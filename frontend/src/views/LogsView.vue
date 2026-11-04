@@ -10,7 +10,7 @@ const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
-const modules = ['ALL', 'STRM', 'Telegram', '订阅', '搜索', 'Emby', 'Emby 302'] as const
+const modules = ['ALL', 'STRM', 'Telegram', '订阅', '搜索', '整理', 'Emby', 'Emby 302'] as const
 type Module = typeof modules[number]
 const route = useRoute()
 const router = useRouter()
@@ -19,7 +19,7 @@ function clearTaskFilter() {
   const { taskID: _, ...query } = route.query
   void router.replace({ query })
 }
-interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string; details?: { url?: string; requestHeaders?: string; responseHeaders?: string; lookupHeaders?: string; lookup?: string; steps?: string; method?: string; path?: string; durationMs?: number; status?: number } }
+interface LogEntry { id: number; time: string; level: Exclude<Level, 'ALL'>; module: string; taskID: string; source: string; message: string; recognition?: { runId?: string; groupId?: string; fileId?: string; status?: string; resultCode?: string; name?: string; sourcePath?: string; targetPath?: string; workKey?: string; season?: number; episode?: number; endEpisode?: number }; details?: { url?: string; requestHeaders?: string; responseHeaders?: string; lookupHeaders?: string; lookup?: string; steps?: string; method?: string; path?: string; durationMs?: number; status?: number } }
 const entries = ref<LogEntry[]>([])
 const level = ref<Level>('INFO')
 const module = ref<Module>('ALL')
@@ -61,14 +61,17 @@ const bgColors: Record<Level, string> = { ALL: 'bg-slate-800', INFO: 'bg-emerald
 const textColors: Record<Level, string> = { ALL: 'text-white', INFO: 'text-white', DEBUG: 'text-white', ERROR: 'text-white', WARNING: 'text-slate-900' }
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
-  return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source} ${entry.details ? JSON.stringify(entry.details) : ''}`.toLowerCase().includes(query)))
+  return entries.value.filter(entry => (!taskID.value || entry.taskID === taskID.value) && (module.value === 'ALL' || entry.module === module.value) && (level.value === 'ALL' || entry.level === level.value) && (!query || `${entry.message} ${entry.module} ${entry.taskID} ${entry.source} ${entry.details ? JSON.stringify(entry.details) : ''} ${entry.recognition ? JSON.stringify(entry.recognition) : ''}`.toLowerCase().includes(query)))
 })
+const taskFilterLabel = computed(() => entries.value.some(entry => entry.taskID === taskID.value && entry.recognition) ? '仅查看当前整理任务' : `仅查看任务：${taskID.value}`)
 watch([level, module, search, taskID], () => { visibleCount.value = 100 })
 
 function timestamp(value: string) {
   const date = new Date(value)
   return `${date.toLocaleString('zh-CN', { hour12: false })}.${String(date.getMilliseconds()).padStart(3, '0')}`
 }
+
+function resultEpisode(entry: LogEntry) { const result = entry.recognition; return result?.season !== undefined && result.episode && result.episode > 0 ? `S${String(result.season).padStart(2, '0')}E${String(result.episode).padStart(2, '0')}${result.endEpisode && result.endEpisode > result.episode ? `-E${String(result.endEpisode).padStart(2, '0')}` : ''}` : '' }
 
 async function refresh() {
   if (loading.value || !mounted || sessionExpired.value) return
@@ -197,7 +200,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
             </div>
           </div>
           <div v-if="taskID" class="logs-task-filter">
-            <span>仅查看任务：{{ taskID }}</span>
+            <span>{{ taskFilterLabel }}</span>
             <button type="button" @click="clearTaskFilter">取消任务筛选</button>
           </div>
           <p v-if="persistence && (persistence.lastError || persistence.failedWrites > 0)" class="logs-persistence" role="status"><template v-if="persistence.lastError">文件保存异常，最近日志仍可查看；{{ persistence.failedWrites }} 条写入未成功。{{ persistence.lastError }}</template><template v-else>{{ persistence.enabled ? '日志写入已恢复' : '文件持久化未启用' }}，本次有 {{ persistence.failedWrites }} 条记录未保存。</template></p>
@@ -227,7 +230,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
           </div>
           <span class="sr-only" role="status">{{ retryStatus }}</span>
         </div>
-        <div v-if="!filtered.length" class="logs-empty">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? sessionExpired ? '重新登录后即可继续查看日志。' : '暂时无法读取日志，请重试。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行搜索、STRM、Telegram、订阅或 Emby 操作后会显示在这里。' }}</div>
+        <div v-if="!filtered.length" class="logs-empty">{{ loading && !updated ? '正在读取日志…' : error && !entries.length ? sessionExpired ? '重新登录后即可继续查看日志。' : '暂时无法读取日志，请重试。' : entries.length ? '没有符合筛选条件的日志。' : '暂无日志，执行整理、搜索、STRM、Telegram、订阅或 Emby 操作后会显示在这里。' }}</div>
         <ol v-else class="logs-list">
           <li v-for="entry in filtered.slice(0, visibleCount)" :key="entry.id" class="logs-entry">
             <div class="logs-entry-meta">
@@ -235,9 +238,13 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
               <time :datetime="entry.time">{{ timestamp(entry.time) }}</time>
               <span class="logs-entry-module">{{ entry.module }}</span>
               <span v-if="entry.source" class="logs-entry-source">{{ entry.source }}</span>
-              <span v-if="entry.taskID" class="logs-entry-task">{{ entry.taskID }}</span>
+              <span v-if="entry.taskID && !entry.recognition" class="logs-entry-task">{{ entry.taskID }}</span>
             </div>
             <p class="logs-message">{{ entry.message }}</p>
+            <details v-if="entry.recognition && (entry.recognition.sourcePath || entry.recognition.targetPath)" class="logs-file-context">
+              <summary><IconChevronRight :size="14" stroke="1.75" aria-hidden="true" focusable="false" />文件与路径</summary>
+              <dl><div v-if="entry.recognition.workKey"><dt>作品</dt><dd>{{ entry.recognition.workKey }}<span v-if="resultEpisode(entry)"> · {{ resultEpisode(entry) }}</span></dd></div><div v-if="entry.recognition.name"><dt>文件名</dt><dd>{{ entry.recognition.name }}</dd></div><div v-if="entry.recognition.sourcePath"><dt>来源</dt><dd>{{ entry.recognition.sourcePath }}</dd></div><div v-if="entry.recognition.targetPath"><dt>目标</dt><dd>{{ entry.recognition.targetPath }}</dd></div></dl>
+            </details>
             <details v-if="entry.details && Object.values(entry.details).some(Boolean)" class="logs-details">
               <summary><IconChevronRight :size="14" stroke="1.75" aria-hidden="true" focusable="false" />请求详情与解析步骤</summary>
               <PlaybackDiagnostics v-bind="entry.details" />
@@ -318,6 +325,16 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 .logs-details summary::-webkit-details-marker { display: none; }
 .logs-details summary > svg { flex-shrink: 0; transition: transform 150ms ease-out; }
 .logs-details[open] summary > svg { transform: rotate(90deg); }
+.logs-file-context { min-width: 0; margin-top: 4px; font-size: 12px; }
+.logs-file-context summary { display: flex; align-items: center; gap: 4px; min-height: 36px; width: fit-content; max-width: 100%; color: var(--logs-action-text); cursor: pointer; list-style: none; border-radius: 6px; }
+.logs-file-context summary::-webkit-details-marker { display: none; }
+.logs-file-context summary > svg { flex: none; }
+.logs-file-context[open] summary > svg { transform: rotate(90deg); }
+.logs-file-context summary:focus-visible { outline: 2px solid var(--logs-focus); outline-offset: -2px; }
+.logs-file-context dl { display: grid; gap: 5px; min-width: 0; padding: 3px 0 8px; }
+.logs-file-context dl > div { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; min-width: 0; line-height: 1.7; }
+.logs-file-context dt { color: var(--logs-muted); }
+.logs-file-context dd { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .logs-details :deep(button) { min-height: 36px; padding: 0 8px; border-radius: 8px; color: var(--logs-action-text); }
 .logs-more { padding: 12px 24px 20px; text-align: center; }
 .logs-more button { min-height: 44px; padding: 0 20px; border-radius: 10px; background: var(--logs-soft); color: var(--logs-action-text); font-size: 13px; cursor: pointer; }
@@ -345,7 +362,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
   .logs-levels button { min-height: 44px; }
   .logs-status { width: 100%; margin-left: 0; }
   .logs-entry { padding: 14px 16px; }.logs-entry-meta { gap: 6px 10px; }
-  .logs-details summary, .logs-details :deep(button) { min-height: 44px; }
+  .logs-details summary, .logs-details :deep(button), .logs-file-context summary { min-height: 44px; }
   .logs-history > summary, .logs-history-action { min-height: 44px; }
 }
 @media (max-width: 379px) {

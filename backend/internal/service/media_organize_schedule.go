@@ -74,7 +74,7 @@ func (s *MediaOrganizer) updateScheduleLocked(id string, settings MediaOrganizeS
 			return old, err
 		}
 		for _, runID := range removed {
-			delete(s.actions, runID)
+			s.removeActionLocked(runID)
 		}
 		if local := s.localMonitors[id]; local != nil && rule.RealtimeEnabled && len(removed) > 0 {
 			local.dirtyDue = s.localMonitorSettings().now()
@@ -93,10 +93,39 @@ func (s *MediaOrganizer) cancelAutomaticScansLocked(ruleID string) []string {
 		if run.Rule.ID != ruleID || run.ID == s.active || run.Status != "queued" || run.Trigger != "schedule" && run.Trigger != "realtime" {
 			return false
 		}
+		if run.TaskFileID != "" || s.actions[run.ID] == "retry" {
+			return false
+		}
 		removed = append(removed, run.ID)
 		return true
 	})
 	return removed
+}
+
+// 按实际轮次结束时间安排下一次扫描，运行快照不能覆盖管理员修改后的规则。
+func (s *MediaOrganizer) finishScanRound(run MediaOrganizeRun) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.localMonitorSettings().now()
+	for i, current := range s.doc.Rules {
+		if current.ID != run.Rule.ID {
+			continue
+		}
+		snapshot := run.Rule
+		snapshot.Name = current.Name
+		if !mediaSameRuleSettings(snapshot, current) {
+			return nil
+		}
+		current.LastScan = now
+		if !current.ScheduleEnabled {
+			current.NextScanAt = time.Time{}
+		} else if run.Trigger == "schedule" || current.NextScanAt.IsZero() || !current.NextScanAt.After(now) {
+			current.NextScanAt = now.Add(time.Duration(current.IntervalSeconds) * time.Second)
+		}
+		s.doc.Rules[i] = current
+		return s.persistMonitorRulesLocked()
+	}
+	return nil
 }
 
 func (s *MediaOrganizer) ruleExecutingLocked(ruleID string) bool {

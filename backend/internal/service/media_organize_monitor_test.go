@@ -256,10 +256,14 @@ func TestMediaLocalMonitorFallbackIndependentOfEvents(t *testing.T) {
 		if err := s.schedule(); err != nil {
 			t.Fatal(err)
 		}
+		run := s.doc.Runs[0]
 		for i := range s.doc.Runs {
 			s.doc.Runs[i].Status = "completed"
 		}
 		clear(s.actions)
+		if err := s.finishScanRound(run); err != nil {
+			t.Fatal(err)
+		}
 	}
 	queue()
 	first := s.doc.Rules[0].NextScanAt

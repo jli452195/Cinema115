@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"time"
+	"path"
 
 	"strm115/backend/internal/client/p115"
 )
@@ -56,10 +56,9 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 		}
 		current := queue[0]
 		queue = queue[1:]
-		if visited[current.id] || len(visited) >= 300 || current.depth > 12 {
-			return fmt.Errorf("115 目录循环或范围过大，请缩小扫描范围")
+		if err := mediaVisitScanDirectory(visited, current.id, path.Join(run.Rule.Source, current.relative), current.depth); err != nil {
+			return fmt.Errorf("扫描 115 目录: %w", err)
 		}
-		visited[current.id] = true
 		files.scan115ID, files.scan115Relative, files.shallow115 = current.id, current.relative, true
 		files.unrelated, files.directories = nil, nil
 		entries, err := files.scan(ctx)
@@ -74,14 +73,15 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 		if fileCount > 5000 {
 			return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
 		}
+		if err := mediaCheckScanDirectoryCount(len(visited)+len(queue)+len(files.directories), path.Join(run.Rule.Source, current.relative)); err != nil {
+			return fmt.Errorf("扫描 115 目录: %w", err)
+		}
 		for _, child := range files.directories {
 			queue = append(queue, media115ScanDirectory{id: child.File.ID, relative: child.File.SourcePath, depth: current.depth + 1})
 		}
 		directories = append(directories, files.directories...)
 		allCandidates = append(allCandidates, files.localCandidates...)
 		allScanned = append(allScanned, entries...)
-		maps.Copy(allSettling, files.settlingVideos)
-		maps.Copy(allPending, files.localPending)
 		immediate := make([]MediaOrganizeEntry, 0, len(entries))
 		for _, entry := range entries {
 			if entry.File.MediaType == "attachment" {
@@ -96,6 +96,8 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 		if err := s.processMediaBatch(ctx, files, run, immediate, true); err != nil {
 			return err
 		}
+		maps.Copy(allSettling, files.settlingVideos)
+		maps.Copy(allPending, files.localPending)
 		unrelated = append(unrelated, files.unrelated...)
 	}
 	files.unrelated, files.directories = unrelated, directories
@@ -111,13 +113,6 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	for i := range s.doc.Rules {
-		if s.doc.Rules[i].ID == run.Rule.ID {
-			s.doc.Rules[i].LastScan = time.Now()
-		}
-	}
-	s.mu.Unlock()
 	if files.cloudEmpty != nil {
 		files.cloudEmpty.complete = true
 	}
@@ -140,7 +135,7 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 	return nil
 }
 
-// 旧任务的外部写入尚未确认时，仅显式重试可继续；自动扫描保护整个视频任务的来源。
+// 未完成主文件的写入需要先核对位置；附件不再保护整个视频任务。
 func (s *MediaOrganizer) pending115Tasks(run *MediaOrganizeRun) (map[string]bool, map[string]bool) {
 	pending, directories := make(map[string]bool), make(map[string]bool)
 	s.mu.Lock()
@@ -151,23 +146,15 @@ func (s *MediaOrganizer) pending115Tasks(run *MediaOrganizeRun) (map[string]bool
 		}
 		tasks := make(map[string]bool)
 		for _, entry := range previous.Entries {
-			if entry.P115Move == nil {
+			if entry.File.MediaType != "video" || entry.Status == "done" || entry.P115Move == nil {
 				continue
 			}
-			pending[entry.File.ID] = true
+			tasks[entry.File.ID] = true
 			if entry.File.ParentID != "" {
 				directories[entry.File.ParentID] = true
 			}
-			if entry.File.MediaType == "video" {
-				tasks[entry.File.ID] = true
-			} else if entry.VideoID != "" {
-				tasks[entry.VideoID] = true
-			}
 		}
 		for _, entry := range previous.Entries {
-			if entry.File.MediaType == "video" && tasks[entry.File.ID] && entry.File.ParentID != "" {
-				directories[entry.File.ParentID] = true
-			}
 			if entry.Status != "done" && (tasks[entry.File.ID] || tasks[entry.VideoID]) {
 				pending[entry.File.ID] = true
 			}

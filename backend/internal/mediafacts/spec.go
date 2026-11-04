@@ -16,7 +16,8 @@ type SearchSpec struct {
 var (
 	resourceCompoundSubtitles = regexp.MustCompile(`(?:(?:内封|內封|内嵌|內嵌|外挂|外掛|双语|雙語|多语|多語|字幕)){2,}`)
 	resourceSizeTags          = regexp.MustCompile(`(?i)[\[【(（]\s*[0-9]+(?:\.[0-9]+)?\s*GB\s*[\]】)）]`)
-	resourceQuality           = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:[0-9]{3,4}\s*[x×]\s*(480|576|720|1080|1440|2160|4320)([pi])?|(480|576|720|1080|1440|2160|4320)([pi])|([48])k)`)
+	// 分辨率按完整高度标签识别，避免不常见的 420P 等声明干扰季集、命名与字幕匹配。
+	resourceQuality = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:[0-9]{3,4}\s*[x×]\s*([0-9]{3,4})([pi])?|([0-9]{3,4})([pi])|([48])k)`)
 )
 
 func Search(title string) SearchSpec {

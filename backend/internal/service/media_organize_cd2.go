@@ -31,11 +31,7 @@ func (s *MediaOrganizer) bindCD2Checkpoint(files *mediaOrganizeFiles, run *Media
 	files.cd2Checkpoint = func(entry MediaOrganizeEntry, current clouddrive2.File) error {
 		for i := range run.Entries {
 			if run.Entries[i].File.ID == entry.File.ID {
-				location := &MediaCD2Location{Path: current.Path, FileID: current.ID}
-				if !current.Modified.IsZero() {
-					location.Modified = current.Modified.UnixNano()
-				}
-				run.Entries[i].CD2Current = location
+				mediaCD2SetLocation(&run.Entries[i], current)
 				return s.checkpoint(run)
 			}
 		}
@@ -155,10 +151,9 @@ func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.S
 	fileCount := 0
 	var walk func(string, string, int) error
 	walk = func(directory, prefix string, depth int) error {
-		if visited[directory] || depth > 12 || len(visited) >= 300 {
-			return fmt.Errorf("CD2 目录循环或范围过大，请缩小扫描范围")
+		if err := mediaVisitScanDirectory(visited, directory, directory, depth); err != nil {
+			return fmt.Errorf("扫描 CD2 目录: %w", err)
 		}
-		visited[directory] = true
 		files, err := f.cd2.List(ctx, directory, true)
 		if err != nil {
 			return fmt.Errorf("读取 CD2 目录: %w", err)
@@ -287,7 +282,7 @@ func (f *mediaOrganizeFiles) cd2Conflict(ctx context.Context, e MediaOrganizeEnt
 	if err != nil {
 		return err
 	}
-	if file == nil || f.rule.DeleteDuplicates && mediaCD2SameSHA1(e, *file) {
+	if file == nil || f.rule.DeleteDuplicates && mediaCD2SameSHA1(e, *file) || file != nil && mediaAttachmentSameDestinationRole(e, file.Name) {
 		return nil
 	}
 	return errMediaTargetExists
@@ -377,7 +372,8 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 				return err
 			}
 		}
-		if path.Dir(current.Path) != path.Dir(source) && current.Path != failurePath && current.Path != destination {
+		atDestination := path.Dir(current.Path) == path.Dir(destination) && strings.EqualFold(path.Base(current.Path), path.Base(destination))
+		if path.Dir(current.Path) != path.Dir(source) && current.Path != failurePath && !atDestination {
 			return fmt.Errorf("CD2 已记录的文件位置不在本次整理计划内")
 		}
 		source, expectedID, e.Modified = current.Path, current.FileID, current.Modified
@@ -401,10 +397,20 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 		}
 	}
 	if sourceErr != nil {
+		recovering := e.Failure != nil && e.Failure.State == "moving" && f.rule.Target == f.rule.Failure
+		if f.rule.DeleteDuplicates && (e.CD2Duplicate || recovering) {
+			keeper, err := f.cd2Collision(ctx, e)
+			if err != nil {
+				return err
+			}
+			if keeper != nil && mediaCD2SameSHA1(e, *keeper) {
+				return f.finishCD2Duplicate(ctx, e, source, expectedID, *keeper, true)
+			}
+		}
 		// 仅核验已计划的精确目标；跨云身份变化且没有成功回执时交由人工核对。
 		target, err := f.cd2.Stat(ctx, destination, true)
-		if err == nil && e.CD2Duplicate && f.rule.DeleteDuplicates && mediaCD2SameSHA1(e, target) {
-			return errMediaDuplicateDone
+		if err != nil && !errors.Is(err, clouddrive2.ErrNotFound) {
+			return err
 		}
 		if err == nil && (mediaCD2Matches(e, target, expectedID) || mediaCD2Matches(e, target, "")) {
 			return nil
@@ -413,6 +419,12 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 	}
 	if !mediaCD2Matches(e, actual, expectedID) {
 		return fmt.Errorf("CD2 来源文件身份或大小已变化，请重新扫描")
+	}
+	atDestination := path.Dir(source) == path.Dir(destination) && strings.EqualFold(path.Base(source), path.Base(destination))
+	if atDestination && e.CD2Duplicate && mediaCD2SameSHA1(e, actual) {
+		// 已保存的去重保留位置再次核验成功时，保留完成语义且不重复回收来源。
+		actual.Hashes = maps.Clone(actual.Hashes)
+		return &mediaDuplicateReceipt{fileID: actual.ID, size: actual.Size, cd2: &actual}
 	}
 	if source == destination {
 		return nil
@@ -425,15 +437,7 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 		if !f.rule.DeleteDuplicates || !mediaCD2SameSHA1(e, *collision) {
 			return errMediaTargetExists
 		}
-		if f.cd2Duplicate != nil {
-			if err := f.cd2Duplicate(e); err != nil {
-				return err
-			}
-		}
-		if err := f.cd2.Delete(ctx, []string{source}); err != nil {
-			return err
-		}
-		return errMediaDuplicateDone
+		return f.finishCD2Duplicate(ctx, e, source, expectedID, *collision, false)
 	}
 	if actual.Name != path.Base(destination) {
 		renamed, err := f.cd2.Rename(ctx, source, path.Base(destination))
@@ -461,6 +465,98 @@ func (f *mediaOrganizeFiles) moveCD2(ctx context.Context, e MediaOrganizeEntry) 
 	return f.recordCD2Location(ctx, e, destination)
 }
 
+// 去重只按已提供的 SHA1 判定；大小、原生 ID 和路径用于确认选中的同一份保留文件。
+func (f *mediaOrganizeFiles) finishCD2Duplicate(ctx context.Context, entry MediaOrganizeEntry, source, expectedID string, keeper clouddrive2.File, missing bool) error {
+	if !f.rule.DeleteDuplicates || keeper.ID == "" || keeper.Path == source || !mediaCD2SameSHA1(entry, keeper) {
+		return errMediaTargetExists
+	}
+	verifyKeeper := func() (clouddrive2.File, error) {
+		current, err := f.cd2.Stat(ctx, keeper.Path, true)
+		if err != nil {
+			return clouddrive2.File{}, err
+		}
+		if current.ID != keeper.ID || current.Path != keeper.Path || current.Name != keeper.Name || current.Name != path.Base(current.Path) ||
+			current.Size != keeper.Size || !mediaCD2SameSHA1(entry, current) || !keeper.Modified.IsZero() && !current.Modified.Equal(keeper.Modified) {
+			return clouddrive2.File{}, fmt.Errorf("CD2 去重保留文件身份或位置已变化")
+		}
+		return current, nil
+	}
+	verifyMissing := func() error {
+		if _, err := f.cd2.Stat(ctx, source, true); !errors.Is(err, clouddrive2.ErrNotFound) {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("CD2 来源重复文件仍存在，删除结果待核实")
+		}
+		children, err := f.cd2.List(ctx, path.Dir(source), true)
+		if err != nil {
+			return err
+		}
+		for _, file := range children {
+			pathIdentity := expectedID == "" || strings.HasPrefix(expectedID, "/")
+			if expectedID != "" && file.ID == expectedID || missing && pathIdentity && mediaCD2SameSHA1(entry, file) {
+				return fmt.Errorf("CD2 来源目录仍有原身份或同内容文件，无法确认去重完成")
+			}
+		}
+		return nil
+	}
+	if err := f.cd2CheckDirectory(ctx, path.Dir(keeper.Path)); err != nil {
+		return err
+	}
+	if missing {
+		if err := verifyMissing(); err != nil {
+			return err
+		}
+		// 历史 moving 没有保留 ID 时，仅接受精确目录内唯一的同名候选。
+		children, err := f.cd2.List(ctx, path.Dir(keeper.Path), true)
+		if err != nil {
+			return err
+		}
+		names := 0
+		for _, file := range children {
+			if strings.EqualFold(file.Name, keeper.Name) {
+				names++
+			}
+		}
+		if names != 1 {
+			return fmt.Errorf("CD2 去重目标无法唯一确认")
+		}
+	} else {
+		if f.cd2Duplicate != nil {
+			if err := f.cd2Duplicate(entry); err != nil {
+				return err
+			}
+		}
+		actual, err := f.cd2.Stat(ctx, source, true)
+		if err != nil {
+			return err
+		}
+		if actual.Path != source || actual.Name != path.Base(source) || !mediaCD2Matches(entry, actual, expectedID) {
+			return fmt.Errorf("CD2 来源重复文件身份已变化，保留来源")
+		}
+	}
+	if _, err := verifyKeeper(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !missing {
+		if err := f.cd2.Delete(ctx, []string{source}); err != nil {
+			return err
+		}
+	}
+	if err := verifyMissing(); err != nil {
+		return err
+	}
+	current, err := verifyKeeper()
+	if err != nil {
+		return err
+	}
+	current.Hashes = maps.Clone(current.Hashes)
+	return &mediaDuplicateReceipt{fileID: current.ID, size: current.Size, cd2: &current}
+}
+
 func (f *mediaOrganizeFiles) recordCD2Location(ctx context.Context, entry MediaOrganizeEntry, full string) error {
 	if f.cd2Checkpoint == nil {
 		return nil
@@ -477,32 +573,53 @@ func (f *mediaOrganizeFiles) recordCD2Location(ctx context.Context, entry MediaO
 }
 
 func (f *mediaOrganizeFiles) cd2CleanupCandidates(ctx context.Context, candidates []MediaOrganizeEntry) ([]MediaOrganizeEntry, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	parent := path.Dir(candidates[0].File.ID)
+	current := &mediaOrganizeFiles{rule: f.rule, cd2: f.cd2, cd2ScanPath: parent, cd2Shallow: true}
+	for _, entry := range candidates {
+		full, err := mediaCD2Relative(f.rule.Source, entry.File.SourcePath)
+		if err != nil || full != entry.File.ID || path.Dir(full) != parent {
+			return nil, fmt.Errorf("CD2 清理路径无法确认")
+		}
+		if scope, _, shared := mediaAttachmentFolder(entry.File); entry.File.MediaType == "attachment" && shared {
+			current.cd2ScanPath, current.cd2Shallow = path.Join(f.rule.Source, scope), false
+		}
+	}
+	// 一次读取同时核验本批文件身份和附件归属，不再逐文件扫描相同目录。
+	if _, err := current.scanCD2(ctx, func(p115.ShareFile, string, string, int64) {}); err != nil {
+		return nil, err
+	}
+	// 共享附件可能检查多个子目录，回收前再统一核对实际父目录中的文件身份。
+	if !current.cd2Shallow {
+		children, err := f.cd2.List(clouddrive2.WithDirectoryCache(ctx), parent, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range candidates {
+			delete(current.cd2Snapshots, entry.File.ID)
+		}
+		for _, file := range children {
+			current.cd2Snapshots[file.Path] = file
+		}
+	}
+	owners := mediaLocalCompanionOwners(current.localCandidates)
 	valid := make([]MediaOrganizeEntry, 0, len(candidates))
 	for _, entry := range candidates {
 		if entry.File.Directory {
 			continue
 		}
 		if entry.File.MediaType == "subtitle" || entry.File.MediaType == "attachment" {
-			unmatched, err := f.cd2OrphanStillUnmatched(ctx, entry)
-			if err != nil {
-				return nil, err
-			}
-			if !unmatched {
+			if !f.orphanDue[entry.File.ID] || len(owners[entry.File.ID]) > 0 {
 				continue
 			}
 		}
-		full, err := mediaCD2Relative(f.rule.Source, entry.File.SourcePath)
-		if err != nil || full != entry.File.ID {
-			return nil, fmt.Errorf("CD2 清理路径无法确认")
-		}
-		actual, err := f.cd2.Stat(ctx, full, true)
-		if errors.Is(err, clouddrive2.ErrNotFound) {
+		actual, present := current.cd2Snapshots[entry.File.ID]
+		if !present {
 			continue
 		}
-		if err != nil {
-			return nil, err
-		}
-		if actual.ReadOnly || actual.Name != entry.File.Name || !mediaCD2Matches(entry, actual, entry.CD2FileID) {
+		if actual.Path != entry.File.ID || actual.Name != entry.File.Name || !mediaCD2Matches(entry, actual, entry.CD2FileID) {
 			continue
 		}
 		if entry.Modified != 0 && actual.Modified.UnixNano() != entry.Modified {
@@ -514,68 +631,94 @@ func (f *mediaOrganizeFiles) cd2CleanupCandidates(ctx context.Context, candidate
 }
 
 func (s *MediaOrganizer) cleanupCD2(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun) error {
-	candidates := slices.Clone(f.unrelated)
-	for _, candidate := range candidates {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		valid, err := f.cd2CleanupCandidates(ctx, []MediaOrganizeEntry{candidate})
-		if err != nil {
-			return err
-		}
-		if len(valid) == 0 {
+	parents := make(map[string][]MediaOrganizeEntry)
+	order := make([]string, 0)
+	for _, entry := range f.unrelated {
+		if entry.File.Directory {
 			continue
 		}
-		entry := candidate
-		entry.CD2Hashes = maps.Clone(candidate.CD2Hashes)
-		entry.Status, entry.Message = "error", "CD2 清理结果待核实；下轮监控会重新扫描"
-		entry.Result = &MediaOrganizeResult{Status: "error", Message: entry.Message, At: time.Now()}
-		index := len(run.Entries)
-		for i := range run.Entries {
-			if run.Entries[i].File.ID == entry.File.ID {
-				index = i
-				break
+		parent := path.Dir(entry.File.ID)
+		if _, seen := parents[parent]; !seen {
+			order = append(order, parent)
+		}
+		parents[parent] = append(parents[parent], entry)
+	}
+	indices := make(map[string]int, len(run.Entries))
+	for i, entry := range run.Entries {
+		indices[entry.File.ID] = i
+	}
+	for _, parent := range order {
+		candidates := parents[parent]
+		for start := 0; start < len(candidates); start += 100 {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-		}
-		if index == len(run.Entries) {
-			run.Entries = append(run.Entries, entry)
-		} else {
-			run.Entries[index] = entry
-		}
-		if err := s.checkpoint(run); err != nil {
-			return err
-		}
-		// 检查点落盘后再次检查普通文件身份；目录始终不进入删除候选。
-		valid, err = f.cd2CleanupCandidates(ctx, []MediaOrganizeEntry{candidate})
-		if err != nil {
-			return err
-		}
-		if len(valid) == 0 {
-			run.Entries[index].Status, run.Entries[index].Message, run.Entries[index].Result = "retained", "文件或目录已变化，已保留来源", nil
+			batch := candidates[start:min(start+100, len(candidates))]
+			for _, entry := range batch {
+				entry.Status, entry.Message = "error", "CD2 清理尚未完成，留待下轮扫描"
+				entry.Result = &MediaOrganizeResult{Status: entry.Status, Message: entry.Message, At: time.Now()}
+				index, found := indices[entry.File.ID]
+				if !found {
+					indices[entry.File.ID] = len(run.Entries)
+					run.Entries = append(run.Entries, entry)
+				} else {
+					run.Entries[index] = entry
+				}
+			}
 			if err := s.checkpoint(run); err != nil {
 				return err
 			}
-			continue
-		}
-		err = f.cd2.Delete(ctx, []string{entry.File.ID})
-		result := &run.Entries[index]
-		if err == nil {
-			result.Status, result.Message = "done", "已通过 CD2 删除无关文件"
-			if f.orphanDue[entry.File.ID] {
-				result.Message = "已清理超过附件宽限仍无对应视频的字幕或附件"
-				s.mu.Lock()
-				s.forgetOrphanLocked(run.Rule, entry.File.ID)
-				s.mu.Unlock()
+			// 落盘后只做一次实时核验，同父文件共用扫描快照和删除后的目录读取。
+			work := clouddrive2.WithDirectoryCache(ctx)
+			valid, err := f.cd2CleanupCandidates(work, batch)
+			if err != nil {
+				return err
 			}
-		} else {
-			result.Message += "：" + err.Error()
-		}
-		result.Result = &MediaOrganizeResult{Status: result.Status, Message: result.Message, At: time.Now()}
-		if saveErr := s.checkpoint(run); saveErr != nil {
-			return saveErr
-		}
-		if err != nil {
-			return fmt.Errorf("CD2 清理已停止: %w", err)
+			paths := make([]string, 0, len(valid))
+			selected := make(map[string]bool, len(valid))
+			for _, entry := range valid {
+				paths = append(paths, entry.File.ID)
+				selected[entry.File.ID] = true
+			}
+			remaining := make(map[string]bool)
+			var writeErr, readErr error
+			if len(paths) > 0 {
+				writeErr = f.cd2.Delete(work, paths)
+				if writeErr != nil {
+					// 超时可能已应用部分删除；只读回本批父目录，按实际存在情况给结果。
+					var children []clouddrive2.File
+					children, readErr = f.cd2.List(clouddrive2.WithDirectoryCache(ctx), parent, true)
+					for _, file := range children {
+						remaining[file.Path] = true
+					}
+				}
+			}
+			var batchErr error
+			for _, candidate := range batch {
+				entry := &run.Entries[indices[candidate.File.ID]]
+				if !selected[candidate.File.ID] {
+					entry.Status, entry.Message, entry.Result = "retained", "文件或附件归属已变化，已保留来源", nil
+					continue
+				}
+				if writeErr == nil || readErr == nil && !remaining[candidate.File.ID] {
+					entry.Status, entry.Message = "done", "已通过 CD2 清理来源文件"
+					if f.orphanDue[candidate.File.ID] {
+						s.mu.Lock()
+						s.forgetOrphanLocked(run.Rule, candidate.File.ID)
+						s.mu.Unlock()
+					}
+				} else {
+					batchErr = errors.Join(writeErr, readErr)
+					entry.Message += "：" + batchErr.Error()
+				}
+				entry.Result = &MediaOrganizeResult{Status: entry.Status, Message: entry.Message, At: time.Now()}
+			}
+			if err := s.checkpoint(run); err != nil {
+				return err
+			}
+			if batchErr != nil {
+				return fmt.Errorf("CD2 清理已停止: %w", batchErr)
+			}
 		}
 	}
 	return nil

@@ -105,18 +105,25 @@ func (f *mediaOrganizeFiles) cleanupListing(ctx context.Context, parent, relativ
 		return nil, err
 	}
 	if f.rule.Storage == "115" {
-		dir, err := f.drive.(mediaOrganizeDrive).ReadDirectory(ctx, parent, f.cookie)
+		var dir p115.DriveDirectory
+		var files []p115.ShareFile
+		var err error
+		if drive, ok := f.drive.(media115DirectoryDrive); ok {
+			dir, files, err = drive.ReadDirectoryFiles(ctx, parent, f.cookie)
+		} else {
+			dir, err = f.drive.(mediaOrganizeDrive).ReadDirectory(ctx, parent, f.cookie)
+			if err == nil {
+				files, err = listOrganizeFiles(ctx, f.drive, parent, f.cookie)
+			}
+		}
 		if err != nil {
 			return nil, err
 		}
 		if dir.CID != parent || dir.Path != path.Join(f.rule.Source, relative) {
 			return nil, fmt.Errorf("来源子目录已变化，已停止清理")
 		}
-		files, err := listOrganizeFiles(ctx, f.drive, parent, f.cookie)
-		if err == nil {
-			f.lists[parent] = files
-		}
-		return files, err
+		f.lists[parent] = files
+		return files, nil
 	}
 	full, err := mediaLocalRoot(f.rule.Source)
 	if relative != "." {
@@ -141,6 +148,10 @@ func (f *mediaOrganizeFiles) cleanupListing(ctx context.Context, parent, relativ
 	return files, nil
 }
 
+type media115CleanupBatchDrive interface {
+	DeleteEntriesBatch(context.Context, string, []string, string) error
+}
+
 func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun, candidates []MediaOrganizeEntry) error {
 	parents := make(map[string][]MediaOrganizeEntry)
 	sharedScopes := make(map[string]bool)
@@ -160,12 +171,12 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 			defer cancel()
 			entries := parents[parent]
 			var siblings []p115.ShareFile
-			var recycler organizeRecycleDrive
+			var recycler media115CleanupBatchDrive
 			if run.Rule.Storage == "115" {
 				var ok bool
-				recycler, ok = f.drive.(organizeRecycleDrive)
+				recycler, ok = f.drive.(media115CleanupBatchDrive)
 				if !ok {
-					return fmt.Errorf("当前网盘不支持移入回收站")
+					return fmt.Errorf("当前网盘不支持批量移入回收站")
 				}
 				if s.reserve != nil {
 					release, err := s.reserve()
@@ -268,7 +279,13 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 					return owner != "" // A video may have arrived since the scan.
 				})
 			}
-			const batchSize = 100
+			batchSize := 100
+			if recycler != nil {
+				batchSize = p115.DriveMutationBatchLimit
+				if slices.ContainsFunc(entries, func(e MediaOrganizeEntry) bool { return e.File.Directory }) {
+					batchSize = 1
+				}
+			}
 			for start := 0; start < len(entries); start += batchSize {
 				if err := work.Err(); err != nil {
 					return err
@@ -299,7 +316,8 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 				if err := s.checkpoint(run); err != nil {
 					return err
 				}
-				var err error
+				var writeErr, readErr error
+				var remaining map[string]bool
 				if recycler != nil {
 					if batch[0].File.Directory {
 						// Directory cleanup is one exact folder at a time. Recheck
@@ -317,11 +335,21 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 							continue
 						}
 					}
-					err = recycler.DeleteEntries(work, ids, f.cookie)
+					writeErr = recycler.DeleteEntriesBatch(work, parent, ids, f.cookie)
+					// 写入报错后仍读取一次来源，逐项确认实际结果，不重放整批删除。
+					verify, verifyCancel := context.WithTimeout(ctx, 15*time.Second)
+					current, verifyErr := f.cleanupListing(verify, parent, path.Dir(batch[0].File.SourcePath))
+					verifyCancel()
+					readErr = verifyErr
+					remaining = make(map[string]bool, len(current))
+					for _, file := range current {
+						remaining[file.ID] = true
+					}
 				}
 				var batchErr error
 				for _, i := range indices {
 					e := &run.Entries[i]
+					var err error
 					if recycler == nil {
 						err = work.Err()
 						if err == nil {
@@ -330,6 +358,17 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 							full, err = f.checkLocalCleanup(*e)
 							if err == nil {
 								err = os.Remove(full)
+							}
+						}
+					}
+					if recycler != nil {
+						switch {
+						case readErr != nil:
+							err = errors.Join(writeErr, readErr)
+						case remaining[e.File.ID]:
+							err = writeErr
+							if err == nil {
+								err = fmt.Errorf("来源文件仍存在，留待下轮清理")
 							}
 						}
 					}
@@ -349,7 +388,6 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 						}
 						if recycler != nil {
 							e.Message += "，已移入 115 回收站"
-							f.lists[parent] = slices.DeleteFunc(f.lists[parent], func(file p115.ShareFile) bool { return file.ID == e.File.ID })
 						}
 					} else {
 						e.Message += "：" + organizePublicError(err, f.cookie)

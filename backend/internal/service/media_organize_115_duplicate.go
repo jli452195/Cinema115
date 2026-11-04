@@ -62,28 +62,33 @@ func (f *mediaOrganizeFiles) delete115Duplicate(ctx context.Context, e MediaOrga
 			break
 		}
 	}
-	if actual == nil || actual.Directory || actual.Size != e.File.Size ||
-		(actual.Name != e.File.Name && actual.Name != path.Base(e.Relative)) || !strings.EqualFold(actual.SHA1, e.File.SHA1) {
+	recovering := actual == nil && e.Failure != nil && e.Failure.State == "moving" && f.rule.Target == f.rule.Failure && f.rule.TargetID == f.rule.FailureID
+	if actual == nil && !recovering || actual != nil && (actual.Directory || actual.Size != e.File.Size ||
+		(actual.Name != e.File.Name && actual.Name != path.Base(e.Relative)) || !strings.EqualFold(actual.SHA1, e.File.SHA1)) {
 		return fmt.Errorf("115 来源文件已变化，请重新扫描")
 	}
 	target, err := f.list(ctx, targetCID)
 	if err != nil {
 		return fmt.Errorf("核验 115 去重目标: %w", err)
 	}
-	confirmed := false
+	confirmed, names := false, 0
 	for _, file := range target {
-		if file.ID == targetFile.ID && file.Name == targetFile.Name && media115SameSHA1(e, file) {
+		if strings.EqualFold(file.Name, targetFile.Name) {
+			names++
+		}
+		if file.ID == targetFile.ID && file.Name == targetFile.Name && file.Size == targetFile.Size && media115SameSHA1(e, file) {
 			confirmed = true
-			break
 		}
 	}
-	if !confirmed {
+	if !confirmed || recovering && names != 1 {
 		return fmt.Errorf("115 目标文件已变化，保留来源")
 	}
-	if err := recycle.DeleteEntries(ctx, []string{e.File.ID}, f.cookie); err != nil {
-		delete(f.lists, e.File.ParentID)
-		delete(f.lists, targetCID)
-		return fmt.Errorf("115 来源重复文件回收结果待核实: %w", err)
+	if actual != nil {
+		if err := recycle.DeleteEntries(ctx, []string{e.File.ID}, f.cookie); err != nil {
+			delete(f.lists, e.File.ParentID)
+			delete(f.lists, targetCID)
+			return fmt.Errorf("115 来源重复文件回收结果待核实: %w", err)
+		}
 	}
 	// 只核验本次回收结果；请求失败或结果不明时不自动再次发起删除。
 	delete(f.lists, e.File.ParentID)
@@ -102,8 +107,8 @@ func (f *mediaOrganizeFiles) delete115Duplicate(ctx context.Context, e MediaOrga
 		return fmt.Errorf("核验 115 去重保留目标: %w", err)
 	}
 	for _, file := range target {
-		if file.ID == targetFile.ID && file.Name == targetFile.Name && media115SameSHA1(e, file) {
-			return errMediaDuplicateDone
+		if file.ID == targetFile.ID && file.Name == targetFile.Name && file.Size == targetFile.Size && media115SameSHA1(e, file) {
+			return &mediaDuplicateReceipt{fileID: file.ID, parentID: targetCID, size: file.Size}
 		}
 	}
 	return fmt.Errorf("115 去重保留目标无法确认，请核实文件")

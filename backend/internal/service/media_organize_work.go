@@ -16,6 +16,12 @@ import (
 )
 
 func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, action string) (processErr error) {
+	if run.RecognitionVersion == "" {
+		run.RecognitionVersion = MediaRecognitionPolicyVersion
+	}
+	if run.RecognitionVersion != MediaRecognitionPolicyVersion {
+		return fmt.Errorf("整理识别策略版本不可用，请重新扫描来源目录")
+	}
 	if err := run.prepareClassification(); err != nil {
 		return err
 	}
@@ -64,7 +70,7 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 			s.localScanSucceeded(run.Rule)
 		}
 	} else if action == "retry" {
-		if err = s.recognize(ctx, run); err != nil {
+		if err = s.recognize(ctx, run, nil); err != nil {
 			return err
 		}
 		if err = s.render(ctx, files, run); err != nil {
@@ -120,29 +126,29 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 	}
 	files.scanned = entries
 	mediaAppendScanEntries(run, entries)
-	if err = s.recognize(ctx, run); err != nil {
+	if err = s.recognize(ctx, run, nil); err != nil {
 		return err
 	}
 	if err = s.render(ctx, files, run); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	for i := range s.doc.Rules {
-		if s.doc.Rules[i].ID == run.Rule.ID {
-			s.doc.Rules[i].LastScan = time.Now()
-		}
-	}
-	s.mu.Unlock()
 	return nil
 }
 
 func mediaGroupIdentityKey(identity mediafacts.Identity) mediafacts.Identity {
 	identity.Name, identity.ParentName = mediafacts.NameKey(identity.Name), mediafacts.NameKey(identity.ParentName)
+	if identity.ParentName == identity.Name {
+		identity.ParentName = ""
+	}
+	identity.AlternativeName = mediafacts.NameKey(identity.AlternativeName)
+	identity.NameSource, identity.YearSource, identity.KindSource = "", "", ""
+	identity.TMDBIDSource, identity.SeasonSource, identity.ContentTypeSource = "", "", ""
 	return identity
 }
 
 func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry) {
 	indices := make(map[mediafacts.Identity]int)
+	identities, episodeContexts := mediaScanIdentities(run, entries)
 	for i, group := range run.Groups {
 		indices[mediaGroupIdentityKey(group.Identity)] = i
 	}
@@ -151,16 +157,24 @@ func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry)
 			run.Entries = append(run.Entries, e)
 			continue
 		}
-		parents := strings.Split(path.Dir(e.File.SourcePath), "/")
-		reverse := make([]string, 0, 2)
-		for i := len(parents) - 1; i >= 0 && len(reverse) < 2; i-- {
-			if parents[i] != "." && parents[i] != "" {
-				reverse = append(reverse, parents[i])
-			}
-		}
-		identity := mediafacts.ParseIdentity(e.File.Name, reverse...)
+		identity := identities[e.File.ID]
 		if e.File.Episode > 0 {
-			identity.Kind = "tv"
+			// 片名仍保留尾部数字时，该数字只是弱编号，不能把电影强制改为剧集。
+			if identity.Kind == "" && mediaIdentityEndsWithEpisode(identity.Name, e.File.Episode) {
+				base := mediaIdentityEpisodeBase(identity.Name)
+				if episodeContexts[e.File.ParentID+":"+mediafacts.NameKey(base)] {
+					identity.Name, identity.NameSource = base, "directory:numbering"
+					identity.Kind, identity.KindSource = "tv", "directory:numbering"
+				} else {
+					identity.Name = mediaIdentityNumberedTitle(identity.Name)
+					e.File.Episode, e.File.EndEpisode = 0, 0
+				}
+			} else if identity.Kind != "movie" {
+				identity.Kind = "tv"
+				if identity.KindSource == "" {
+					identity.KindSource = "filename:numbering"
+				}
+			}
 			if e.File.Season == 0 {
 				identity.Season, identity.SeasonExplicit = 0, true
 			}
@@ -184,25 +198,35 @@ func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry)
 	}
 }
 
-func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) error {
+func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, groups []int) error {
 	byGroup := make(map[string][]int, len(run.Groups))
 	for i, entry := range run.Entries {
-		if entry.File.MediaType == "video" && mediaInRunTask(run, entry) {
+		if entry.File.MediaType == "video" && entry.Status != "done" && mediaInRunTask(run, entry) {
 			byGroup[entry.Group] = append(byGroup[entry.Group], i)
 		}
 	}
-	for i := range run.Groups {
+	if groups == nil {
+		groups = make([]int, len(run.Groups))
+		for i := range groups {
+			groups[i] = i
+		}
+	}
+	for _, i := range groups {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		g := &run.Groups[i]
-		if g.TMDBID > 0 {
-			continue
+		if i < 0 || i >= len(run.Groups) {
+			return ErrMediaOrganizeInput
 		}
+		g := &run.Groups[i]
 		indices := byGroup[g.ID]
 		if len(indices) == 0 {
 			continue
 		}
+		if g.TMDBID > 0 {
+			continue
+		}
+		g.ResultCode = ""
 		numbered, special := false, false
 		for _, index := range indices {
 			e := &run.Entries[index]
@@ -211,21 +235,29 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun) e
 		}
 		if special && !numbered && g.Identity.Kind == "tv" {
 			g.Message = "特殊内容需确认对应作品与季集"
+			g.ResultCode = "NUMBERING_MISSING"
 			continue
 		}
 		lookup, cancel := context.WithTimeout(ctx, 25*time.Second)
-		match, err := recognizeMedia(lookup, s.metadata, g.Identity)
+		match, decision, err := recognizeMediaWithDecision(lookup, s.metadata, g.Identity)
 		cancel()
+		g.ResultCode = decision.ResultCode
 		if err != nil {
-			g.Message = "查询暂未完成：" + err.Error()
+			g.Message = "查询暂未完成：" + persistentLogText(err.Error())
 			continue
 		}
 		if match == nil {
-			g.Message = "未找到唯一匹配，请选择作品"
+			g.Message = decision.Message
+			if g.Message == "" {
+				g.Message = "未找到合适匹配，请选择作品"
+			}
 			continue
 		}
 		g.Kind, g.TMDBID, g.Title = match.Detail.Kind, match.Detail.ID, match.Detail.Title
-		g.Identity.Season = match.Season
+		g.ResultCode = "MATCHED"
+		g.Year = mediaRecognitionYear(match.Detail.Date)
+		g.Message = ""
+		g.MatchedSeason = mediaOptionalNumber(&match.Season)
 		if g.Kind == "tv" {
 			for _, index := range indices {
 				run.Entries[index].File.Season = match.Season
@@ -269,12 +301,15 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 				return ctx.Err()
 			}
 			g.Message = "查询暂未完成：" + err.Error()
+			g.ResultCode = "METADATA_QUERY_FAILED"
 			continue
 		}
 		prepared[g.ID] = p
 		g.Title = p.detail.Title
+		g.Year = mediaRecognitionYear(p.detail.Date)
 		g.Category = ""
 		g.Message = ""
+		g.ResultCode = "MATCHED"
 		if run.Rule.Classify {
 			category, err := run.Classification.Classifier.Classify(mediaClassificationFacts(p.detail))
 			if err != nil {
@@ -296,14 +331,14 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			continue
 		}
 		// 未核实的外部写入继续使用持久化原计划，不能因模板或元数据变化改写目标。
-		if e.P115Move != nil {
+		if e.P115Move != nil || e.AttachmentKeep != nil {
 			continue
 		}
 		if e.File.MediaType != "video" && e.Status != "done" {
 			if run.TaskFileID == "" {
 				e.Group, e.VideoID = "", ""
 			}
-			e.Relative, e.Target = "", ""
+			e.Relative, e.Target, e.ResultCode = "", "", ""
 			e.Status, e.Message = "unmatched", "未找到唯一对应的视频，保留来源"
 		}
 		if e.Status == "done" && e.File.MediaType == "video" {
@@ -315,17 +350,40 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			continue
 		}
 		delete(results, e.File.ID)
-		e.Relative, e.Target, e.Message = "", "", ""
+		e.Relative, e.Target, e.Message, e.ResultCode = "", "", "", ""
 		p, ok := prepared[e.Group]
 		if !ok {
 			e.Status = "needs_match"
 			e.Message = "请选择对应作品"
+			for _, group := range run.Groups {
+				if group.ID == e.Group && group.ResultCode == "NUMBERING_MISSING" {
+					if code, message := mediaOrganizeNumberingError(e.File); code != "" {
+						e.ResultCode, e.Message = code, message
+						if code == "NUMBERING_CONFLICT" || code == "NUMBERING_INVALID" {
+							e.Status = "invalid"
+						}
+					}
+					break
+				}
+			}
 			continue
+		}
+		for _, group := range run.Groups {
+			if group.ID == e.Group && group.MatchedSeason != nil && group.Kind == "tv" {
+				e.File.Season = *group.MatchedSeason
+				break
+			}
 		}
 		result, err := p.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: e.File.ID, Season: e.File.Season, Episode: e.File.Episode}, Name: e.File.Name, NamingValues: e.File.NamingValues})
 		if err != nil {
 			e.Status = "invalid"
 			e.Message = err.Error()
+			e.ResultCode = "NAMING_FAILED"
+			if p.snapshot.Template.Kind == naming.TV {
+				if code, message := mediaOrganizeNumberingError(e.File); code != "" {
+					e.ResultCode, e.Message = code, message
+				}
+			}
 			continue
 		}
 		for _, g := range run.Groups {
@@ -346,10 +404,10 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		original = append(original, e.File)
 		positions[e.File.ID] = i
 	}
-	for _, sub := range organizeSubtitles(original) {
+	for _, sub := range organizeSubtitles(mediaAttachmentMatchFiles(original)) {
 		i := positions[sub.File.ID]
 		e := &run.Entries[i]
-		if e.Status == "done" || e.P115Move != nil || !mediaInRunTask(run, *e) {
+		if e.Status == "done" || e.P115Move != nil || e.AttachmentKeep != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		video, ok := results[sub.VideoID]
@@ -358,6 +416,10 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			e.VideoID = sub.VideoID
 		}
 		if !ok {
+			if sub.VideoID != "" {
+				e.Message = "对应视频尚未就绪，字幕保留来源"
+				e.ResultCode = "WAITING_MAIN_FILE"
+			}
 			continue
 		}
 		result, err := naming.Companion(video, sub.Tail, sub.File.Name)
@@ -373,9 +435,10 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		e.Message = ""
 	}
 	mediaOrganizeAttachments(run, results)
+	mediaPlanAttachmentChoices(run)
 	duplicates := make(map[string][]int)
 	for i, e := range run.Entries {
-		if e.Status != "ready" || e.P115Move != nil {
+		if e.Status != "ready" || e.P115Move != nil || e.AttachmentKeep != nil {
 			continue
 		}
 		key := strings.ToLower(e.Relative)
@@ -383,24 +446,30 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	}
 	for _, indices := range duplicates {
 		if len(indices) > 1 && !((run.Rule.Storage == "cd2" || run.Rule.Storage == "115") && run.Rule.DeleteDuplicates) {
+			names := make([]string, 0, min(len(indices), 4))
+			for _, index := range indices[:min(len(indices), 4)] {
+				names = append(names, run.Entries[index].File.Name)
+			}
 			for _, i := range indices {
 				if !mediaInRunTask(run, run.Entries[i]) {
 					continue
 				}
 				run.Entries[i].Status = "conflict"
-				run.Entries[i].Message = "本批次存在相同目标路径，请修正作品或季集"
+				run.Entries[i].ResultCode = "BATCH_TARGET_CONFLICT"
+				run.Entries[i].Message = fmt.Sprintf("本批次 %d 个输入生成相同目标 %s：%s，请检查命名或作品季集", len(indices), run.Entries[i].Target, strings.Join(names, "、"))
 			}
 		}
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.Status != "ready" || e.P115Move != nil || !mediaInRunTask(run, *e) {
+		if e.Status != "ready" || e.P115Move != nil || e.AttachmentKeep != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		if err := files.conflict(ctx, *e); err != nil {
 			e.Status = "error"
 			if errors.Is(err, errMediaTargetExists) {
 				e.Status = "conflict"
+				e.ResultCode = "TARGET_EXISTS"
 			}
 			e.Message = err.Error()
 		}
@@ -419,6 +488,16 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		ctx = clouddrive2.WithDirectoryCache(ctx)
 	}
 	mediaValidateAttachmentOwners(run, mediaEntryFiles(run.Entries))
+	if err := s.prepareAttachmentChoices(ctx, files, run); err != nil {
+		return err
+	}
+	// 已选附件统一留到本轮末尾；普通路径中新发现的失败计划不在同轮重试。
+	pendingAttachments := make(map[string]bool, len(run.Entries))
+	for _, entry := range run.Entries {
+		if entry.AttachmentKeep != nil {
+			pendingAttachments[entry.File.ID] = true
+		}
+	}
 	run.Status = "running"
 	if err := s.checkpoint(run); err != nil {
 		return err
@@ -438,13 +517,16 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		s.tryCleanup115EmptyDirectories(ctx, files, run)
 	} else {
 		for i := range run.Entries {
-			if failures[run.Entries[i].File.ID] {
+			if failures[run.Entries[i].File.ID] || run.Entries[i].AttachmentKeep != nil {
 				continue
 			}
 			if err := s.executeMediaEntry(ctx, files, run, i); err != nil {
 				return err
 			}
 		}
+	}
+	if err := s.executePendingAttachmentChoices(ctx, files, run, pendingAttachments); err != nil {
+		return err
 	}
 	if err := s.quarantine(ctx, files, run, false); err != nil {
 		return err
@@ -466,7 +548,9 @@ func mediaFinishRun(run *MediaOrganizeRun) {
 			if e.Failure != nil && e.Failure.State == "stored" {
 				target = path.Join(run.Rule.Failure, e.File.SourcePath)
 			}
-			e.Result = &MediaOrganizeResult{Status: "error", Message: e.Message, Target: target, At: time.Now()}
+			if e.Result == nil || e.Result.Status != "error" || e.Result.Message != e.Message || e.Result.Target != target {
+				e.Result = &MediaOrganizeResult{Status: "error", Message: e.Message, Target: target, At: time.Now()}
+			}
 		}
 	}
 	for _, e := range run.Entries {

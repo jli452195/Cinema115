@@ -19,37 +19,57 @@ func TestMediaOrganizerScheduleClockAndCoalescing(t *testing.T) {
 	if err := s.schedule(); err != nil || len(s.actions) != 1 {
 		t.Fatal("启用后应立即排入一次扫描", err, s.actions)
 	}
-	next := s.doc.Rules[0].NextScanAt
-	if !next.Equal(now.Add(7 * time.Second)) {
-		t.Fatal("未使用自定义秒数", next)
+	if !s.doc.Rules[0].NextScanAt.IsZero() {
+		t.Fatal("下一周期应在本轮结束后计算")
 	}
-	s.doc.Runs[0].Status = "completed"
-	clear(s.actions)
+	running, action, found := s.takeQueuedRunLocked()
+	if !found {
+		t.Fatal("缺少待执行扫描")
+	}
+	now = now.Add(time.Minute)
+	for range 3 {
+		if err := s.schedule(); err != nil || len(s.actions) != 0 {
+			t.Fatal("扫描超过间隔也不得堆积补跑", err, s.actions)
+		}
+	}
+	if err := s.processQueuedRun(context.Background(), running, action); err != nil {
+		t.Fatal(err)
+	}
+	next := now.Add(7 * time.Second)
+	if !s.doc.Rules[0].NextScanAt.Equal(next) || s.active != "" {
+		t.Fatal("应从轮次完成计算完整周期并释放执行状态", s.doc.Rules[0], s.active)
+	}
 	now = now.Add(3 * time.Second)
 	manual, err := s.Start(rule.ID)
 	if err != nil || manual.Trigger != "manual" || !s.doc.Rules[0].NextScanAt.Equal(next) {
 		t.Fatal("手动扫描不得推迟定时周期", err, manual)
 	}
-	s.doc.Runs[0].Status = "completed"
-	clear(s.actions)
+	running, action, found = s.takeQueuedRunLocked()
+	if !found {
+		t.Fatal("缺少手动扫描")
+	}
+	if err := s.processQueuedRun(context.Background(), running, action); err != nil {
+		t.Fatal(err)
+	}
 	now = next
 	if err := s.schedule(); err != nil || len(s.actions) != 1 {
 		t.Fatal("手动扫描后到期仍应调度", err)
 	}
-	active := s.doc.Runs[0].ID
-	s.active = active
-	s.doc.Runs[0].Status = "running"
+	running, action, found = s.takeQueuedRunLocked()
+	if !found {
+		t.Fatal("到期扫描未入队")
+	}
 	now = now.Add(time.Minute)
 	for range 3 {
-		if err := s.schedule(); err != nil || len(s.actions) != 1 {
+		if err := s.schedule(); err != nil || len(s.actions) != 0 {
 			t.Fatal("运行中的到期轮次不得重复堆积", err, s.actions)
 		}
 	}
-	s.active = ""
-	s.doc.Runs[0].Status = "completed"
-	clear(s.actions)
-	if err := s.schedule(); err != nil || len(s.actions) != 1 {
-		t.Fatal("运行期间已到期，应在完成后合并补扫一次", err)
+	if err := s.processQueuedRun(context.Background(), running, action); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.schedule(); err != nil || len(s.actions) != 0 || !s.doc.Rules[0].NextScanAt.Equal(now.Add(7*time.Second)) {
+		t.Fatal("长扫描结束后必须等待下一完整周期", err, s.doc.Rules[0])
 	}
 }
 

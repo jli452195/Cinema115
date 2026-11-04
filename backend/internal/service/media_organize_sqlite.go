@@ -17,6 +17,7 @@ type mediaOrganizeStorage interface {
 	LoadMediaOrganize(context.Context) (storage.MediaOrganizeRows, error)
 	SaveMediaOrganize(context.Context, string, []storage.MediaOrganizeRunRow, []string) error
 	QueryMediaOrganize(context.Context, string, string, int) (storage.MediaOrganizeQuery, error)
+	QueryMediaOrganizeLive(context.Context, string, string, int, []storage.MediaOrganizeLiveTaskRow) (storage.MediaOrganizeQuery, error)
 }
 
 type mediaOrganizeSettings struct {
@@ -58,16 +59,16 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 	if s.doc.Runs == nil {
 		s.doc.Runs = []MediaOrganizeRun{}
 	}
-	changed := []string{}
+	changed := make([]string, 0, len(s.doc.Runs))
 	for i := range s.doc.Runs {
 		r := &s.doc.Runs[i]
+		*r = mediaPersistentRun(*r)
 		if mediaRunActive(r.Status) {
 			r.Status = "interrupted"
 			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
-			changed = append(changed, r.ID)
-		} else if !loaded.Initialized {
-			changed = append(changed, r.ID)
 		}
+		// 摘要由当前规则派生，启动时重建以免保留旧的状态分组或操作权限。
+		changed = append(changed, r.ID)
 	}
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
 		return nil, err
@@ -103,7 +104,7 @@ func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
 		}
 		run := MediaOrganizeRun(stored.runFields)
 		run.Rule = rule
-		doc.Runs = append(doc.Runs, run)
+		doc.Runs = append(doc.Runs, mediaPersistentRun(run))
 	}
 	s.doc = doc
 	return nil
@@ -130,7 +131,7 @@ func mediaStoredRule(raw json.RawMessage) (MediaOrganizeRule, error) {
 		rule.AttachmentCleanupEnabled = *previous.AttachmentCleanupEnabled
 	}
 	if previous.AttachmentGraceSeconds == nil {
-		rule.AttachmentGraceSeconds = 60
+		rule.AttachmentGraceSeconds = 10
 	} else {
 		rule.AttachmentGraceSeconds = *previous.AttachmentGraceSeconds
 	}
@@ -237,20 +238,25 @@ func (s *MediaOrganizer) persistSQLiteLockedContext(ctx context.Context, changed
 }
 
 func mediaRunRow(run MediaOrganizeRun) (storage.MediaOrganizeRunRow, error) {
-	raw, err := json.Marshal(run)
+	cleanup := mediaRunCleanup(run)
+	run = mediaPersistentRun(run)
+	raw, err := mediaMarshalPersistentRun(run)
 	if err != nil {
 		return storage.MediaOrganizeRunRow{}, err
 	}
 	row := storage.MediaOrganizeRunRow{ID: run.ID, RuleID: run.Rule.ID, Status: run.Status, At: mediaSortTime(run.UpdatedAt), Record: string(raw), Tasks: []storage.MediaOrganizeTaskRow{}}
 	for _, task := range mediaTasks(run) {
 		item := task.MediaOrganizeHistoryItem
-		raw, err := json.Marshal(item)
+		if item.Status != "failed" && item.Status != "done" {
+			continue
+		}
+		taskRow, err := mediaHistoryTaskRow(item)
 		if err != nil {
 			return row, err
 		}
-		row.Tasks = append(row.Tasks, storage.MediaOrganizeTaskRow{FileID: item.FileID, Group: mediaStatusGroup(item.Status), At: mediaSortTime(item.At), Search: strings.ToLower(strings.Join([]string{item.Title, item.Name, item.Source, item.Target}, "\n")), Record: string(raw)})
+		row.Tasks = append(row.Tasks, taskRow)
 	}
-	if len(row.Tasks) == 0 {
+	if len(row.Tasks) == 0 && run.Status == "failed" {
 		activity := MediaOrganizeActivity{RunID: run.ID, RuleName: run.Rule.Name, Status: run.Status, Message: run.Message, At: run.UpdatedAt}
 		raw, err := json.Marshal(activity)
 		if err != nil {
@@ -258,7 +264,6 @@ func mediaRunRow(run MediaOrganizeRun) (storage.MediaOrganizeRunRow, error) {
 		}
 		row.Activity = string(raw)
 	}
-	cleanup := mediaRunCleanup(run)
 	if cleanup.Files+cleanup.Directories+cleanup.Failed > 0 {
 		raw, err := json.Marshal(cleanup)
 		if err != nil {

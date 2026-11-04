@@ -12,7 +12,8 @@ var mediaAttachmentExtensions = extensionSet("nfo,xml,json,jpg,jpeg,png,webp,tbn
 var mediaArtworkStem = regexp.MustCompile(`(?i)^(?:poster|fanart|banner|clearart|discart|disc|keyart|landscape|logo|clearlogo|folder|thumb|backdrop|background|cover)(?:[0-9]+)?$`)
 
 func mediaAttachment(name string) bool {
-	return mediaAttachmentExtensions[strings.ToLower(path.Ext(name))]
+	ext := strings.ToLower(path.Ext(name))
+	return mediaAttachmentExtensions[ext] || ext == ".mp3" && strings.EqualFold(mediaAttachmentCanonicalName(name), "theme.mp3")
 }
 
 func mediaAttachmentMetadata(name string) bool {
@@ -21,6 +22,15 @@ func mediaAttachmentMetadata(name string) bool {
 }
 
 func mediaAttachmentVideo(file OrganizeFile, files []OrganizeFile) (owner, longest int, tail string) {
+	owner, longest, tail = mediaAttachmentVideoNamed(file, files)
+	if longest >= 0 {
+		return
+	}
+	file.Name = mediaAttachmentMatchName(file, files)
+	return mediaAttachmentVideoNamed(file, files)
+}
+
+func mediaAttachmentVideoNamed(file OrganizeFile, files []OrganizeFile) (owner, longest int, tail string) {
 	owner, longest = -1, -1
 	stem := strings.TrimSuffix(file.Name, path.Ext(file.Name))
 	for i, video := range files {
@@ -48,7 +58,8 @@ func mediaAttachmentVideo(file OrganizeFile, files []OrganizeFile) (owner, longe
 // from another movie is never folder artwork, even when just one video remains.
 func mediaAttachmentFolder(file OrganizeFile) (parent, subdir string, shared bool) {
 	parent = path.Dir(file.SourcePath)
-	stem := strings.ToLower(strings.TrimSuffix(file.Name, path.Ext(file.Name)))
+	name := mediaAttachmentCanonicalName(file.Name)
+	stem := strings.ToLower(strings.TrimSuffix(name, path.Ext(name)))
 	if mediaAttachmentMetadata(file.Name) {
 		return parent, "", stem == "tvshow" || stem == "movie" || stem == "season"
 	}
@@ -58,7 +69,7 @@ func mediaAttachmentFolder(file OrganizeFile) (parent, subdir string, shared boo
 	if base := path.Base(parent); base == ".actors" || base == "extrafanart" {
 		return path.Dir(parent), base, true
 	}
-	return parent, "", mediaArtworkStem.MatchString(stem)
+	return parent, "", strings.EqualFold(name, "theme.mp3") || mediaArtworkStem.MatchString(stem)
 }
 
 func mediaAttachmentInScope(video OrganizeFile, parent string) bool {
@@ -100,7 +111,7 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 	}
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" || e.P115Move != nil || e.VideoID == "" || !mediaInRunTask(run, *e) {
+		if e.File.MediaType != "attachment" || e.Status == "done" || e.P115Move != nil || e.AttachmentKeep != nil || e.VideoID == "" || !mediaInRunTask(run, *e) {
 			continue
 		}
 		owner, longest, _ := mediaAttachmentVideo(e.File, files)
@@ -116,6 +127,7 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 			}
 		}
 		if !valid {
+			mediaClearMainFileWaiting(e)
 			if run.TaskFileID != "" {
 				e.Relative, e.Target = "", ""
 				e.Status, e.Message = "retained", "附件未匹配对应视频，保留来源待核对"
@@ -137,10 +149,11 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 	files := mediaEntryFiles(run.Entries)
 	for i := range run.Entries {
 		e := &run.Entries[i]
-		if e.File.MediaType != "attachment" || e.Status == "done" || e.P115Move != nil || !mediaInRunTask(run, *e) {
+		if e.File.MediaType != "attachment" || e.Status == "done" || e.P115Move != nil || e.AttachmentKeep != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		originalGroup, originalVideo := e.Group, e.VideoID
+		mediaClearMainFileWaiting(e)
 		e.Status, e.Message = "retained", "无法确认附件归属，保留来源"
 		e.Group, e.VideoID, e.Relative, e.Target = "", "", "", ""
 		owner, longest, tail := mediaAttachmentVideo(e.File, files)
@@ -175,7 +188,7 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 				dir := result.Directory
 				g := groups[video.Group]
 				kind, tmdbID := g.Kind, g.TMDBID
-				if kind == "tv" && (vp != parent || strings.EqualFold(e.File.Name, "tvshow.nfo")) {
+				if kind == "tv" && (vp != parent || strings.EqualFold(mediaAttachmentCanonicalName(e.File.Name), "tvshow.nfo")) {
 					dir = path.Dir(dir)
 				}
 				if first >= 0 && (workID != tmdbID || workKind != kind || destination != dir) {
@@ -187,16 +200,20 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 			}
 			if first >= 0 {
 				e.Group, e.VideoID = group, run.Entries[first].File.ID
-				e.Relative = path.Join(destination, subdir, e.File.Name)
+				e.Relative = path.Join(destination, subdir, mediaAttachmentCanonicalName(e.File.Name))
 			}
 		}
 		if e.Relative != "" {
 			e.Status, e.Message = "ready", ""
 			e.Target = path.Join(run.Rule.Target, e.Relative)
 		} else if e.VideoID != "" {
-			e.Status, e.Message = "unmatched", "对应视频尚未匹配，附件保留来源"
+			e.Status, e.Message = "unmatched", "对应视频尚未就绪，附件保留来源"
+			if _, ready := results[e.VideoID]; !ready {
+				e.ResultCode = "WAITING_MAIN_FILE"
+			}
 		}
 		if run.TaskFileID != "" && e.VideoID != originalVideo {
+			mediaClearMainFileWaiting(e)
 			e.Group, e.VideoID = originalGroup, originalVideo
 			e.Relative, e.Target = "", ""
 			e.Status, e.Message = "retained", "公共附件归属不再唯一，保留来源待核对"

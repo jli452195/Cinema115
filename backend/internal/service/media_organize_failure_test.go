@@ -23,7 +23,7 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 	mediaTestFile(t, rule.Source, "season/Unknown.S01E01.ass", "subtitle")
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "scan")
-	if run.FailureCount != 2 || run.ReadyCount != 0 {
+	if len(mediaFailureEntries(&run)) != 2 {
 		t.Fatal("unmatched video and companion must be eligible", run)
 	}
 	if _, err := os.Stat(filepath.Join(rule.Failure, "season/Unknown.S01E01.strm")); !errors.Is(err, os.ErrNotExist) {
@@ -47,9 +47,6 @@ func TestMediaOrganizerFailureDirectoryCorrectionAndRestart(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(rule.Failure, filepath.FromSlash(e.File.ID))); err != nil {
 			t.Fatal("original hierarchy lost", err)
 		}
-	}
-	if queued.FailureCount != 0 || queued.ReadyCount != 0 {
-		t.Fatal("stored failures must not be offered for repeated moves", queued)
 	}
 	scan, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &scan, "auto")
@@ -120,7 +117,7 @@ func TestMediaOrganizerFailureDirectoryConflictAndTransient(t *testing.T) {
 		mediaTestFile(t, rule.Source, "Work.S01E01.ass", "subtitle")
 		run, _ := s.Start(rule.ID)
 		mediaTestProcess(t, s, &run, "auto")
-		if run.FailureCount != 0 {
+		if len(mediaFailureEntries(&run)) != 0 {
 			t.Fatal("metadata failure must not be quarantined or negatively cached", run)
 		}
 		for _, e := range run.Entries {

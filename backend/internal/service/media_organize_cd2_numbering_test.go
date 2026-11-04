@@ -110,6 +110,18 @@ func TestMediaOrganizerCD2RetryRepairsMissingPublisherNumbering(t *testing.T) {
 		t.Fatal(err)
 	}
 	restarted.cd2 = connection
+	beforeRetry, err := restarted.Snapshot(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingIndex := slices.IndexFunc(beforeRetry.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.ID == siblingID })
+	if siblingIndex < 0 {
+		t.Fatal("重启后缺少其他已完成集的映射", beforeRetry.Entries)
+	}
+	siblingReference := beforeRetry.Entries[siblingIndex]
+	if !siblingReference.Reference || siblingReference.Status != "done" || siblingReference.Result == nil || siblingReference.Result.Status != "done" || !siblingReference.Result.At.Equal(sibling.At) || siblingReference.Target != sibling.Target || siblingReference.File.Season != 2 || siblingReference.File.Episode != 8 {
+		t.Fatal("其他已完成集应保留原完成结果、时间及正确目标映射", siblingReference)
+	}
 	queued, err := restarted.Retry(run.ID, MediaOrganizeCorrection{FileID: fileID})
 	if err != nil || queued.Entries[0].File.Episode != 7 || queued.Entries[0].File.Season != 2 {
 		t.Fatal("普通重试应从原文件名恢复缺失集数", queued, err)
@@ -131,16 +143,24 @@ func TestMediaOrganizerCD2RetryRepairsMissingPublisherNumbering(t *testing.T) {
 			t.Fatal("重试后目标文件缺失", entry.Target)
 		}
 	}
-	unchanged, err := restarted.Task(run.ID, siblingID)
+	afterRetry, err := restarted.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := json.Marshal(sibling)
+	siblingIndex = slices.IndexFunc(afterRetry.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.ID == siblingID })
+	if siblingIndex < 0 {
+		t.Fatal("重试丢失其他已完成集的映射", afterRetry.Entries)
+	}
+	unchanged := afterRetry.Entries[siblingIndex]
+	want, err := json.Marshal(siblingReference)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := json.Marshal(unchanged)
 	if err != nil || string(got) != string(want) {
-		t.Fatal("单任务重试改变了其他集", sibling, unchanged, err)
+		t.Fatal("单任务重试改变了其他集的映射", siblingReference, unchanged, err)
+	}
+	if target, exists := fs.files[unchanged.Target]; !exists || target.Size != unchanged.File.Size {
+		t.Fatal("单任务重试影响了其他集的目标文件", unchanged)
 	}
 }

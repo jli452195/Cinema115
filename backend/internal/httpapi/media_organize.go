@@ -77,7 +77,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		if in.AttachmentCleanupEnabled != nil {
 			rule.AttachmentCleanupEnabled = *in.AttachmentCleanupEnabled
 		}
-		rule.AttachmentGraceSeconds = 60
+		rule.AttachmentGraceSeconds = 10
 		if in.AttachmentGraceSeconds != nil {
 			rule.AttachmentGraceSeconds = *in.AttachmentGraceSeconds
 		}
@@ -130,6 +130,10 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 	g.GET("/runs/:id/task", func(c *gin.Context) {
 		out, err := s.Task(c.Param("id"), c.Query("fileId"))
 		if err != nil {
+			if errors.Is(err, service.ErrMediaOrganizeTaskNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "整理任务记录已移除"})
+				return
+			}
 			fail(c, err)
 			return
 		}

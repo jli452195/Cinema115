@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"strings"
 	"time"
 )
 
-// MediaOrganizeFailure records a move intent before external writes. File IDs and original
-// paths stay stable so subtitle associations and corrections remain valid.
+// 失败搬运保留原任务关联键；去重完成后另存实际保留身份用于纠正重试。
 type MediaOrganizeFailure struct {
 	State     string `json:"state"`
 	ParentID  string `json:"parentId,omitempty"`
+	FileID    string `json:"fileId,omitempty"`
 	CD2FileID string `json:"cd2FileId,omitempty"`
 	Reason    string `json:"reason"`
 	Message   string `json:"message,omitempty"`
@@ -22,7 +23,7 @@ type MediaOrganizeFailure struct {
 func mediaTransientGroups(run *MediaOrganizeRun) map[string]bool {
 	groups := make(map[string]bool)
 	for _, g := range run.Groups {
-		if strings.HasPrefix(g.Message, "查询暂未完成") {
+		if g.ResultCode == "METADATA_QUERY_FAILED" || strings.HasPrefix(g.Message, "查询暂未完成") {
 			groups[g.ID] = true
 		}
 	}
@@ -36,7 +37,7 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 	}
 	pending := make(map[string]bool)
 	for _, entry := range run.Entries {
-		if entry.P115Move != nil {
+		if entry.P115Move != nil || entry.AttachmentKeep != nil && entry.AttachmentKeep.Phase != "retained" {
 			pending[entry.File.ID] = true
 		}
 	}
@@ -62,23 +63,6 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 		}
 	}
 	return eligible
-}
-
-func mediaRunCounts(run *MediaOrganizeRun) {
-	run.ReadyCount, run.FailureCount = 0, 0
-	failures := mediaFailureEntries(run)
-	for _, e := range run.Entries {
-		if e.Status == "done" || e.Status == "retained" || e.File.MediaType == "cleanup" {
-			continue
-		}
-		if failures[e.File.ID] {
-			if e.Failure == nil || e.Failure.State != "stored" {
-				run.FailureCount++
-			}
-		} else if e.Status == "ready" || e.Status == "error" && e.Relative != "" {
-			run.ReadyCount++
-		}
-	}
 }
 
 func (f *mediaOrganizeFiles) failureFiles(ctx context.Context) (*mediaOrganizeFiles, error) {
@@ -137,76 +121,130 @@ func (s *MediaOrganizer) quarantine(ctx context.Context, files *mediaOrganizeFil
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if e.Failure == nil {
-			e.Failure = &MediaOrganizeFailure{State: "pending", Reason: e.Message}
-			if e.Failure.Reason == "" {
-				e.Failure.Reason = "相关视频需要人工处理"
-			}
-		}
-		work, cancel := context.WithTimeout(ctx, 30*time.Second)
-		var saveErr error
-		err := func() error {
-			var release func()
-			if run.Rule.Storage == "115" && s.reserve != nil {
-				var err error
-				release, err = s.reserve()
-				if err != nil {
-					return err
-				}
-				defer release()
-			}
-			target, err := files.failureFiles(work)
-			if err != nil {
-				return err
-			}
-			plan := *e
-			plan.Relative = e.File.SourcePath
-			if run.Rule.Storage == "115" {
-				e.Failure.ParentID, err = target.cloudDestination(work, plan.Relative, true)
-				if err != nil {
-					return err
-				}
-			}
-			if !moving {
-				if err := target.conflict(work, plan); err != nil {
-					return err
-				}
-			}
-			e.Failure.State = "moving"
-			if saveErr = s.checkpoint(run); saveErr != nil {
-				return saveErr
-			}
-			if err := target.move(work, plan); err != nil {
-				return err
-			}
-			if run.Rule.Storage == "cd2" {
-				actual, err := target.cd2.Stat(work, path.Join(run.Rule.Failure, plan.Relative), true)
-				if err != nil {
-					return err
-				}
-				e.Failure.CD2FileID = actual.ID
-			}
-			return nil
-		}()
-		cancel()
-		if saveErr != nil {
-			return saveErr
-		}
-		if err == nil {
-			e.Failure.State, e.Failure.Message = "stored", ""
-		} else {
-			e.Failure.Message = organizePublicError(err, files.cookie)
-		}
-		e.Result = &MediaOrganizeResult{Status: "error", Message: e.Failure.Reason, At: time.Now(), Target: path.Join(run.Rule.Failure, e.File.SourcePath)}
-		if err := s.checkpoint(run); err != nil {
+		stop, err := s.quarantineEntry(ctx, files, run, i, moving)
+		if err != nil {
 			return err
 		}
-		files.forget115SourceEntry(*e)
-		s.tryCleanup115EmptyDirectories(ctx, files, run)
-		if err != nil && !errors.Is(err, errMediaTargetExists) {
-			// A failed provider or mount must not trigger one request per file.
+		if stop {
 			break
 		}
 	}
 	return ctx.Err()
+}
+
+// 每次仅保护当前文件所属视频，避免整个失败队列阻止其他历史记录删除。
+func (s *MediaOrganizer) quarantineEntry(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, index int, moving bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	indices, releaseEntry := s.beginMediaEntries(run, []int{index})
+	if len(indices) == 0 {
+		return false, nil
+	}
+	defer releaseEntry()
+	e := &run.Entries[index]
+	if e.Failure == nil {
+		e.Failure = &MediaOrganizeFailure{State: "pending", Reason: e.Message}
+		if e.Failure.Reason == "" {
+			e.Failure.Reason = "相关视频需要人工处理"
+		}
+	}
+	work, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var saveErr error
+	err := func() error {
+		var release func()
+		if run.Rule.Storage == "115" && s.reserve != nil {
+			var err error
+			release, err = s.reserve()
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
+		target, err := files.failureFiles(work)
+		if err != nil {
+			return err
+		}
+		plan := *e
+		plan.Relative = e.File.SourcePath
+		if run.Rule.Storage == "115" {
+			e.Failure.ParentID, err = target.cloudDestination(work, plan.Relative, true)
+			if err != nil {
+				return err
+			}
+		}
+		if !moving {
+			if err := target.conflict(work, plan); err != nil {
+				return err
+			}
+		}
+		e.Failure.State = "moving"
+		if saveErr = s.checkpoint(run); saveErr != nil {
+			return saveErr
+		}
+		if err := target.move(work, plan); err != nil {
+			var receipt *mediaDuplicateReceipt
+			if !errors.As(err, &receipt) {
+				return err
+			}
+			return mediaStoreFailureDuplicate(e, run.Rule, receipt)
+		}
+		if run.Rule.Storage == "cd2" {
+			actual, err := target.cd2.Stat(work, path.Join(run.Rule.Failure, plan.Relative), true)
+			if err != nil {
+				return err
+			}
+			e.Failure.CD2FileID = actual.ID
+		}
+		return nil
+	}()
+	if saveErr != nil {
+		return false, saveErr
+	}
+	if err == nil {
+		e.Failure.State, e.Failure.Message = "stored", ""
+	} else {
+		e.Failure.Message = organizePublicError(err, files.cookie)
+	}
+	e.Result = &MediaOrganizeResult{Status: "error", Message: e.Failure.Reason, At: time.Now(), Target: path.Join(run.Rule.Failure, e.File.SourcePath)}
+	if err := s.checkpoint(run); err != nil {
+		return false, err
+	}
+	files.forget115SourceEntry(*e)
+	s.tryCleanup115EmptyDirectories(ctx, files, run)
+	// 网盘或挂载失败后结束当前轮次，避免对余下每个文件重复请求。
+	return err != nil && !errors.Is(err, errMediaTargetExists), ctx.Err()
+}
+
+func mediaStoreFailureDuplicate(entry *MediaOrganizeEntry, rule MediaOrganizeRule, receipt *mediaDuplicateReceipt) error {
+	if receipt == nil || receipt.fileID == "" || receipt.size < 0 || entry.Failure == nil {
+		return fmt.Errorf("失败目录去重保留身份未确认")
+	}
+	switch rule.Storage {
+	case "115":
+		if receipt.cd2 != nil || receipt.fileID == entry.File.ID || receipt.parentID == "" || receipt.parentID != entry.Failure.ParentID {
+			return fmt.Errorf("115 失败目录去重保留身份不一致")
+		}
+		entry.Failure.FileID = receipt.fileID
+	case "cd2":
+		file := receipt.cd2
+		expected, err := mediaCD2Relative(rule.Failure, entry.File.SourcePath)
+		if err != nil || file == nil || file.ID != receipt.fileID || file.Size != receipt.size || file.Directory || file.ReadOnly ||
+			path.Dir(file.Path) != path.Dir(expected) || file.Name != path.Base(file.Path) || !strings.EqualFold(file.Name, path.Base(expected)) || !mediaCD2SameSHA1(*entry, *file) {
+			return fmt.Errorf("CD2 失败目录去重保留身份不一致")
+		}
+		modified := int64(0)
+		if !file.Modified.IsZero() {
+			modified = file.Modified.UnixNano()
+		}
+		entry.Failure.CD2FileID = file.ID
+		entry.CD2Current = &MediaCD2Location{Path: file.Path, FileID: file.ID, Modified: modified}
+		entry.CD2Hashes = maps.Clone(file.Hashes)
+		entry.CD2Duplicate = false
+	default:
+		return fmt.Errorf("当前存储未提供可核验的失败目录去重回执")
+	}
+	entry.File.Size = receipt.size
+	return nil
 }

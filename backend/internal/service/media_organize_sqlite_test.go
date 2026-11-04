@@ -100,11 +100,11 @@ func TestMediaOrganizerSQLiteMigrationAndNoResurrection(t *testing.T) {
 	if _, err := os.Stat(old.path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("committed legacy snapshot was not removed", err)
 	}
-	deleted, err := s.DeleteHistory(context.Background(), MediaOrganizeDelete{Items: []MediaOrganizeDeleteItem{{RunID: finished.ID, FileID: finished.Entries[0].File.ID}}})
+	deleted, err := s.DeleteHistory(context.Background(), MediaOrganizeDelete{Items: []MediaOrganizeDeleteItem{{RunID: active.ID, FileID: active.Entries[0].File.ID}}})
 	if err != nil || deleted != 1 {
 		t.Fatal(deleted, err)
 	}
-	// Simulate an undeletable or restored stale snapshot after the first import.
+	// 首次导入后，即使旧快照重新出现也不能恢复已删除失败或成功任务历史。
 	if err := old.Save(string(raw)); err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestMediaOrganizerSQLiteSearchPaginationAndStatuses(t *testing.T) {
 	newer.Entries[0].Result.At = newer.UpdatedAt.Add(100 * time.Millisecond)
 	saveMediaFixtures(t, s, done, running, partial, newer)
 	h := mediaHistoryTest(t, s, "", "all", 1)
-	if h.Total != 49 || h.Pages != 3 || h.Items[0].RunID != "newer" || !reflect.DeepEqual(h.Counts, map[string]int{"all": 49, "done": 46, "running": 1, "attention": 2}) {
+	if h.Total != 49 || h.Pages != 3 || h.Items[0].RunID != "newer" || !reflect.DeepEqual(h.Counts, map[string]int{"all": 49, "done": 47, "running": 1, "failed": 1}) {
 		t.Fatal("incorrect counts or subsecond order", h)
 	}
 	seen := map[string]bool{}
@@ -203,7 +203,7 @@ func TestMediaOrganizerSQLiteSearchPaginationAndStatuses(t *testing.T) {
 			t.Fatal("search must be literal and case insensitive", q, h)
 		}
 	}
-	if h := mediaHistoryTest(t, s, "作品", "done", 99); h.Total != 46 || h.Page != 3 || len(h.Items) != 6 || h.Counts["attention"] != 2 {
+	if h := mediaHistoryTest(t, s, "作品", "done", 99); h.Total != 47 || h.Page != 3 || len(h.Items) != 7 || h.Counts["failed"] != 1 {
 		t.Fatal("filter must precede pagination without narrowing counts", h)
 	}
 }
@@ -220,11 +220,14 @@ func TestMediaOrganizerSQLiteDeleteTaskAndActiveProtection(t *testing.T) {
 	regular.Entries[1].Group = "other"
 	regular.Entries = append(regular.Entries, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "sub"}, MediaType: "subtitle"}, VideoID: regular.Entries[0].File.ID, Group: "group", Status: "done"})
 	active, action, partial := mediaRecordFixture("active", "completed", 1), mediaRecordFixture("action", "completed", 1), mediaRecordFixture("partial", "partial", 1)
+	action.Status, action.TaskFileID, action.Entries[0].Status = "queued", action.Entries[0].File.ID, "error"
 	partial.Entries = append(partial.Entries, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "bad-sub"}, MediaType: "subtitle"}, VideoID: partial.Entries[0].File.ID, Status: "error"})
 	saveMediaFixtures(t, s, regular, active, action, partial)
 	s.active, s.actions[action.ID] = active.ID, "retry"
+	_, release := s.beginMediaEntries(&active, []int{0})
+	defer release()
 	if task, err := s.Task(active.ID, active.Entries[0].File.ID); err != nil || task.CanDelete {
-		t.Fatal("completed checkpoint is still owned by worker", task, err)
+		t.Fatal("实际文件操作尚未结束时不能删除对应主文件记录", task, err)
 	}
 	items := []MediaOrganizeDeleteItem{{RunID: regular.ID, FileID: regular.Entries[0].File.ID}, {RunID: active.ID, FileID: active.Entries[0].File.ID}}
 	if _, err := s.DeleteHistory(context.Background(), MediaOrganizeDelete{Items: items}); !errors.Is(err, ErrMediaOrganizeBusy) {
@@ -250,14 +253,14 @@ func TestMediaOrganizerSQLiteDeleteTaskAndActiveProtection(t *testing.T) {
 			t.Fatal("deleting history changed a real file", filename, err)
 		}
 	}
-	if deleted, err := s.DeleteHistory(context.Background(), MediaOrganizeDelete{Completed: true}); err != nil || deleted != 1 {
-		t.Fatal("clear must skip partial and all runtime-owned tasks", deleted, err)
+	if deleted, err := s.DeleteHistory(context.Background(), MediaOrganizeDelete{Status: "done"}); err != nil || deleted != 2 {
+		t.Fatal("clear must include completed primaries and skip all runtime-owned tasks", deleted, err)
 	}
 	if _, err := s.Snapshot(regular.ID); !errors.Is(err, ErrMediaOrganizeInput) {
 		t.Fatal("last child deletion retained empty parent", err)
 	}
 	reopened, err := OpenMediaOrganizerSQLite(context.Background(), db, dir, "test", nil, nil, nil, nil, nil, nil)
-	if err != nil || mediaHistoryTest(t, reopened, "", "all", 1).Total != 3 {
+	if err != nil || mediaHistoryTest(t, reopened, "", "all", 1).Total != 2 {
 		t.Fatal("deleted task was not persisted", err)
 	}
 }
@@ -290,13 +293,13 @@ func TestMediaOrganizerSQLiteGrayReturnToSourceAndRetention(t *testing.T) {
 	}
 	mediaTestProcess(t, s, &next, "auto")
 	if h := mediaHistoryTest(t, s, "", "done", 1); h.Total != 2 || next.ID == run.ID {
-		t.Fatal("returned source must be processed despite old history", h)
+		t.Fatal("返回来源的文件仍须正常整理，两次实际成功均保留历史", h)
 	}
 	data, err := os.ReadFile(task.Target)
 	if err != nil || string(data) != content {
 		t.Fatal("STRM content changed", err)
 	}
-	// An unmatched source must also be eligible after correcting metadata.
+	// 修正元数据后，同一来源重新成功应清除其旧失败。
 	items := metadata.items
 	metadata.items = nil
 	mediaTestFile(t, rule.Source, "Work.S01E02.strm", content)
@@ -305,7 +308,7 @@ func TestMediaOrganizerSQLiteGrayReturnToSourceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	mediaTestProcess(t, s, &failed, "auto")
-	if h := mediaHistoryTest(t, s, "", "attention", 1); h.Total != 1 {
+	if h := mediaHistoryTest(t, s, "", "failed", 1); h.Total != 1 {
 		t.Fatal("unmatched source failure was not retained", h)
 	}
 	metadata.items = items
@@ -314,21 +317,23 @@ func TestMediaOrganizerSQLiteGrayReturnToSourceAndRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	mediaTestProcess(t, s, &corrected, "auto")
-	if h := mediaHistoryTest(t, s, "", "done", 1); h.Total != 3 {
-		t.Fatal("corrected source was skipped because of previous failure", h)
+	if h := mediaHistoryTest(t, s, "", "done", 1); h.Total != 3 || h.Counts["failed"] != 0 {
+		t.Fatal("修正后的来源应正常整理，并移除相同来源的旧失败", h)
 	}
 	for i := range 55 {
-		saveMediaFixtures(t, s, mediaRecordFixture(fmt.Sprintf("old-%02d", i), "completed", 1))
+		old := mediaRecordFixture(fmt.Sprintf("old-%02d", i), "partial", 1)
+		old.Entries[0].Status, old.Entries[0].Result.Status = "error", "error"
+		saveMediaFixtures(t, s, old)
 	}
 	next, err = s.Start(rule.ID)
 	if err != nil {
 		t.Fatal("history must never block new scan", err)
 	}
 	mediaTestProcess(t, s, &next, "auto")
-	if h := mediaHistoryTest(t, s, "", "all", 1); h.Total != 59 {
-		t.Fatal("retention silently removed real tasks", h.Total)
+	if h := mediaHistoryTest(t, s, "", "all", 1); h.Total != 58 || h.Counts["failed"] != 55 || h.Counts["done"] != 3 {
+		t.Fatal("空扫描不能清除成功历史，失败历史也不能按批次数丢弃", h)
 	}
-	t.Log("isolated SQLite/filesystem gray run: moved STRM returned to source and processed again; >50 real batches retained; no NAS/115 calls")
+	t.Log("隔离灰度验证：STRM 返回来源后重新整理，成功清除旧失败，超过 50 个失败批次仍保留；未调用 NAS 或 115")
 }
 
 type canceledMediaStore struct {

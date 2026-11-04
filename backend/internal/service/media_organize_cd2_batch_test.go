@@ -228,7 +228,15 @@ func TestMediaOrganizerCD2BatchVideoFailureRetainsSubtitle(t *testing.T) {
 	if saved.Status != "partial" || len(fs.renames) != 1 || len(fs.renames[0]) != 2 || len(fs.moves) != 1 || len(fs.moves[0]) != 1 || len(fs.singleMoves)+len(fs.singleRenames) != 0 {
 		t.Fatal("视频失败后字幕不得触发任何写入", saved, fs.renames, fs.moves)
 	}
-	for _, entry := range saved.Entries[:2] {
+	byID := make(map[string]MediaOrganizeEntry, len(saved.Entries))
+	for _, entry := range saved.Entries {
+		byID[entry.File.ID] = entry
+	}
+	for _, id := range []string{video.File.ID, subtitle.File.ID} {
+		entry, exists := byID[id]
+		if !exists {
+			t.Fatal("失败视频和依赖字幕必须保留", id, saved.Entries)
+		}
 		if entry.Status != "error" || entry.CD2Current != nil {
 			t.Fatal("失败及字幕依赖结果应持久保留", entry)
 		}
@@ -236,11 +244,12 @@ func TestMediaOrganizerCD2BatchVideoFailureRetainsSubtitle(t *testing.T) {
 			t.Fatal("视频或字幕来源被误移动", entry)
 		}
 	}
-	if !strings.Contains(saved.Entries[1].Message, "对应视频尚未整理成功") {
-		t.Fatal("字幕未说明视频依赖失败", saved.Entries[1])
+	if !strings.Contains(byID[subtitle.File.ID].Message, "对应视频尚未整理成功") {
+		t.Fatal("字幕未说明视频依赖失败", byID[subtitle.File.ID])
 	}
-	if saved.Entries[2].Status != "done" || fs.moves[0][0] != path.Join(rule.Source, path.Base(other.Target)) {
-		t.Fatal("一个视频失败不应阻止同批无关视频整理", saved.Entries[2], fs.moves)
+	completed := byID[other.File.ID]
+	if completed.Status != "done" || !completed.Reference || completed.Result == nil || completed.Result.Status != "done" || completed.Result.At.IsZero() || fs.moves[0][0] != path.Join(rule.Source, path.Base(other.Target)) {
+		t.Fatal("同批无关视频应保留精简成功结果与附件关联映射", completed, fs.moves)
 	}
 }
 

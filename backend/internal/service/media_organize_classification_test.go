@@ -189,17 +189,24 @@ func TestMediaOrganizerClassificationPinnedForCorrectionAndRestart(t *testing.T)
 			t.Fatal("corrected companions used new global rules or lost content", e, err)
 		}
 	}
-	unchanged, _ := restarted.Task(run.ID, other.FileID)
-	want, err := json.Marshal(other)
+	if task, err := restarted.Task(run.ID, other.FileID); err != nil || task.Status != "done" || !task.At.Equal(other.At) {
+		t.Fatal("单项修正不能改变其他成功主文件的历史和完成时间", task, err)
+	}
+	unchanged, err := restarted.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := json.Marshal(unchanged)
-	if err != nil {
-		t.Fatal(err)
+	found := false
+	for _, entry := range unchanged.Entries {
+		if entry.File.ID == other.FileID {
+			found = true
+			if !entry.Reference || entry.Status != "done" || entry.Relative != other.Entries[0].Relative || entry.Target != other.Entries[0].Target {
+				t.Fatal("单项修正不能改变其他成功主文件的已确认目标映射", other, entry)
+			}
+		}
 	}
-	if string(want) != string(got) {
-		t.Fatal("single task correction changed another task", other, unchanged)
+	if !found {
+		t.Fatal("单项修正丢失了其他成功主文件的只读映射", unchanged)
 	}
 	// A new batch uses the new active configuration.
 	restarted.classification = settings
@@ -248,6 +255,9 @@ func TestMediaOrganizerClassificationUnavailableDoesNotStopOtherMonitoring(t *te
 	mediaTestProcess(t, s, &run, "auto")
 	if run.Status != "completed" || run.Classification.YAML != "" {
 		t.Fatal("unclassified monitoring was affected", run)
+	}
+	if err := s.finishScanRound(run); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range []string{"Work.S01E01.strm", "ads.txt"} {
 		if _, err := os.Stat(filepath.Join(rule.Source, name)); err != nil {

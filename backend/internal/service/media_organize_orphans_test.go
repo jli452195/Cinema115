@@ -144,6 +144,88 @@ func TestMediaOrganizerDisabledOrphanCleanupKeepsFirstDiscovery(t *testing.T) {
 	}
 }
 
+func TestMediaOrganizerOrphanThemeUsesGraceAndKeepsStandaloneAudio(t *testing.T) {
+	for _, storage := range []string{"local", "115", "cd2"} {
+		t.Run(storage, func(t *testing.T) {
+			fixture := newMediaOrphanFixture(t, storage)
+			s, rule := fixture.organizer, fixture.rule
+			rule.AttachmentGraceSeconds = 10
+			var err error
+			rule, err = s.SaveRule(rule)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+			s.monitorOptions.now = func() time.Time { return now }
+			for _, name := range []string{"theme.mp3", "theme(1).mp3", "song.mp3", "album.flac", "font.ttf", "movie.iso"} {
+				fixture.add(name)
+			}
+			mediaOrphanScan(t, s, rule)
+			if !fixture.present("theme.mp3") || !fixture.present("theme(1).mp3") {
+				t.Fatal("影视主题音频应先等待附件宽限")
+			}
+			now = now.Add(10 * time.Second)
+			mediaOrphanScan(t, s, rule)
+			if fixture.present("theme.mp3") || fixture.present("theme(1).mp3") {
+				t.Fatal("无视频的主题音频应在宽限到期后清理")
+			}
+			for _, name := range []string{"song.mp3", "album.flac", "font.ttf", "movie.iso"} {
+				if !fixture.present(name) {
+					t.Fatal("普通音频、字体和未支持的视频不能作为无关文件删除", name)
+				}
+			}
+		})
+	}
+}
+
+func TestMediaOrganizerThemeFollowsVideoAndKeepsOneCopy(t *testing.T) {
+	for _, storage := range []string{"local", "115", "cd2"} {
+		t.Run(storage, func(t *testing.T) {
+			fixture := newMediaOrphanFixture(t, storage)
+			if storage == "115" {
+				s, drive, _, previous, _ := newMedia115PipelineTest(t)
+				fixture = mediaOrphanFixture{s, previous.Rule, func(name string) string {
+					id := strconv.Itoa(500 + len(drive.dirs["10"]))
+					drive.dirs["10"] = append(drive.dirs["10"], p115.ShareFile{ID: id, Name: name, Size: 16})
+					return id
+				}, func(name string) bool {
+					for _, file := range drive.dirs["10"] {
+						if file.Name == name {
+							return true
+						}
+					}
+					return false
+				}}
+			}
+			for _, name := range []string{"Work.S01E01.mkv", "theme.mp3", "theme(1).mp3"} {
+				fixture.add(name)
+			}
+			run, err := fixture.organizer.Start(fixture.rule.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mediaTestProcess(t, fixture.organizer, &run, "auto")
+			if fixture.present("Work.S01E01.mkv") || fixture.present("theme.mp3") || fixture.present("theme(1).mp3") {
+				t.Fatal("主题音频应随视频整理并按同角色留一", run.Entries)
+			}
+			moved, kept := 0, 0
+			for _, entry := range run.Entries {
+				if !mediaAttachment(entry.File.Name) || path.Ext(entry.File.Name) != ".mp3" || entry.Result == nil || entry.Status != "done" {
+					continue
+				}
+				if entry.Result.Action == "attachment_kept" {
+					kept++
+				} else if path.Base(entry.Target) == "theme.mp3" {
+					moved++
+				}
+			}
+			if moved != 1 || kept != 1 {
+				t.Fatal("目标应保留一份主题音频，另一份确认回收", moved, kept, run.Entries)
+			}
+		})
+	}
+}
+
 func TestMediaOrganizerLocalOrphanReplacementResetsNativeIdentityGrace(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
 	rule.AttachmentGraceSeconds = 20
@@ -190,8 +272,8 @@ func TestMediaOrganizerLocalOrphanReplacementResetsNativeIdentityGrace(t *testin
 func TestMediaOrganizerStoredAttachmentDefaultsAndExplicitZero(t *testing.T) {
 	for _, raw := range []string{`{"storage":"local","intervalSeconds":300}`, `{"storage":"cd2","intervalSeconds":20}`} {
 		rule, err := mediaStoredRule(json.RawMessage(raw))
-		if err != nil || !rule.AttachmentCleanupEnabled || rule.AttachmentGraceSeconds != 60 {
-			t.Fatal("缺失字段默认应为开启和60秒", rule, err)
+		if err != nil || !rule.AttachmentCleanupEnabled || rule.AttachmentGraceSeconds != 10 {
+			t.Fatal("缺失字段默认应为开启和10秒", rule, err)
 		}
 	}
 	rule, err := mediaStoredRule(json.RawMessage(`{"storage":"115","intervalSeconds":300,"attachmentCleanupEnabled":false,"attachmentGraceSeconds":0}`))

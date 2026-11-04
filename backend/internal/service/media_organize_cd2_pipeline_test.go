@@ -114,7 +114,7 @@ func TestMediaOrganizerCD2LateSubtitleUsesPersistedVideoMapping(t *testing.T) {
 	if _, exists := fs.files[late.Path]; exists || slices.Contains(fs.deleted, late.Path) {
 		t.Fatal("晚到字幕应补入历史视频目录，不能被当成孤立字幕删除", second.Entries, fs.deleted)
 	}
-	if len(second.Entries) != 2 || !slices.ContainsFunc(second.Entries, func(entry MediaOrganizeEntry) bool { return entry.CD2Reference && entry.Status == "done" }) {
+	if len(second.Entries) != 2 || !slices.ContainsFunc(second.Entries, func(entry MediaOrganizeEntry) bool { return entry.Reference && entry.Status == "done" }) {
 		t.Fatal("晚到字幕缺少持久来源映射", second.Entries)
 	}
 }
@@ -212,11 +212,16 @@ func TestMediaOrganizerCD2ConfigurablePollingSchedule(t *testing.T) {
 				t.Fatal("启用的 CD2 规则应直接显示轮询状态", status)
 			}
 			if scenario.queued {
-				if !s.doc.Rules[0].LastScan.After(rule.LastScan) {
-					t.Fatal("轮询入队必须记录最近扫描时间")
+				if !s.doc.Rules[0].LastScan.Equal(rule.LastScan) {
+					t.Fatal("轮询入队不能改写上次完成的扫描时间")
 				}
 				if err := s.schedule(); err != nil || len(s.actions) != 1 || len(s.doc.Runs) != 1 {
 					t.Fatal("重复调度不能叠加同一规则的扫描", s.doc.Runs, err)
+				}
+				run := s.doc.Runs[0]
+				now = now.Add(time.Minute)
+				if err := s.finishScanRound(run); err != nil || !s.doc.Rules[0].LastScan.Equal(now) || !s.doc.Rules[0].NextScanAt.Equal(now.Add(37*time.Second)) {
+					t.Fatal("轮询完成后才记录扫描时间并计算下一间隔", err, s.doc.Rules[0])
 				}
 			}
 		})
@@ -366,10 +371,139 @@ func TestMediaOrganizerCD2LateSubtitleWithoutHashesAndChangedTarget(t *testing.T
 			second, _ := s.Start(rule.ID)
 			err := s.process(context.Background(), &second, "auto")
 			_, retained := fs.files[late.Path]
-			if slices.Contains(fs.deleted, late.Path) || !changed && (err != nil || retained) || changed && (err == nil || !retained) {
-				t.Fatal("无哈希应使用目标写回执，目标改变应保留附件", err, fs.deleted, second.Entries)
+			if err != nil || slices.Contains(fs.deleted, late.Path) || retained != changed {
+				t.Fatal("有效回执应补入字幕，失效目标的字幕应等待附件宽限", err, fs.deleted, second.Entries)
 			}
 		})
+	}
+}
+
+func TestMediaOrganizerCD2InvalidReferenceOnlyRetainsRelatedSidecars(t *testing.T) {
+	for _, scenario := range []string{"missing", "changed", "read-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, _, _, connection, rule := newMediaCD2Organizer(t)
+			fs := connection.filesystem
+			fs.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
+			first, _ := s.Start(rule.ID)
+			mediaTestProcess(t, s, &first, "auto")
+			var target string
+			for _, entry := range first.Entries {
+				if entry.File.MediaType == "video" {
+					target = entry.Target
+				}
+			}
+			if target == "" {
+				t.Fatal("缺少已完成视频目标")
+			}
+			switch scenario {
+			case "missing":
+				delete(fs.files, target)
+			case "changed":
+				actual := fs.files[target]
+				actual.Size++
+				fs.files[target] = actual
+			case "read-failure":
+				fs.statErrors[target] = errors.New("模拟历史目标读取失败")
+			}
+			rule.AttachmentGraceSeconds = 0
+			if _, err := s.SaveRule(rule); err != nil {
+				t.Fatal(err)
+			}
+			late := fs.add(path.Join(rule.Source, "Work.S01E01.ass"), false, 8)
+			newVideo := fs.add(path.Join(rule.Source, "Work.S01E02.mkv"), false, 123)
+			unrelated := fs.add(path.Join(rule.Source, "Unrelated.nfo"), false, 8)
+			fs.add(path.Join(rule.Source, "later"), true, 0)
+			laterVideo := fs.add(path.Join(rule.Source, "later/Work.S01E03.mkv"), false, 123)
+			second, _ := s.Start(rule.ID)
+			mediaTestProcess(t, s, &second, "auto")
+			_, retained := fs.files[late.Path]
+			protected := scenario == "read-failure"
+			if retained != protected || slices.Contains(fs.deleted, late.Path) == protected {
+				t.Fatal("读取异常只保护相关附件，失效历史应按当前来源和宽限清理", second.Entries, fs.deleted)
+			}
+			if _, retained := fs.files[unrelated.Path]; retained || !slices.Contains(fs.deleted, unrelated.Path) {
+				t.Fatal("历史目标异常不能阻止同目录无关附件清理", second.Entries, fs.deleted)
+			}
+			for _, video := range []string{newVideo.Path, laterVideo.Path} {
+				if _, retained := fs.files[video]; retained || !slices.ContainsFunc(second.Entries, func(entry MediaOrganizeEntry) bool {
+					return entry.File.ID == video && entry.Status == "done"
+				}) {
+					t.Fatal("旧目标异常不应阻塞本目录或后续目录的视频", video, second.Entries)
+				}
+			}
+		})
+	}
+}
+
+func TestMediaOrganizerCD2StaleReferenceDoesNotBlockValidSharedArtwork(t *testing.T) {
+	s, _, _, connection, rule := newMediaCD2Organizer(t)
+	fs := connection.filesystem
+	for _, name := range []string{"Work.S01E01.mkv", "Work.S01E02.mkv"} {
+		fs.add(path.Join(rule.Source, name), false, 123)
+	}
+	first, _ := s.Start(rule.ID)
+	mediaTestProcess(t, s, &first, "auto")
+	for _, entry := range first.Entries {
+		if entry.File.Episode == 2 {
+			delete(fs.files, entry.Target)
+		}
+	}
+	art := fs.add(path.Join(rule.Source, "poster.jpg"), false, 8)
+	video := fs.add(path.Join(rule.Source, "Work.S01E03.mkv"), false, 123)
+	second, _ := s.Start(rule.ID)
+	mediaTestProcess(t, s, &second, "auto")
+	if _, retained := fs.files[art.Path]; retained || slices.Contains(fs.deleted, art.Path) {
+		t.Fatal("失效历史不应阻止共享附件补入已核实的有效目标", second.Entries, fs.deleted)
+	}
+	if _, retained := fs.files[video.Path]; retained {
+		t.Fatal("共享附件未完成不能阻止新视频入库", second.Entries)
+	}
+}
+
+func TestMediaOrganizerCD2LateSubtitleAcceptsCompressedSuccessIndex(t *testing.T) {
+	s, _, _, connection, rule := newMediaCD2Organizer(t)
+	fs := connection.filesystem
+	fs.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
+	first, _ := s.Start(rule.ID)
+	mediaTestProcess(t, s, &first, "auto")
+	for i := range s.doc.Runs {
+		if s.doc.Runs[i].ID == first.ID {
+			for j := range s.doc.Runs[i].Entries {
+				entry := &s.doc.Runs[i].Entries[j]
+				if entry.File.MediaType == "video" {
+					entry.Reference, entry.Result = true, nil
+				}
+			}
+		}
+	}
+	late := fs.add(path.Join(rule.Source, "Work.S01E01.ass"), false, 8)
+	second, _ := s.Start(rule.ID)
+	mediaTestProcess(t, s, &second, "auto")
+	if _, retained := fs.files[late.Path]; retained || slices.Contains(fs.deleted, late.Path) {
+		t.Fatal("压缩的成功索引仍应支持晚到字幕正常移动", second.Entries, fs.deleted)
+	}
+}
+
+func TestMediaOrganizerCD2LateReferencePreservesCancellation(t *testing.T) {
+	s, _, _, connection, rule := newMediaCD2Organizer(t)
+	connection.filesystem.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
+	first, _ := s.Start(rule.ID)
+	mediaTestProcess(t, s, &first, "auto")
+	connection.filesystem.add(path.Join(rule.Source, "Work.S01E01.ass"), false, 8)
+	files, err := s.files(context.Background(), rule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.close()
+	entries, err := files.scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, _ := s.Start(rule.ID)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.cd2AddReferences(ctx, files, &second, entries); !errors.Is(err, context.Canceled) {
+		t.Fatal("取消整轮时必须向调用方返回取消信号", err)
 	}
 }
 
@@ -405,6 +539,9 @@ func TestMediaOrganizerCD2FailedScanRetriesAtPollingInterval(t *testing.T) {
 	}
 	run.Status = "failed"
 	if err := s.checkpoint(&run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.finishScanRound(run); err != nil {
 		t.Fatal(err)
 	}
 	started := s.doc.Rules[0].LastScan

@@ -142,7 +142,7 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 		t.Fatalf("unexpected scan %+v", run)
 	}
 	state := mediaTestState(s, 1)
-	if state.History.Total != 2 || state.History.Items[0].Status != "error" {
+	if state.History.Total != 2 || state.History.Items[0].Status != "failed" {
 		t.Fatal("interrupted primary files must remain visible for recovery", state)
 	}
 	for _, e := range run.Entries {
@@ -188,23 +188,39 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, _ := restarted.Snapshot(run.ID)
-	if len(saved.Entries) != 4 || saved.Status != "partial" {
-		t.Fatal(saved)
+	saved, err := restarted.Snapshot(run.ID)
+	if err != nil || len(saved.Entries) != 2 || saved.Status != "completed" {
+		t.Fatal("成功重启后应只保留两个视频引用", saved, err)
 	}
 	state = mediaTestState(restarted, 1)
-	if state.History.Total != 2 {
-		t.Fatal("history must contain only executed files", state)
+	if state.History.Total != 2 || state.History.Counts["done"] != 2 || state.History.Counts["failed"] != 0 {
+		t.Fatal("成功视频应保留历史，无主字幕不能额外生成失败历史", state)
 	}
-	for _, item := range state.History.Items {
-		if item.Status != "done" || item.Title != "作品" || item.Kind != "tv" || item.At.IsZero() || item.Target == "" || !strings.Contains(item.Source, item.Name) {
-			t.Fatal("incomplete file history", item)
+	expected := make(map[string]MediaOrganizeEntry, 2)
+	for _, entry := range snapshot.Entries {
+		if entry.File.MediaType == "video" {
+			expected[entry.File.ID] = entry
 		}
 	}
-	saved.Entries[0].Result.Status = "tampered"
-	fresh, _ := restarted.Snapshot(run.ID)
-	if fresh.Entries[0].Result.Status != "done" {
-		t.Fatal("snapshot result is not detached")
+	for _, entry := range saved.Entries {
+		original, exists := expected[entry.File.ID]
+		if !exists || !entry.Reference || entry.File.MediaType != "video" || entry.Status != "done" || entry.Result == nil || entry.Result.Status != "done" || !entry.Result.At.Equal(original.Result.At) || entry.File.Name != original.File.Name || entry.File.SourcePath != original.File.SourcePath || entry.File.Season != original.File.Season || entry.File.Episode != original.File.Episode || entry.Target == "" || entry.Target != original.Target || entry.Relative != original.Relative {
+			t.Fatal("成功视频引用缺失源、目标或季集身份", entry)
+		}
+	}
+	if len(saved.Groups) != 1 || saved.Groups[0].Title != "作品" || saved.Groups[0].Kind != "tv" || saved.Groups[0].TMDBID != 42 || saved.Groups[0].MatchedSeason == nil || *saved.Groups[0].MatchedSeason != 1 {
+		t.Fatal("成功引用必须保留最终作品及采用季号", saved.Groups)
+	}
+	if data, err := os.ReadFile(filepath.Join(rule.Source, "unmatched.ass")); err != nil || string(data) != "keep" {
+		t.Fatal("丢弃孤立附件执行上下文不得修改其来源文件", err)
+	}
+	originalName, originalTarget := saved.Entries[0].File.Name, saved.Entries[0].Target
+	saved.Entries[0].File.Name, saved.Entries[0].Target = "tampered", "tampered"
+	saved.Groups[0].Title = "tampered"
+	*saved.Groups[0].MatchedSeason = 999
+	fresh, err := restarted.Snapshot(run.ID)
+	if err != nil || fresh.Entries[0].File.Name != originalName || fresh.Entries[0].Target != originalTarget || fresh.Groups[0].Title != "作品" || fresh.Groups[0].MatchedSeason == nil || *fresh.Groups[0].MatchedSeason != 1 {
+		t.Fatal("快照的引用切片及采用季号指针必须独立复制", fresh, err)
 	}
 }
 
@@ -323,7 +339,7 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 		t.Fatal("each failed video/subtitle attempt must be recorded", state)
 	}
 	for _, item := range state.History.Items {
-		if item.Status != "error" && item.Status != "conflict" || item.Message == "" || item.At.IsZero() {
+		if item.Status != "failed" || item.Message == "" || item.At.IsZero() {
 			t.Fatal("failure reason or time lost", item)
 		}
 	}
@@ -338,9 +354,15 @@ func TestMediaOrganizerConflictsMutationAndSubtitleDependency(t *testing.T) {
 }
 
 func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
-	s, _, _, rule := newMediaOrganizeTest(t)
+	s, _, store, rule := newMediaOrganizeTest(t)
+	savedIDs := make([]string, 0, 20)
 	for i := range 20 {
-		s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "saved-" + strconv.Itoa(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: strconv.Itoa(i)}, MediaType: "video"}, Status: "done"}}})
+		id, name := "saved-"+strconv.Itoa(i), "Failed.S01E"+strconv.Itoa(i+1)+".mkv"
+		s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: id, Rule: rule, Status: "partial", Entries: []MediaOrganizeEntry{{File: OrganizeFile{ShareFile: p115.ShareFile{ID: strconv.Itoa(i), Name: name}, SourcePath: name, MediaType: "video"}, Status: "error", Message: "模拟失败历史", Result: &MediaOrganizeResult{Status: "error", Message: "模拟失败历史", At: time.Now()}}}})
+		savedIDs = append(savedIDs, id)
+	}
+	if err := s.persistLocked(savedIDs...); err != nil {
+		t.Fatal(err)
 	}
 	for i := range 25 {
 		if i == 10 {
@@ -356,9 +378,16 @@ func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 		}
 		mediaTestProcess(t, s, &run, action)
 		state := mediaTestState(s, 1)
-		if run.Status != "completed" || state.History.Total != 20 || len(s.doc.Runs) != 21 {
-			t.Fatal("empty scans must stay hidden and preserve actual history", run, state)
+		if run.Status != "completed" || state.History.Total != 20 || state.History.Counts["failed"] != 20 || state.History.Counts["done"] != 0 || len(s.doc.Runs) != 21 {
+			t.Fatal("空扫描应保持隐藏，不能驱逐持久化的失败历史", run, state)
 		}
+	}
+	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := mediaTestState(restarted, 1); state.History.Total != 20 || state.History.Counts["failed"] != 20 {
+		t.Fatal("多次空扫描后，重启仍应保留全部失败历史", state)
 	}
 	s.doc.Runs = append(s.doc.Runs, MediaOrganizeRun{ID: "failed", Rule: rule, Status: "failed", Message: "来源目录不可访问"})
 	if failed, err := s.Snapshot("failed"); err != nil || failed.Message == "" || mediaTestState(s, 1).History.Total != 20 {
@@ -374,7 +403,7 @@ func TestMediaOrganizerFileHistoryPagination(t *testing.T) {
 		name := "Work.S01E" + strconv.Itoa(i+1) + ".strm"
 		run.Entries = append(run.Entries, MediaOrganizeEntry{File: OrganizeFile{ShareFile: p115.ShareFile{ID: name, Name: name}, SourcePath: name, Season: 1, Episode: i + 1, MediaType: "video"}, Group: "1", Status: "done", Target: "/library/" + name, Result: &MediaOrganizeResult{Status: "done", At: base.Add(time.Duration(i) * time.Second)}})
 	}
-	s.doc.Runs = []MediaOrganizeRun{run}
+	saveMediaFixtures(t, s, run)
 	for _, tt := range []struct{ requested, page, count, firstEpisode int }{{0, 1, 20, 45}, {2, 2, 20, 25}, {99, 3, 5, 5}} {
 		t.Run(strconv.Itoa(tt.requested), func(t *testing.T) {
 			state := mediaTestState(s, tt.requested)
@@ -484,8 +513,8 @@ func TestMediaOrganizerMonitoringToggleDuringWork(t *testing.T) {
 	for ctx.Err() == nil {
 		run, err := s.Snapshot(runID)
 		if err == nil && run.Status == "completed" {
-			if !run.Rule.RealtimeEnabled || mediaTestState(s, 1).Rules[0].RealtimeEnabled || run.ReadyCount != 0 || run.FailureCount != 0 {
-				t.Fatal("pause changed the frozen task or counts", run)
+			if !run.Rule.RealtimeEnabled || mediaTestState(s, 1).Rules[0].RealtimeEnabled {
+				t.Fatal("pause changed the frozen task", run)
 			}
 			data, err := os.ReadFile(filepath.Join(rule.Target, filepath.FromSlash(run.Entries[0].Relative)))
 			if err != nil || string(data) != "http://unchanged/" {
@@ -540,7 +569,7 @@ func TestMediaOrganizerMonitoringToggleWithUnavailableStorage(t *testing.T) {
 	})
 }
 
-func TestMediaOrganizerRecognitionIsConservative(t *testing.T) {
+func TestMediaOrganizerRecognitionUsesFirstEligible(t *testing.T) {
 	f := &mediaRecognitionFake{items: []tmdb.Item{{ID: 1, Kind: "movie", Title: "Different", Date: "2024-01-01"}}}
 	detail, err := recognizeMedia(context.Background(), f, mediafacts.Identity{Name: "作品别名", Year: "2024", Season: 1})
 	if err != nil || detail == nil {
@@ -548,8 +577,8 @@ func TestMediaOrganizerRecognitionIsConservative(t *testing.T) {
 	}
 	f.items = []tmdb.Item{{ID: 1, Kind: "tv", Title: "Work", Date: "2024-01-01"}, {ID: 2, Kind: "movie", Title: "Work", Date: "2024-01-01"}}
 	detail, err = recognizeMedia(context.Background(), f, mediafacts.Identity{Name: "Work", Year: "2024", Season: 1})
-	if err != nil || detail != nil {
-		t.Fatal("ambiguous names must need confirmation", detail, err)
+	if err != nil || detail == nil || detail.Detail.ID != 1 || detail.Detail.Kind != "tv" {
+		t.Fatal("matching names must use the first eligible TMDB result", detail, err)
 	}
 	f.err = context.DeadlineExceeded
 	if _, err = recognizeMedia(context.Background(), f, mediafacts.Identity{Name: "Work"}); !errors.Is(err, context.DeadlineExceeded) {

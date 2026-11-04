@@ -323,6 +323,7 @@ func main() {
 		log.Fatal(err)
 	}
 	mediaOrganizer.SetCD2(cd2Connections)
+	mediaOrganizer.Logs = generationLogs
 	httpapi.RegisterMediaOrganize(admin, mediaOrganizer)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService

@@ -46,13 +46,18 @@ func (s *MediaOrganizer) execute115Batches(ctx context.Context, files *mediaOrga
 			indices, singles := make([]int, 0), make([]int, 0)
 			for _, index := range groups[key] {
 				entry := &run.Entries[index]
+				if entry.AttachmentKeep != nil {
+					continue
+				}
 				if entry.Status == "done" || (entry.File.MediaType == "video") != videos {
 					continue
 				}
 				if entry.VideoID != "" && !done[entry.VideoID] && entry.P115Move == nil {
 					media115BatchResult(entry, fmt.Errorf("对应视频尚未整理成功，关联文件保留来源"), files.cookie)
+					entry.ResultCode = "WAITING_MAIN_FILE"
 					continue
 				}
+				mediaClearMainFileWaiting(entry)
 				if entry.Failure != nil && entry.P115Move == nil {
 					singles = append(singles, index)
 					continue
@@ -91,6 +96,7 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 	valid := make([]int, 0, len(indices))
 	for _, index := range indices {
 		entry := &run.Entries[index]
+		mediaClearMainFileWaiting(entry)
 		if entry.P115Move != nil && !media115BatchIntentMatches(run.Rule, *entry) {
 			s.reconcile115ChangedIntent(ctx, files, run, drive, index)
 			continue
@@ -104,6 +110,24 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 	if len(valid) == 0 {
 		return nil, s.checkpoint(run)
 	}
+	valid, releaseEntries := s.beginMediaEntries(run, valid)
+	if len(valid) == 0 {
+		return nil, nil
+	}
+	defer releaseEntries()
+	active := valid
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		// 尝试已因真实错误结束时，才把未完成意图记为失败，不追加保存重试。
+		for _, index := range active {
+			entry := &run.Entries[index]
+			if entry.Status == "ready" && entry.P115Move != nil {
+				media115BatchResult(entry, resultErr, files.cookie)
+			}
+		}
+	}()
 	work, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	if s.reserve != nil {
@@ -112,7 +136,10 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 			for _, index := range valid {
 				media115BatchResult(&run.Entries[index], err, files.cookie)
 			}
-			return nil, s.checkpoint(run)
+			if err := s.checkpoint(run); err != nil {
+				return nil, err
+			}
+			return nil, work.Err()
 		}
 		defer release()
 	}
@@ -130,7 +157,7 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 		var err error
 		target, err = files.read115BatchDirectory(work, drive, targetID, targetPath)
 		if err != nil {
-			return nil, s.fail115Batch(run, valid, err, files.cookie)
+			return nil, s.fail115Batch(work, run, valid, err, files.cookie)
 		}
 		targetRead = true
 		remaining := make([]int, 0, len(valid))
@@ -157,12 +184,12 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 	}
 	source, err := files.read115BatchDirectory(work, drive, first.File.ParentID, sourcePath)
 	if err != nil {
-		return nil, s.fail115Batch(run, valid, err, files.cookie)
+		return nil, s.fail115Batch(work, run, valid, err, files.cookie)
 	}
 	if targetID == "" {
 		targetID, err = files.cloudDestination(work, first.Relative, false)
 		if err != nil {
-			return nil, s.fail115Batch(run, valid, err, files.cookie)
+			return nil, s.fail115Batch(work, run, valid, err, files.cookie)
 		}
 	}
 	if targetID == "" {
@@ -177,7 +204,7 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 			}
 		}
 		if !creatable {
-			return nil, s.fail115Batch(run, valid, fmt.Errorf("来源与原定目标中无法确认文件，未创建替代目录"), files.cookie)
+			return nil, s.fail115Batch(work, run, valid, fmt.Errorf("来源与原定目标中无法确认文件，未创建替代目录"), files.cookie)
 		}
 		// 目录创建也由精确目标路径的准备意图覆盖，创建结果不明时不再写文件。
 		if err := s.checkpoint(run); err != nil {
@@ -185,16 +212,16 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 		}
 		targetID, err = files.cloudDestination(work, first.Relative, true)
 		if err != nil {
-			return nil, s.fail115Batch(run, valid, err, files.cookie)
+			return nil, s.fail115Batch(work, run, valid, err, files.cookie)
 		}
 	}
 	if targetID == "" || targetID == first.File.ParentID || targetID == run.Rule.SourceID || targetID == run.Rule.FailureID {
-		return nil, s.fail115Batch(run, valid, fmt.Errorf("115 批处理目标目录无效"), files.cookie)
+		return nil, s.fail115Batch(work, run, valid, fmt.Errorf("115 批处理目标目录无效"), files.cookie)
 	}
 	if !targetRead {
 		target, err = files.read115BatchDirectory(work, drive, targetID, targetPath)
 		if err != nil {
-			return nil, s.fail115Batch(run, valid, err, files.cookie)
+			return nil, s.fail115Batch(work, run, valid, err, files.cookie)
 		}
 	}
 	items := make([]int, 0, len(valid))
@@ -225,6 +252,7 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 		}
 		if entry.VideoID != "" && !videoDone[entry.VideoID] {
 			media115BatchResult(entry, fmt.Errorf("对应视频尚未整理成功，关联文件保留来源"), files.cookie)
+			entry.ResultCode = "WAITING_MAIN_FILE"
 			continue
 		}
 		key := strings.ToLower(name)
@@ -247,7 +275,8 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 			entry.P115Move.Phase = "renaming"
 			renames = append(renames, p115.RenameTarget{ID: entry.File.ID, Name: name})
 		}
-		media115BatchResult(entry, fmt.Errorf("115 批量写入结果待核实"), files.cookie)
+		// 预写只保存文件意图，当前尝试尚未结束，不能先发布失败回执。
+		entry.Status, entry.Message, entry.ResultCode, entry.Result = "ready", "", "", nil
 		items = append(items, index)
 	}
 	if err := s.checkpoint(run); err != nil {
@@ -337,11 +366,14 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 	return fallback, work.Err()
 }
 
-func (s *MediaOrganizer) fail115Batch(run *MediaOrganizeRun, indices []int, err error, cookie string) error {
+func (s *MediaOrganizer) fail115Batch(ctx context.Context, run *MediaOrganizeRun, indices []int, err error, cookie string) error {
 	for _, index := range indices {
 		media115BatchResult(&run.Entries[index], err, cookie)
 	}
-	return s.checkpoint(run)
+	if err := s.checkpoint(run); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func (s *MediaOrganizer) reconcile115ChangedIntent(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, drive media115DirectoryDrive, index int) {

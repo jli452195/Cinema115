@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/storage"
 )
 
 type MediaOrganizeResult struct {
@@ -30,6 +32,7 @@ type MediaOrganizeHistoryItem struct {
 	Source          string `json:"source"`
 	AttachmentCount int    `json:"attachmentCount"`
 	CanDelete       bool   `json:"canDelete"`
+	CanRetry        bool   `json:"canRetry"`
 	MediaOrganizeResult
 }
 type MediaOrganizeHistory struct {
@@ -68,8 +71,8 @@ type MediaOrganizeDeleteItem struct {
 	FileID string `json:"fileId"`
 }
 type MediaOrganizeDelete struct {
-	Items     []MediaOrganizeDeleteItem `json:"items"`
-	Completed bool                      `json:"completed"`
+	Items  []MediaOrganizeDeleteItem `json:"items"`
+	Status string                    `json:"status,omitempty"`
 }
 
 func mediaStatusGroup(status string) string {
@@ -79,7 +82,7 @@ func mediaStatusGroup(status string) string {
 	if mediaRunActive(status) {
 		return "running"
 	}
-	return "attention"
+	return "failed"
 }
 
 type MediaOrganizeTask struct {
@@ -100,7 +103,39 @@ func mediaRunActive(status string) bool {
 	return status == "queued" || status == "scanning" || status == "running"
 }
 
-// Group saved results in one pass; viewing tasks never reads the drive or TMDB.
+type mediaTaskPermission struct {
+	CanDelete bool
+	CanRetry  bool
+}
+
+func (s *MediaOrganizer) taskPermissionsLocked(run MediaOrganizeRun) map[string]mediaTaskPermission {
+	busy := s.busyRunLocked(run.ID) || mediaRunActive(run.Status)
+	out := make(map[string]mediaTaskPermission)
+	for _, entry := range run.Entries {
+		if entry.File.MediaType == "video" {
+			out[entry.File.ID] = mediaTaskPermission{CanDelete: s.inFlight[run.ID][entry.File.ID] == 0}
+		}
+	}
+	if busy {
+		return out
+	}
+	for _, entry := range run.Entries {
+		if entry.Status == "done" || entry.Status == "retained" || entry.File.MediaType == "cleanup" {
+			continue
+		}
+		owner := entry.VideoID
+		if entry.File.MediaType == "video" {
+			owner = entry.File.ID
+		}
+		if permission, ok := out[owner]; ok {
+			permission.CanRetry = true
+			out[owner] = permission
+		}
+	}
+	return out
+}
+
+// 历史结果只取决于主文件；查看记录不读取网盘或 TMDB。
 func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 	groups := make(map[string]MediaOrganizeGroup, len(run.Groups))
 	for _, g := range run.Groups {
@@ -114,52 +149,55 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 	}
 	tasks := make([]MediaOrganizeTask, 0, len(run.Entries))
 	for _, e := range run.Entries {
-		if e.File.MediaType != "video" || e.CD2Reference && len(companions[e.File.ID]) == 0 {
+		completed, hasCompletion := mediaPrimaryCompletion(e)
+		if e.File.MediaType != "video" || e.Reference && !hasCompletion {
 			continue
 		}
 		g := groups[e.Group]
 		entries := append([]MediaOrganizeEntry{e}, companions[e.File.ID]...)
-		result := MediaOrganizeResult{Status: "done", At: run.UpdatedAt, Target: e.Target}
+		at := e.UpdatedAt
+		if at.IsZero() {
+			at = run.CreatedAt
+		}
+		result := MediaOrganizeResult{Status: "done", At: at, Target: e.Target}
 		if e.Result != nil {
 			result = *e.Result
 		}
-		allDone := true
-		for _, entry := range entries {
-			if entry.Result != nil && entry.Result.At.After(result.At) {
-				result.At = entry.Result.At
-			}
-			if entry.Status != "done" {
-				allDone = false
-				if result.Message == "" && entry.Message != "" {
-					result.Message = entry.File.Name + "：" + entry.Message
-				}
-			}
+		if result.At.IsZero() {
+			result.At = at
 		}
 		switch {
-		case allDone:
+		case e.Status == "done":
+			if hasCompletion {
+				result = completed
+			}
 			result.Status, result.Message = "done", ""
 			if result.Action == "duplicate" {
 				result.Message = "SHA1 一致，已删除来源重复文件"
 			}
-		case mediaRunActive(run.Status) && (run.TaskFileID == e.File.ID || run.TaskFileID == "" && (e.Status == "pending" || e.Status == "ready" || e.Status == "done")):
-			result.Status = run.Status
-		case e.Status == "done":
-			result.Status = "partial"
+		case mediaRunActive(run.Status) && (run.TaskFileID == e.File.ID || run.TaskFileID == "" && (e.Status == "pending" || e.Status == "ready")):
+			result.Status, result.Message = "running", e.Message
+			if run.Status == "queued" {
+				result.Message = "已排队，等待整理"
+			}
 		default:
-			result.Status = "error"
-			if g.Message != "" {
+			result.Status = "failed"
+			if e.Message != "" {
+				result.Message = e.Message
+			}
+			if result.Message == "" && g.Message != "" {
 				result.Message = g.Message
 			}
 		}
-		if result.Status != "done" && result.Message == "" {
-			result.Message = run.Message
+		if result.Status == "failed" && result.Message == "" {
+			result.Message = "文件暂未处理完成"
 		}
 		source := run.Rule.Source
 		if run.Rule.Storage == "local" {
 			source = filepath.ToSlash(source)
 			result.Target = filepath.ToSlash(result.Target)
 		}
-		item := MediaOrganizeHistoryItem{RunID: run.ID, FileID: e.File.ID, Name: e.File.Name, Title: g.Title, Kind: g.Kind, MediaType: e.File.MediaType, Season: e.File.Season, Episode: e.File.Episode, Source: path.Join(source, e.File.SourcePath), AttachmentCount: len(entries) - 1, CanDelete: !mediaRunActive(run.Status), MediaOrganizeResult: result}
+		item := MediaOrganizeHistoryItem{RunID: run.ID, FileID: e.File.ID, Name: e.File.Name, Title: g.Title, Kind: g.Kind, MediaType: e.File.MediaType, Season: e.File.Season, Episode: e.File.Episode, Source: path.Join(source, e.File.SourcePath), AttachmentCount: len(entries) - 1, MediaOrganizeResult: result}
 		tasks = append(tasks, MediaOrganizeTask{MediaOrganizeHistoryItem: item, Rule: run.Rule, Group: g, Entries: entries})
 	}
 	return tasks
@@ -168,22 +206,34 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 func (s *MediaOrganizer) busyRunLocked(id string) bool { return s.active == id || s.actions[id] != "" }
 
 func (s *MediaOrganizer) Task(id, fileID string) (MediaOrganizeTask, error) {
+	if id == "" || fileID == "" {
+		return MediaOrganizeTask{}, ErrMediaOrganizeInput
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, run := range s.doc.Runs {
 		if run.ID != id {
 			continue
 		}
+		permissions := s.taskPermissionsLocked(run)
+		selected := run
+		selected.Entries = nil
+		for _, entry := range run.Entries {
+			if mediaInTask(entry, fileID) {
+				selected.Entries = append(selected.Entries, entry)
+			}
+		}
 		var snapshot MediaOrganizeRun
-		cloneMediaRun(run, &snapshot)
+		cloneMediaRun(selected, &snapshot)
 		for _, task := range mediaTasks(snapshot) {
 			if task.FileID == fileID {
-				task.CanDelete = task.CanDelete && !s.busyRunLocked(id)
+				permission := permissions[fileID]
+				task.CanDelete, task.CanRetry = permission.CanDelete, permission.CanRetry
 				return task, nil
 			}
 		}
 	}
-	return MediaOrganizeTask{}, ErrMediaOrganizeInput
+	return MediaOrganizeTask{}, ErrMediaOrganizeTaskNotFound
 }
 
 func (s *MediaOrganizer) State() MediaOrganizeState {
@@ -216,7 +266,9 @@ func mediaRunCleanup(run MediaOrganizeRun) MediaOrganizeCleanup {
 			continue
 		}
 		if e.Status != "done" {
-			out.Failed++
+			if !mediaRunActive(run.Status) {
+				out.Failed++
+			}
 		} else if e.File.Directory {
 			out.Directories++
 		} else {
@@ -230,13 +282,15 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 	if status == "" {
 		status = "all"
 	}
-	if !slices.Contains([]string{"all", "running", "done", "attention"}, status) || len(query) > 500 {
+	if !slices.Contains([]string{"all", "running", "done", "failed"}, status) || len(query) > 500 {
 		return MediaOrganizeHistory{}, ErrMediaOrganizeInput
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := MediaOrganizeHistory{Items: []MediaOrganizeHistoryItem{}, Counts: map[string]int{"all": 0, "running": 0, "done": 0, "attention": 0}, Activity: []MediaOrganizeActivity{}, Cleanup: []MediaOrganizeCleanup{}, Active: s.active != "" || len(s.actions) > 0}
-	rows, err := s.db.QueryMediaOrganize(ctx, strings.TrimSpace(query), status, page)
+	out := MediaOrganizeHistory{Items: []MediaOrganizeHistoryItem{}, Counts: map[string]int{"all": 0, "running": 0, "done": 0, "failed": 0}, Activity: []MediaOrganizeActivity{}, Cleanup: []MediaOrganizeCleanup{}}
+	live, err := s.liveHistoryRows(ctx)
+	if err != nil {
+		return out, err
+	}
+	rows, err := s.db.QueryMediaOrganizeLive(ctx, strings.TrimSpace(query), status, page, live)
 	if err != nil {
 		return out, fmt.Errorf("查询整理记录: %w", err)
 	}
@@ -246,7 +300,6 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		if err := json.Unmarshal([]byte(raw), &item); err != nil {
 			return out, err
 		}
-		item.CanDelete = item.CanDelete && !s.busyRunLocked(item.RunID)
 		out.Items = append(out.Items, item)
 	}
 	for _, raw := range rows.Activity {
@@ -263,13 +316,63 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		}
 		out.Cleanup = append(out.Cleanup, item)
 	}
+	// 数据库查询不占业务锁；操作权限在返回前按最新的在途文件重新计算。
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	out.Active = s.active != "" || len(s.actions) > 0
+	permissions := make(map[string]map[string]mediaTaskPermission)
+	wanted := make(map[string]bool, len(out.Items))
+	for _, item := range out.Items {
+		wanted[item.RunID] = true
+	}
+	for _, run := range s.doc.Runs {
+		if wanted[run.ID] {
+			permissions[run.ID] = s.taskPermissionsLocked(run)
+		}
+	}
+	for i := range out.Items {
+		item := &out.Items[i]
+		permission := permissions[item.RunID][item.FileID]
+		item.CanDelete, item.CanRetry = permission.CanDelete, permission.CanRetry
+	}
 	return out, nil
 }
 
-// Deletion and checkpoints share the organizer mutex. A running batch is never
-// modified, including already-successful children, so workers cannot revive it.
+// 只在复制运行摘要时持锁，慢查询或取消请求不阻塞整理检查点。
+func (s *MediaOrganizer) liveHistoryRows(ctx context.Context) ([]storage.MediaOrganizeLiveTaskRow, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	live := make([]storage.MediaOrganizeLiveTaskRow, 0)
+	for _, run := range s.doc.Runs {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !mediaRunActive(run.Status) {
+			continue
+		}
+		for _, task := range mediaTasks(run) {
+			if task.Status != "done" && task.Status != "running" {
+				continue
+			}
+			row, err := mediaHistoryTaskRow(task.MediaOrganizeHistoryItem)
+			if err != nil {
+				return nil, err
+			}
+			live = append(live, storage.MediaOrganizeLiveTaskRow{RunID: run.ID, MediaOrganizeTaskRow: row})
+		}
+	}
+	return live, ctx.Err()
+}
+
+// 删除只移除记录和排队动作；实际文件操作进行时暂时保护对应主文件。
 func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeDelete) (int, error) {
-	if input.Completed == (len(input.Items) > 0) || len(input.Items) > 20 {
+	if input.Status != "" && input.Status != "done" && input.Status != "failed" {
+		return 0, ErrMediaOrganizeInput
+	}
+	if (input.Status != "") == (len(input.Items) > 0) || len(input.Items) > 20 {
 		return 0, ErrMediaOrganizeInput
 	}
 	selected := make(map[string]map[string]bool)
@@ -287,11 +390,12 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	// Validate the complete request before mutating any batch.
+	// 先校验整个请求，避免部分删除后才发现选中了受保护任务。
 	for _, run := range s.doc.Runs {
-		if selected[run.ID] != nil && (mediaRunActive(run.Status) || s.busyRunLocked(run.ID)) {
+		if selected[run.ID] != nil {
+			permissions := s.taskPermissionsLocked(run)
 			for _, entry := range run.Entries {
-				if entry.File.MediaType == "video" && selected[run.ID][entry.File.ID] {
+				if entry.File.MediaType == "video" && selected[run.ID][entry.File.ID] && !permissions[entry.File.ID].CanDelete {
 					return 0, ErrMediaOrganizeBusy
 				}
 			}
@@ -299,17 +403,15 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 	}
 	deleted := 0
 	changed := []string{}
+	cancelled := []string{}
 	runs := make([]MediaOrganizeRun, 0, len(s.doc.Runs))
 	for _, original := range s.doc.Runs {
 		ids := selected[original.ID]
-		if input.Completed {
-			if mediaRunActive(original.Status) || s.busyRunLocked(original.ID) {
-				runs = append(runs, original)
-				continue
-			}
+		if input.Status != "" {
 			ids = map[string]bool{}
+			permissions := s.taskPermissionsLocked(original)
 			for _, task := range mediaTasks(original) {
-				if task.Status == "done" {
+				if task.Status == input.Status && permissions[task.FileID].CanDelete {
 					ids[task.FileID] = true
 				}
 			}
@@ -342,11 +444,14 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 		run.Groups = slices.DeleteFunc(run.Groups, func(g MediaOrganizeGroup) bool { return !used[g.ID] })
 		if valid[run.TaskFileID] {
 			run.TaskFileID = ""
+			if s.actions[run.ID] == "retry" && s.active != run.ID {
+				cancelled = append(cancelled, run.ID)
+				mediaFinishRun(&run)
+			}
 		}
 		deleted += len(valid)
 		changed = append(changed, run.ID)
-		if hasVideo {
-			mediaRunCounts(&run)
+		if hasVideo || s.active == run.ID || s.actions[run.ID] == "auto" {
 			runs = append(runs, run)
 		}
 	}
@@ -356,6 +461,9 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 	s.doc.Runs = runs
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
 		return 0, err
+	}
+	for _, id := range cancelled {
+		s.removeActionLocked(id)
 	}
 	return deleted, nil
 }

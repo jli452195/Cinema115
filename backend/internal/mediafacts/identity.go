@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"strm115/backend/internal/releaseparse"
 )
@@ -22,6 +21,17 @@ type Identity struct {
 	ParentName     string `json:"parentName,omitempty"`
 	YearFromParent bool   `json:"yearFromParent,omitempty"`
 	SeasonExplicit bool   `json:"seasonExplicit,omitempty"`
+	// 裸年份保留完整片名和“片名＋年份”两种解释，不能直接当作明确声明冲突。
+	AlternativeName   string `json:"alternativeName,omitempty"`
+	AlternativeYear   string `json:"alternativeYear,omitempty"`
+	ContentType       string `json:"contentType,omitempty"`
+	NameSource        string `json:"-"`
+	YearSource        string `json:"-"`
+	KindSource        string `json:"-"`
+	TMDBIDSource      string `json:"-"`
+	SeasonSource      string `json:"-"`
+	ContentTypeSource string `json:"-"`
+	Conflict          string `json:"conflict,omitempty"`
 }
 
 var identityID = regexp.MustCompile(`(?i)[\[{]tmdb(?:id)?[=-](\d+)[\]}]`)
@@ -37,15 +47,7 @@ var identityMovieTag = regexp.MustCompile(`(?i)[\[【(（](?:MOVIE|FILM)[\]】)�
 var identityEpisodeCount = regexp.MustCompile(`全\s*[0-9]+\s*[集话話]`)
 var identityCollection = regexp.MustCompile(`(?i)合集|\bcollection\b`)
 var identityBareEpisode = regexp.MustCompile(`(?i)^[0-9]{2,4}(?:v[0-9]+)?$`)
-
-func NameKey(value string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return unicode.ToLower(r)
-		}
-		return -1
-	}, value)
-}
+var identityVersion = regexp.MustCompile(`(?i)(?:^|[ ._-])(?:V|REV)[0-9]{1,3}(?:$|[^a-z0-9])`)
 
 // ParseIdentity uses the file first and at most two meaningful parent folders.
 // Generic download/library roots must be excluded by the caller.
@@ -60,6 +62,7 @@ func ParseIdentity(name string, parents ...string) Identity {
 	specialFile := identitySpecial.MatchString(parts[0])
 	if specialFile {
 		out.Kind = "tv"
+		out.KindSource = "filename"
 	}
 	for i, original := range parts {
 		if i > 2 {
@@ -68,18 +71,28 @@ func ParseIdentity(name string, parents ...string) Identity {
 		if i > 0 && identityCollection.MatchString(original) {
 			continue
 		}
+		source := "filename"
+		if i > 0 {
+			source = "parent:" + strconv.Itoa(i)
+		}
 		value := strings.TrimSpace(original)
-		if m := identityID.FindStringSubmatch(value); m != nil {
+		value = identityContentDeclaration(value, source, &out)
+		for _, m := range identityID.FindAllStringSubmatch(value, -1) {
 			id, _ := strconv.Atoi(m[1])
 			if out.TMDBID == 0 {
 				out.TMDBID = id
+				out.TMDBIDSource = source
+			} else if id > 0 && id != out.TMDBID {
+				identityAddConflict(&out, "TMDB_ID_CONFLICT")
 			}
-			value = identityID.ReplaceAllString(value, "")
 		}
+		value = identityID.ReplaceAllString(value, "")
 		if m := identitySeason.FindStringSubmatch(value); m != nil {
 			if (out.Kind == "" || i == 0 && specialFile) && (i == 0 || !specialFile) {
 				out.Kind = "tv"
+				out.KindSource = source
 				out.SeasonExplicit = true
+				out.SeasonSource = source
 				if m[1] != "" {
 					out.Season, _ = strconv.Atoi(m[1])
 				} else {
@@ -89,19 +102,27 @@ func ParseIdentity(name string, parents ...string) Identity {
 		}
 		if out.Kind == "" && identityMovie.MatchString(value) && (i == 0 || !specialFile) {
 			out.Kind = "movie"
+			out.KindSource = source
 		}
 		value = identityStripGroup(value)
 		year := identityYearIndex(value)
-		if year != nil && out.Year == "" {
+		ambiguousYear := year != nil && i == 0 && !tvContext && !identityStrongYear(value, year)
+		if year != nil && !ambiguousYear && out.Year == "" {
 			out.Year = value[year[0]:year[1]]
 			out.YearFromParent = i > 0
+			out.YearSource = source
 		}
 		end := len(value)
-		if year != nil {
+		if year != nil && !ambiguousYear {
 			end = year[0]
 		}
 		for _, pattern := range []*regexp.Regexp{identityYearRange, identityEpisode, identitySeason, identitySpec, identitySpecial, identityMovieTag, identityEpisodeCount} {
 			if loc := pattern.FindStringIndex(value); loc != nil && loc[0] < end {
+				end = loc[0]
+			}
+		}
+		if ambiguousYear {
+			if loc := identityVersion.FindStringIndex(value); loc != nil && loc[0] >= year[1] && loc[0] < end {
 				end = loc[0]
 			}
 		}
@@ -116,10 +137,21 @@ func ParseIdentity(name string, parents ...string) Identity {
 			}
 		}
 		title := strings.Trim(strings.NewReplacer("_", " ", ".", " ").Replace(value[:end]), " []【】()（）- ")
+		if ambiguousYear && year[0] < end {
+			prefix := strings.Trim(strings.NewReplacer("_", " ", ".", " ").Replace(value[:year[0]]), " []【】()（）- ")
+			title = strings.TrimSpace(prefix + " " + strings.NewReplacer("_", " ", ".", " ").Replace(value[year[0]:end]))
+		}
 		key := NameKey(title)
 		numericTitle := i == 0 && len(key) == 4 && year != nil && key != out.Year
 		if out.Name == "" && key != "" && (!onlyDigits(key) || numericTitle) && key != "season" && key != "specials" && key != "sp" {
 			out.Name = title
+			out.NameSource = source
+			if ambiguousYear && year[0] < end {
+				alternative := strings.Trim(strings.NewReplacer("_", " ", ".", " ").Replace(value[:year[0]]), " []【】()（）- ")
+				if NameKey(alternative) != "" && NameKey(alternative) != key {
+					out.AlternativeName, out.AlternativeYear = alternative, value[year[0]:year[1]]
+				}
+			}
 		}
 		if i == 0 {
 			fileName = out.Name != ""
@@ -136,11 +168,19 @@ func ParseIdentity(name string, parents ...string) Identity {
 // The year token must stand alone. Leading numeric titles, dimensions and
 // collection ranges are not release years; the last remaining year wins.
 func identityYearIndex(value string) []int {
+	indices := identityYearIndices(value, false)
+	if len(indices) == 0 {
+		return nil
+	}
+	return indices[len(indices)-1]
+}
+
+func identityYearIndices(value string, leading bool) [][]int {
 	ranges := append(identityYearRange.FindAllStringIndex(value, -1), resourceQuality.FindAllStringIndex(value, -1)...)
-	var found []int
+	found := make([][]int, 0, 2)
 	for _, m := range identityYear.FindAllStringSubmatchIndex(value, -1) {
 		start, end := m[2], m[3]
-		if start == 0 || end < len(value) && numberingAlnum(value[end]) {
+		if start == 0 && !leading || end < len(value) && numberingAlnum(value[end]) {
 			continue
 		}
 		inRange := false
@@ -148,10 +188,21 @@ func identityYearIndex(value string) []int {
 			inRange = inRange || start >= span[0] && end <= span[1]
 		}
 		if !inRange {
-			found = []int{start, end}
+			found = append(found, []int{start, end})
 		}
 	}
 	return found
+}
+
+// 配对括号和多个年份词元提供发行年份证据，单独的裸年份仍可能属于作品标题。
+func identityStrongYear(value string, year []int) bool {
+	left, right := strings.TrimSpace(value[:year[0]]), strings.TrimSpace(value[year[1]:])
+	for _, pair := range [][2]string{{"(", ")"}, {"[", "]"}, {"{", "}"}, {"（", "）"}, {"【", "】"}} {
+		if strings.HasSuffix(left, pair[0]) && strings.HasPrefix(right, pair[1]) {
+			return true
+		}
+	}
+	return len(identityYearIndices(value, true)) > 1
 }
 
 func identityStripGroup(value string) string {
@@ -170,7 +221,7 @@ func identityStripGroup(value string) string {
 		candidate := strings.TrimLeft(rest, " ._-[]【】()（）")
 		known = !identitySpec.MatchString("[" + prefix + "]")
 		for _, pattern := range []*regexp.Regexp{identityEpisode, identitySeason, identitySpec, identitySpecial} {
-			if m := pattern.FindStringIndex(rest); m != nil && m[0] == 0 {
+			if m := pattern.FindStringIndex(candidate); m != nil && m[0] == 0 {
 				known = false
 			}
 		}

@@ -122,7 +122,7 @@ func TestMediaOrganizerCD2DirectoryTreeUsesOnlyConfirmedSourceRemovals(t *testin
 				entry.CD2Current = &MediaCD2Location{Path: path.Join(parent, "renamed.mkv")}
 				removed = false
 			case "reference":
-				entry.Status, entry.CD2Reference = "done", true
+				entry.Status, entry.Reference = "done", true
 				removed = false
 			default:
 				removed = false

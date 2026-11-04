@@ -1,9 +1,7 @@
 package service
 
 import (
-	"context"
 	"maps"
-	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -72,26 +70,13 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 		previous.Files = nil
 	}
 	previous.Files = maps.Clone(previous.Files)
-	if hasOrphans && run.Rule.Storage == "cd2" {
-		for _, old := range s.doc.Runs {
-			if old.Rule.ID != run.Rule.ID || !mediaOrphanBinding(old.Rule).matches(run.Rule) {
-				continue
-			}
-			for _, entry := range old.Entries {
-				if entry.File.MediaType == "video" && entry.Status == "done" {
-					files.orphanVideos = append(files.orphanVideos, entry.File)
-				}
-			}
-		}
-	}
 	s.mu.Unlock()
 	var owners map[string][]string
 	if hasOrphans {
-		candidates := append([]OrganizeFile{}, files.localCandidates...)
+		candidates := files.localCandidates
 		if files.localCandidates == nil {
 			candidates = mediaEntryFiles(files.scanned)
 		}
-		candidates = append(candidates, files.orphanVideos...)
 		owners = mediaLocalCompanionOwners(candidates)
 	}
 	state := mediaOrphanBinding(run.Rule)
@@ -174,20 +159,4 @@ func (s *MediaOrganizer) forgetOrphanLocked(rule MediaOrganizeRule, fileID strin
 	if len(state.Files) == 0 {
 		delete(s.doc.Orphans, rule.ID)
 	}
-}
-
-// CD2 删除前重新读取关联范围，临时下载名称同样参与归属判断。
-func (f *mediaOrganizeFiles) cd2OrphanStillUnmatched(ctx context.Context, entry MediaOrganizeEntry) (bool, error) {
-	if !f.orphanDue[entry.File.ID] {
-		return false, nil
-	}
-	current := &mediaOrganizeFiles{rule: f.rule, cd2: f.cd2, cd2ScanPath: path.Dir(entry.File.ID), cd2Shallow: true}
-	if scope, _, shared := mediaAttachmentFolder(entry.File); entry.File.MediaType == "attachment" && shared {
-		current.cd2ScanPath, current.cd2Shallow = path.Join(f.rule.Source, scope), false
-	}
-	if _, err := current.scan(ctx); err != nil {
-		return false, err
-	}
-	candidates := append(current.localCandidates, f.orphanVideos...)
-	return len(mediaLocalCompanionOwners(candidates)[entry.File.ID]) == 0, nil
 }

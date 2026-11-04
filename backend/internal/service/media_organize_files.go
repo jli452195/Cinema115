@@ -21,6 +21,44 @@ type mediaOrganizeDrive interface {
 	ReadDirectory(context.Context, string, string) (p115.DriveDirectory, error)
 }
 
+// 去重完成回执只在当前调用中传递已核验的保留身份，不形成持久化操作账本。
+type mediaDuplicateReceipt struct {
+	fileID   string
+	parentID string
+	size     int64
+	cd2      *clouddrive2.File
+}
+
+func (*mediaDuplicateReceipt) Error() string { return errMediaDuplicateDone.Error() }
+func (*mediaDuplicateReceipt) Unwrap() error { return errMediaDuplicateDone }
+
+const (
+	mediaOrganizeScanDirectoryLimit = 5000
+	mediaOrganizeScanDepthLimit     = 12
+)
+
+func mediaCheckScanDirectoryCount(count int, location string) error {
+	if count > mediaOrganizeScanDirectoryLimit {
+		return fmt.Errorf("单次最多扫描 %d 个目录（包含来源根目录），当前发现 %d 个：%s", mediaOrganizeScanDirectoryLimit, count, location)
+	}
+	return nil
+}
+
+// 根目录计入总数，各存储使用相同边界；重复目录不能形成完整扫描证明。
+func mediaVisitScanDirectory(visited map[string]bool, id, location string, depth int) error {
+	if visited[id] {
+		return fmt.Errorf("扫描发现重复目录或目录循环：%s", location)
+	}
+	if depth > mediaOrganizeScanDepthLimit {
+		return fmt.Errorf("扫描目录层级超过 %d 层（当前 %d 层）：%s", mediaOrganizeScanDepthLimit, depth, location)
+	}
+	if err := mediaCheckScanDirectoryCount(len(visited)+1, location); err != nil {
+		return err
+	}
+	visited[id] = true
+	return nil
+}
+
 type mediaOrganizeFiles struct {
 	rule                 MediaOrganizeRule
 	drive                OrganizeDrive
@@ -54,7 +92,6 @@ type mediaOrganizeFiles struct {
 	pending115           map[string]bool
 	pending115Dirs       map[string]bool
 	orphanDue            map[string]bool
-	orphanVideos         []OrganizeFile
 	cloudEmpty           *media115EmptyState
 }
 
@@ -186,7 +223,7 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			return
 		}
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
-		organizeFileNumbering(&item)
+		mediaOrganizeFileNumbering(&item)
 		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
 		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Status: "pending", CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
 	}
@@ -211,7 +248,8 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		if _, err = mediaLocalRoot(f.rule.Target); err != nil {
 			return nil, err
 		}
-		dirs, fileCount := 0, 0
+		fileCount := 0
+		visited := map[string]bool{root: true}
 		seen := make(map[string]bool)
 		started := time.Now()
 		pending := make(map[string]bool)
@@ -263,9 +301,8 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return nil
 			}
 			if entry.IsDir() {
-				dirs++
-				if dirs > 300 || strings.Count(rel, string(filepath.Separator)) > 12 {
-					return fmt.Errorf("目录过大，请缩小扫描范围")
+				if err := mediaVisitScanDirectory(visited, full, full, strings.Count(rel, string(filepath.Separator))+1); err != nil {
+					return err
 				}
 				info, err := entry.Info()
 				if err != nil {
@@ -344,10 +381,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 			if cid == f.rule.TargetID || cid != "" && cid == f.rule.FailureID {
 				return fmt.Errorf("目标或失败目录不能位于来源目录内")
 			}
-			if visited[cid] || depth > 12 || len(visited) >= 300 {
-				return fmt.Errorf("目录循环或范围过大")
+			if err := mediaVisitScanDirectory(visited, cid, path.Join(f.rule.Source, prefix), depth); err != nil {
+				return err
 			}
-			visited[cid] = true
 			if f.pending115Dirs[cid] {
 				f.settlingVideos[cid] = true
 			}
@@ -471,6 +507,9 @@ func (f *mediaOrganizeFiles) cloudDestination(ctx context.Context, relative stri
 }
 
 func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry) error {
+	if e.AttachmentKeep != nil {
+		return nil
+	}
 	if e.Relative == "" {
 		return nil
 	}
@@ -483,6 +522,9 @@ func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry)
 			return ErrMediaOrganizeInput
 		}
 		if _, err := os.Lstat(full); err == nil {
+			if mediaAttachmentSameDestinationRole(e, path.Base(e.Relative)) {
+				return nil
+			}
 			return errMediaTargetExists
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -502,6 +544,9 @@ func (f *mediaOrganizeFiles) conflict(ctx context.Context, e MediaOrganizeEntry)
 			return nil
 		}
 		if strings.EqualFold(file.Name, path.Base(e.Relative)) {
+			if mediaAttachmentSameDestinationRole(e, file.Name) {
+				return nil
+			}
 			if f.rule.DeleteDuplicates && media115SameSHA1(e, file) {
 				return nil
 			}
@@ -516,8 +561,10 @@ func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) err
 		return f.moveCD2(ctx, e)
 	}
 	if e.Failure != nil && e.Failure.State == "stored" {
-		// Keep the original file identity and subtitle associations in the plan.
-		// Only the actual read location changes after quarantine.
+		if f.rule.Storage == "115" && e.Failure.FileID != "" {
+			return f.move115FailureDuplicate(ctx, e)
+		}
+		// 仅改变隔离后的读取位置，原任务键和附件关联保持不变。
 		if _, err := f.failureFiles(ctx); err != nil {
 			return err
 		}
@@ -566,12 +613,12 @@ func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) err
 	if actual == nil || actual.Directory || actual.Size != e.File.Size || (actual.Name != e.File.Name && actual.Name != target) {
 		return fmt.Errorf("来源文件已变化，请重新扫描")
 	}
-	for _, other := range source {
-		if other.ID != actual.ID && strings.EqualFold(other.Name, target) {
-			return fmt.Errorf("来源目录中已有同名文件")
-		}
-	}
 	if actual.Name != target {
+		for _, other := range source {
+			if other.ID != actual.ID && strings.EqualFold(other.Name, target) {
+				return fmt.Errorf("来源目录中已有同名文件")
+			}
+		}
 		if err = f.drive.RenameEntries(ctx, []p115.RenameTarget{{ID: e.File.ID, Name: target}}, f.cookie); err != nil {
 			delete(f.lists, e.File.ParentID)
 			return err
@@ -591,6 +638,102 @@ func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) err
 		}
 	}
 	return nil
+}
+
+func (f *mediaOrganizeFiles) move115FailureDuplicate(ctx context.Context, entry MediaOrganizeEntry) error {
+	failure := entry.Failure
+	if failure.FileID == entry.File.ID || failure.ParentID == "" {
+		return fmt.Errorf("115 失败目录保留身份无效")
+	}
+	drive, ok := f.drive.(mediaOrganizeDrive)
+	if !ok {
+		return fmt.Errorf("115 目录核验服务不可用")
+	}
+	verifyTarget := func() (*mediaDuplicateReceipt, error) {
+		cid, err := f.cloudDestination(ctx, entry.Relative, false)
+		if err != nil || cid == "" {
+			return nil, err
+		}
+		dir, err := drive.ReadDirectory(ctx, cid, f.cookie)
+		if err != nil {
+			return nil, err
+		}
+		if dir.CID != cid || dir.Path != path.Join(f.rule.Target, path.Dir(entry.Relative)) {
+			return nil, fmt.Errorf("115 整理目标目录已变化")
+		}
+		delete(f.lists, cid)
+		children, err := f.list(ctx, cid)
+		if err != nil {
+			return nil, err
+		}
+		var receipt *mediaDuplicateReceipt
+		names := 0
+		for _, file := range children {
+			if strings.EqualFold(file.Name, path.Base(entry.Relative)) {
+				names++
+			}
+			if file.ID == failure.FileID && file.Name == path.Base(entry.Relative) && file.Size == entry.File.Size && media115SameSHA1(entry, file) {
+				receipt = &mediaDuplicateReceipt{fileID: file.ID, parentID: cid, size: file.Size}
+			}
+		}
+		if receipt != nil && names != 1 {
+			return nil, fmt.Errorf("115 整理目标存在重名文件，保留来源")
+		}
+		return receipt, nil
+	}
+	// 上次移动可能已经成功，先核对精确目标，避免依赖已经清理的旧目录。
+	if receipt, err := verifyTarget(); err != nil {
+		return err
+	} else if receipt != nil {
+		return receipt
+	}
+	if _, err := f.failureFiles(ctx); err != nil {
+		return err
+	}
+	dir, err := drive.ReadDirectory(ctx, failure.ParentID, f.cookie)
+	if err != nil {
+		return err
+	}
+	if dir.CID != failure.ParentID || dir.Path != path.Join(f.rule.Failure, path.Dir(entry.File.SourcePath)) {
+		return fmt.Errorf("115 失败文件所在目录已变化")
+	}
+	delete(f.lists, failure.ParentID)
+	children, err := f.list(ctx, failure.ParentID)
+	if err != nil {
+		return err
+	}
+	var keeper *p115.ShareFile
+	for i := range children {
+		file := &children[i]
+		if file.ID == failure.FileID {
+			if file.Size != entry.File.Size || !media115SameSHA1(entry, *file) ||
+				!strings.EqualFold(file.Name, path.Base(entry.File.SourcePath)) && file.Name != path.Base(entry.Relative) {
+				return fmt.Errorf("115 失败目录保留文件已变化")
+			}
+			keeper = file
+			break
+		}
+	}
+	if keeper == nil {
+		return fmt.Errorf("115 失败目录保留文件不存在，请重新扫描")
+	}
+	current := *f
+	current.rule.Source, current.rule.SourceID = f.rule.Failure, f.rule.FailureID
+	actual := entry
+	actual.File.ShareFile, actual.File.ParentID = *keeper, failure.ParentID
+	actual.File.SourcePath = path.Join(path.Dir(entry.File.SourcePath), keeper.Name)
+	actual.Failure = nil
+	if err := current.move(ctx, actual); err != nil {
+		return err
+	}
+	receipt, err := verifyTarget()
+	if err != nil {
+		return err
+	}
+	if receipt == nil {
+		return fmt.Errorf("115 失败目录保留文件移动结果待核实")
+	}
+	return receipt
 }
 
 func (f *mediaOrganizeFiles) moveLocal(ctx context.Context, e MediaOrganizeEntry) error {

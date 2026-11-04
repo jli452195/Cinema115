@@ -180,7 +180,7 @@ func TestMediaRecognitionExplicitCoordinatesRemainStable(t *testing.T) {
 }
 
 func TestMediaRecognitionRejectsAmbiguousOrUnrelatedHints(t *testing.T) {
-	for _, scenario := range []string{"wrong-parent-year", "same-year-seasons", "duplicate-alias", "unrelated-parent", "adjacent-title-prefix", "base-title-pack-year"} {
+	for _, scenario := range []string{"wrong-parent-year", "same-year-seasons", "unrelated-parent", "adjacent-title-prefix", "base-title-pack-year"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newMediaCollectionMetadata()
 			identity := mediafacts.Identity{Name: "Nanatsu no Taizai", Kind: "tv", Season: 1}
@@ -193,10 +193,6 @@ func TestMediaRecognitionRejectsAmbiguousOrUnrelatedHints(t *testing.T) {
 			case "same-year-seasons":
 				f.details[62104].Seasons[3].Date = "2021-02-01"
 				identity = mediafacts.Identity{Name: "Nanatsu no Taizai Unknown Subtitle", ParentName: "七大罪 未知副标题", Kind: "tv", Year: "2021", YearFromParent: true, Season: 1}
-			case "duplicate-alias":
-				other := &tmdb.Detail{Item: tmdb.Item{ID: 999, Kind: "tv", Title: "Another work", Date: "2014-10-05"}}
-				f.details[999], f.items = other, append(f.items, other.Item)
-				f.aliases[999] = []string{"Nanatsu no Taizai"}
 			case "unrelated-parent":
 				identity = mediafacts.ParseIdentity("Unrelated Show.S01E01.mkv", "七大罪 2014")
 			case "adjacent-title-prefix":

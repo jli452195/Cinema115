@@ -41,7 +41,7 @@ func NewSubtitleMatcher(videos []SubtitleVideo) *SubtitleMatcher {
 
 // Only complete, known metadata fields may be removed. Title/episode/group and
 // unknown edition tags stay part of identity; this is not fuzzy title matching.
-const subtitleMetadataToken = `(?:(?:480|576|720|1080|1440|2160|4320)[pi]|[0-9]{3,4}\s*[x×]\s*(?:480|576|720|1080|1440|2160|4320)|[48]k|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ -]?bit|mkv|mp4|chs|cht|sc|tc|gb|big5|ja|jpn|eng|简体(?:中文)?|簡體(?:中文)?|繁体(?:中文)?|繁體(?:中文)?|简繁|簡繁|简|繁|内嵌|內嵌|内封|內封|外挂|外掛|forced|sdh|default)`
+const subtitleMetadataToken = `(?:[0-9]{3,4}[pi]|[0-9]{3,4}\s*[x×]\s*[0-9]{3,4}(?:[pi])?|[48]k|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ -]?bit|mkv|mp4|chs|cht|sc|tc|gb|big5|ja|jpn|eng|简体(?:中文)?|簡體(?:中文)?|繁体(?:中文)?|繁體(?:中文)?|简繁|簡繁|简|繁|内嵌|內嵌|内封|內封|外挂|外掛|forced|sdh|default)`
 
 var (
 	subtitleMetadata = regexp.MustCompile(`(?i)^` + subtitleMetadataToken + `(?:[ ._+&/-]+` + subtitleMetadataToken + `)*$`)

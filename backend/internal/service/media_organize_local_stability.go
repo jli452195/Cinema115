@@ -32,6 +32,7 @@ func mediaTemporaryBase(name string) string {
 // Reuse the ordinary ownership rules, including ambiguous candidate sets, so
 // removing a waiting video never assigns its sidecars to a different video.
 func mediaLocalCompanionOwners(files []OrganizeFile) map[string][]string {
+	files = mediaAttachmentMatchFiles(files)
 	owners := make(map[string][]string)
 	matcher := organizeSubtitleMatcher(files)
 	for _, file := range files {

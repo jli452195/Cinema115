@@ -109,8 +109,11 @@ func TestMedia115PipelineMovesCompleteDirectoryBeforeReadingChildren(t *testing.
 			t.Fatal("完整目录中的媒体未完成整理", entry)
 		}
 	}
-	if !s.doc.Rules[0].LastScan.After(previousScan) {
-		t.Fatal("完整扫描后应更新最近扫描时间")
+	if !s.doc.Rules[0].LastScan.Equal(previousScan) {
+		t.Fatal("流水线尚未收尾时不能提前更新最近扫描时间")
+	}
+	if err := s.finishScanRound(*run); err != nil || !s.doc.Rules[0].LastScan.After(previousScan) {
+		t.Fatal("完整轮次收尾后应更新最近扫描时间", err)
 	}
 }
 
@@ -302,6 +305,7 @@ func TestMedia115PipelineOrphanGraceSurvivesRuns(t *testing.T) {
 	now := time.Now()
 	s.monitorOptions.now = func() time.Time { return now }
 	drive.dirs["10"] = []p115.ShareFile{{ID: "501", Name: "missing.zh.ass", Size: 8}}
+	s.removeActionLocked(run.ID)
 	if err := s.process115Auto(context.Background(), files, run); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +320,11 @@ func TestMedia115PipelineOrphanGraceSurvivesRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if second.ID == run.ID {
+		t.Fatal("上一轮已执行完成后必须创建独立扫描轮次", second)
+	}
 	second.Rule.AttachmentGraceSeconds = 60
+	s.removeActionLocked(second.ID)
 	nextFiles, err := s.files(context.Background(), second.Rule)
 	if err != nil {
 		t.Fatal(err)
@@ -431,7 +439,7 @@ func TestMedia115PipelineRejectsDirectoryCycleAndLimits(t *testing.T) {
 					parent = id
 				}
 			case "directories":
-				for i := range 300 {
+				for i := range mediaOrganizeScanDirectoryLimit {
 					id, name := fmt.Sprint(500+i), fmt.Sprintf("dir-%d", i)
 					drive.dirs["10"] = append(drive.dirs["10"], p115.ShareFile{ID: id, Name: name, Directory: true})
 					drive.paths[id], drive.dirs[id] = path.Join("/inbox", name), []p115.ShareFile{}
@@ -441,8 +449,13 @@ func TestMedia115PipelineRejectsDirectoryCycleAndLimits(t *testing.T) {
 					drive.dirs["10"] = append(drive.dirs["10"], p115.ShareFile{ID: fmt.Sprint(500 + i), Name: "keep.iso", Size: 123})
 				}
 			}
-			if err := s.process115Auto(context.Background(), files, run); err == nil {
+			err := s.process115Auto(context.Background(), files, run)
+			if err == nil {
 				t.Fatal("超出扫描范围应停止")
+			}
+			want := map[string]string{"cycle": "重复目录或目录循环", "depth": "层级超过 12 层", "directories": "最多扫描 5000 个目录", "files": "最多 5000 个文件"}[scenario]
+			if !strings.Contains(err.Error(), want) {
+				t.Fatal("扫描失败必须区分具体边界", err)
 			}
 			if len(drive.deleted) != 0 || files.cloudEmpty == nil || files.cloudEmpty.complete || len(files.directories) != 0 {
 				t.Fatal("扫描限制失败不能给出删除证明", drive.deleted)

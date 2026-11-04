@@ -23,8 +23,12 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`CREATE TABLE media_run_writes(run_id TEXT NOT NULL)`,
 		`CREATE TABLE media_task_writes(file_id TEXT NOT NULL)`,
+		`CREATE TABLE media_settings_writes(record TEXT NOT NULL)`,
 		`CREATE TRIGGER audit_media_task_updates AFTER UPDATE ON media_organize_tasks BEGIN INSERT INTO media_task_writes(file_id) VALUES(NEW.file_id); END`,
+		`CREATE TRIGGER audit_media_settings_updates AFTER UPDATE ON media_organize_settings BEGIN INSERT INTO media_settings_writes(record) VALUES(NEW.record); END`,
+		`CREATE TRIGGER audit_media_run_updates AFTER UPDATE ON media_organize_runs BEGIN INSERT INTO media_run_writes(run_id) VALUES(NEW.id); END`,
 		`CREATE TRIGGER reject_media_task BEFORE INSERT ON media_organize_tasks WHEN NEW.file_id='reject' BEGIN SELECT RAISE(ABORT,'injected task write failure'); END`,
 	} {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
@@ -35,8 +39,14 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	var writes int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_run_writes`).Scan(&writes); err != nil || writes != 0 {
+		t.Fatal("相同批次不应重复写入", writes, err)
+	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_task_writes`).Scan(&writes); err != nil || writes != 0 {
 		t.Fatal("identical checkpoint rewrote completed task rows", writes, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_settings_writes`).Scan(&writes); err != nil || writes != 0 {
+		t.Fatal("相同检查点重写设置", writes, err)
 	}
 	changed := run
 	changed.Record = "new-run"
@@ -45,13 +55,19 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 	if err := s.SaveMediaOrganize(ctx, "new-rules", []MediaOrganizeRunRow{changed}, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_run_writes`).Scan(&writes); err != nil || writes != 1 {
+		t.Fatal("批次变化应只更新一次", writes, err)
+	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_task_writes`).Scan(&writes); err != nil || writes != 1 {
 		t.Fatal("checkpoint should write only the changed child", writes, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM media_settings_writes`).Scan(&writes); err != nil || writes != 1 {
+		t.Fatal("设置变化应只更新一次", writes, err)
 	}
 	bad := changed
 	bad.Record = "uncommitted-run"
 	bad.Tasks = append([]MediaOrganizeTaskRow{}, changed.Tasks...)
-	bad.Tasks = append(bad.Tasks, MediaOrganizeTaskRow{FileID: "reject", Group: "attention"})
+	bad.Tasks = append(bad.Tasks, MediaOrganizeTaskRow{FileID: "reject", Group: "failed"})
 	if err := s.SaveMediaOrganize(ctx, "uncommitted-rules", []MediaOrganizeRunRow{bad}, nil); err == nil {
 		t.Fatal("injected SQL failure must propagate")
 	}

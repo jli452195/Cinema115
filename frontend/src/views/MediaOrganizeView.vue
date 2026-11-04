@@ -44,13 +44,13 @@ function realtimeLabel(rule: MediaRule) {
   return '正在建立监听'
 }
 function intervalLabel(seconds: number) { return seconds >= 60 && seconds % 60 === 0 ? `${seconds / 60} 分钟` : `${seconds} 秒` }
-function attachmentCleanupLabel(rule: MediaRule) { return rule.attachmentCleanupEnabled === false ? '保留未匹配附件' : rule.attachmentGraceSeconds === 0 ? '未匹配附件复核后立即清理' : `未匹配附件宽限 ${intervalLabel(rule.attachmentGraceSeconds ?? 60)}` }
+function attachmentCleanupLabel(rule: MediaRule) { return rule.attachmentCleanupEnabled === false ? '保留未匹配附件' : rule.attachmentGraceSeconds === 0 ? '未匹配附件复核后立即清理' : `未匹配附件宽限 ${rule.attachmentGraceSeconds ?? 10} 秒` }
 function scheduledLabel(rule: MediaRule) { return rule.scheduleEnabled ? `定时扫描 · 每 ${intervalLabel(rule.intervalSeconds)}` : '定时扫描已暂停' }
 function nextScanLabel(rule: MediaRule) {
   if (!rule.scheduleEnabled) return ''
   const next = rule.nextScanAt ? new Date(rule.nextScanAt) : undefined
-  if (!next || !Number.isFinite(next.getTime()) || next.getFullYear() <= 1) return activeRules.value.includes(rule.id) ? '完成后补扫一次' : '即将扫描'
-  if (next.getTime() <= Date.now()) return activeRules.value.includes(rule.id) ? '完成后补扫一次' : '等待扫描'
+  if (!next || !Number.isFinite(next.getTime()) || next.getFullYear() <= 1) return activeRules.value.includes(rule.id) ? '本轮结束后按设定间隔扫描' : '即将扫描'
+  if (next.getTime() <= Date.now()) return activeRules.value.includes(rule.id) ? '本轮结束后按设定间隔扫描' : '等待扫描'
   return `下次扫描 ${next.toLocaleTimeString([], { hour12: false })}`
 }
 function ruleBusy(id: string) { return !!pending.value[id] }
@@ -73,7 +73,7 @@ async function act(name: string, fn: () => Promise<void>, dialog = false, scope 
   finally { delete pending.value[scope]; poll() }
 }
 function edit(rule?: MediaRule) {
-  editor.value = rule ? { ...rule, attachmentCleanupEnabled: rule.attachmentCleanupEnabled ?? true, attachmentGraceSeconds: rule.attachmentGraceSeconds ?? 60 } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, realtimeEnabled: false, scheduleEnabled: false, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
+  editor.value = rule ? { ...rule, attachmentCleanupEnabled: rule.attachmentCleanupEnabled ?? true, attachmentGraceSeconds: rule.attachmentGraceSeconds ?? 10 } : { id: '', name: '', storage: 'local', source: '', target: '', classify: true, realtimeEnabled: false, scheduleEnabled: false, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 10 }
   if (editor.value.storage !== 'local') editor.value.deleteDuplicates ??= false
   editorSnapshot.value = ruleSignature(editor.value); dialogError.value = ''
 }
@@ -129,7 +129,7 @@ async function save() {
   await act('save', async () => {
     const saved = await request<MediaRule>('/rules', { method: 'POST', body: JSON.stringify(current) })
     stateGeneration++; rules.value = rules.value.some(item => item.id === saved.id) ? rules.value.map(item => item.id === saved.id ? saved : item) : [...rules.value, saved]
-    editor.value = undefined; notice.value = '整理配置已保存，后续任务使用新配置'; await refresh()
+    editor.value = undefined; notice.value = '整理配置已保存，后续任务使用新配置'; void refresh()
   }, true, current.id || 'editor')
 }
 async function toggleAutomatic(rule: MediaRule, field: 'realtimeEnabled' | 'scheduleEnabled') {
@@ -144,14 +144,15 @@ async function toggleAutomatic(rule: MediaRule, field: 'realtimeEnabled' | 'sche
     }
     const kind = field === 'realtimeEnabled' ? '实时监控' : '定时扫描'
     notice.value = saved[field] ? `已启用${saved.name}的${kind}` : `已暂停${saved.name}的${kind}${activeRules.value.includes(saved.id) ? '，正在执行的批次会继续完成' : ''}`
-    await refresh()
+    void refresh()
   }, false, rule.id)
 }
 async function runNow(rule: MediaRule) {
   await act('run', async () => {
-    await request(`/rules/${rule.id}/run`, { method: 'POST' }); stateGeneration++
+    const run = await request<{ status: string }>(`/rules/${rule.id}/run`, { method: 'POST' }); stateGeneration++
     active.value = true; activeRules.value = [...new Set([...activeRules.value, rule.id])]
-    notice.value = '已提交，可在整理记录中查看进度与结果'; await refresh()
+    notice.value = run.status === 'queued' ? `${rule.name}已按手动任务排队，等待当前批次完成；可在整理记录中查看进度` : run.status === 'scanning' ? `${rule.name}正在识别，继续执行现有批次；可在整理记录中查看进度` : run.status === 'running' ? `${rule.name}正在整理，继续执行现有批次；可在整理记录中查看进度` : `${rule.name}已提交，可在整理记录中查看进度与结果`
+    void refresh()
   }, false, rule.id)
 }
 async function remove() {
@@ -207,7 +208,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
             <footer class="mo-rule-actions" :class="{ 'has-realtime': rule.storage === 'local' }">
               <button v-if="rule.storage === 'local'" class="mo-button mo-rule-toggle" :class="{ 'is-start': !rule.realtimeEnabled }" :disabled="ruleBusy(rule.id)" :aria-label="`${rule.realtimeEnabled ? '暂停' : '启用'}${rule.name}的实时监控`" @click="toggleAutomatic(rule, 'realtimeEnabled')"><component :is="rule.realtimeEnabled ? IconPlayerPause : IconPlayerPlay" :size="16" aria-hidden="true" />{{ pending[rule.id] === 'realtimeEnabled' ? '保存中…' : rule.realtimeEnabled ? '暂停实时' : '启用实时' }}</button>
               <button class="mo-button mo-rule-toggle" :class="{ 'is-start': !rule.scheduleEnabled }" :disabled="ruleBusy(rule.id)" :aria-label="`${rule.scheduleEnabled ? '暂停' : '启用'}${rule.name}的定时扫描`" @click="toggleAutomatic(rule, 'scheduleEnabled')"><component :is="rule.scheduleEnabled ? IconPlayerPause : IconPlayerPlay" :size="16" aria-hidden="true" />{{ pending[rule.id] === 'scheduleEnabled' ? '保存中…' : rule.scheduleEnabled ? '暂停定时' : '启用定时' }}</button>
-              <button class="mo-button mo-rule-scan" :disabled="ruleBusy(rule.id) || activeRules.includes(rule.id)" @click="runNow(rule)"><IconPlayerPlay :size="16" aria-hidden="true" />{{ activeRules.includes(rule.id) ? '运行中…' : pending[rule.id] === 'run' ? '提交中…' : '立即运行' }}</button>
+              <button class="mo-button mo-rule-scan" :disabled="ruleBusy(rule.id)" @click="runNow(rule)"><IconPlayerPlay :size="16" aria-hidden="true" />{{ pending[rule.id] === 'run' ? '提交中…' : '立即运行' }}</button>
             </footer>
           </article>
         </div>
@@ -234,7 +235,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
           </div>
           <div class="mo-attachment-line">
             <SettingSwitch v-model="editor.attachmentCleanupEnabled" label="清理未匹配附件" :disabled="!!busy" />
-            <DurationInput v-model="editor.attachmentGraceSeconds" label="附件宽限" caption="宽限" :minimum="0" :initial-unit="editor.id ? undefined : 'seconds'" :disabled="!!busy || !editor.attachmentCleanupEnabled" />
+            <label>附件宽限（秒）<input v-model.number="editor.attachmentGraceSeconds" aria-label="附件宽限" type="number" min="0" max="86400" step="1" required :disabled="!!busy || !editor.attachmentCleanupEnabled" /></label>
           </div>
         </div>
         <p class="mo-muted">启用定时扫描后先扫描一次，到期合并补扫。暂停只停止后续触发，当前批次继续完成。{{ editor.storage === 'local' ? '实时监控与定时扫描分别控制。' : '' }}</p>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 
@@ -35,13 +36,12 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 		}
 		directory := queue[0]
 		queue = queue[1:]
-		if visited[directory] {
-			continue
+		if !mediaCloudWithin(run.Rule.Source, directory) {
+			return fmt.Errorf("CD2 扫描目录不在来源范围内：%s", directory)
 		}
-		if !mediaCloudWithin(run.Rule.Source, directory) || len(visited) >= 300 || strings.Count(strings.TrimPrefix(directory, run.Rule.Source), "/") > 12 {
-			return fmt.Errorf("CD2 扫描范围过大，请缩小来源目录")
+		if err := mediaVisitScanDirectory(visited, directory, directory, strings.Count(strings.TrimPrefix(directory, run.Rule.Source), "/")); err != nil {
+			return fmt.Errorf("扫描 CD2 目录: %w", err)
 		}
-		visited[directory] = true
 		files.cd2ScanPath, files.cd2Shallow = directory, true
 		files.unrelated, files.directories = nil, nil
 		entries, err := files.scan(ctx)
@@ -55,13 +55,14 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 		if fileCount > 5000 {
 			return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
 		}
+		if err := mediaCheckScanDirectoryCount(len(visited)+len(queue)+len(files.directories), directory); err != nil {
+			return fmt.Errorf("扫描 CD2 目录: %w", err)
+		}
 		for _, child := range files.directories {
 			queue = append(queue, child.File.ID)
 		}
 		directories = append(directories, files.directories...)
 		allCandidates = append(allCandidates, files.localCandidates...)
-		maps.Copy(allSettling, files.settlingVideos)
-		maps.Copy(allPending, files.localPending)
 		immediate := make([]MediaOrganizeEntry, 0, len(entries))
 		for _, entry := range entries {
 			if entry.File.MediaType == "attachment" {
@@ -76,6 +77,8 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 		if err := s.processMediaBatch(ctx, files, run, immediate, true); err != nil {
 			return err
 		}
+		maps.Copy(allSettling, files.settlingVideos)
+		maps.Copy(allPending, files.localPending)
 		unrelated = append(unrelated, files.unrelated...)
 	}
 	files.unrelated, files.directories = unrelated, directories
@@ -135,11 +138,11 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 	refs := make([]reference, 0)
 	s.mu.Lock()
 	for _, old := range s.doc.Runs {
-		if old.ID == run.ID || old.Rule.ID != run.Rule.ID || old.Rule.ConnectionID != run.Rule.ConnectionID || old.Rule.ConnectionRevision != run.Rule.ConnectionRevision || old.Rule.Source != run.Rule.Source || old.Rule.Target != run.Rule.Target {
+		if old.ID == run.ID || old.Rule.ID != run.Rule.ID || old.Rule.Storage != "cd2" || old.Rule.ConnectionID != run.Rule.ConnectionID || old.Rule.ConnectionRevision != run.Rule.ConnectionRevision || old.Rule.Source != run.Rule.Source || old.Rule.Target != run.Rule.Target {
 			continue
 		}
 		for _, entry := range old.Entries {
-			if entry.CD2Reference || entry.File.MediaType != "video" || entry.Status != "done" || entry.Relative == "" || present[entry.File.ID] || !wanted[entry.File.ParentID] && !slices.ContainsFunc(scopes, func(scope string) bool { return mediaAttachmentInScope(entry.File, scope) }) {
+			if entry.File.MediaType != "video" || entry.Status != "done" || entry.Relative == "" || present[entry.File.ID] || !wanted[entry.File.ParentID] && !slices.ContainsFunc(scopes, func(scope string) bool { return mediaAttachmentInScope(entry.File, scope) }) {
 				continue
 			}
 			present[entry.File.ID] = true
@@ -168,6 +171,9 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 		}
 	}
 	for _, ref := range refs {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		entry := ref.entry
 		if !required[entry.File.ID] {
 			continue
@@ -179,9 +185,20 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 		if err != nil {
 			continue
 		}
+		if current := entry.CD2Current; current != nil && path.Clean(current.Path) == current.Path &&
+			path.Dir(current.Path) == path.Dir(full) && strings.EqualFold(path.Base(current.Path), path.Base(full)) {
+			full = current.Path
+		}
 		actual, err := files.cd2.Stat(ctx, full, true)
+		if errors.Is(err, clouddrive2.ErrNotFound) {
+			continue
+		}
 		if err != nil {
-			return fmt.Errorf("晚到附件对应目标无法确认，已保留来源: %w", err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			mediaRetainReferenceSidecars(files, entries, owners, entry.File.ID, "晚到附件对应目标无法确认，已保留来源："+err.Error())
+			continue
 		}
 		expectedID := entry.CD2FileID
 		if entry.CD2Current != nil {
@@ -189,11 +206,13 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 			entry.Modified = entry.CD2Current.Modified
 		}
 		if actual.Directory || !(mediaCD2Matches(entry, actual, expectedID) || entry.CD2Duplicate && mediaCD2SameSHA1(entry, actual)) {
-			return fmt.Errorf("晚到附件对应目标身份已变化，已保留来源")
+			continue
 		}
 		ref.group.ID = fmt.Sprintf("reference-%d", len(run.Groups)+1)
+		ref.group.ResultCode = ""
 		run.Groups = append(run.Groups, ref.group)
-		entry.Group, entry.CD2Reference, entry.Result, entry.Failure = ref.group.ID, true, nil, nil
+		entry.Group, entry.Reference, entry.Result, entry.Failure = ref.group.ID, true, nil, nil
+		entry.AttachmentKeep = nil
 		run.Entries = append(run.Entries, entry)
 	}
 	return nil

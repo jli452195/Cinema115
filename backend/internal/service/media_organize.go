@@ -17,6 +17,7 @@ import (
 
 var ErrMediaOrganizeInput = errors.New("整理参数无效")
 var ErrMediaOrganizeBusy = errors.New("整理任务正在处理，请稍后重试")
+var ErrMediaOrganizeTaskNotFound = fmt.Errorf("%w：整理任务记录已移除", ErrMediaOrganizeInput)
 var errMediaTargetExists = errors.New("目标已存在，不覆盖")
 var errMediaDuplicateDone = errors.New("已删除 SHA1 相同的来源重复文件")
 
@@ -45,50 +46,57 @@ type MediaOrganizeRule struct {
 }
 
 type MediaOrganizeEntry struct {
-	File         OrganizeFile          `json:"file"`
-	Modified     int64                 `json:"modified,omitempty"`
-	CD2FileID    string                `json:"cd2FileId,omitempty"`
-	CD2Hashes    map[uint32]string     `json:"cd2Hashes,omitempty"`
-	CD2Current   *MediaCD2Location     `json:"cd2Current,omitempty"`
-	CD2Reference bool                  `json:"cd2Reference,omitempty"`
-	CD2Duplicate bool                  `json:"cd2Duplicate,omitempty"`
-	Group        string                `json:"group"`
-	VideoID      string                `json:"videoId,omitempty"`
-	Relative     string                `json:"relative,omitempty"`
-	Target       string                `json:"target,omitempty"`
-	Status       string                `json:"status"`
-	Message      string                `json:"message,omitempty"`
-	Result       *MediaOrganizeResult  `json:"result,omitempty"`
-	Failure      *MediaOrganizeFailure `json:"failure,omitempty"`
-	P115Move     *Media115MoveIntent   `json:"p115Move,omitempty"`
+	File           OrganizeFile               `json:"file"`
+	Modified       int64                      `json:"modified,omitempty"`
+	CD2FileID      string                     `json:"cd2FileId,omitempty"`
+	CD2Hashes      map[uint32]string          `json:"cd2Hashes,omitempty"`
+	CD2Current     *MediaCD2Location          `json:"cd2Current,omitempty"`
+	Reference      bool                       `json:"reference,omitempty"`
+	CD2Duplicate   bool                       `json:"cd2Duplicate,omitempty"`
+	Group          string                     `json:"group"`
+	VideoID        string                     `json:"videoId,omitempty"`
+	Relative       string                     `json:"relative,omitempty"`
+	Target         string                     `json:"target,omitempty"`
+	Status         string                     `json:"status"`
+	Message        string                     `json:"message,omitempty"`
+	Result         *MediaOrganizeResult       `json:"result,omitempty"`
+	Failure        *MediaOrganizeFailure      `json:"failure,omitempty"`
+	P115Move       *Media115MoveIntent        `json:"p115Move,omitempty"`
+	UpdatedAt      time.Time                  `json:"updatedAt,omitempty"`
+	ResultCode     string                     `json:"resultCode,omitempty"`
+	AttachmentKeep *MediaAttachmentKeepIntent `json:"-"`
 }
 
 type MediaOrganizeGroup struct {
-	ID       string              `json:"id"`
-	Identity mediafacts.Identity `json:"identity"`
-	Kind     string              `json:"kind,omitempty"`
-	TMDBID   int                 `json:"tmdbId,omitempty"`
-	Title    string              `json:"title,omitempty"`
-	Category string              `json:"category,omitempty"`
-	Message  string              `json:"message,omitempty"`
+	ID            string              `json:"id"`
+	Identity      mediafacts.Identity `json:"identity"`
+	Kind          string              `json:"kind,omitempty"`
+	TMDBID        int                 `json:"tmdbId,omitempty"`
+	Title         string              `json:"title,omitempty"`
+	Year          string              `json:"year,omitempty"`
+	Category      string              `json:"category,omitempty"`
+	Message       string              `json:"message,omitempty"`
+	MatchedSeason *int                `json:"matchedSeason,omitempty"`
+	ResultCode    string              `json:"resultCode,omitempty"`
 }
 
 type MediaOrganizeRun struct {
-	ID             string                 `json:"id"`
-	Trigger        string                 `json:"trigger,omitempty"`
-	Rule           MediaOrganizeRule      `json:"rule"`
-	Classification ClassificationSnapshot `json:"classification"`
-	Status         string                 `json:"status"`
-	Message        string                 `json:"message,omitempty"`
-	CreatedAt      time.Time              `json:"createdAt"`
-	UpdatedAt      time.Time              `json:"updatedAt"`
-	Groups         []MediaOrganizeGroup   `json:"groups"`
-	Entries        []MediaOrganizeEntry   `json:"entries"`
-	ReadyCount     int                    `json:"readyCount"`
-	FailureCount   int                    `json:"failureCount"`
-	TaskFileID     string                 `json:"taskFileId,omitempty"`
-	streaming      bool
-	processing     map[string]bool
+	ID                 string                 `json:"id"`
+	Trigger            string                 `json:"trigger,omitempty"`
+	Rule               MediaOrganizeRule      `json:"rule"`
+	Classification     ClassificationSnapshot `json:"classification"`
+	Status             string                 `json:"status"`
+	Message            string                 `json:"message,omitempty"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	UpdatedAt          time.Time              `json:"updatedAt"`
+	Groups             []MediaOrganizeGroup   `json:"groups"`
+	Entries            []MediaOrganizeEntry   `json:"entries"`
+	TaskFileID         string                 `json:"taskFileId,omitempty"`
+	RecognitionVersion string                 `json:"recognitionVersion,omitempty"`
+	streaming          bool
+	processing         map[string]bool
+	seenTasks          map[string]bool
+	recognitionEvents  []mediaRecognitionLogEvent
 }
 
 // Restore only this batch's rules, never the current global configuration.
@@ -123,6 +131,7 @@ type mediaOrganizeDocument struct {
 // MediaOrganizer has its own state and worker; it never updates anime tasks.
 // Only immutable naming facts and the provider's directory reservation are shared.
 type MediaOrganizer struct {
+	Logs           *GenerationLogs
 	mu             sync.Mutex
 	db             mediaOrganizeStorage
 	doc            mediaOrganizeDocument
@@ -136,6 +145,7 @@ type MediaOrganizer struct {
 	active         string
 	persistErr     error
 	actions        map[string]string
+	inFlight       map[string]map[string]int
 	wake           chan struct{}
 	monitorWake    chan struct{}
 	monitorRunning bool
@@ -161,9 +171,16 @@ func (s *MediaOrganizer) persistMonitorRulesLocked(changed ...string) error {
 func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	*target = source
 	target.processing = nil
+	target.seenTasks = nil
+	target.recognitionEvents = nil
 	target.Groups = slices.Clone(source.Groups)
+	for i := range target.Groups {
+		target.Groups[i].MatchedSeason = mediaOptionalNumber(source.Groups[i].MatchedSeason)
+	}
 	target.Entries = slices.Clone(source.Entries)
 	for i := range target.Entries {
+		target.Entries[i].File.filenameFacts = nil
+		target.Entries[i].AttachmentKeep = cloneMediaAttachmentKeep(source.Entries[i].AttachmentKeep)
 		target.Entries[i].File.NamingValues = maps.Clone(source.Entries[i].File.NamingValues)
 		target.Entries[i].CD2Hashes = maps.Clone(source.Entries[i].CD2Hashes)
 		if source.Entries[i].CD2Current != nil {
@@ -324,7 +341,10 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 		return rule, err
 	}
 	for _, id := range changed {
-		delete(s.actions, id)
+		s.removeActionLocked(id)
+	}
+	if local := s.localMonitors[rule.ID]; local != nil && rule.RealtimeEnabled && len(changed) > 0 && mediaSameWatchRule(local.rule, rule) {
+		local.dirtyDue = s.localMonitorSettings().now()
 	}
 	s.notify()
 	return rule, nil
@@ -354,7 +374,7 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 				return err
 			}
 			for _, runID := range removed {
-				delete(s.actions, runID)
+				s.removeActionLocked(runID)
 			}
 			return nil
 		}
@@ -365,20 +385,6 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, r := range s.doc.Runs {
-		if r.Rule.ID == id && (r.Status == "queued" || r.Status == "scanning" || r.Status == "running") {
-			if r.Status == "queued" && s.active != r.ID && r.Trigger != "manual" {
-				r.Trigger = "manual"
-				s.doc.Runs[i].Trigger = "manual"
-				if err := s.persistLocked(r.ID); err != nil {
-					return MediaOrganizeRun{}, err
-				}
-			}
-			var copy MediaOrganizeRun
-			cloneMediaRun(r, &copy)
-			return copy, nil
-		}
-	}
 	for _, rule := range s.doc.Rules {
 		if rule.ID == id {
 			return s.queueScanLocked(rule)
@@ -392,6 +398,23 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 }
 
 func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigger string) (MediaOrganizeRun, error) {
+	for i, run := range s.doc.Runs {
+		if run.Rule.ID != rule.ID || run.TaskFileID != "" || !mediaRunActive(run.Status) && !s.busyRunLocked(run.ID) {
+			continue
+		}
+		if trigger == "manual" && run.Status == "queued" && run.ID != s.active && run.Trigger != "manual" {
+			run.Trigger, run.UpdatedAt = "manual", s.localMonitorSettings().now()
+			s.doc.Runs[i] = run
+			if err := s.persistLocked(run.ID); err != nil {
+				return MediaOrganizeRun{}, err
+			}
+			s.enqueueActionLocked(run.ID, "auto")
+			s.notify()
+		}
+		var snapshot MediaOrganizeRun
+		cloneMediaRun(run, &snapshot)
+		return snapshot, nil
+	}
 	var classification ClassificationSnapshot
 	if rule.Classify {
 		if s.classification == nil {
@@ -407,15 +430,28 @@ func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigge
 	if err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, Status: "queued", CreatedAt: time.Now(), UpdatedAt: time.Now(), Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	now := s.localMonitorSettings().now()
+	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, RecognitionVersion: MediaRecognitionPolicyVersion, Status: "queued", CreatedAt: now, UpdatedAt: now, Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	// Keep at most the latest empty diagnostic for each rule. Actual media
-	// tasks persist until explicitly deleted and never block later scans.
+	// 下一轮只保留失败和成功视频的只读映射，清除上一轮的临时展示数据。
 	removed := []string{}
+	for i := range s.doc.Runs {
+		old := &s.doc.Runs[i]
+		if old.Rule.ID == rule.ID && !mediaRunActive(old.Status) && !s.busyRunLocked(old.ID) &&
+			slices.ContainsFunc(old.Entries, func(entry MediaOrganizeEntry) bool {
+				return entry.File.MediaType == "video" && entry.Status == "done" && !entry.Reference
+			}) {
+			*old = mediaPersistentRun(*old)
+			removed = append(removed, old.ID)
+		}
+	}
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
-		if old.Rule.ID != rule.ID || mediaRunActive(old.Status) || old.ID == s.active {
+		if old.Rule.ID != rule.ID {
+			return false
+		}
+		if mediaRunActive(old.Status) || old.ID == s.active {
 			return false
 		}
 		for _, entry := range old.Entries {
@@ -427,19 +463,15 @@ func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigge
 		return true
 	})
 	s.doc.Runs = append([]MediaOrganizeRun{r}, s.doc.Runs...)
-	for i := range s.doc.Rules {
-		if s.doc.Rules[i].ID == rule.ID {
-			now := s.localMonitorSettings().now()
-			s.doc.Rules[i].LastScan = now
-			if trigger == "schedule" {
-				s.doc.Rules[i].NextScanAt = now.Add(time.Duration(rule.IntervalSeconds) * time.Second)
-			}
-		}
-	}
+	slices.Sort(removed)
+	removed = slices.Compact(removed)
 	if err := s.persistLocked(append(removed, id)...); err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	s.actions[id] = "auto"
+	for _, removedID := range removed {
+		s.removeActionLocked(removedID)
+	}
+	s.enqueueActionLocked(id, "auto")
 	s.notify()
 	return r, nil
 }
@@ -454,12 +486,50 @@ func (s *MediaOrganizer) notify() {
 func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	r.recognitionEvents = nil
+	defer func() { r.recognitionEvents = nil }()
 	r.UpdatedAt = time.Now()
-	mediaRunCounts(r)
 	for i := range s.doc.Runs {
 		if s.doc.Runs[i].ID == r.ID {
-			cloneMediaRun(*r, &s.doc.Runs[i])
-			return s.persistLocked(r.ID)
+			published := mediaPublishRun(r, s.doc.Runs[i])
+			mediaCheckpointResults(&published, s.doc.Runs[i])
+			resolved := published
+			resolved.Entries = nil
+			previousDone := make(map[string]bool)
+			for _, entry := range s.doc.Runs[i].Entries {
+				if entry.Status == "done" {
+					previousDone[entry.File.ID] = true
+				}
+			}
+			for _, entry := range published.Entries {
+				if entry.File.MediaType == "video" && entry.Status == "done" && !entry.Reference && !previousDone[entry.File.ID] {
+					resolved.Entries = append(resolved.Entries, entry)
+				}
+			}
+			cloneMediaRun(published, &s.doc.Runs[i])
+			changed := append([]string{r.ID}, mediaForgetResolvedFailures(&s.doc, resolved, s.busyRunLocked)...)
+			if err := s.persistLocked(changed...); err != nil {
+				return err
+			}
+			if r.seenTasks == nil {
+				r.seenTasks = make(map[string]bool)
+			}
+			for id := range mediaVideoIDs(published) {
+				r.seenTasks[id] = true
+			}
+			updated := make(map[string]time.Time, len(published.Entries))
+			for _, entry := range published.Entries {
+				updated[entry.File.ID] = entry.UpdatedAt
+			}
+			for j := range r.Entries {
+				if at, ok := updated[r.Entries[j].File.ID]; ok {
+					r.Entries[j].UpdatedAt = at
+				}
+			}
+			for _, event := range published.recognitionEvents {
+				s.Logs.appendRecognition(r.Rule.Name, event.level, event.message, event.details)
+			}
+			return nil
 		}
 	}
 	return ErrMediaOrganizeInput
@@ -502,46 +572,109 @@ func (s *MediaOrganizer) Run(ctx context.Context) error {
 				s.mu.Unlock()
 				return err
 			}
-			var id, action string
-			var run MediaOrganizeRun
 			if s.active != "" {
 				s.mu.Unlock()
 				break
 			}
-			for key, value := range s.actions {
-				id, action = key, value
+			run, action, found := s.takeQueuedRunLocked()
+			s.mu.Unlock()
+			if !found {
 				break
 			}
-			if id != "" {
-				delete(s.actions, id)
-				s.active = id
-				for _, r := range s.doc.Runs {
-					if r.ID == id {
-						cloneMediaRun(r, &run)
-						break
-					}
-				}
+			if err := s.processQueuedRun(ctx, run, action); err != nil {
+				return err
 			}
-			s.mu.Unlock()
-			if id == "" {
-				break
-			}
-			work, cancel := context.WithTimeout(ctx, 2*time.Hour)
-			err := s.process(work, &run, action)
-			cancel()
-			if err != nil {
-				s.retryLocalScan(run.Rule, err)
-				run.Status = "failed"
-				run.Message = err.Error()
-				if saveErr := s.checkpoint(&run); saveErr != nil {
-					return saveErr
-				}
-			}
-			s.mu.Lock()
-			s.active = ""
-			s.mu.Unlock()
 		}
 	}
+}
+
+// 入队顺序仅用于当前工作线程，任务提交成功后才登记，避免持久化回滚留下幽灵动作。
+func (s *MediaOrganizer) enqueueActionLocked(id, action string) {
+	if s.actions == nil {
+		s.actions = make(map[string]string)
+	}
+	s.actions[id] = action
+}
+
+func (s *MediaOrganizer) removeActionLocked(id string) {
+	delete(s.actions, id)
+}
+
+func mediaActionPriority(action string, run MediaOrganizeRun) int {
+	if action == "retry" {
+		return 0
+	}
+	if run.Trigger == "manual" {
+		return 1
+	}
+	return 2
+}
+
+func (s *MediaOrganizer) takeQueuedRunLocked() (MediaOrganizeRun, string, bool) {
+	selected := -1
+	for i, run := range s.doc.Runs {
+		if s.actions[run.ID] == "" {
+			continue
+		}
+		if selected < 0 || mediaActionBefore(run, s.actions[run.ID], s.doc.Runs[selected], s.actions[s.doc.Runs[selected].ID]) {
+			selected = i
+		}
+	}
+	if selected < 0 {
+		return MediaOrganizeRun{}, "", false
+	}
+	var snapshot MediaOrganizeRun
+	cloneMediaRun(s.doc.Runs[selected], &snapshot)
+	snapshot.seenTasks = mediaVideoIDs(snapshot)
+	action := s.actions[snapshot.ID]
+	s.removeActionLocked(snapshot.ID)
+	s.active = snapshot.ID
+	return snapshot, action, true
+}
+
+func mediaActionBefore(a MediaOrganizeRun, actionA string, b MediaOrganizeRun, actionB string) bool {
+	if priorityA, priorityB := mediaActionPriority(actionA, a), mediaActionPriority(actionB, b); priorityA != priorityB {
+		return priorityA < priorityB
+	}
+	if !a.UpdatedAt.Equal(b.UpdatedAt) {
+		return a.UpdatedAt.Before(b.UpdatedAt)
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID < b.ID
+}
+
+// 所有退出路径都释放当前批次，包括错误结果检查点或调度持久化失败。
+func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganizeRun, action string) error {
+	defer func() {
+		s.mu.Lock()
+		if s.active == run.ID {
+			s.active = ""
+		}
+		delete(s.inFlight, run.ID)
+		for i := range s.doc.Runs {
+			if s.doc.Runs[i].ID == run.ID {
+				s.doc.Runs[i] = mediaPersistentRun(s.doc.Runs[i])
+				break
+			}
+		}
+		s.mu.Unlock()
+	}()
+	work, cancel := context.WithTimeout(ctx, 2*time.Hour)
+	err := s.process(work, &run, action)
+	cancel()
+	if err != nil {
+		s.retryLocalScan(run.Rule, err)
+		run.Status, run.Message = "failed", err.Error()
+		if saveErr := s.checkpoint(&run); saveErr != nil {
+			return saveErr
+		}
+	}
+	if action == "auto" {
+		return s.finishScanRound(run)
+	}
+	return nil
 }
 
 func mediaWithin(root, child string) bool {

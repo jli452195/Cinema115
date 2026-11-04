@@ -115,6 +115,13 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 			t.Fatal("manual preview/execute deleted unrelated file", name, err)
 		}
 	}
+	videoRunID := run.ID
+	var videoTarget string
+	for _, entry := range run.Entries {
+		if entry.File.MediaType == "video" {
+			videoTarget = entry.Target
+		}
+	}
 	run, _ = s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
 	cleanup := mediaRunCleanup(run)
@@ -135,8 +142,19 @@ func TestMediaOrganizerAttachmentsAndAutoCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state := mediaTestState(restarted, 1); state.History.Total != 1 || len(state.Cleanup) != 1 || state.History.Items[0].AttachmentCount != 4 {
-		t.Fatal("task aggregation or durable cleanup summary lost", state)
+	if state := mediaTestState(restarted, 1); state.History.Total != 1 || state.History.Counts["done"] != 1 || len(state.Cleanup) != 0 {
+		t.Fatal("成功视频应保留，文件快照不保存附件执行记录", state)
+	}
+	reference, err := restarted.Snapshot(videoRunID)
+	if err != nil || len(reference.Entries) != 1 {
+		t.Fatal("成功后应仅保留视频映射，不保存附件执行记录", reference, err)
+	}
+	video := reference.Entries[0]
+	if !video.Reference || video.Status != "done" || video.Result == nil || video.Result.Status != "done" || video.Result.At.IsZero() || video.File.ID != "Work.S01E01.mkv" || videoTarget == "" || video.Target != videoTarget {
+		t.Fatal("成功视频应保留位置映射与精简完成结果", video)
+	}
+	if task, err := restarted.Task(videoRunID, video.File.ID); err != nil || task.Status != "done" || !task.At.Equal(video.Result.At) {
+		t.Fatal("成功详情应可查询且保持完成时间", task, err)
 	}
 }
 
@@ -279,6 +297,10 @@ func (d *mediaCleanupDrive) DeleteEntries(ctx context.Context, ids []string, coo
 	return d.cleanupFakeDrive.DeleteEntries(ctx, ids, cookie)
 }
 
+func (d *mediaCleanupDrive) DeleteEntriesBatch(ctx context.Context, _ string, ids []string, cookie string) error {
+	return d.DeleteEntries(ctx, ids, cookie)
+}
+
 func newMediaCleanupCloud(t *testing.T) (*MediaOrganizer, *mediaCleanupDrive, MediaOrganizeRule) {
 	t.Helper()
 	manual, fake, accountID, _ := newOrganizeTest(t)
@@ -320,8 +342,8 @@ func TestMediaOrganizerCloudCleanupBatchingAndFrozenCredentials(t *testing.T) {
 	if err := s.cleanup(context.Background(), f, &run); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.batches) != 3 || len(d.batches[0]) != 100 || len(d.batches[2]) != 5 || len(d.deleted) != 205 || d.listCalls["10"] != 2 {
-		t.Fatal("expected one rescan per parent and batched deletes", len(d.deleted), d.batches, d.listCalls)
+	if len(d.batches) != 5 || len(d.batches[0]) != 50 || len(d.batches[4]) != 5 || len(d.deleted) != 205 || d.listCalls["10"] != 7 {
+		t.Fatal("应按 50 项真批量删除，每批共用一次结果核验", len(d.deleted), d.batches, d.listCalls)
 	}
 	if len(d.dirs["10"]) != 1 || d.dirs["10"][0].ID != "800" || len(d.dirs["20"]) != 1 {
 		t.Fatal("cleanup escaped its exact unrelated file snapshots", d.dirs)
@@ -360,11 +382,14 @@ func TestMediaOrganizerCloudCleanupStopsOnTimeoutAndChangedParent(t *testing.T) 
 				}
 				return
 			}
+			if scenario == "timeout" {
+				if err != nil || !slices.Contains(d.deleted, "500") || !slices.Contains(d.deleted, "501") || slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return entry.Status != "done" }) {
+					t.Fatal("超时后已确认删除的文件应完成，并继续独立目录", run, d.deleted, err)
+				}
+				return
+			}
 			if err == nil || slices.Contains(d.deleted, "501") {
 				t.Fatal("subsequent cleanup must stop on provider uncertainty", d.deleted, err)
-			}
-			if scenario == "timeout" && (len(run.Entries) != 1 || run.Entries[0].Status == "done") {
-				t.Fatal("timed-out deletion incorrectly reported success", run)
 			}
 			if scenario == "moved parent" && len(d.deleted) != 0 {
 				t.Fatal("moved source parent was deleted", d.deleted)
@@ -569,7 +594,7 @@ func TestMediaOrganizerCloudOrphanAttachments(t *testing.T) {
 	}
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	if len(d.deleted) != 4 || len(d.batches) != 1 || d.listCalls["10"] != 2 {
+	if len(d.deleted) != 4 || len(d.batches) != 1 || d.listCalls["10"] != 3 {
 		t.Fatal("orphan sidecars must share one recheck and deletion batch", d.deleted, d.batches, d.listCalls)
 	}
 	for _, e := range run.Entries {

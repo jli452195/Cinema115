@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	"strm115/backend/internal/client/clouddrive2"
 )
@@ -25,28 +26,26 @@ func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrga
 		if err := s.cd2AddReferences(batchCtx, files, run, entries); err != nil {
 			return err
 		}
+	} else if run.Rule.Storage == "115" {
+		if err := s.add115References(batchCtx, files, run, entries); err != nil {
+			return err
+		}
+	}
+	retained := make(map[string]string)
+	for _, entry := range entries {
+		if mediaSidecar(entry) && entry.Status == "retained" {
+			retained[entry.File.ID] = entry.Message
+		}
 	}
 	mediaAppendScanEntries(run, entries)
-	oldGroups := run.Groups
-	run.Groups = make([]MediaOrganizeGroup, 0, len(oldGroups))
-	for _, group := range oldGroups {
+	groups := make([]int, 0, len(run.Groups))
+	for i, group := range run.Groups {
 		if !files.recognized[group.ID] {
-			run.Groups = append(run.Groups, group)
+			groups = append(groups, i)
 			files.recognized[group.ID] = true
 		}
 	}
-	err := s.recognize(batchCtx, run)
-	updated := make(map[string]MediaOrganizeGroup, len(run.Groups))
-	for _, group := range run.Groups {
-		updated[group.ID] = group
-	}
-	run.Groups = oldGroups
-	for i, group := range run.Groups {
-		if current, ok := updated[group.ID]; ok {
-			run.Groups[i] = current
-		}
-	}
-	if err != nil {
+	if err := s.recognize(batchCtx, run, groups); err != nil {
 		return err
 	}
 	if err := s.render(batchCtx, files, run); err != nil {
@@ -58,5 +57,29 @@ func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrga
 			return err
 		}
 	}
+	// 部分历史目标核验失败时，共享附件不能被其余成功引用重新激活。
+	for i := range run.Entries {
+		entry := &run.Entries[i]
+		if message, keep := retained[entry.File.ID]; keep {
+			entry.Status, entry.Message = "retained", message
+			entry.Group, entry.VideoID, entry.Relative, entry.Target, entry.ResultCode = "", "", "", "", ""
+			entry.Result = nil
+		}
+	}
 	return s.execute(batchCtx, files, run)
+}
+
+// 历史目标读取异常只保护相关附件，不扩大为整个目录。
+func mediaRetainReferenceSidecars(files *mediaOrganizeFiles, entries []MediaOrganizeEntry, owners map[string][]string, videoID, message string) {
+	for i := range entries {
+		entry := &entries[i]
+		if !mediaSidecar(*entry) || !slices.Contains(owners[entry.File.ID], videoID) {
+			continue
+		}
+		entry.Status, entry.Message = "retained", message
+		if files.localPending == nil {
+			files.localPending = make(map[string]bool)
+		}
+		files.localPending[entry.File.ID] = true
+	}
 }

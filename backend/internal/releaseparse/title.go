@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-const ParserVersion int64 = 10
+const ParserVersion int64 = 11
 
 var ErrInput = errors.New("invalid release parser input")
 
@@ -35,6 +35,7 @@ var (
 	dashedEpisode  = regexp.MustCompile(`(?:^|[\s|：:])-\s*(` + expression + `)`)
 	bareEpisode    = regexp.MustCompile(`(?:^|[\s_])(` + expression + `)`)
 	seasonMetadata = regexp.MustCompile(`(?i)SEASON\s*[0-9]{1,3}`)
+	audioMetadata  = regexp.MustCompile(`(?i)(?:HE[ ._-]?AAC|AAC|DDP|DD\+|DD|E[ ._-]?AC[ ._-]?3|AC[ ._-]?3|DTS(?:[ ._-]?(?:HD|MA|X))*|TRUE[ ._-]?HD|FLAC|OPUS|L?PCM|MP3)(?:[ ._-]+ATMOS)?[ ._-]*[1-9]\.[01](?:\.[2468])?`)
 	// More than one numbering system in a title needs confirmation, even when
 	// one of them looks like a perfectly ordinary standalone bracket number.
 	ordinalEpisode = regexp.MustCompile(`(?i)[0-9]{1,2}(?:st|nd|rd|th)\s*-\s*(` + expression + `)`)
@@ -90,6 +91,7 @@ func Title(title string) (Result, error) {
 			metadataSpans = append(metadataSpans, span)
 		}
 	}
+	audioSpans := audioMetadata.FindAllStringIndex(title, -1)
 	candidates := make([]candidate, 0, 8)
 	add := func(start, end int, kind string, strong bool) {
 		if start < 0 || end <= start {
@@ -97,6 +99,12 @@ func Title(title string) (Result, error) {
 		}
 		for _, span := range metadataSpans {
 			if start < span[1] && end > span[0] {
+				return
+			}
+		}
+		// 只排除完整音频字段内的声道数字，跨过字段的连集及其后的其他编号仍须校验。
+		for _, span := range audioSpans {
+			if start >= span[0] && end <= span[1] && leftBoundary(title, span[0]) && rightBoundary(title, span[1]) {
 				return
 			}
 		}

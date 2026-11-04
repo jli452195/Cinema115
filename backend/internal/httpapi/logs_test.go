@@ -94,6 +94,23 @@ func TestLogsEmbyModule(t *testing.T) {
 	}
 }
 
+func TestLogsMediaOrganizeModule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	logs := &service.GenerationLogs{}
+	logs.Append("整理", "demo-run:1:1", "临时整理", "INFO", "作品匹配完成")
+	logs.Append("STRM", "other", "其他任务", "INFO", "完成")
+	RegisterLogs(router.Group("/api/admin"), logs)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest("GET", "/api/admin/logs?module=整理&level=ALL", nil))
+	var body struct {
+		Entries []service.GenerationLog `json:"entries"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &body) != nil || len(body.Entries) != 1 || body.Entries[0].TaskID != "demo-run:1:1" {
+		t.Fatal("整理模块应支持独立筛选并保留追踪号", response.Body.String())
+	}
+}
+
 func TestLogsEmby302Module(t *testing.T) {
 	logs := &service.GenerationLogs{}
 	proxy := service.NewEmbyProxyLogs(logs)

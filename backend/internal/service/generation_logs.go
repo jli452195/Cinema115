@@ -16,14 +16,15 @@ import (
 const GenerationLogCapacity = 2000
 
 type GenerationLog struct {
-	ID      uint64           `json:"id"`
-	Time    time.Time        `json:"time"`
-	Level   string           `json:"level"`
-	Module  string           `json:"module"`
-	TaskID  string           `json:"taskID"`
-	Source  string           `json:"source"`
-	Message string           `json:"message"`
-	Details *ProxyLogDetails `json:"details,omitempty"`
+	ID          uint64                      `json:"id"`
+	Time        time.Time                   `json:"time"`
+	Level       string                      `json:"level"`
+	Module      string                      `json:"module"`
+	TaskID      string                      `json:"taskID"`
+	Source      string                      `json:"source"`
+	Message     string                      `json:"message"`
+	Details     *ProxyLogDetails            `json:"details,omitempty"`
+	Recognition *MediaRecognitionLogDetails `json:"recognition,omitempty"`
 }
 
 // GenerationLogs 使用固定容量环形缓冲区，允许记录分享链接，不记录登录凭证。
@@ -62,6 +63,18 @@ func (s *GenerationLogs) Append(module, task, source, level, message string) {
 }
 
 func (s *GenerationLogs) appendDetails(module, task, source, level, message string, details *ProxyLogDetails) {
+	s.appendEvent(module, task, source, level, message, details, nil)
+}
+
+func (s *GenerationLogs) appendRecognition(source, level, message string, details MediaRecognitionLogDetails) {
+	task := details.RunID
+	if details.FileID != "" {
+		task += ":" + details.FileID
+	}
+	s.appendEvent("整理", task, persistentLogText(source), level, persistentLogText(message), nil, &details)
+}
+
+func (s *GenerationLogs) appendEvent(module, task, source, level, message string, details *ProxyLogDetails, recognition *MediaRecognitionLogDetails) {
 	if s == nil {
 		return
 	}
@@ -77,9 +90,16 @@ func (s *GenerationLogs) appendDetails(module, task, source, level, message stri
 		details = &copy
 		boundGenerationLogDetails(details)
 	}
+	if recognition != nil {
+		copy := cloneMediaRecognitionLogDetails(*recognition)
+		recognition = &copy
+		for _, value := range []*string{&recognition.RunID, &recognition.GroupID, &recognition.FileID, &recognition.Name, &recognition.SourcePath, &recognition.TargetPath, &recognition.WorkKey, &recognition.ResultCode, &recognition.Status} {
+			*value = boundedLogText(persistentLogText(*value), 1024)
+		}
+	}
 	s.mu.Lock()
 	s.sequence++
-	entry := GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message, Details: details}
+	entry := GenerationLog{ID: s.sequence, Time: time.Now().UTC(), Level: level, Module: module, TaskID: task, Source: source, Message: message, Details: details, Recognition: recognition}
 	s.entries[s.next] = entry
 	s.next = (s.next + 1) % len(s.entries)
 	if s.size < len(s.entries) {
@@ -126,6 +146,10 @@ func (s *GenerationLogs) Read(level, module string, after uint64, incremental bo
 		if entry.Details != nil {
 			copy := *entry.Details
 			entry.Details = &copy
+		}
+		if entry.Recognition != nil {
+			copy := cloneMediaRecognitionLogDetails(*entry.Recognition)
+			entry.Recognition = &copy
 		}
 		result = append(result, entry)
 	}

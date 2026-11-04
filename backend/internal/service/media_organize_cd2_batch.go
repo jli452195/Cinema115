@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"strings"
 	"time"
@@ -35,6 +36,11 @@ func (s *MediaOrganizer) executeCD2Batches(ctx context.Context, files *mediaOrga
 			}
 			if entry.VideoID != "" && !done[entry.VideoID] {
 				mediaCD2SetResult(entry, fmt.Errorf("对应视频尚未整理成功，关联文件保留来源"))
+				entry.ResultCode = "WAITING_MAIN_FILE"
+				continue
+			}
+			mediaClearMainFileWaiting(entry)
+			if entry.AttachmentKeep != nil {
 				continue
 			}
 			key := path.Dir(entry.Relative)
@@ -67,12 +73,19 @@ func (s *MediaOrganizer) executeCD2Batch(ctx context.Context, files *mediaOrgani
 	}
 	// 零散单文件直接处理，省去只对多文件有收益的分组预检。
 	if len(indices) == 1 {
-		entry := &run.Entries[indices[0]]
-		mediaCD2SetResult(entry, files.move(ctx, *entry))
-		if err := s.checkpoint(run); err != nil {
-			return err
+		return s.executeCD2SingleEntry(ctx, files, run, indices[0])
+	}
+	indices, releaseEntries := s.beginMediaEntries(run, indices)
+	if len(indices) == 0 {
+		return nil
+	}
+	defer func() {
+		if releaseEntries != nil {
+			releaseEntries()
 		}
-		return ctx.Err()
+	}()
+	for _, index := range indices {
+		mediaClearMainFileWaiting(&run.Entries[index])
 	}
 	first := run.Entries[indices[0]]
 	destination, err := files.cd2Destination(ctx, first.Relative, true)
@@ -80,7 +93,10 @@ func (s *MediaOrganizer) executeCD2Batch(ctx context.Context, files *mediaOrgani
 		for _, index := range indices {
 			mediaCD2SetResult(&run.Entries[index], err)
 		}
-		return s.checkpoint(run)
+		if err := s.checkpoint(run); err != nil {
+			return err
+		}
+		return ctx.Err()
 	}
 	targets, err := files.cd2.List(ctx, path.Dir(destination), true)
 	if err != nil {
@@ -195,16 +211,34 @@ func (s *MediaOrganizer) executeCD2Batch(ctx context.Context, files *mediaOrgani
 	if err := s.checkpoint(run); err != nil {
 		return err
 	}
+	// 批量操作已结束，回退单项只保护各自所属视频。
+	releaseEntries()
+	releaseEntries = nil
 	for _, index := range singles {
-		if err := ctx.Err(); err != nil {
+		if err := s.executeCD2SingleEntry(ctx, files, run, index); err != nil {
 			return err
 		}
-		entry := &run.Entries[index]
-		err := files.move(ctx, *entry)
-		mediaCD2SetResult(entry, err)
-		if err := s.checkpoint(run); err != nil {
-			return err
-		}
+	}
+	return ctx.Err()
+}
+
+func (s *MediaOrganizer) executeCD2SingleEntry(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, index int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entry := &run.Entries[index]
+	if mediaSidecar(*entry) {
+		return s.executeMediaEntry(ctx, files, run, index)
+	}
+	indices, releaseEntry := s.beginMediaEntries(run, []int{index})
+	if len(indices) == 0 {
+		return nil
+	}
+	defer releaseEntry()
+	mediaClearMainFileWaiting(entry)
+	mediaCD2SetResult(entry, files.move(ctx, *entry))
+	if err := s.checkpoint(run); err != nil {
+		return err
 	}
 	return ctx.Err()
 }
@@ -257,6 +291,18 @@ func mediaCD2BatchMatches(entry MediaOrganizeEntry, current clouddrive2.File) bo
 	return entry.Modified != 0 && !current.Modified.IsZero() && entry.Modified == current.Modified.UnixNano() && mediaCD2Matches(entry, current, current.ID)
 }
 
+// 已核实的去重目标可与旧来源有不同身份和大小，成功结果复用现有实际位置字段。
+func mediaCD2ApplyDuplicateReceipt(entry *MediaOrganizeEntry, err error) {
+	var receipt *mediaDuplicateReceipt
+	if !errors.As(err, &receipt) || receipt.cd2 == nil {
+		return
+	}
+	current := *receipt.cd2
+	entry.File.Size = current.Size
+	entry.CD2Hashes = maps.Clone(current.Hashes)
+	mediaCD2SetLocation(entry, current)
+}
+
 func mediaCD2SetResult(entry *MediaOrganizeEntry, err error) {
 	entry.Status, entry.Message = "done", ""
 	if err != nil && !errors.Is(err, errMediaDuplicateDone) {
@@ -265,7 +311,9 @@ func mediaCD2SetResult(entry *MediaOrganizeEntry, err error) {
 			entry.Status = "conflict"
 		}
 	} else {
+		mediaCD2ApplyDuplicateReceipt(entry, err)
 		entry.Failure = nil
+		mediaClearMainFileWaiting(entry)
 	}
 	entry.Result = &MediaOrganizeResult{Status: entry.Status, Message: entry.Message, At: time.Now(), Target: entry.Target}
 	if errors.Is(err, errMediaDuplicateDone) {

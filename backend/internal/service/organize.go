@@ -44,14 +44,15 @@ type OrganizeConfig struct {
 
 type OrganizeFile struct {
 	p115.ShareFile
-	TitleOnly    bool                    `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
-	ParentID     string                  `json:"parentId"`
-	SourcePath   string                  `json:"sourcePath"`
-	MediaType    string                  `json:"mediaType"`
-	Season       int                     `json:"season"`
-	Episode      int                     `json:"episode"`
-	EndEpisode   int                     `json:"endEpisode,omitempty"`
-	NamingValues map[naming.Field]string `json:"namingValues,omitempty"`
+	TitleOnly     bool                    `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
+	ParentID      string                  `json:"parentId"`
+	SourcePath    string                  `json:"sourcePath"`
+	MediaType     string                  `json:"mediaType"`
+	Season        int                     `json:"season"`
+	Episode       int                     `json:"episode"`
+	EndEpisode    int                     `json:"endEpisode,omitempty"`
+	NamingValues  map[naming.Field]string `json:"namingValues,omitempty"`
+	filenameFacts *mediafacts.FilenameFacts
 }
 
 type OrganizeScan struct {

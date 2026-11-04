@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -74,8 +75,12 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	}
 	request("GET", "/history?status=unknown", "", 400)
 	request("DELETE", "/history", `{}`, 400)
-	request("DELETE", "/history", `{"completed":true,"items":[{"runId":"x","fileId":"y"}]}`, 400)
-	request("DELETE", "/history", `{"completed":true}`, 200)
+	request("DELETE", "/history", `{"status":"done","items":[{"runId":"x","fileId":"y"}]}`, 400)
+	for _, status := range []string{"all", "running", "unknown"} {
+		request("DELETE", "/history", `{"status":"`+status+`"}`, 400)
+	}
+	request("DELETE", "/history", `{"status":"done"}`, 200)
+	request("DELETE", "/history", `{"status":"failed"}`, 200)
 	var lightweight map[string]json.RawMessage
 	if err := json.Unmarshal(request("GET", "", "", 200).Body.Bytes(), &lightweight); err != nil || lightweight["history"] != nil {
 		t.Fatal("settings endpoint must not load record history", err)
@@ -137,7 +142,7 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		until := time.Now().Add(3 * time.Second)
 		for time.Now().Before(until) {
 			snapshot, err := s.Snapshot(run.ID)
-			if err == nil && snapshot.Status == status {
+			if err == nil && snapshot.Status == status && !s.State().Active {
 				run = snapshot
 				return
 			}
@@ -146,42 +151,82 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 		t.Fatal("task did not reach", status)
 	}
 	wait("completed")
-	if run.Groups[0].Category != "电影/其他电影" || run.Classification.Revision == "" || !strings.HasPrefix(run.Entries[0].Relative, "电影/其他电影/") {
+	if len(run.Groups) != 1 || run.Groups[0].Category != "电影/其他电影" || run.Groups[0].Kind != "movie" || run.Groups[0].TMDBID != 42 || len(run.Entries) != 1 || !strings.HasPrefix(run.Entries[0].Relative, "电影/其他电影/") {
 		t.Fatal("API worker did not use the configured classification", run)
 	}
-	data, err := os.ReadFile(filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative)))
+	organized := filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative))
+	if entry := run.Entries[0]; !entry.Reference || entry.Status != "done" || entry.Result == nil || entry.Result.Status != "done" || entry.Result.At.IsZero() || filepath.Clean(entry.Target) != filepath.Clean(organized) {
+		t.Fatal("成功后应保留实际完成结果及真实分类目标的精简引用", entry)
+	}
+	successfulRunID, completedAt := run.ID, run.Entries[0].Result.At
+	data, err := os.ReadFile(organized)
 	if err != nil || string(data) != body {
 		t.Fatal("file contents changed", err)
 	}
-	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200)
+	if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("成功整理后来源仍存在", err)
+	}
+	var completed service.MediaOrganizeTask
+	if err := json.Unmarshal(request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200).Body.Bytes(), &completed); err != nil || completed.Status != "done" || !completed.At.Equal(completedAt) || len(completed.Entries) != 1 || filepath.Clean(completed.Target) != filepath.Clean(organized) {
+		t.Fatal("成功历史详情应可查询且保留原完成时间和目标", completed, err)
+	}
+	request("GET", "/runs/"+run.ID+"/task?fileId=", "", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{\"fileId\":\"Work.2024.strm\",\"season\":-1}", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{}", 400)
 	readState("?page=99")
-	if state.Page != 1 || state.Total != 1 || state.Items[0].Status != "done" || state.Items[0].Target == "" {
-		t.Fatal("executed file missing from history", state)
-	}
-	until := time.Now().Add(3 * time.Second)
-	for s.State().Active && time.Now().Before(until) {
-		time.Sleep(time.Millisecond)
+	if state.Page != 1 || state.Total != 1 || state.Counts["done"] != 1 || len(state.Items) != 1 || !state.Items[0].At.Equal(completedAt) || state.Items[0].RunID != successfulRunID {
+		t.Fatal("本轮结束后成功历史应继续可查询，并保持实际完成时间", state)
 	}
 	readState("?q=work&status=done")
-	if state.Total != 1 || state.Counts["done"] != 1 || !state.Items[0].CanDelete {
-		t.Fatal("history filtering or delete permission missing", state)
+	if state.Total != 1 || state.Counts["done"] != 1 || len(state.Items) != 1 || state.Items[0].RunID != successfulRunID {
+		t.Fatal("成功历史应支持搜索和筛选", state)
 	}
-	selection := service.MediaOrganizeDelete{Items: []service.MediaOrganizeDeleteItem{{RunID: run.ID, FileID: "Work.2024.strm"}}}
-	raw, _ = json.Marshal(selection)
-	response = request("DELETE", "/history", string(raw), 200)
+	// 重新放回同名来源，验证真实目标冲突、失败历史及删除不影响文件。
+	const conflictingBody = "http://unmodified.invalid/conflicting-strm"
+	if err := os.WriteFile(file, []byte(conflictingBody), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(file, old, old); err != nil {
+		t.Fatal(err)
+	}
+	response = request("POST", "/rules/"+rule.ID+"/run", "", 202)
+	if err := json.Unmarshal(response.Body.Bytes(), &run); err != nil {
+		t.Fatal(err)
+	}
+	wait("partial")
+	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 200)
+	readState("?page=99&q=work&status=failed")
+	if state.Page != 1 || state.Total != 1 || state.Counts["failed"] != 1 || state.Counts["done"] != 1 || state.Items[0].Status != "failed" || !state.Items[0].CanDelete {
+		t.Fatal("失败历史筛选或空闲任务删除权限错误", state)
+	}
+	failedFile := filepath.Join(rule.Failure, "Work.2024.strm")
+	if data, err := os.ReadFile(failedFile); err != nil || string(data) != conflictingBody {
+		t.Fatal("冲突来源应保留原内容进入失败目录", err)
+	}
+	response = request("DELETE", "/history", `{"status":"failed"}`, 200)
 	if !strings.Contains(response.Body.String(), `"deleted":1`) {
 		t.Fatal("single task deletion did not report count", response.Body.String())
 	}
 	readState("")
-	if state.Total != 0 {
-		t.Fatal("deleted task is still visible", state)
+	if state.Total != 1 || state.Counts["failed"] != 0 || state.Counts["done"] != 1 || len(state.Items) != 1 || state.Items[0].RunID != successfulRunID || !state.Items[0].At.Equal(completedAt) {
+		t.Fatal("删除失败记录不能删除或改写此前的成功历史", state)
 	}
-	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 400)
-	data, err = os.ReadFile(filepath.Join(target, filepath.FromSlash(run.Entries[0].Relative)))
+	request("GET", "/runs/"+run.ID+"/task?fileId=Work.2024.strm", "", 404)
+	response = request("DELETE", "/history", `{"status":"done"}`, 200)
+	if !strings.Contains(response.Body.String(), `"deleted":1`) {
+		t.Fatal("清理全部成功应准确删除成功历史", response.Body.String())
+	}
+	readState("")
+	if state.Total != 0 || state.Counts["done"] != 0 || state.Counts["failed"] != 0 {
+		t.Fatal("手动清理后成功历史仍然存在", state)
+	}
+	request("GET", "/runs/"+successfulRunID+"/task?fileId=Work.2024.strm", "", 404)
+	data, err = os.ReadFile(organized)
 	if err != nil || string(data) != body {
 		t.Fatal("record deletion changed the organized file", err)
+	}
+	if data, err := os.ReadFile(failedFile); err != nil || string(data) != conflictingBody {
+		t.Fatal("删除失败历史不得删除或修改失败目录中的文件", err)
 	}
 	request("DELETE", "/rules/"+rule.ID, "", 200)
 }
@@ -340,19 +385,25 @@ func TestMediaOrganizeAttachmentGraceAPI(t *testing.T) {
 		return w
 	}
 	source, target := t.TempDir(), t.TempDir()
+	var ruleID string
 	for _, test := range []struct {
 		value       any
 		enabled     any
 		want        int
 		wantEnabled bool
 	}{
-		{nil, nil, 60, true},
+		{nil, nil, 10, true},
 		{0, true, 0, true},
+		{1200, true, 1200, true},
+		{10, true, 10, true},
 		{37, false, 37, false},
 		{86400, true, 86400, true},
-		{nil, false, 60, false},
+		{nil, false, 10, false},
 	} {
 		body := map[string]any{"name": "附件宽限", "storage": "local", "source": source, "target": target, "intervalSeconds": 20}
+		if ruleID != "" {
+			body["id"] = ruleID
+		}
 		if test.value != nil {
 			body["attachmentGraceSeconds"] = test.value
 		}
@@ -370,8 +421,17 @@ func TestMediaOrganizeAttachmentGraceAPI(t *testing.T) {
 		if saved.AttachmentGraceSeconds != test.want || saved.AttachmentCleanupEnabled != test.wantEnabled {
 			t.Fatal("附件清理默认值、关闭状态或明确的零值未保留", saved)
 		}
+		ruleID = saved.ID
 		if err := json.Unmarshal(request("/rules/"+saved.ID+"/schedule", `{"realtimeEnabled":false,"scheduleEnabled":false,"intervalSeconds":31}`, http.StatusOK).Body.Bytes(), &saved); err != nil || saved.AttachmentGraceSeconds != test.want || saved.AttachmentCleanupEnabled != test.wantEnabled {
 			t.Fatal("独立开关接口不应改动附件清理设置", saved, err)
+		}
+		reopened, err := service.OpenMediaOrganizerSQLite(ctx, store, t.TempDir(), "test-secret", nil, nil, nil, nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded := reopened.State().Rules
+		if len(loaded) != 1 || loaded[0].ID != ruleID || loaded[0].AttachmentGraceSeconds != test.want || loaded[0].AttachmentCleanupEnabled != test.wantEnabled {
+			t.Fatal("SQLite 重新加载后必须保持明确保存的秒数和开关", loaded)
 		}
 	}
 	for _, value := range []any{-1, 86401, 0.5, "20"} {
@@ -383,7 +443,7 @@ func TestMediaOrganizeAttachmentGraceAPI(t *testing.T) {
 		request("/rules", string(raw), http.StatusBadRequest)
 	}
 	request("/rules", `{"name":"无效开关","storage":"local","source":"source","target":"target","intervalSeconds":20,"attachmentCleanupEnabled":"false"}`, http.StatusBadRequest)
-	if len(s.State().Rules) != 5 {
+	if len(s.State().Rules) != 1 {
 		t.Fatal("无效宽限不应创建规则", s.State().Rules)
 	}
 }
