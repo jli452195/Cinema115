@@ -68,6 +68,9 @@ func (s *MediaOrganizer) executeCD2Batches(ctx context.Context, files *mediaOrga
 }
 
 func (s *MediaOrganizer) executeCD2Batch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, bulk clouddrive2.BatchFilesystem, indices []int) error {
+	if err := s.checkOrganizeStop(run); err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}

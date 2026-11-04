@@ -32,7 +32,7 @@ func (f *mediaOrganizeFiles) cd2RemainingDirectoryChildren(run *MediaOrganizeRun
 		remaining[directory] = maps.Clone(children)
 	}
 	for _, entry := range run.Entries {
-		if entry.File.Directory || entry.Reference {
+		if entry.Reference {
 			continue
 		}
 		removed := entry.Status == "done" || entry.Failure != nil && entry.Failure.State == "stored"

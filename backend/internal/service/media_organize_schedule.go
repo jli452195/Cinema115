@@ -14,7 +14,7 @@ type MediaOrganizeSchedule struct {
 }
 
 func mediaValidateSchedule(storage string, settings MediaOrganizeSchedule) error {
-	if settings.IntervalSeconds < 1 || settings.IntervalSeconds > 86400 || settings.RealtimeEnabled && storage != "local" {
+	if settings.IntervalSeconds < 1 || settings.IntervalSeconds > 86400 || storage == "cd2" && settings.RealtimeEnabled {
 		return ErrMediaOrganizeInput
 	}
 	return nil
@@ -53,6 +53,13 @@ func (s *MediaOrganizer) updateScheduleLocked(id string, settings MediaOrganizeS
 		if old.ID != id {
 			continue
 		}
+		if settings.RealtimeEnabled || settings.ScheduleEnabled {
+			for _, run := range s.doc.Runs {
+				if run.Rule.ID == id && s.stopping[run.ID] {
+					return old, ErrMediaOrganizeBusy
+				}
+			}
+		}
 		if err := mediaValidateSchedule(old.Storage, settings); err != nil {
 			return old, err
 		}
@@ -70,6 +77,9 @@ func (s *MediaOrganizer) updateScheduleLocked(id string, settings MediaOrganizeS
 			rule.NextScanAt = time.Time{}
 		}
 		s.doc.Rules[i] = rule
+		if cloud := s.cloudMonitors[id]; cloud != nil && old.RealtimeEnabled != rule.RealtimeEnabled {
+			cloud.initialized = false
+		}
 		if err := s.persistMonitorRulesLocked(removed...); err != nil {
 			return old, err
 		}
@@ -150,11 +160,24 @@ func (s *MediaOrganizer) schedule() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.localMonitorSettings().now()
+	s.refreshCloudMonitorsLocked(now)
 	for _, rule := range s.doc.Rules {
 		if s.rulePendingLocked(rule.ID) {
 			continue
 		}
 		scheduled := rule.ScheduleEnabled && (rule.NextScanAt.IsZero() || !rule.NextScanAt.After(now))
+		if !scheduled && rule.Storage != "local" {
+			queued, err := s.queueCloudChangesLocked(rule, now)
+			if errors.Is(err, ErrMediaOrganizeBusy) || errors.Is(err, ErrClassificationUnavailable) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if queued {
+				continue
+			}
+		}
 		local := s.localMonitors[rule.ID]
 		realtime := false
 		if rule.Storage == "local" && local != nil && mediaSameWatchRule(local.rule, rule) && local.initialized {
@@ -173,6 +196,12 @@ func (s *MediaOrganizer) schedule() error {
 				continue
 			}
 			return err
+		}
+		if scheduled {
+			if cloud := s.cloudMonitors[rule.ID]; cloud != nil {
+				clear(cloud.pending)
+				cloud.full, cloud.first, cloud.due = false, time.Time{}, time.Time{}
+			}
 		}
 		if local == nil {
 			continue

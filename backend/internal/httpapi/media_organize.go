@@ -127,6 +127,14 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		}
 		c.JSON(202, out)
 	})
+	g.POST("/rules/:id/stop", func(c *gin.Context) {
+		rule, err := s.Stop(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"rule": rule})
+	})
 	g.GET("/runs/:id/task", func(c *gin.Context) {
 		out, err := s.Task(c.Param("id"), c.Query("fileId"))
 		if err != nil {

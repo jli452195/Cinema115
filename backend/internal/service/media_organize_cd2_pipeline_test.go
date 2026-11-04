@@ -303,17 +303,17 @@ func TestMediaOrganizerCD2CompanionsArrivingBeforeVideoAreRetained(t *testing.T)
 	}
 }
 
-func TestMediaOrganizerCD2RetainedVideoNeverReactivatedByLaterBatch(t *testing.T) {
+func TestMediaOrganizerCD2LateSubtitleFollowsCompletedVideoNextRound(t *testing.T) {
 	s, _, _, connection, rule := newMediaCD2Organizer(t)
 	fs := connection.filesystem
 	first := fs.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
-	fs.add(path.Join(rule.Source, "later"), true, 0)
+	later := fs.add(path.Join(rule.Source, "later"), true, 0)
 	second := fs.add(path.Join(rule.Source, "later/Work.S01E02.mkv"), false, 123)
-	rootLists := 0
+	added := false
 	fs.onList = func(directory string) error {
-		if directory == rule.Source {
-			rootLists++
-			if rootLists == 2 {
+		if directory == later.Path {
+			if !added {
+				added = true
 				late := fs.add(path.Join(rule.Source, "Work.S01E01.ass"), false, 8)
 				late.Modified = time.Now()
 				fs.files[late.Path] = late
@@ -323,14 +323,14 @@ func TestMediaOrganizerCD2RetainedVideoNeverReactivatedByLaterBatch(t *testing.T
 	}
 	run, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &run, "auto")
-	if _, exists := fs.files[first.Path]; !exists {
-		t.Fatal("首目录因新到字幕保留的视频，不能在下一目录被重新激活", run.Entries)
+	if _, exists := fs.files[first.Path]; exists {
+		t.Fatal("首目录的视频应立即完成整理", run.Entries)
 	}
 	if _, exists := fs.files[second.Path]; exists {
 		t.Fatal("后续目录仍应正常整理", run.Entries)
 	}
-	if !slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.ID == first.Path && entry.Status == "retained" }) {
-		t.Fatal("首目录的保留状态被后续批次覆盖", run.Entries)
+	if !slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.ID == first.Path && entry.Status == "done" }) {
+		t.Fatal("晚到字幕不能改变视频成功状态", run.Entries)
 	}
 	next, err := s.Start(rule.ID)
 	if err != nil {
@@ -339,7 +339,7 @@ func TestMediaOrganizerCD2RetainedVideoNeverReactivatedByLaterBatch(t *testing.T
 	mediaTestProcess(t, s, &next, "auto")
 	for _, source := range []string{first.Path, path.Join(rule.Source, "Work.S01E01.ass")} {
 		if _, exists := fs.files[source]; exists || slices.Contains(fs.deleted, source) {
-			t.Fatal("下一轮应把视频与新到字幕一起移走，不能误删字幕", source, next.Entries, fs.deleted)
+			t.Fatal("下一轮应补齐新到字幕，不能误删字幕", source, next.Entries, fs.deleted)
 		}
 	}
 	if next.Status != "completed" || len(next.Entries) != 2 {

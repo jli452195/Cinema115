@@ -92,6 +92,9 @@ type mediaOrganizeFiles struct {
 	pending115           map[string]bool
 	pending115Dirs       map[string]bool
 	orphanDue            map[string]bool
+	cleanupScope         string
+	partialCleanup       bool
+	sourceVacated        bool
 	cloudEmpty           *media115EmptyState
 }
 
@@ -367,6 +370,7 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		f.localCandidates = make([]OrganizeFile, 0, 128)
 		f.settlingVideos = make(map[string]bool)
 		f.localPending = make(map[string]bool)
+		fileCount := 0
 		var directoryDrive media115DirectoryDrive
 		if f.shallow115 {
 			var supported bool
@@ -420,6 +424,10 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 						}
 					}
 				} else {
+					fileCount++
+					if fileCount > 5000 {
+						return fmt.Errorf("单次最多 5000 个文件：%s", path.Join(f.rule.Source, prefix))
+					}
 					relative := path.Join(prefix, file.Name)
 					candidate := OrganizeFile{ShareFile: file, ParentID: cid, SourcePath: relative, MediaType: mediaFileType(file.Name)}
 					if f.pending115[file.ID] {
@@ -442,9 +450,6 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 						f.localCandidates = append(f.localCandidates, candidate)
 					}
 					appendFile(file, cid, relative, 0)
-				}
-				if len(out)+len(f.unrelated) > 5000 {
-					return fmt.Errorf("单次最多 5000 个文件")
 				}
 			}
 			return nil

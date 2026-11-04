@@ -28,7 +28,7 @@ func TestMediaScanLimit115ReadsVideoAfterThreeHundredDirectories(t *testing.T) {
 	if err := s.process115Auto(context.Background(), files, run); err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != "completed" || len(run.Entries) != 1 || run.Entries[0].File.ID != "9001" || run.Entries[0].Status != "done" || run.Entries[0].File.Season != 1 || run.Entries[0].File.Episode != 1 || len(run.Groups) != 1 || run.Groups[0].TMDBID != 42 || media115PipelineHas(drive, last, "9001") {
+	if run.Status != "completed" || len(run.Entries) != 302 || run.Entries[0].File.ID != "9001" || run.Entries[0].Status != "done" || run.Entries[0].File.Season != 1 || run.Entries[0].File.Episode != 1 || len(run.Groups) != 1 || run.Groups[0].TMDBID != 42 || media115PipelineHas(drive, last, "9001") {
 		t.Fatal("超过旧目录上限后仍必须识别并移动末尾视频", run, drive.moves)
 	}
 	if len(s.Logs.Read("ALL", "整理", 0, false).Entries) != 0 {

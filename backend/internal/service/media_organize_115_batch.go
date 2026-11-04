@@ -90,6 +90,9 @@ func (s *MediaOrganizer) execute115Batches(ctx context.Context, files *mediaOrga
 }
 
 func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, drive media115DirectoryDrive, indices []int) (fallback []int, resultErr error) {
+	if err := s.checkOrganizeStop(run); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

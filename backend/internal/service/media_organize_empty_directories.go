@@ -32,8 +32,16 @@ func (s *MediaOrganizer) cleanupEmptyDirectories(ctx context.Context, files *med
 	for id, entry := range files.cleanupDirectories {
 		candidates[id] = entry
 	}
+	for _, entry := range run.Entries {
+		if entry.File.Directory && entry.Status == "done" {
+			delete(candidates, entry.File.ID)
+		}
+	}
 	ordered := make([]MediaOrganizeEntry, 0, len(candidates))
 	for _, entry := range candidates {
+		if !mediaInScope(entry.File.SourcePath, files.cleanupScope) {
+			continue
+		}
 		if !entry.File.Directory || entry.File.SourcePath == "" || entry.File.SourcePath == "." || path.IsAbs(entry.File.SourcePath) || path.Clean(entry.File.SourcePath) != entry.File.SourcePath || strings.HasPrefix(entry.File.SourcePath, "../") {
 			continue
 		}

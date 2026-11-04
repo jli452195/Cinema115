@@ -54,10 +54,11 @@ type MediaOrganizeCleanup struct {
 	At          time.Time `json:"at"`
 }
 type MediaOrganizeState struct {
-	Rules       []MediaOrganizeRule                   `json:"rules"`
-	Active      bool                                  `json:"active"`
-	ActiveRules []string                              `json:"activeRules"`
-	Monitoring  map[string]MediaOrganizeMonitorStatus `json:"monitoring"`
+	StoppingRules []string                              `json:"stoppingRules"`
+	Rules         []MediaOrganizeRule                   `json:"rules"`
+	Active        bool                                  `json:"active"`
+	ActiveRules   []string                              `json:"activeRules"`
+	Monitoring    map[string]MediaOrganizeMonitorStatus `json:"monitoring"`
 }
 type MediaOrganizeActivity struct {
 	RunID    string    `json:"runId"`
@@ -251,7 +252,15 @@ func (s *MediaOrganizer) State() MediaOrganizeState {
 			}
 		}
 	}
+	for id, cloud := range s.cloudMonitors {
+		if cloud.rule.Storage == "115" && cloud.rule.RealtimeEnabled {
+			state.Monitoring[id] = cloud.status
+		}
+	}
 	for _, run := range s.doc.Runs {
+		if s.stopping[run.ID] {
+			state.StoppingRules = append(state.StoppingRules, run.Rule.ID)
+		}
 		if mediaRunActive(run.Status) || s.busyRunLocked(run.ID) {
 			state.ActiveRules = append(state.ActiveRules, run.Rule.ID)
 		}

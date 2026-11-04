@@ -27,11 +27,12 @@ type DriveSTRMEventState struct {
 // Its watermark advances only after affected directory queues are durable;
 // scans may then run independently without holding up history discovery.
 type DriveSTRMEvents struct {
-	service *DriveSTRMService
-	client  DriveSTRMLifeClient
-	gate    chan struct{}
-	mu      sync.RWMutex
-	state   DriveSTRMEventState
+	Organizer *MediaOrganizer
+	service   *DriveSTRMService
+	client    DriveSTRMLifeClient
+	gate      chan struct{}
+	mu        sync.RWMutex
+	state     DriveSTRMEventState
 }
 
 func NewDriveSTRMEvents(service *DriveSTRMService, client DriveSTRMLifeClient) *DriveSTRMEvents {
@@ -54,6 +55,7 @@ func (r *DriveSTRMEvents) Check(ctx context.Context) error {
 	}
 	defer func() { <-r.gate }()
 	err := r.check(ctx)
+	r.Organizer.lifeEventStatus(err == nil)
 	r.mu.Lock()
 	r.state.LastCheckedAt = time.Now().UTC()
 	r.state.LastError = ""
@@ -86,6 +88,9 @@ func (r *DriveSTRMEvents) run(ctx context.Context, refresh time.Duration) {
 			return
 		}
 		settings, err := r.service.Store.GetDriveSTRMSettings(ctx)
+		if len(r.Organizer.event115Roots("")) > 0 && (settings.EventIntervalSeconds == 0 || settings.EventIntervalSeconds > 15) {
+			settings.EventIntervalSeconds = 15
+		}
 		if err == nil && driveSTRMEventDue(settings, lastAttempt, failures, time.Now()) {
 			pollCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 			err = r.Check(pollCtx)
@@ -136,6 +141,7 @@ func (r *DriveSTRMEvents) check(ctx context.Context) error {
 			roots = append(roots, value.SourceCID)
 		}
 	}
+	roots = append(roots, r.Organizer.event115Roots(accountID)...)
 	if len(roots) == 0 {
 		return nil
 	}
@@ -237,6 +243,9 @@ func (r *DriveSTRMEvents) check(ctx context.Context) error {
 			cids = append(cids, cid)
 		}
 		sort.Strings(cids)
+		if err := r.Organizer.notify115Directories(ctx, account.ID, cids); err != nil {
+			return err
+		}
 		if err := s.NotifyDirectories(ctx, account.ID, cids); err != nil {
 			return fmt.Errorf("保存目录 STRM 变更队列: %w", err)
 		}

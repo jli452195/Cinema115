@@ -454,7 +454,7 @@ func TestMediaOrganizerCD2RejectsOverlapReadOnlyAndChangedRevision(t *testing.T)
 	}
 }
 
-func TestMediaOrganizerCD2LateCompanionsAndTemporaryDownloadsStayTogether(t *testing.T) {
+func TestMediaOrganizerCD2LateCompanionsDoNotBlockScannedVideos(t *testing.T) {
 	for _, lateName := range []string{"Work.S01E01.nfo", "Work.S01E01.mkv.part"} {
 		t.Run(lateName, func(t *testing.T) {
 			s, _, _, connection, rule := newMediaCD2Organizer(t)
@@ -477,13 +477,17 @@ func TestMediaOrganizerCD2LateCompanionsAndTemporaryDownloadsStayTogether(t *tes
 			late.Modified = time.Now()
 			fs.files[late.Path] = late
 			run := MediaOrganizeRun{Rule: rule, Entries: entries}
+			listed := len(fs.listed)
 			if err := files.recheckLocalCompanions(context.Background(), &run); err != nil {
 				t.Fatal(err)
 			}
 			for _, entry := range run.Entries {
-				if entry.Status != "retained" || entry.Relative != "" {
-					t.Fatal("新附件或临时下载出现后应保留整组", entry)
+				if entry.Status != "ready" || entry.Relative == "" {
+					t.Fatal("晚到附件留待下一轮，不应阻塞已扫描视频", entry)
 				}
+			}
+			if len(fs.listed) != listed {
+				t.Fatal("CD2 不应为晚到附件重复扫描目录", fs.listed)
 			}
 		})
 	}

@@ -174,6 +174,52 @@ func TestMediaOrganizerEditingPreservesWatchAndRunningSnapshot(t *testing.T) {
 	}
 }
 
+func TestMediaOrganizerCD2PollingKeepsTwentySeconds(t *testing.T) {
+	s, _, _, _, rule := newMediaCD2Organizer(t)
+	s.doc.Rules = []MediaOrganizeRule{rule}
+	rule.IntervalSeconds = 0
+	saved, err := s.SaveRule(rule)
+	if err != nil || saved.IntervalSeconds != 20 || saved.RealtimeEnabled {
+		t.Fatal("CD2 默认应为二十秒轮询", saved, err)
+	}
+	if _, err := s.UpdateSchedule(context.Background(), rule.ID, MediaOrganizeSchedule{RealtimeEnabled: true, IntervalSeconds: 20}); !errors.Is(err, ErrMediaOrganizeInput) {
+		t.Fatal("CD2 不应接受事件订阅配置", err)
+	}
+	now := time.Now()
+	s.monitorOptions.now = func() time.Time { return now }
+	if _, err := s.UpdateSchedule(context.Background(), rule.ID, MediaOrganizeSchedule{ScheduleEnabled: true, IntervalSeconds: 20}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.schedule(); err != nil || len(s.actions) != 1 {
+		t.Fatal("启用轮询后应启动首轮扫描", err, s.actions)
+	}
+	run, action, found := s.takeQueuedRunLocked()
+	if !found {
+		t.Fatal("缺少轮询扫描")
+	}
+	if err := s.processQueuedRun(context.Background(), run, action); err != nil {
+		t.Fatal(err)
+	}
+	if !s.doc.Rules[0].NextScanAt.Equal(now.Add(20 * time.Second)) {
+		t.Fatal("应在本轮结束二十秒后再扫描", s.doc.Rules[0])
+	}
+	rows, err := s.db.LoadMediaOrganize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.decodeSQLite(rows); err != nil || s.doc.Rules[0].IntervalSeconds != 20 || s.doc.Rules[0].RealtimeEnabled {
+		t.Fatal("重新加载不能改变轮询间隔", s.doc.Rules, err)
+	}
+	now = now.Add(19 * time.Second)
+	if err := s.schedule(); err != nil || len(s.actions) != 0 {
+		t.Fatal("未到轮询周期不能重复扫描", err, s.actions)
+	}
+	now = now.Add(time.Second)
+	if err := s.schedule(); err != nil || len(s.actions) != 1 {
+		t.Fatal("二十秒到期应启动下一轮", err, s.actions)
+	}
+}
+
 func TestMediaOrganizerStoredIntervalsPreserved(t *testing.T) {
 	s, _, _, _ := newMediaOrganizeTest(t)
 	for _, raw := range []string{

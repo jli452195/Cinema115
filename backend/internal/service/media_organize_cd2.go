@@ -142,7 +142,9 @@ func mediaCD2ShareFile(file clouddrive2.File) p115.ShareFile {
 }
 
 func (f *mediaOrganizeFiles) scanCD2(ctx context.Context, appendFile func(p115.ShareFile, string, string, int64)) (map[string]bool, error) {
-	f.cd2Snapshots = make(map[string]clouddrive2.File)
+	if f.cd2Snapshots == nil || !f.cd2Shallow {
+		f.cd2Snapshots = make(map[string]clouddrive2.File)
+	}
 	f.settlingVideos = make(map[string]bool)
 	f.localCandidates = make([]OrganizeFile, 0, 128)
 	pending := make(map[string]bool)

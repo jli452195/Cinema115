@@ -103,21 +103,16 @@ func (f *mediaOrganizeFiles) holdLocalCompanions(entries []MediaOrganizeEntry, p
 	})
 }
 
-// Recognition may wait on external metadata. Re-list once before the batch
-// executes, so a newly arriving companion cannot be separated from its video.
-// This listing owns separate cleanup snapshots; the original scan remains the
-// only source of files that this run is allowed to remove.
+// 本地文件可能仍在写入，识别后复查一次；云端主文件由原生写入预检核验，晚到附件下一轮补齐。
+// 复查快照仅用于判断稳定性，清理仍以最初扫描记录为准。
 func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *MediaOrganizeRun) error {
-	if f.rule.Storage != "local" && f.rule.Storage != "cd2" || !slices.ContainsFunc(run.Entries, func(e MediaOrganizeEntry) bool {
+	if f.rule.Storage != "local" || !slices.ContainsFunc(run.Entries, func(e MediaOrganizeEntry) bool {
 		return e.File.MediaType == "video" && e.Relative != "" && (e.Status == "ready" || e.Status == "error")
 	}) {
 		return nil
 	}
-	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady, cd2: f.cd2, cd2ScanPath: f.cd2ScanPath, cd2Shallow: f.cd2Shallow}
+	current := &mediaOrganizeFiles{rule: f.rule, localReady: f.localReady}
 	if _, err := current.scan(ctx); err != nil {
-		if f.rule.Storage == "cd2" {
-			return err
-		}
 		return &mediaLocalScanError{err}
 	}
 	beforeOwners, currentOwners := mediaLocalCompanionOwners(f.localCandidates), mediaLocalCompanionOwners(current.localCandidates)
@@ -136,11 +131,6 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 			return true
 		}
 		x, y := f.localSnapshots[id], current.localSnapshots[id]
-		if f.rule.Storage == "cd2" {
-			a, before := f.cd2Snapshots[id]
-			b, after := current.cd2Snapshots[id]
-			return !before || !after || a.ID != b.ID || !a.Modified.Equal(b.Modified) || !slices.Equal(beforeOwners[id], currentOwners[id])
-		}
 		return x == nil || y == nil || !x.ModTime().Equal(y.ModTime()) || !slices.Equal(beforeOwners[id], currentOwners[id])
 	}
 	for _, files := range []map[string]OrganizeFile{before, after} {

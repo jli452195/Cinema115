@@ -89,6 +89,9 @@ func (f *mediaOrganizeFiles) ready115EmptyBranches() []MediaOrganizeEntry {
 			return empty[id]
 		}
 		checked[id] = true
+		if entry, exists := state.dirs[id]; exists && !mediaInScope(entry.File.SourcePath, f.cleanupScope) {
+			return false
+		}
 		items, known := state.children[id]
 		if !known || f.protected115Directory(id) || state.attempted[id] {
 			return false
@@ -122,6 +125,9 @@ func (f *mediaOrganizeFiles) ready115EmptyBranches() []MediaOrganizeEntry {
 
 // 即时清理失败不阻断其他媒体整理；本轮停止新的清理写入，收尾统一报告错误。
 func (s *MediaOrganizer) tryCleanup115EmptyDirectories(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) {
+	if s.checkOrganizeStop(run) != nil {
+		return
+	}
 	if files.cloudEmpty == nil || files.cloudEmpty.err != nil {
 		return
 	}
@@ -149,6 +155,9 @@ func (s *MediaOrganizer) cleanup115EmptyDirectories(ctx context.Context, files *
 	defer func() { state.proven = nil }()
 	for {
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := s.checkOrganizeStop(run); err != nil {
 			return err
 		}
 		ready := files.ready115EmptyBranches()

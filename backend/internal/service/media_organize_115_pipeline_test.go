@@ -101,11 +101,11 @@ func TestMedia115PipelineMovesCompleteDirectoryBeforeReadingChildren(t *testing.
 	if err := s.process115Auto(context.Background(), files, run); err != nil {
 		t.Fatal(err)
 	}
-	if !checked || run.Status != "completed" || len(run.Entries) != 3 || files.cloudEmpty == nil || !files.cloudEmpty.complete {
+	if !checked || run.Status != "completed" || len(run.Entries) != 4 || files.cloudEmpty == nil || !files.cloudEmpty.complete {
 		t.Fatal("逐目录流水线结果不完整", checked, run.Status, run.Entries)
 	}
 	for _, entry := range run.Entries {
-		if entry.Status != "done" || entry.Relative == "" {
+		if entry.Status != "done" || entry.File.MediaType != "cleanup" && entry.Relative == "" {
 			t.Fatal("完整目录中的媒体未完成整理", entry)
 		}
 	}
@@ -192,7 +192,7 @@ func TestMedia115PipelineSharedAttachmentsWaitAndUseEarlierVideo(t *testing.T) {
 	if err := s.process115Auto(context.Background(), files, run); err != nil {
 		t.Fatal(err)
 	}
-	if run.Status != "completed" || len(run.Entries) != 4 || len(drive.deleted) != 0 {
+	if run.Status != "completed" || len(run.Entries) != 5 || !slices.Equal(drive.deleted, []string{"30"}) {
 		t.Fatal("共享附件未完整跟随本轮已移动的视频", run.Entries, drive.deleted)
 	}
 	for _, entry := range run.Entries {
@@ -271,12 +271,12 @@ func TestMedia115PipelineSharedPosterIncludesLaterDifferentWork(t *testing.T) {
 	if err := s.process115Auto(context.Background(), files, run); err != nil {
 		t.Fatal(err)
 	}
-	if !media115PipelineHas(drive, "10", "502") || len(drive.deleted) != 0 || len(run.Entries) != 3 {
-		t.Fatal("来源含不同作品时共享海报必须保留", run.Entries, drive.deleted)
+	if media115PipelineHas(drive, "10", "502") || !slices.Contains(drive.deleted, "502") || len(run.Entries) != 4 {
+		t.Fatal("视频全部离开来源后应清理无法归属的海报", run.Entries, drive.deleted)
 	}
 	for _, entry := range run.Entries {
 		if entry.File.ID == "502" {
-			if entry.Status != "retained" || entry.VideoID != "" || entry.Target != "" || entry.Relative != "" {
+			if entry.Status != "done" || entry.VideoID != "" || entry.Target != "" || entry.Relative != "" {
 				t.Fatal("共享海报不能提前归属第一个视频", entry)
 			}
 		} else if entry.Status != "done" {

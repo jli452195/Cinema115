@@ -14,6 +14,9 @@ func mediaClearMainFileWaiting(entry *MediaOrganizeEntry) {
 
 // 单项执行与批量回退共用相同的字幕依赖、预约和结果检查点。
 func (s *MediaOrganizer) executeMediaEntry(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, index int) error {
+	if err := s.checkOrganizeStop(run); err != nil {
+		return err
+	}
 	e := &run.Entries[index]
 	if !mediaInRunTask(run, *e) || e.Status != "ready" && e.Status != "error" || e.Relative == "" {
 		return nil

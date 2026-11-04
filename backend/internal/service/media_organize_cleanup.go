@@ -163,6 +163,9 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 		parents[e.File.ParentID] = append(parents[e.File.ParentID], e)
 	}
 	for _, parent := range order {
+		if err := s.checkOrganizeStop(run); err != nil {
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}

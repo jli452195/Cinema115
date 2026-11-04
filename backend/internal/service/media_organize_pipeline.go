@@ -9,6 +9,9 @@ import (
 
 // 存储共用识别与命名缓存，文件定位和写入仍交给各自的原生入口。
 func (s *MediaOrganizer) processMediaBatch(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry, recheck bool) error {
+	if err := s.checkOrganizeStop(run); err != nil {
+		return err
+	}
 	if len(entries) == 0 {
 		return nil
 	}

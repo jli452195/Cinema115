@@ -42,7 +42,9 @@ func mediaOrphanEqual(a, b mediaOrphan) bool {
 // 三种存储共用首次发现时间和文件身份；正常匹配的字幕及附件继续立即整理。
 func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	now := s.localMonitorSettings().now()
-	entries := slices.Clone(run.Entries)
+	entries := slices.DeleteFunc(slices.Clone(run.Entries), func(entry MediaOrganizeEntry) bool {
+		return entry.Reference || !mediaInScope(entry.File.SourcePath, files.cleanupScope)
+	})
 	indices := make(map[string]int, len(entries))
 	for i, entry := range run.Entries {
 		indices[entry.File.ID] = i
@@ -61,8 +63,19 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 			}
 		}
 	}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.VideoID == "" || entry.P115Move != nil {
+			continue
+		}
+		if slices.ContainsFunc(run.Entries, func(video MediaOrganizeEntry) bool {
+			return video.File.ID == entry.VideoID && (video.Status == "done" || video.Failure != nil && video.Failure.State == "stored")
+		}) {
+			entry.VideoID, entry.Group = "", ""
+		}
+	}
 	hasOrphans := slices.ContainsFunc(entries, func(entry MediaOrganizeEntry) bool {
-		return (entry.File.MediaType == "subtitle" || entry.File.MediaType == "attachment") && entry.VideoID == "" && entry.Status != "done"
+		return (entry.File.MediaType == "subtitle" || entry.File.MediaType == "attachment") && entry.Status != "done"
 	})
 	s.mu.Lock()
 	previous, existed := s.doc.Orphans[run.Rule.ID]
@@ -81,10 +94,20 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 	}
 	state := mediaOrphanBinding(run.Rule)
 	state.Files = make(map[string]mediaOrphan)
+	if files.partialCleanup {
+		state.Files = maps.Clone(previous.Files)
+		if state.Files == nil {
+			state.Files = make(map[string]mediaOrphan)
+		}
+	}
 	files.orphanDue = make(map[string]bool)
 	for i := range entries {
 		entry := &entries[i]
-		if entry.File.MediaType != "subtitle" && entry.File.MediaType != "attachment" || entry.VideoID != "" || entry.Status == "done" {
+		if entry.File.MediaType != "subtitle" && entry.File.MediaType != "attachment" || entry.Status == "done" || entry.Failure != nil && entry.Failure.State == "stored" {
+			delete(state.Files, entry.File.ID)
+			continue
+		}
+		if entry.VideoID != "" {
 			continue
 		}
 		observation := mediaOrphan{Since: now, FileID: entry.File.ID, Size: entry.File.Size, Modified: entry.Modified, Hashes: maps.Clone(entry.CD2Hashes)}
@@ -120,7 +143,7 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 			run.Entries[index] = *entry
 		}
 		protected := !present || len(owners[entry.File.ID]) > 0 || files.settlingVideos[entry.File.ParentID] || files.localPending[entry.File.ID]
-		if run.Rule.AttachmentCleanupEnabled && !protected && now.Sub(observation.Since) >= time.Duration(run.Rule.AttachmentGraceSeconds)*time.Second {
+		if run.Rule.AttachmentCleanupEnabled && !protected && (files.sourceVacated || now.Sub(observation.Since) >= time.Duration(run.Rule.AttachmentGraceSeconds)*time.Second) {
 			files.orphanDue[entry.File.ID] = true
 			candidate := *entry
 			candidate.Group, candidate.VideoID, candidate.Relative, candidate.Target = "", "", "", ""
@@ -129,6 +152,7 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 	}
 	run.Entries = slices.DeleteFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return files.orphanDue[entry.File.ID] })
 	unchanged := previous.matches(run.Rule) && maps.EqualFunc(previous.Files, state.Files, func(a, b mediaOrphan) bool { return a.Since.Equal(b.Since) && mediaOrphanEqual(a, b) })
+	s.scheduleOrphanScopes(run.Rule, entries, state.Files, files.orphanDue)
 	if unchanged || !existed && len(state.Files) == 0 {
 		return nil
 	}

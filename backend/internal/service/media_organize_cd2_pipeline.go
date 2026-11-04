@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -14,97 +13,7 @@ import (
 
 // 每次读取一个完整目录后立即整理；分页读取尚未完成时不修改该目录。
 func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
-	run.Status, run.streaming = "scanning", true
-	defer func() { run.streaming = false }()
-	if err := s.checkpoint(run); err != nil {
-		return err
-	}
-	files.naming = make(map[string]preparedMediaNaming)
-	files.recognized = make(map[string]bool)
-	queue := []string{run.Rule.Source}
-	visited := make(map[string]bool)
-	deferred := make([]MediaOrganizeEntry, 0)
-	unrelated := make([]MediaOrganizeEntry, 0)
-	directories := make([]MediaOrganizeEntry, 0)
-	allCandidates := make([]OrganizeFile, 0)
-	allSettling := make(map[string]bool)
-	allPending := make(map[string]bool)
-	fileCount := 0
-	for len(queue) > 0 {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		directory := queue[0]
-		queue = queue[1:]
-		if !mediaCloudWithin(run.Rule.Source, directory) {
-			return fmt.Errorf("CD2 扫描目录不在来源范围内：%s", directory)
-		}
-		if err := mediaVisitScanDirectory(visited, directory, directory, strings.Count(strings.TrimPrefix(directory, run.Rule.Source), "/")); err != nil {
-			return fmt.Errorf("扫描 CD2 目录: %w", err)
-		}
-		files.cd2ScanPath, files.cd2Shallow = directory, true
-		files.unrelated, files.directories = nil, nil
-		entries, err := files.scan(ctx)
-		if err != nil {
-			if directory != run.Rule.Source && errors.Is(err, clouddrive2.ErrNotFound) {
-				continue
-			}
-			return err
-		}
-		fileCount += len(files.cd2Snapshots)
-		if fileCount > 5000 {
-			return fmt.Errorf("单次最多 5000 个文件，请缩小扫描范围")
-		}
-		if err := mediaCheckScanDirectoryCount(len(visited)+len(queue)+len(files.directories), directory); err != nil {
-			return fmt.Errorf("扫描 CD2 目录: %w", err)
-		}
-		for _, child := range files.directories {
-			queue = append(queue, child.File.ID)
-		}
-		directories = append(directories, files.directories...)
-		allCandidates = append(allCandidates, files.localCandidates...)
-		immediate := make([]MediaOrganizeEntry, 0, len(entries))
-		for _, entry := range entries {
-			if entry.File.MediaType == "attachment" {
-				if _, _, shared := mediaAttachmentFolder(entry.File); shared {
-					deferred = append(deferred, entry)
-					continue
-				}
-			}
-			immediate = append(immediate, entry)
-		}
-		files.scanned = entries
-		if err := s.processMediaBatch(ctx, files, run, immediate, true); err != nil {
-			return err
-		}
-		maps.Copy(allSettling, files.settlingVideos)
-		maps.Copy(allPending, files.localPending)
-		unrelated = append(unrelated, files.unrelated...)
-	}
-	files.unrelated, files.directories = unrelated, directories
-	files.localCandidates, files.settlingVideos, files.localPending = allCandidates, allSettling, allPending
-	files.cd2ScanPath, files.cd2Shallow = "", false
-	if len(deferred) > 0 {
-		deferred = files.holdLocalCompanions(deferred, allPending)
-		if err := s.processMediaBatch(ctx, files, run, deferred, false); err != nil {
-			return err
-		}
-	}
-	// 仅在所有待扫描目录完整读取后清理，后续目录失败不会误删附件。
-	if err := s.prepareOrphanCleanup(files, run); err != nil {
-		return err
-	}
-	if len(files.unrelated) > 0 {
-		if err := s.cleanupCD2(ctx, files, run); err != nil {
-			return err
-		}
-	}
-	run.streaming = false
-	mediaFinishRun(run)
-	if len(run.Entries) == 0 && len(allPending) > 0 {
-		run.Message = fmt.Sprintf("有 %d 个临时文件尚未完成，留待后续轮询", len(allPending))
-	}
-	return nil
+	return s.processCloudAuto(ctx, files, run)
 }
 
 // 成功记录提供来源与目标的映射，晚到字幕无需重新识别已经移走的视频。

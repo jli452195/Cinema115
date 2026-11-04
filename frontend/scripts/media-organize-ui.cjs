@@ -21,7 +21,7 @@ const gate = () => {
   second.episode = 2; second.group.tmdbId = 0; second.group.message = '未找到唯一匹配'
   const third = task('another/Work.S01E01.mkv', 'done', [entry('another/Work.S01E01.mkv', 'video', 'done')])
   const tasks = [first, second, third]
-  const state = { rules: [{ ...copy(rule), scheduleEnabled: true }], active: true, activeRules: [rule.id], records: tasks, cleanup: [{ runId: 'run1', ruleName: rule.name, files: 6, directories: 2, failed: 0, at: first.at }] }
+  const state = { rules: [{ ...copy(rule), scheduleEnabled: true }], active: false, activeRules: [], records: tasks, cleanup: [{ runId: 'run1', ruleName: rule.name, files: 6, directories: 2, failed: 0, at: first.at }] }
   let rejectRuleSave = false, rejectRun = false, runStatus = 'queued', heldRun, heldTask, heldState, heldRuleState, heldSchedule
   await page.route('**/api/**', async route => {
     const req = route.request(), u = new URL(req.url()), endpoint = u.pathname, method = req.method(), body = req.postDataJSON()
@@ -78,41 +78,35 @@ const gate = () => {
     assert.equal(await history.count(), 0)
     assert.equal(calls.some(call => call.endpoint.endsWith('/history')), false)
     assert.equal(await page.getByRole('button', { name: '扫描预览', exact: true }).count(), 0)
-    const runButton = page.getByRole('button', { name: '立即运行', exact: true })
-    await page.getByText('本轮结束后按设定间隔扫描', { exact: true }).waitFor()
-    assert.equal(await runButton.isEnabled(), true, '已有自动排队批次仍可提交手动优先')
+    const runButton = page.getByRole('button', { name: 'NAS 验收立即完整扫描', exact: true })
+    await page.getByText('即将完整扫描', { exact: true }).waitFor()
     const runSubmit = gate(); heldRun = runSubmit
     await runButton.click(); await runSubmit.ready
-    assert.equal(await page.getByRole('button', { name: '提交中…', exact: true }).isDisabled(), true)
+    assert.equal(await runButton.isDisabled(), true)
     await page.locator('.mo-rule-scan').evaluate(button => { button.click(); button.click() })
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1, '请求尚未返回时不能重复提交')
     const stateRefresh = gate(); heldRuleState = stateRefresh
     runSubmit.release(); await stateRefresh.ready
     await page.getByRole('status').filter({ hasText: 'NAS 验收已按手动任务排队' }).waitFor()
     assert.equal(await detail.count(), 0)
-    assert.equal(await runButton.isEnabled(), true, '提交后的慢状态刷新不能延长按钮锁')
-    assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, 1)
+    assert.equal(await page.getByRole('button', { name: '停止NAS 验收的整理', exact: true }).isEnabled(), true)
     assert.equal(state.rules[0].scheduleEnabled, true, '手动运行不得修改定时开关')
     stateRefresh.release()
-    for (const phase of ['running', 'scanning']) {
-      runStatus = phase
-      await runButton.click()
-      await page.getByRole('status').filter({ hasText: phase === 'scanning' ? 'NAS 验收正在识别，继续执行现有批次' : 'NAS 验收正在整理，继续执行现有批次' }).waitFor()
-      assert.equal(await runButton.isEnabled(), true, '复用执行中的批次后仍可再次查询运行状态')
-    }
+    state.active = false; state.activeRules = []
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await runButton.waitFor()
     rejectRun = true
     await runButton.click()
     await page.getByRole('alert').filter({ hasText: '模拟运行提交失败' }).waitFor()
     assert.equal(await runButton.isEnabled(), true)
     const scheduleSave = gate(); heldSchedule = scheduleSave
-    await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).click(); await scheduleSave.ready
+    await page.getByRole('button', { name: '暂停NAS 验收的定时完整扫描', exact: true }).click(); await scheduleSave.ready
     assert.equal(await runButton.isDisabled(), true, '同规则的其他提交期间不能交错提交运行')
     const scheduleRefresh = gate(); heldRuleState = scheduleRefresh
-    scheduleSave.release()
-    await scheduleRefresh.ready
-    await page.getByText('定时扫描已暂停', { exact: true }).waitFor()
+    scheduleSave.release(); await scheduleRefresh.ready
+    await page.getByText('定时完整扫描已暂停', { exact: true }).waitFor()
     await page.waitForFunction(() => !document.querySelector('.mo-rule-scan')?.disabled)
-    assert.equal(await runButton.isEnabled(), true, '开关提交完成后的状态刷新也不能延长运行按钮锁')
+    assert.equal(await runButton.isEnabled(), true, '状态刷新不能延长按钮锁')
     scheduleRefresh.release()
     const submittedRuns = calls.filter(c => c.endpoint.endsWith('/run')).length
     state.active = false; state.activeRules = []
@@ -157,14 +151,14 @@ const gate = () => {
     assert.deepEqual(retry.body, { fileId: second.fileId, season: 1, episode: 13, kind: 'tv', tmdbId: 99 })
     await detail.getByRole('button', { name: '关闭', exact: true }).click()
     await tab('整理规则').click()
-    await page.getByRole('button', { name: '启用NAS 验收的定时扫描', exact: true }).click()
-    await page.getByText('定时扫描 · 每 5 分钟', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '启用NAS 验收的定时完整扫描', exact: true }).click()
+    await page.getByText('完整扫描 · 每 5 分钟', { exact: true }).waitFor()
     rejectRuleSave = true
-    await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).click()
+    await page.getByRole('button', { name: '暂停NAS 验收的定时完整扫描', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '模拟保存失败' }).waitFor()
-    assert.equal(await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).count(), 1)
-    await page.getByRole('button', { name: '暂停NAS 验收的定时扫描', exact: true }).click()
-    await page.getByText('定时扫描已暂停', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '暂停NAS 验收的定时完整扫描', exact: true }).count(), 1)
+    await page.getByRole('button', { name: '暂停NAS 验收的定时完整扫描', exact: true }).click()
+    await page.getByText('定时完整扫描已暂停', { exact: true }).waitFor()
     assert.equal(calls.filter(c => c.endpoint.endsWith('/run')).length, submittedRuns)
     await page.locator('.mo-rule-card').hover()
     assert.ok((await page.locator('.mo-rule-card').evaluate(el => getComputedStyle(el, '::before').animationName)).includes('ambient-glow'))
@@ -172,7 +166,7 @@ const gate = () => {
     assert.equal(await page.locator('.mo-rule-card').evaluate(el => getComputedStyle(el, '::before').animationName), 'none')
     await tab('整理记录').click()
     await page.locator('.mo-cleanup summary').click()
-    await page.getByText('文件 6 · 空目录 2', { exact: true }).waitFor()
+    await page.locator('.mo-cleanup>p').getByText('文件 6 · 空目录 2', { exact: true }).waitFor()
     state.records = Array.from({ length: 45 }, (_, i) => ({ ...copy(first), fileId: 'fixture-' + i, episode: i + 1 }))
     await page.getByRole('button', { name: '刷新记录', exact: true }).click()
     const pagination = page.getByRole('navigation', { name: '整理记录分页', exact: true })

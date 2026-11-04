@@ -228,6 +228,11 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	if data, err := os.ReadFile(failedFile); err != nil || string(data) != conflictingBody {
 		t.Fatal("删除失败历史不得删除或修改失败目录中的文件", err)
 	}
+	request("POST", "/rules/missing/stop", "", 400)
+	var stopped struct{ Rule service.MediaOrganizeRule }
+	if err := json.Unmarshal(request("POST", "/rules/"+rule.ID+"/stop", "", 200).Body.Bytes(), &stopped); err != nil || stopped.Rule.ID != rule.ID || stopped.Rule.RealtimeEnabled || stopped.Rule.ScheduleEnabled || s.State().Active {
+		t.Fatal("invalid stop response", stopped, err)
+	}
 	request("DELETE", "/rules/"+rule.ID, "", 200)
 }
 

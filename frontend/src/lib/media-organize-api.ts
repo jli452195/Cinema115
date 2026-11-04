@@ -25,8 +25,8 @@ export interface MediaHistory {
 }
 export interface MediaTask extends MediaHistoryItem { rule: MediaRule; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }
-export interface MediaMonitorStatus { mode: 'starting' | 'realtime' | 'unavailable' | 'polling'; message?: string; lastEventAt?: string }
-export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; monitoring?: Record<string, MediaMonitorStatus> }
+export interface MediaMonitorStatus { mode: 'starting' | 'connecting' | 'realtime' | 'event' | 'unavailable' | 'polling'; message?: string; lastEventAt?: string }
+export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; stoppingRules?: string[]; monitoring?: Record<string, MediaMonitorStatus> }
 export interface MediaLocalDirectoryPage {
   path: string; parentPath: string | null; directories: { name: string; path: string }[]; truncated: boolean
 }

@@ -212,6 +212,9 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 		}
 	}
 	for _, i := range groups {
+		if err := s.checkOrganizeStop(run); err != nil {
+			return err
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -279,6 +282,9 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		}
 	}
 	for i := range run.Groups {
+		if err := s.checkOrganizeStop(run); err != nil {
+			return err
+		}
 		g := &run.Groups[i]
 		if g.TMDBID < 1 || !selectedGroups[g.ID] {
 			continue

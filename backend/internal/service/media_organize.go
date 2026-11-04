@@ -97,6 +97,7 @@ type MediaOrganizeRun struct {
 	processing         map[string]bool
 	seenTasks          map[string]bool
 	recognitionEvents  []mediaRecognitionLogEvent
+	scanScopes         []mediaScanScope
 }
 
 // Restore only this batch's rules, never the current global configuration.
@@ -151,6 +152,8 @@ type MediaOrganizer struct {
 	monitorRunning bool
 	localMonitors  map[string]*mediaLocalRuntime
 	monitorOptions mediaLocalMonitorOptions
+	stopping       map[string]bool
+	cloudMonitors  map[string]*mediaCloudRuntime
 }
 
 func (s *MediaOrganizer) persistLocked(changed ...string) error {
@@ -171,6 +174,7 @@ func (s *MediaOrganizer) persistMonitorRulesLocked(changed ...string) error {
 func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	*target = source
 	target.processing = nil
+	target.scanScopes = slices.Clone(source.scanScopes)
 	target.seenTasks = nil
 	target.recognitionEvents = nil
 	target.Groups = slices.Clone(source.Groups)
@@ -230,6 +234,9 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 	}
 	if rule.AttachmentGraceSeconds < 0 || rule.AttachmentGraceSeconds > 86400 {
 		return rule, ErrMediaOrganizeInput
+	}
+	if rule.Storage == "cd2" && rule.IntervalSeconds == 0 {
+		rule.IntervalSeconds = 20
 	}
 	if err := mediaValidateSchedule(rule.Storage, MediaOrganizeSchedule{rule.RealtimeEnabled, rule.ScheduleEnabled, rule.IntervalSeconds}); err != nil {
 		return rule, err
@@ -305,6 +312,13 @@ func (s *MediaOrganizer) SaveRuleContext(ctx context.Context, rule MediaOrganize
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if rule.RealtimeEnabled || rule.ScheduleEnabled {
+		for _, run := range s.doc.Runs {
+			if run.Rule.ID == rule.ID && s.stopping[run.ID] {
+				return rule, ErrMediaOrganizeBusy
+			}
+		}
+	}
 	var changed []string
 	if rule.ID == "" {
 		var err error
@@ -387,6 +401,11 @@ func (s *MediaOrganizer) Start(id string) (MediaOrganizeRun, error) {
 	defer s.mu.Unlock()
 	for _, rule := range s.doc.Rules {
 		if rule.ID == id {
+			for _, run := range s.doc.Runs {
+				if run.Rule.ID == id && s.stopping[run.ID] {
+					return MediaOrganizeRun{}, ErrMediaOrganizeBusy
+				}
+			}
 			return s.queueScanLocked(rule)
 		}
 	}
@@ -653,6 +672,7 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 			s.active = ""
 		}
 		delete(s.inFlight, run.ID)
+		delete(s.stopping, run.ID)
 		for i := range s.doc.Runs {
 			if s.doc.Runs[i].ID == run.ID {
 				s.doc.Runs[i] = mediaPersistentRun(s.doc.Runs[i])
@@ -664,6 +684,13 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 	work, cancel := context.WithTimeout(ctx, 2*time.Hour)
 	err := s.process(work, &run, action)
 	cancel()
+	if errors.Is(err, errMediaOrganizeStopped) {
+		mediaFinishStoppedRun(&run)
+		if saveErr := s.checkpoint(&run); saveErr != nil {
+			return saveErr
+		}
+		return nil
+	}
 	if err != nil {
 		s.retryLocalScan(run.Rule, err)
 		run.Status, run.Message = "failed", err.Error()
@@ -671,7 +698,7 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 			return saveErr
 		}
 	}
-	if action == "auto" {
+	if action == "auto" && len(run.scanScopes) == 0 {
 		return s.finishScanRound(run)
 	}
 	return nil

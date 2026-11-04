@@ -26,6 +26,9 @@ func (s *MediaOrganizer) cleanupCD2EmptyDirectories(ctx context.Context, files *
 		if err := ctx.Err(); err != nil {
 			return errors.Join(cleanupErr, err)
 		}
+		if err := s.checkOrganizeStop(run); err != nil {
+			return err
+		}
 		end := start + 1
 		depth := strings.Count(ordered[start].File.SourcePath, "/")
 		for end < len(ordered) && strings.Count(ordered[end].File.SourcePath, "/") == depth {
