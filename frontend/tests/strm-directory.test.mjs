@@ -9,12 +9,12 @@ import { parse, compileScript } from '@vue/compiler-sfc'
 
 const require = createRequire(import.meta.url)
 const { createRenderer } = require('vue')
-function load(file) {
+function load(file, dependencies = {}) {
   const source = readFileSync(file, 'utf8')
   const code = file.endsWith('.vue') ? compileScript(parse(source, { filename: file }).descriptor, { id: 'directory-test' }).content : source
   const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
   const module = { exports: {} }
-  const resolve = id => id.endsWith('.vue') ? { default: {} } : id.startsWith('.') ? load(path.resolve(path.dirname(file), id + '.ts')) : require(id)
+  const resolve = id => Object.hasOwn(dependencies, id) ? dependencies[id] : id.endsWith('.vue') ? { default: {} } : id.startsWith('.') ? load(path.resolve(path.dirname(file), id + '.ts'), dependencies) : require(id)
   new Function('require', 'module', 'exports', compiled)(resolve, module, module.exports)
   return module.exports
 }
@@ -32,11 +32,14 @@ function environment(t, fetch) {
   t.after(() => { for (const [key, value] of originals) globalThis[key] = value })
 }
 function mount(name, props) {
-  const View = load(file(name)).default
+  // 只模拟浏览器通知组件，仍执行真实 useToast 包装与业务状态逻辑。
+  const notices = [], toast = { dismiss() {} }
+  for (const type of ['success', 'error', 'warning', 'info']) toast[type] = (title, options) => notices.push({ type, title, description: options.description })
+  const View = load(file(name), { 'vue-sonner': { toast } }).default
   View.render = () => null
   const app = renderer.createApp(View, props)
   const vm = app.mount({})
-  return { app, state: vm.$.setupState }
+  return { app, state: vm.$.setupState, notices }
 }
 
 test('directory dialog selects loaded root and children, blocks errors and loading', async t => {
@@ -212,10 +215,13 @@ test('editing a directory keeps failed saves retryable and persists the replacem
     assert.equal(s.settingsDirty, true)
     await s.saveAutomation()
     assert.match(s.error, /save failed/)
+    assert.equal(mounted.notices.at(-1).type, 'error')
+    assert.match(mounted.notices.at(-1).description, /save failed/)
     assert.equal(saved.generation.outputDir, 'inbox')
     assert.equal(s.settingsDirty, true)
     failSave = false
     await s.saveAutomation()
+    assert.equal(mounted.notices.at(-1).type, 'success')
     assert.equal(saved.generation.outputDir, 'movies')
     assert.equal(s.taskOutputDir, 'movies')
     assert.equal(s.settingsDirty, false)

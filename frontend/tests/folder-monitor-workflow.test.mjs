@@ -95,16 +95,13 @@ test('schedule switch restores the saved state when enabling or disabling fails'
 test('interval selection rolls back on failure and saves the chosen interval on retry', async t => {
   const { state: s, requests, fail } = await harness(t)
   await s.changeEnabled(true)
-  const select = { value: '1800' }
   fail(true)
-  await s.changeInterval({ target: select })
-  assert.equal(select.value, '600')
+  await s.changeInterval('1800')
   assert.equal(s.interval, '600')
   assert.equal(s.monitor.intervalSeconds, 600)
   assert.match(s.actionError, /保存失败/)
   fail(false)
-  select.value = '1800'
-  await s.changeInterval({ target: select })
+  await s.changeInterval('1800')
   assert.equal(s.interval, '1800')
   assert.equal(s.monitor.intervalSeconds, 1800)
   assert.equal(s.monitor.enabled, true)
