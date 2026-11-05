@@ -21,14 +21,13 @@ onBeforeUnmount(() => { dialog.value?.close(); unlock?.(); if (previousFocus?.is
   </Teleport>
 </template>
 <style scoped>
-/* Contained 布局：固定头尾与内部滚动，采用 HeroUI 风格中性边框与柔和投影 */
-.p115-contained[open] { display:flex; flex-direction:column; overflow:hidden; color:#404040; background:#fff; border:1px solid #e5e5e5; box-shadow:0 24px 80px -24px rgb(0 0 0 / .3),0 12px 32px -20px rgb(0 0 0 / .2); }
+/* 固定头尾与内部滚动，表面、边框和文字统一使用全站主题色。 */
+.p115-contained[open] { @apply border border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 24px 80px -24px rgb(0 0 0 / .3),0 12px 32px -20px rgb(0 0 0 / .2); }
 .p115-contained>header,.p115-contained>footer { flex-shrink:0; }
 .p115-contained>div { min-height:0; overflow-y:auto; overscroll-behavior:contain; padding:16px 20px; }
-.p115-contained>header { background:#fff; border-color:#f0f0f0; padding:14px 20px; }
-.p115-contained>header>h2 { color:#171717; font-size:16px; font-weight:600; }
-.p115-contained>footer { background:#fafafa; border-color:#f0f0f0; padding:12px 20px; }
-.p115-contained>header>button { color:#737373; min-width:40px; min-height:40px; display:inline-flex; align-items:center; justify-content:center; }
-:global(.dark .p115-contained[open]) { color:#e5e5e5; background:#171717; border-color:#262626; }:global(.dark .p115-contained>header) { background:#171717; border-color:#262626; }:global(.dark .p115-contained>header>h2) { color:#f5f5f5; }:global(.dark .p115-contained>footer) { background:#191919; border-color:#262626; }:global(.dark .p115-contained>header>button) { color:#a3a3a3; }
+.p115-contained>header { @apply border-slate-100 bg-white dark:border-slate-800 dark:bg-slate-900; padding:14px 20px; }
+.p115-contained>header>h2 { @apply text-slate-900 dark:text-slate-100; font-size:16px; font-weight:600; }
+.p115-contained>footer { @apply border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-950; padding:12px 20px; }
+.p115-contained>header>button { @apply text-slate-500 dark:text-slate-400; min-width:40px; min-height:40px; display:inline-flex; align-items:center; justify-content:center; }
 @media(max-width:639px) { .p115-contained { width:calc(100vw - 1rem); max-height:calc(100dvh - 1rem); }.p115-contained>header,.p115-contained>footer { padding:12px 16px; }.p115-contained>div { padding:14px 16px; }.p115-contained>header>button { min-width:44px; min-height:44px; } }
 </style>

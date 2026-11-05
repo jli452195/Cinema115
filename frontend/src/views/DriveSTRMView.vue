@@ -233,7 +233,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 </script>
 
 <template>
-  <ManagementLayout class="ds-page" title="115网盘STRM" description="从主网盘生成本地 STRM，保留原目录层级。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
+  <ManagementLayout title="115网盘STRM" description="从主网盘生成本地 STRM，保留原目录层级。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
     <p v-if="error" role="alert" class="ds-alert">{{ error }} <button type="button" class="underline" :disabled="!!busy" @click="refresh">重新加载</button></p>
     <p v-if="notice" role="status" class="ds-notice">{{ notice }}</p>
     <p v-if="state && !state.accountReady" class="ds-alert">请先在 <RouterLink to="/helper115" class="underline">115 助手</RouterLink> 配置并登录主账号，基础设置可先保存。</p>
@@ -437,33 +437,32 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 </template>
 
 <style scoped>
-.ds-page { background-color:#f5f5f5; }:global(.dark .ds-page) { background-color:#0a0a0a; }
-.ds-settings { @apply rounded-2xl bg-white dark:bg-neutral-900; padding:20px; }
+.ds-settings { @apply rounded-2xl bg-white dark:bg-slate-900; padding:20px; }
 .ds-section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.ds-section-heading h2 { @apply text-neutral-800 dark:text-neutral-100; display:flex; align-items:center; gap:8px; min-width:0; font-size:15px; font-weight:600; }
+.ds-section-heading h2 { @apply text-slate-800 dark:text-slate-100; display:flex; align-items:center; gap:8px; min-width:0; font-size:15px; font-weight:600; }
 .ds-section-heading h2>svg { @apply text-blue-500; flex-shrink:0; }
-.ds-section-count { @apply bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400; padding:1px 7px; border-radius:6px; font-size:12px; font-variant-numeric:tabular-nums; }
+.ds-section-count { @apply bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400; padding:1px 7px; border-radius:6px; font-size:12px; font-variant-numeric:tabular-nums; }
 .ds-save-actions { display:flex; align-items:center; gap:12px; flex-shrink:0; }
-.ds-help { @apply text-neutral-500 dark:text-neutral-400; font-size:12px; line-height:1.7; margin-top:7px; }
+.ds-help { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.7; margin-top:7px; }
 .ds-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px 20px; margin-top:22px; min-width:0; }
-.ds-download-controls { @apply bg-neutral-50 dark:bg-neutral-800/50; grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:14px 18px; border-radius:10px; padding:13px 14px; }.ds-rate-input { width:160px; flex-shrink:0; }.ds-image-mode { width:200px; flex-shrink:0; }.ds-download-help { flex-basis:100%; min-width:0; }.ds-download-controls .ds-help { margin:0; }.ds-download-help .ds-help+.ds-help { margin-top:6px; }
-.ds-event-setting { display:flex; align-items:center; gap:20px; margin-top:22px; min-width:0; }.ds-event-setting>div { flex:1; min-width:0; }.ds-event-title { @apply text-neutral-700 dark:text-neutral-200; font-size:13px; font-weight:500; }.ds-event-setting .ds-help { margin-top:3px; }.ds-event-setting>.ds-outlined { width:220px; flex-shrink:0; }
-.ds-outlined { @apply border border-neutral-300 dark:border-neutral-600; position:relative; display:block; min-width:0; border-radius:8px; transition:border-color .15s; }
+.ds-download-controls { @apply bg-slate-50 dark:bg-slate-800/50; grid-column:1/-1; display:flex; flex-wrap:wrap; align-items:center; gap:14px 18px; border-radius:10px; padding:13px 14px; }.ds-rate-input { width:160px; flex-shrink:0; }.ds-image-mode { width:200px; flex-shrink:0; }.ds-download-help { flex-basis:100%; min-width:0; }.ds-download-controls .ds-help { margin:0; }.ds-download-help .ds-help+.ds-help { margin-top:6px; }
+.ds-event-setting { display:flex; align-items:center; gap:20px; margin-top:22px; min-width:0; }.ds-event-setting>div { flex:1; min-width:0; }.ds-event-title { @apply text-slate-700 dark:text-slate-200; font-size:13px; font-weight:500; }.ds-event-setting .ds-help { margin-top:3px; }.ds-event-setting>.ds-outlined { width:220px; flex-shrink:0; }
+.ds-outlined { @apply border border-slate-300 dark:border-slate-600; position:relative; display:block; min-width:0; border-radius:8px; transition:border-color .15s; }
 .ds-outlined:focus-within { @apply border-blue-500; box-shadow:0 0 0 1px #3b82f6; }
-.ds-outlined>span { @apply bg-white text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300; position:absolute; top:-9px; left:9px; padding:0 5px; font-size:12px; line-height:17px; }
-.ds-outlined>input,.ds-outlined>select { @apply text-neutral-800 dark:text-neutral-100; display:block; width:100%; min-width:0; height:40px; padding:0 13px; border:0; border-radius:inherit; background:transparent; font-size:13px; outline:none; }
-.ds-outlined>select { @apply dark:[color-scheme:dark]; padding-right:32px; cursor:pointer; }.ds-outlined option { @apply bg-white text-neutral-800 dark:bg-neutral-900 dark:text-neutral-100; }
+.ds-outlined>span { @apply bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300; position:absolute; top:-9px; left:9px; padding:0 5px; font-size:12px; line-height:17px; }
+.ds-outlined>input,.ds-outlined>select { @apply text-slate-800 dark:text-slate-100; display:block; width:100%; min-width:0; height:40px; padding:0 13px; border:0; border-radius:inherit; background:transparent; font-size:13px; outline:none; }
+.ds-outlined>select { @apply dark:[color-scheme:dark]; padding-right:32px; cursor:pointer; }.ds-outlined option { @apply bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100; }
 .ds-outlined>input:focus-visible,.ds-outlined>select:focus-visible { outline:none; }
-.ds-outlined:has(>input:disabled),.ds-outlined:has(>select:disabled) { @apply border-neutral-200 bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800/50; }.ds-outlined>input:disabled,.ds-outlined>select:disabled { @apply text-neutral-400 dark:text-neutral-500; cursor:not-allowed; }
-.ds-preview { margin-top:14px; }.ds-preview summary { @apply text-neutral-600 dark:text-neutral-300; display:flex; align-items:center; gap:6px; width:fit-content; min-height:32px; cursor:pointer; list-style:none; font-size:12px; }.ds-preview summary::-webkit-details-marker { display:none; }.ds-chevron { transition:transform .15s; }.ds-preview[open] .ds-chevron { transform:rotate(90deg); }.ds-preview code { @apply rounded-lg bg-neutral-50 text-neutral-700 dark:bg-neutral-950 dark:text-neutral-300; display:block; padding:10px 12px; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
+.ds-outlined:has(>input:disabled),.ds-outlined:has(>select:disabled) { @apply border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50; }.ds-outlined>input:disabled,.ds-outlined>select:disabled { @apply text-slate-400 dark:text-slate-500; cursor:not-allowed; }
+.ds-preview { margin-top:14px; }.ds-preview summary { @apply text-slate-600 dark:text-slate-300; display:flex; align-items:center; gap:6px; width:fit-content; min-height:32px; cursor:pointer; list-style:none; font-size:12px; }.ds-preview summary::-webkit-details-marker { display:none; }.ds-chevron { transition:transform .15s; }.ds-preview[open] .ds-chevron { transform:rotate(90deg); }.ds-preview code { @apply rounded-lg bg-slate-50 text-slate-700 dark:bg-slate-950 dark:text-slate-300; display:block; padding:10px 12px; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
 .ds-directories { margin-top:24px; }.ds-directories>.ds-section-heading { margin-bottom:14px; }.ds-start-hint { margin:-4px 0 12px; }
 .ds-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); align-items:start; gap:14px; }
-.ds-card { @apply rounded-2xl bg-white p-4 text-neutral-700 dark:bg-neutral-900 dark:text-neutral-200; min-width:0; box-shadow:0 4px 16px -10px rgb(0 0 0 / .15),0 1px 3px rgb(0 0 0 / .035); transition:box-shadow .2s; }.ds-card:hover { box-shadow:0 9px 26px -14px rgb(0 0 0 / .2),0 2px 6px rgb(0 0 0 / .04); }
-.ds-heading { display:flex; align-items:center; gap:8px; margin-bottom:16px; }.ds-symbol { @apply bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300; display:grid; place-items:center; width:36px; height:36px; border-radius:11px; flex-shrink:0; }.ds-name { flex:1; min-width:0; }.ds-name h3 { font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ds-status { @apply text-neutral-500 dark:text-neutral-400; display:inline-flex; gap:5px; align-items:center; font-size:12px; margin-top:3px; }.ds-status.running { @apply text-blue-600 dark:text-blue-400; }.ds-status.attention { @apply text-amber-700 dark:text-amber-400; }
-.ds-icon { @apply text-neutral-400 hover:bg-neutral-100 hover:text-blue-600 dark:hover:bg-neutral-800; display:grid; place-items:center; width:32px; height:36px; border-radius:8px; flex-shrink:0; }
-.ds-paths { display:grid; gap:8px; font-size:13px; }.ds-paths>div { display:flex; align-items:baseline; gap:12px; }.ds-paths dt { @apply text-neutral-500 dark:text-neutral-400; display:flex; align-items:center; gap:6px; flex-shrink:0; }.ds-paths dd { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.ds-card-schedule { margin-top:15px; }.ds-schedule-summary { display:flex; align-items:center; gap:8px; }.ds-schedule-title { @apply text-neutral-500 dark:text-neutral-400; font-size:11px; }.ds-schedule-description { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; font-size:11px; line-height:1.7; }.ds-schedule-description>span { @apply bg-neutral-50 text-neutral-500 dark:bg-neutral-800/70 dark:text-neutral-400; border-radius:6px; padding:2px 7px; }
+.ds-card { @apply rounded-2xl bg-white p-4 text-slate-700 dark:bg-slate-900 dark:text-slate-200; min-width:0; box-shadow:0 4px 16px -10px rgb(0 0 0 / .15),0 1px 3px rgb(0 0 0 / .035); transition:box-shadow .2s; }.ds-card:hover { box-shadow:0 9px 26px -14px rgb(0 0 0 / .2),0 2px 6px rgb(0 0 0 / .04); }
+.ds-heading { display:flex; align-items:center; gap:8px; margin-bottom:16px; }.ds-symbol { @apply bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300; display:grid; place-items:center; width:36px; height:36px; border-radius:11px; flex-shrink:0; }.ds-name { flex:1; min-width:0; }.ds-name h3 { font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ds-status { @apply text-slate-500 dark:text-slate-400; display:inline-flex; gap:5px; align-items:center; font-size:12px; margin-top:3px; }.ds-status.running { @apply text-blue-600 dark:text-blue-400; }.ds-status.attention { @apply text-amber-700 dark:text-amber-400; }
+.ds-icon { @apply text-slate-400 hover:bg-slate-100 hover:text-blue-600 dark:hover:bg-slate-800; display:grid; place-items:center; width:32px; height:36px; border-radius:8px; flex-shrink:0; }
+.ds-paths { display:grid; gap:8px; font-size:13px; }.ds-paths>div { display:flex; align-items:baseline; gap:12px; }.ds-paths dt { @apply text-slate-500 dark:text-slate-400; display:flex; align-items:center; gap:6px; flex-shrink:0; }.ds-paths dd { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ds-card-schedule { margin-top:15px; }.ds-schedule-summary { display:flex; align-items:center; gap:8px; }.ds-schedule-title { @apply text-slate-500 dark:text-slate-400; font-size:11px; }.ds-schedule-description { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; font-size:11px; line-height:1.7; }.ds-schedule-description>span { @apply bg-slate-50 text-slate-500 dark:bg-slate-800/70 dark:text-slate-400; border-radius:6px; padding:2px 7px; }
 
 /* 目录编辑弹窗 - 紧凑双列与 HeroUI 风格中性控件 */
 .ds-editor-form { margin:0; display:flex; flex-direction:column; gap:12px; }
@@ -471,71 +470,71 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
 .ds-editor-alert { @apply rounded-lg bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300; padding:8px 12px; font-size:12px; line-height:1.5; overflow-wrap:anywhere; margin:0; }
 .ds-editor-section { display:flex; flex-direction:column; gap:8px; }
 .ds-editor-section-header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-.ds-editor-section-heading { @apply text-neutral-800 dark:text-neutral-100; display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; }
-.ds-editor-section-heading>svg { @apply text-neutral-400 dark:text-neutral-500; }
-.ds-editor-subtle-hint { @apply text-neutral-400 dark:text-neutral-500; font-size:11px; }
+.ds-editor-section-heading { @apply text-slate-800 dark:text-slate-100; display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; }
+.ds-editor-section-heading>svg { @apply text-slate-400 dark:text-slate-500; }
+.ds-editor-subtle-hint { @apply text-slate-400 dark:text-slate-500; font-size:11px; }
 
 /* 字段与栅格排版 */
 .ds-editor-row { display:flex; gap:12px; }
 .ds-field { display:flex; flex-direction:column; gap:4px; min-width:0; }
-.ds-field-label { @apply text-neutral-600 dark:text-neutral-300; font-size:12px; font-weight:500; }
-.ds-field-hint { @apply text-neutral-400 dark:text-neutral-500; font-size:11px; line-height:1.4; margin:2px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ds-field-label { @apply text-slate-600 dark:text-slate-300; font-size:12px; font-weight:500; }
+.ds-field-hint { @apply text-slate-400 dark:text-slate-500; font-size:11px; line-height:1.4; margin:2px 0 0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* 桌面端名称与自动监控同行 */
 .ds-name-monitor-row { align-items:flex-end; }
 .ds-name-field { flex:1; }
 .ds-monitor-field { width:190px; flex-shrink:0; }
-.ds-monitor-box { @apply border border-neutral-200 bg-neutral-50/80 dark:border-neutral-800 dark:bg-neutral-800/40; display:flex; align-items:center; height:36px; padding:0 10px; border-radius:8px; }
+.ds-monitor-box { @apply border border-slate-200 bg-slate-50/80 dark:border-slate-800 dark:bg-slate-800/40; display:flex; align-items:center; height:36px; padding:0 10px; border-radius:8px; }
 .ds-monitor-box :deep(label) { width:100%; display:flex; flex-direction:row-reverse; align-items:center; justify-content:space-between; gap:8px; cursor:pointer; }
 .ds-monitor-box :deep(span.text-sm) { font-size:12px; font-weight:500; }
-.ds-monitor-box:has(input:disabled) { @apply border-neutral-200 bg-neutral-50 opacity-60 dark:border-neutral-800 dark:bg-neutral-900/50; cursor:not-allowed; }
+.ds-monitor-box:has(input:disabled) { @apply border-slate-200 bg-slate-50 opacity-60 dark:border-slate-800 dark:bg-slate-900/50; cursor:not-allowed; }
 .ds-monitor-box:has(input:disabled) :deep(label) { cursor:not-allowed; }
 
 /* 输入框通用 */
-.ds-input { @apply border border-neutral-200 bg-white text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100; height:36px; padding:0 10px; border-radius:8px; font-size:13px; width:100%; min-width:0; box-sizing:border-box; transition:border-color .15s,box-shadow .15s; }
+.ds-input { @apply border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; height:36px; padding:0 10px; border-radius:8px; font-size:13px; width:100%; min-width:0; box-sizing:border-box; transition:border-color .15s,box-shadow .15s; }
 .ds-input:focus { @apply border-blue-500; outline:none; box-shadow:0 0 0 1px #3b82f6; }
-.ds-input:disabled { @apply border-neutral-200 bg-neutral-50 text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900/50 dark:text-neutral-500; cursor:not-allowed; }
+.ds-input:disabled { @apply border-slate-200 bg-slate-50 text-slate-400 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-500; cursor:not-allowed; }
 
 /* 桌面端来源与输出双列紧凑 */
 .ds-paths-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.ds-directory-picker { @apply border border-neutral-200 bg-neutral-50/80 hover:bg-neutral-100 text-neutral-700 dark:border-neutral-700 dark:bg-neutral-800/40 dark:hover:bg-neutral-800 dark:text-neutral-200; display:flex; align-items:center; gap:6px; width:100%; height:36px; padding:0 10px; border-radius:8px; font-size:13px; text-align:left; box-sizing:border-box; min-width:0; cursor:pointer; transition:background-color .15s,border-color .15s; }
-.ds-directory-picker:disabled { @apply cursor-not-allowed opacity-50 bg-neutral-50 dark:bg-neutral-900; }
+.ds-directory-picker { @apply border border-slate-200 bg-slate-50/80 hover:bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:bg-slate-800 dark:text-slate-200; display:flex; align-items:center; gap:6px; width:100%; height:36px; padding:0 10px; border-radius:8px; font-size:13px; text-align:left; box-sizing:border-box; min-width:0; cursor:pointer; transition:background-color .15s,border-color .15s; }
+.ds-directory-picker:disabled { @apply cursor-not-allowed opacity-50 bg-slate-50 dark:bg-slate-900; }
 .ds-directory-text { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-.ds-field-icon { @apply text-neutral-400 dark:text-neutral-500; flex-shrink:0; }
+.ds-field-icon { @apply text-slate-400 dark:text-slate-500; flex-shrink:0; }
 .ds-picker-action { @apply text-blue-600 dark:text-blue-400; font-size:12px; font-weight:500; flex-shrink:0; }
 .ds-output-group { display:flex; gap:6px; width:100%; min-width:0; }
 .ds-output-group .ds-input { flex:1; }
 .ds-picker-btn { flex-shrink:0; height:36px; min-height:36px; padding:0 12px; font-size:12px; }
 
 /* 自动任务双列卡片 */
-.ds-schedule-section { @apply border-t border-neutral-100 dark:border-neutral-800/80; margin-top:6px; padding-top:10px; gap:8px; }
+.ds-schedule-section { @apply border-t border-slate-100 dark:border-slate-800/80; margin-top:6px; padding-top:10px; gap:8px; }
 .ds-schedule-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.ds-schedule-card { @apply border border-neutral-200/90 bg-neutral-50/60 dark:border-neutral-800 dark:bg-neutral-800/30; border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between; min-width:0; gap:5px; }
+.ds-schedule-card { @apply border border-slate-200/90 bg-slate-50/60 dark:border-slate-800 dark:bg-slate-800/30; border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; justify-content:space-between; min-width:0; gap:5px; }
 .ds-schedule-card-header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; }
 .ds-schedule-toggle { flex:1; min-width:0; }
 .ds-schedule-toggle :deep(label) { display:flex; align-items:center; gap:6px; cursor:pointer; }
 .ds-schedule-toggle :deep(span.text-sm) { font-size:12px; font-weight:500; }
 .ds-schedule-interval { flex-shrink:0; }
-.ds-compact-select { @apply border border-neutral-300 bg-white text-neutral-800 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:[color-scheme:dark]; height:28px; padding:0 16px 0 8px; border-radius:6px; font-size:12px; cursor:pointer; outline:none; transition:border-color .15s; }
+.ds-compact-select { @apply border border-slate-300 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:[color-scheme:dark]; height:28px; padding:0 16px 0 8px; border-radius:6px; font-size:12px; cursor:pointer; outline:none; transition:border-color .15s; }
 .ds-compact-select:focus { @apply border-blue-500; box-shadow:0 0 0 1px #3b82f6; }
-.ds-compact-select:disabled { @apply border-neutral-200 bg-neutral-100 text-neutral-400 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-600; cursor:not-allowed; }
-.ds-schedule-card-hint { @apply text-neutral-500 dark:text-neutral-400; font-size:11px; line-height:1.4; margin:0; }
+.ds-compact-select:disabled { @apply border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-600; cursor:not-allowed; }
+.ds-schedule-card-hint { @apply text-slate-500 dark:text-slate-400; font-size:11px; line-height:1.4; margin:0; }
 
 /* 底部状态提示文案 */
-.ds-editor-bottom-note { @apply text-neutral-400 dark:text-neutral-500; font-size:11px; line-height:1.4; margin:0; }
+.ds-editor-bottom-note { @apply text-slate-400 dark:text-slate-500; font-size:11px; line-height:1.4; margin:0; }
 .ds-dirty-warn { @apply text-amber-600 dark:text-amber-400; }
-.ds-editor-footer-note { @apply text-neutral-400 dark:text-neutral-500; align-self:center; margin-right:auto; font-size:12px; }
+.ds-editor-footer-note { @apply text-slate-400 dark:text-slate-500; align-self:center; margin-right:auto; font-size:12px; }
 
 /* 开关蓝色高亮与无障碍焦点圈 */
 .ds-editor-form :deep(input[role='switch']:checked + span) { background-color:#2563eb; }
 .ds-editor-form :deep(input[role='switch']:focus-visible + span) { --tw-ring-color:#60a5fa; }
 
-.ds-counts { @apply bg-neutral-50 dark:bg-neutral-800/60; display:flex; flex-wrap:wrap; gap:5px 13px; border-radius:9px; padding:9px 10px; font-size:12px; margin-top:14px; }.ds-counts b { font-size:14px; font-variant-numeric:tabular-nums; }
+.ds-counts { @apply bg-slate-50 dark:bg-slate-800/60; display:flex; flex-wrap:wrap; gap:5px 13px; border-radius:9px; padding:9px 10px; font-size:12px; margin-top:14px; }.ds-counts b { font-size:14px; font-variant-numeric:tabular-nums; }
 .ds-retrying { @apply text-amber-700 dark:text-amber-400; }
-.ds-meta { @apply text-neutral-500 dark:text-neutral-400; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:5px; font-size:12px; margin:10px 0; }.ds-meta button { @apply text-blue-600 dark:text-blue-400; padding:5px 0 5px 8px; }.ds-message { font-size:12px; line-height:1.6; margin-top:8px; overflow-wrap:anywhere; }.ds-failed { @apply text-red-600 dark:text-red-400; }
-.ds-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.ds-button { @apply bg-neutral-100 text-neutral-700 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700; display:inline-flex; align-items:center; justify-content:center; gap:6px; border-radius:9px; min-height:36px; padding:7px 11px; font-size:13px; font-weight:500; }.ds-primary { @apply bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-500; }.ds-check { @apply bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60; }.ds-danger { @apply bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:text-white; }.ds-text-button { @apply text-blue-600 dark:text-blue-400; font-size:12px; padding:8px 0; }button:disabled { cursor:not-allowed; opacity:.45; }button:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #3b82f6; outline-offset:3px; }
-.ds-alert { @apply rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300; padding:12px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.ds-notice { @apply text-blue-700 dark:text-blue-300; margin-bottom:12px; font-size:13px; }.ds-empty { @apply rounded-xl bg-white text-neutral-500 dark:bg-neutral-900 dark:text-neutral-400; display:flex; align-items:center; gap:10px; padding:18px; font-size:13px; line-height:1.7; }.ds-empty>svg { flex-shrink:0; }
-.ds-notes { @apply text-neutral-500 dark:text-neutral-400; font-size:12px; line-height:1.8; margin-top:12px; }.ds-notes summary { width:fit-content; min-height:32px; cursor:pointer; }.ds-notes p { margin-top:4px; max-width:900px; }
+.ds-meta { @apply text-slate-500 dark:text-slate-400; display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:5px; font-size:12px; margin:10px 0; }.ds-meta button { @apply text-blue-600 dark:text-blue-400; padding:5px 0 5px 8px; }.ds-message { font-size:12px; line-height:1.6; margin-top:8px; overflow-wrap:anywhere; }.ds-failed { @apply text-red-600 dark:text-red-400; }
+.ds-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; }.ds-button { @apply bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700; display:inline-flex; align-items:center; justify-content:center; gap:6px; border-radius:9px; min-height:36px; padding:7px 11px; font-size:13px; font-weight:500; }.ds-primary { @apply bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:text-white dark:hover:bg-blue-500; }.ds-check { @apply bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60; }.ds-danger { @apply bg-red-600 text-white hover:bg-red-700 dark:bg-red-600 dark:text-white; }.ds-text-button { @apply text-blue-600 dark:text-blue-400; font-size:12px; padding:8px 0; }button:disabled { cursor:not-allowed; opacity:.45; }button:focus-visible,input:focus-visible,summary:focus-visible { outline:2px solid #3b82f6; outline-offset:3px; }
+.ds-alert { @apply rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300; padding:12px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.ds-notice { @apply text-blue-700 dark:text-blue-300; margin-bottom:12px; font-size:13px; }.ds-empty { @apply rounded-xl bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400; display:flex; align-items:center; gap:10px; padding:18px; font-size:13px; line-height:1.7; }.ds-empty>svg { flex-shrink:0; }
+.ds-notes { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.8; margin-top:12px; }.ds-notes summary { width:fit-content; min-height:32px; cursor:pointer; }.ds-notes p { margin-top:4px; max-width:900px; }
 .ds-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }.ds-spin { animation:ds-spin 1s linear infinite; }@keyframes ds-spin { to { transform:rotate(360deg) } }
 @media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-outlined>input,.ds-outlined>select { height:44px; font-size:16px; } }
 @media(max-width:639px) {

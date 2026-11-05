@@ -272,21 +272,20 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
 .catalog-search { max-width: 740px; }
 .catalog-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
 .catalog-quarter-nav { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; }
-.catalog-quarter-step, .catalog-season :deep(.select-menu-trigger) { border: 1px solid rgb(148 163 184 / .25); background: #fff; box-shadow: 0 2px 0 rgb(148 163 184 / .18), 0 2px 5px rgb(15 23 42 / .025); transition: transform .2s cubic-bezier(.34, 1.56, .64, 1), border-color .16s ease, box-shadow .16s ease; }
-.catalog-quarter-step { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; align-items: center; justify-content: center; border-radius: 10px; color: rgb(var(--color-slate-600)); }
+.catalog-quarter-step, .catalog-season :deep(.select-menu-trigger) { box-shadow: 0 2px 0 rgb(148 163 184 / .18), 0 2px 5px rgb(15 23 42 / .025); transition: transform .2s cubic-bezier(.34, 1.56, .64, 1), border-color .16s ease, box-shadow .16s ease; }
+.catalog-quarter-step { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; align-items: center; justify-content: center; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); }
 .catalog-quarter-step:disabled { opacity: .35; box-shadow: none; cursor: default; }
 .catalog-quarter-nav .catalog-season { flex: 1 1 180px; width: 180px; min-width: 0; }
 .catalog-season :deep(.select-menu-trigger) { gap: 7px; min-height: 44px; padding: 8px 10px; }
 .catalog-season-content { display: inline-flex; min-width: 0; align-items: center; gap: 7px; white-space: nowrap; }
-.catalog-season-icon { flex: none; color: #3b82f6; }
-.catalog-season-label { overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 650; color: rgb(var(--color-slate-800)); font-variant-numeric: tabular-nums; }
-.catalog-current-season { flex: none; border-radius: 5px; padding: 2px 5px; background: #eff6ff; color: #2563eb; font-size: 11px; font-weight: 600; line-height: 16px; }
-@media (hover: hover) and (pointer: fine) { .catalog-quarter-step:hover:not(:disabled), .catalog-season :deep(.select-menu-trigger:hover:not(:disabled)) { transform: translateY(-1px); border-color: rgb(96 165 250 / .55); box-shadow: 0 3px 0 rgb(148 163 184 / .14), 0 4px 8px rgb(15 23 42 / .04); } }
+.catalog-season-icon { flex: none; color: rgb(var(--action-link)); }
+.catalog-season-label { overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 650; color: rgb(var(--content-primary)); font-variant-numeric: tabular-nums; }
+.catalog-current-season { flex: none; border-radius: 5px; padding: 2px 5px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-size: 11px; font-weight: 600; line-height: 16px; }
+@media (hover: hover) and (pointer: fine) { .catalog-quarter-step:hover:not(:disabled), .catalog-season :deep(.select-menu-trigger:hover:not(:disabled)) { transform: translateY(-1px); box-shadow: 0 3px 0 rgb(148 163 184 / .14), 0 4px 8px rgb(15 23 42 / .04); } .catalog-quarter-step:hover:not(:disabled) { background: rgb(var(--surface-hover)); } }
 .catalog-quarter-step:active:not(:disabled), .catalog-season :deep(.select-menu-trigger:active:not(:disabled)) { transform: translateY(1px); box-shadow: none; }
-.catalog-quarter-step:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+.catalog-quarter-step:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
 .catalog-calendar-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; border-radius: 10px; padding: 0 12px; background: rgb(148 163 184 / .08); color: rgb(var(--color-slate-600)); font-size: 12px; }
 .catalog-calendar-toggle[aria-pressed="true"] { color: #2563eb; font-weight: 500; }
-.catalog-season { --ae-surface: rgb(var(--color-slate-50)); --ae-ink: rgb(var(--color-slate-700)); --ae-muted: rgb(var(--color-slate-600)); --ae-inset: rgb(var(--color-slate-100)); --ae-blue: #2563eb; }
 .catalog-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; margin-top: 8px; min-height: 24px; font-size: 11px; color: rgb(var(--color-slate-500)); }
 .catalog-range button { padding: 6px; color: #2563eb; }
 .catalog-count { margin-left: 10px; font-size: 12px; color: rgb(var(--color-slate-500)); font-weight: 400; }
@@ -296,12 +295,8 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
 .catalog-status-error button { min-height: 44px; color: #2563eb; }
 .dark .catalog-status-error button { color: #93c5fd; }
 .dark .catalog-calendar-toggle[aria-pressed="true"] { color: #93c5fd; }
-.dark .catalog-season { --ae-surface: rgb(var(--color-slate-800)); --ae-ink: rgb(var(--color-slate-200)); --ae-muted: rgb(var(--color-slate-300)); --ae-inset: rgb(var(--color-slate-700)); --ae-blue: #93c5fd; }
-.dark .catalog-quarter-step, .dark .catalog-season :deep(.select-menu-trigger) { background: rgb(var(--color-slate-800)); border-color: rgb(148 163 184 / .25); color: rgb(var(--color-slate-300)); box-shadow: 0 2px 0 rgb(0 0 0 / .2), 0 2px 5px rgb(0 0 0 / .08); }
+.dark .catalog-quarter-step, .dark .catalog-season :deep(.select-menu-trigger) { box-shadow: 0 2px 0 rgb(0 0 0 / .2), 0 2px 5px rgb(0 0 0 / .08); }
 .dark .catalog-quarter-step:disabled { box-shadow: none; }
-.dark .catalog-season-label { color: rgb(var(--color-slate-100)); }
-.dark .catalog-season-icon { color: #93c5fd; }
-.dark .catalog-current-season { background: rgb(59 130 246 / .14); color: #93c5fd; }
 .dark .catalog-range button { color: #93c5fd; }
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) { .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; } }

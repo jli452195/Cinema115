@@ -80,7 +80,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
 </script>
 
 <template>
-  <div ref="root" class="relative inline-block min-w-[7.5rem] text-left">
+  <div ref="root" class="relative inline-block min-w-[7.5rem] max-w-full text-left">
     <button
       ref="button"
       type="button"
@@ -91,11 +91,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
       :aria-expanded="open"
       :aria-controls="listboxID"
       :aria-activedescendant="open ? `${listboxID}-${activeIndex}` : undefined"
-      :class="variant === 'anime' ? 'select-menu-trigger' : 'flex h-10 w-full items-center justify-between gap-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm text-slate-700 dark:text-slate-300 outline-none transition hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800 focus:border-slate-400 focus:ring-2 focus:ring-slate-200 dark:focus:ring-slate-700 disabled:cursor-not-allowed disabled:opacity-50'"
+      class="select-menu-control"
+      :class="{ 'select-menu-trigger': variant === 'anime' }"
       @click="toggle"
       @keydown="keydown"
     >
-      <slot name="trigger" :label="selectedLabel"><span class="truncate">{{ selectedLabel }}</span></slot>
+      <slot name="trigger" :label="selectedLabel"><span class="select-menu-label">{{ selectedLabel }}</span></slot>
       <IconChevronDown :size="16" class="shrink-0 transition-transform" :class="{ 'rotate-180': open }" aria-hidden="true" />
     </button>
     <ul
@@ -107,24 +108,22 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
       :aria-label="label"
       :style="panelStyle"
       class="select-menu-panel"
-      :class="variant === 'anime' ? 'select-menu-anime' : 'rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1 shadow-lg shadow-slate-900/10'"
+      :class="{ 'select-menu-anime': variant === 'anime' }"
     >
       <li v-for="(option, index) in options" :id="`${listboxID}-${index}`" :key="option.value" role="option" :aria-selected="option.value === modelValue">
         <button
           type="button"
           tabindex="-1"
-          :class="variant === 'anime' ? ['select-menu-option', { active: index === activeIndex, selected: option.value === modelValue }] : ['flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors',
-            index === activeIndex ? 'bg-slate-100 dark:bg-slate-800/80' : 'bg-transparent',
-            option.value === modelValue ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-400'
-          ]"
+          class="select-menu-option"
+          :class="{ active: index === activeIndex, selected: option.value === modelValue }"
           @pointerenter="activeIndex = index"
           @pointerdown.prevent
           @click="choose(index)"
         >
           <div v-if="variant !== 'anime'" class="flex w-3 shrink-0 items-center justify-center">
-            <span v-if="option.value === modelValue" class="h-1.5 w-1.5 rounded-full bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.5)] dark:bg-amber-400 dark:shadow-[0_0_6px_rgba(251,191,36,0.5)]" aria-hidden="true" />
+            <span v-if="option.value === modelValue" class="h-1.5 w-1.5 rounded-full bg-selection-content" aria-hidden="true" />
           </div>
-          <span :class="variant === 'anime' ? 'select-menu-label' : 'whitespace-nowrap'">{{ option.label }}</span>
+          <span class="select-menu-label">{{ option.label }}</span>
         </button>
       </li>
     </ul>
@@ -132,17 +131,20 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', outside); do
 </template>
 
 <style scoped>
-.select-menu-trigger { display: flex; width: 100%; min-width: 0; min-height: 44px; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px; border: 1px solid rgb(148 163 184 / .16); border-radius: 10px; background: var(--ae-surface, #fff); color: var(--ae-ink, #1e293b); font-size: 12px; cursor: pointer; }
-.select-menu-trigger:hover:not(:disabled) { border-color: rgb(96 165 250 / .55); }
-.select-menu-trigger[aria-expanded=true], .select-menu-trigger:focus-visible { outline: 2px solid var(--ae-blue, #2563eb); outline-offset: 2px; }
-.select-menu-trigger:disabled { opacity: .45; cursor: default; }
-.select-menu-panel { position: fixed; inset: auto; margin: 0; overflow: auto; overscroll-behavior: contain; }
+.select-menu-control { display: flex; width: 100%; min-width: 0; min-height: 40px; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); font-size: 14px; line-height: 1.5; text-align: left; cursor: pointer; transition: background-color .15s, border-color .15s, color .15s; }
+.select-menu-trigger { min-height: 44px; gap: 16px; font-size: 12px; }
+.select-menu-control:hover:not(:disabled) { background: rgb(var(--surface-hover)); }
+.select-menu-control[aria-expanded=true], .select-menu-control:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+.select-menu-control:disabled { opacity: .5; cursor: not-allowed; }
+.select-menu-panel { position: fixed; inset: auto; margin: 0; padding: 4px; border: 1px solid rgb(var(--line-default)); border-radius: 12px; background: rgb(var(--surface-elevated)); color: rgb(var(--content-primary)); box-shadow: 0 8px 24px rgb(0 0 0 / .16); overflow: auto; overscroll-behavior: contain; }
+.dark .select-menu-panel { box-shadow: 0 8px 24px rgb(0 0 0 / .32); }
 .select-menu-panel::backdrop { background: transparent; }
-.select-menu-anime { padding: 5px; border: 0; border-radius: 12px; background: var(--ae-surface, #fff); color: var(--ae-ink, #1e293b); box-shadow: 0 6px 24px rgb(15 23 42 / .15), 0 0 0 1px rgb(148 163 184 / .08); }
-.select-menu-option { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 8px 12px; border-radius: 8px; text-align: left; color: var(--ae-muted, #475569); font-size: 13px; line-height: 1.6; cursor: pointer; }
-.select-menu-option.active { background: var(--ae-inset, #edf1f6); }
-.select-menu-option.selected { color: var(--ae-blue, #2563eb); font-weight: 600; }
+.select-menu-anime { padding: 5px; }
+.select-menu-option { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 8px 12px; border-radius: 8px; background: transparent; text-align: left; color: rgb(var(--content-secondary)); font-size: 14px; line-height: 1.6; cursor: pointer; transition: background-color .15s, color .15s; }
+.select-menu-anime .select-menu-option { font-size: 13px; }
+.select-menu-option.active { background: rgb(var(--surface-hover)); color: rgb(var(--content-primary)); }
+.select-menu-option.selected { background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-weight: 600; }
 .select-menu-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-@media (max-width: 639px) { .select-menu-option { min-height: 44px; } }
-@media (prefers-reduced-motion: reduce) { .transition-transform { transition: none; } }
+@media (max-width: 639px) { .select-menu-control, .select-menu-option { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .select-menu-control, .select-menu-option, .transition-transform { transition: none; } }
 </style>

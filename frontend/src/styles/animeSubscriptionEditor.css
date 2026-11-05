@@ -149,9 +149,6 @@
 .ae-source-switch > label { align-items: center; justify-content: center; min-width: var(--ae-control-height, 44px); min-height: var(--ae-control-height, 44px); gap: 0; }
 .ae-source-switch input + span { margin-top: 0; }
 .ae-source-switch label > span:last-child { display: none; }
-.anime-floating .anime-editor .ae-source-switch input:checked + span { background: #2563eb; }
-.anime-floating .anime-editor .ae-source-switch input:focus-visible + span { --tw-ring-color: #60a5fa; --tw-ring-offset-color: var(--ae-surface); }
-.ae-source-switch input:disabled + span { opacity: .45; }
 .ae-summary-title h3, .ae-choose-source h3 { font-size: 14px; font-weight: 600; }
 .ae-confirmation { font-size: 10px; color: var(--ae-muted); margin-left: 10px; white-space: nowrap; }
 .ae-confirmation.ready { color: #178475; }.dark .ae-confirmation.ready { color: #6ee7b7; }

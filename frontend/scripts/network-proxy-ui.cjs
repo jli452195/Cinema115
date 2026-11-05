@@ -1,4 +1,4 @@
-// All APIs are mocked. No connection is made to a proxy, NAS service or external site.
+// 所有接口使用模拟响应，不连接代理、NAS 服务或外部网站。
 const assert = require('node:assert/strict'), path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async () => {
@@ -149,8 +149,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     passed.push('collapsed auth retains edits, leaving can cancel/discard, explicit password clearing, no secret persistence')
 
     const artifact = path.join(os.tmpdir(), 'cinema115-network-proxy-ui'); await fs.mkdir(artifact, { recursive: true })
-    for (const [width, theme] of [[1440, 'light'], [390, 'light'], [320, 'dark']]) {
+    await url().fill('http://proxy.example:7891')
+    for (const [width, theme] of [1440, 390, 320].flatMap(width => ['light', 'dark'].map(theme => [width, theme]))) {
       await page.setViewportSize({ width, height: 1000 }); await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme)
+      await switcher().focus(); await page.keyboard.press('Space'); assert.equal(await switcher().isChecked(), false)
+      await page.keyboard.press('Space'); assert.equal(await switcher().isChecked(), true)
+      const expectedAction = theme === 'dark' ? 'rgb(55, 105, 181)' : 'rgb(37, 99, 235)'
+      await page.waitForFunction(expected => getComputedStyle(document.querySelector('.setting-switch-track')).backgroundColor === expected, expectedAction)
+      const appearance = await page.evaluate(() => {
+        const style = selector => getComputedStyle(document.querySelector(selector))
+        function contrast(foreground, background) {
+          const luminance = color => color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => value / 255).map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4).reduce((total, value, index) => total + value * [.2126, .7152, .0722][index], 0)
+          const [low, high] = [luminance(foreground), luminance(background)].sort((a, b) => a - b)
+          return (high + .05) / (low + .05)
+        }
+        const track = style('.setting-switch-track'), button = style('.np-primary'), input = style('.np-field input'), muted = style('.np-muted'), panel = style('.np-panel')
+        return { action: button.backgroundColor, focus: track.outlineColor, focusWidth: track.outlineWidth, buttonContrast: contrast(button.color, button.backgroundColor), fieldContrast: contrast(input.color, input.backgroundColor), helpContrast: contrast(muted.color, panel.backgroundColor), touchHeight: document.querySelector('.setting-switch').getBoundingClientRect().height }
+      })
+      assert.equal(appearance.action, expectedAction)
+      assert.equal(appearance.focus, theme === 'dark' ? 'rgb(141, 174, 232)' : 'rgb(37, 99, 235)')
+      assert.equal(appearance.focusWidth, '2px')
+      for (const key of ['buttonContrast', 'fieldContrast', 'helpContrast']) assert.ok(appearance[key] >= 4.5, `${width}/${theme} ${key}: ${appearance[key]}`)
+      if (width < 640) assert.ok(appearance.touchHeight >= 44)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true)
       await page.screenshot({ path: path.join(artifact, `network-${width}-${theme}.png`), fullPage: true })
       const before = testCalls().length; await openTest().click(); await dialog().waitFor()
@@ -171,7 +191,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await closeTest()
     }
     assert.deepEqual(errors, [])
-    passed.push('320/390px and desktop light/dark page and test-modal layouts without viewport overflow; close/cancel remain reachable')
+    passed.push('320/390/1440px in both themes: blue controls, visible keyboard focus, readable text pairs, mobile switch touch size, and reachable modal actions without viewport overflow')
     console.log(JSON.stringify({ passed, artifact }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

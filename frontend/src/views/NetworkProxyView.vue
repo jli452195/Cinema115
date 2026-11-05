@@ -106,19 +106,19 @@ onBeforeUnmount(() => { lifecycle.abort(); testController?.abort(); password.val
     <template #actions><button type="button" class="np-button" :disabled="!!busy || !loaded || !!credentialIssue" @click="openTests"><IconBolt :size="16" aria-hidden="true" />测试连接</button><button type="submit" form="network-proxy-form" class="np-button np-primary" :disabled="!!busy || !loaded || !dirty || !!credentialIssue"><IconDeviceFloppy :size="16" aria-hidden="true" />{{ busy === 'save' ? '保存中…' : '保存配置' }}</button></template>
     <p v-if="error" role="alert" class="np-feedback np-error mb-4">{{ error }}<button v-if="!loaded" type="button" :disabled="!!busy" class="underline" @click="load">重新加载</button></p>
     <p v-if="notice" role="status" class="np-feedback np-note mb-4">{{ notice }}</p>
-    <p v-if="busy === 'load'" role="status" class="mb-4 text-sm text-slate-500 dark:text-slate-400">正在读取网络代理配置…</p>
+    <p v-if="busy === 'load'" role="status" class="mb-4 text-sm text-content-secondary">正在读取网络代理配置…</p>
     <div class="np-page">
-      <form id="network-proxy-form" class="np-panel min-w-0 rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6" @submit.prevent="save">
+      <form id="network-proxy-form" class="np-panel min-w-0 rounded-xl border border-line-default bg-surface-card p-4 shadow-sm sm:p-6" :aria-busy="!!busy" @submit.prevent="save">
         <fieldset :disabled="!!busy || !loaded" class="np-fields">
           <SettingSwitch v-model="form.enabled" label="启用网络代理" description="仅对下方选中的服务生效，保存后应用。" :disabled="!!busy || !loaded" />
           <div class="np-address"><label class="np-field">代理地址<input v-model="form.url" type="url" :required="form.enabled" maxlength="2048" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.0.2:7890" aria-describedby="np-url-help" /></label><p id="np-url-help" class="np-muted mt-2">支持 HTTP、HTTPS、SOCKS5、SOCKS5H，填写 NAS 可访问的地址。</p></div>
           <details class="np-auth np-section" :open="authOpen" @toggle="authOpen = ($event.target as HTMLDetailsElement).open">
             <summary><span>代理认证</span><small>{{ passwordConfigured ? '已保存密码' : '可选' }}</small></summary>
-            <div class="np-auth-fields"><label class="np-field">代理用户名<input v-model="form.username" type="text" autocomplete="off" maxlength="256" /></label><label class="np-field">代理密码<input v-model="password" type="password" autocomplete="new-password" :disabled="clearPassword" maxlength="1024" :placeholder="passwordConfigured ? '留空保留已保存密码' : '可选'" /></label></div>
+            <div class="np-auth-fields"><label class="np-field">代理用户名<input v-model="form.username" type="text" autocomplete="off" maxlength="256" :aria-invalid="credentialIssue ? true : undefined" :aria-describedby="credentialIssue ? 'np-auth-help np-credential-error' : 'np-auth-help'" /></label><label class="np-field">代理密码<input v-model="password" type="password" autocomplete="new-password" :disabled="clearPassword" maxlength="1024" :placeholder="passwordConfigured ? '留空保留已保存密码' : '可选'" aria-describedby="np-auth-help" /></label></div>
             <label v-if="passwordConfigured" class="np-check"><input v-model="clearPassword" type="checkbox" :disabled="!!password" /><span>清除已保存密码</span></label>
-            <p class="np-muted mt-2">密码不会回显，关闭此区域不会丢弃输入；修改或清除后需保存。</p>
+            <p id="np-auth-help" class="np-muted mt-2">密码不会回显，关闭此区域不会丢弃输入；修改或清除后需保存。</p>
           </details>
-          <p v-if="credentialIssue" role="alert" class="np-credential-error">{{ credentialIssue }}</p>
+          <p v-if="credentialIssue" id="np-credential-error" role="alert" class="np-credential-error">{{ credentialIssue }}</p>
           <section class="np-section" aria-labelledby="np-services-title">
             <div class="np-section-heading"><h2 id="np-services-title">服务范围</h2><span class="np-muted">已选择 {{ form.services.length }} 项</span></div>
             <div class="np-services"><label v-for="service in availableServices" :key="service.id" class="np-check np-service" :class="{ 'is-selected': form.services.includes(service.id) }"><input v-model="form.services" type="checkbox" :value="service.id" /><span>{{ service.label }}</span></label></div>
@@ -150,21 +150,80 @@ onBeforeUnmount(() => { lifecycle.abort(); testController?.abort(); password.val
 </template>
 
 <style scoped>
-.np-page { display:grid;gap:16px;color:rgb(var(--color-slate-700)); }.dark .np-page { color:rgb(var(--color-slate-200)); }
-.np-fields { display:grid;gap:20px;min-width:0; }.np-fields:disabled { opacity:.65; }
-.np-fields :deep(input[role='switch']:checked + span) { background-color:#2563eb; }.np-fields :deep(input[role='switch']:focus-visible + span) { --tw-ring-color:#60a5fa; }
-.np-field { display:grid;min-width:0;gap:8px;font-size:14px;font-weight:500; }
-.np-field input { width:100%;min-width:0;min-height:44px;padding:9px 12px;border:1px solid rgb(var(--color-slate-200));border-radius:12px;background:rgb(var(--color-slate-50));color:inherit;font-size:14px;font-weight:400;outline:none; }.dark .np-field input { border-color:rgb(var(--color-slate-700));background:rgb(var(--color-slate-950)); }
-.np-field input:focus { border-color:#3b82f6;box-shadow:0 0 0 2px rgb(59 130 246/.12); }
-.np-muted,.np-boundary { color:rgb(var(--color-slate-500));font-size:12px;line-height:1.8; }.dark .np-muted,.dark .np-boundary { color:rgb(var(--color-slate-400)); }
-.np-section { border-top:1px solid rgb(var(--color-slate-100));padding-top:20px; }.dark .np-section { border-color:rgb(var(--color-slate-800)); }h2 { font-size:16px;font-weight:600;color:rgb(var(--color-slate-900)); }.dark h2 { color:rgb(var(--color-slate-100)); }.np-auth summary { font-size:14px;font-weight:500; }.np-section-heading { display:flex;align-items:center;justify-content:space-between;gap:12px; }
-.np-services { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:12px 0; }.np-check { display:flex;min-width:0;min-height:40px;align-items:center;gap:9px;font-size:14px;cursor:pointer; }.np-check input { width:16px;height:16px;flex-shrink:0;accent-color:#2563eb; }.np-check span { overflow-wrap:anywhere; }.np-service { padding:8px 10px;border:1px solid rgb(var(--color-slate-200));border-radius:10px; }.np-service.is-selected { border-color:rgb(59 130 246/.3);background:rgb(59 130 246/.05); }.dark .np-service { border-color:rgb(var(--color-slate-700)); }.dark .np-service.is-selected { border-color:rgb(96 165 250/.4);background:rgb(59 130 246/.08); }
-.np-auth summary { display:list-item;cursor:pointer; }.np-auth summary small { margin-left:10px;font-size:12px;font-weight:400;color:rgb(var(--color-slate-500)); }.np-auth-fields { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:14px 0 8px; }
-.np-save-state { padding-top:2px; }
-.np-button { display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:8px 14px;border:1px solid rgb(var(--color-slate-200));border-radius:12px;background:#fff;font-size:14px;font-weight:500;color:rgb(var(--color-slate-700)); }.dark .np-button { border-color:rgb(var(--color-slate-700));background:rgb(var(--color-slate-900));color:rgb(var(--color-slate-200)); }.np-primary,.dark .np-primary { border-color:#2563eb;background:#2563eb;color:#fff; }.np-button:disabled { opacity:.45;cursor:not-allowed; }.np-button:focus-visible,.np-check input:focus-visible,.np-auth summary:focus-visible { outline:2px solid #3b82f6;outline-offset:3px; }
-.np-feedback { border-radius:9px;padding:11px 13px;font-size:13px;line-height:1.8;overflow-wrap:anywhere; }.np-feedback button { margin-left:12px; }.np-error,.np-credential-error,.np-test-result.is-failed { color:#b91c1c; }.np-error { background:rgb(239 68 68/.07); }.dark .np-error,.dark .np-credential-error,.dark .np-test-result.is-failed { color:#fca5a5; }.np-credential-error { font-size:12px; }.np-note { color:rgb(var(--color-slate-600));background:rgb(var(--color-slate-100)); }.dark .np-note { color:rgb(var(--color-slate-300));background:rgb(var(--color-slate-800)); }.np-test-result.is-success { color:#047857; }.dark .np-test-result.is-success { color:#6ee7b7; }
-.np-test-list { display:grid;gap:8px;max-height:52dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable; }.np-test-row { display:grid;grid-template-columns:36px minmax(0,1fr) auto 36px;align-items:center;gap:12px;min-height:70px;padding:12px;border-radius:12px;background:rgb(var(--color-slate-100));color:rgb(var(--color-slate-700)); }.dark .np-test-row { background:rgb(var(--color-slate-800));color:rgb(var(--color-slate-200)); }.np-test-logo { display:flex;align-items:center;justify-content:center;width:36px;height:36px;flex-shrink:0;border-radius:10px;background:rgb(var(--color-slate-200)); }.np-test-logo img { max-width:28px;max-height:28px;object-fit:contain; }.dark .np-test-logo { background:rgb(var(--color-slate-700)); }.np-test-info { min-width:0; }.np-test-name { display:flex;align-items:center;flex-wrap:wrap;gap:7px;font-size:14px;font-weight:500;line-height:1.6;overflow-wrap:anywhere; }.np-test-route { font-size:11px;font-weight:400;color:rgb(var(--color-slate-500)); }.dark .np-test-route { color:rgb(var(--color-slate-400)); }.np-test-result { font-size:12px;line-height:1.7;color:rgb(var(--color-slate-500));overflow-wrap:anywhere; }.np-test-message { display:block; }.np-test-latency { font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums; }.np-test-action { display:flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:9px;color:rgb(var(--color-slate-500)); }.np-test-action:not(:disabled):hover { color:#2563eb;background:rgb(59 130 246/.1); }.np-test-action:disabled { opacity:.45;cursor:default; }.np-test-action:focus-visible { outline:2px solid #60a5fa;outline-offset:2px; }.np-spin { animation:np-spin 1s linear infinite; }@keyframes np-spin { to { transform:rotate(360deg); } }@media(prefers-reduced-motion:reduce) { .np-spin { animation:none; } }
-@media(hover:hover) { .np-button:not(:disabled):hover { filter:brightness(.96); }.dark .np-button:not(:disabled):hover { filter:brightness(1.12); } }
-@media(max-width:639px) { .np-layout :deep(.management-heading) { grid-template-columns:minmax(0,1fr); }.np-layout :deep(.management-heading > div) { grid-row:3;flex-wrap:wrap; }.np-layout :deep(.management-heading > p) { grid-column:1; }.np-fields { gap:16px; }.np-section { padding-top:16px; }.np-auth-fields { grid-template-columns:minmax(0,1fr); }.np-field input { font-size:16px; }.np-button,.np-check { min-height:44px; }.np-services { grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }.np-service { padding:8px;font-size:13px; }.np-test-row { grid-template-columns:30px minmax(0,1fr) auto 32px;gap:8px;padding:10px 8px; }.np-test-logo { width:30px;height:30px; }.np-test-logo img { max-width:24px;max-height:24px; }.np-test-name { font-size:13px; }.np-test-latency { font-size:12px; }.np-test-action { width:32px;min-height:44px; } }
-@media(max-width:359px) { .np-services { grid-template-columns:minmax(0,1fr); } }
+.np-page { display: grid; gap: 16px; color: rgb(var(--content-primary)); }
+.np-fields { display: grid; gap: 24px; min-width: 0; }
+.np-field { display: grid; min-width: 0; gap: 8px; color: rgb(var(--content-primary)); font-size: 14px; font-weight: 500; }
+.np-field input { width: 100%; min-width: 0; min-height: 44px; padding: 9px 12px; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-page)); color: rgb(var(--content-primary)); font-size: 14px; font-weight: 400; }
+.np-field input::placeholder { color: rgb(var(--content-secondary)); opacity: 1; }
+.np-field input:focus { border-color: rgb(var(--focus)); outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+.np-field input:disabled { opacity: .5; cursor: not-allowed; }
+.np-field input[aria-invalid=true] { border-color: rgb(var(--status-danger)); }
+.np-muted, .np-boundary { color: rgb(var(--content-secondary)); font-size: 12px; line-height: 1.8; }
+.np-section { border-top: 1px solid rgb(var(--line-default)); padding-top: 24px; }
+h2 { font-size: 16px; font-weight: 600; color: rgb(var(--content-primary)); }
+.np-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.np-services { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.np-check { display: flex; min-width: 0; min-height: 40px; align-items: center; gap: 8px; font-size: 14px; cursor: pointer; }
+.np-check input { width: 18px; height: 18px; flex-shrink: 0; accent-color: rgb(var(--action-primary)); }
+.np-check:has(input:disabled) { cursor: not-allowed; }
+.np-check input:disabled { opacity: .5; }
+.np-check span { overflow-wrap: anywhere; }
+.np-service { padding: 8px 12px; border: 1px solid rgb(var(--line-default)); border-radius: 8px; }
+.np-service.is-selected { border-color: rgb(var(--selection-content)); background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+.np-auth summary { display: list-item; min-height: 40px; align-content: center; font-size: 14px; font-weight: 500; cursor: pointer; }
+.np-auth summary small { margin-left: 12px; font-size: 12px; font-weight: 400; color: rgb(var(--content-secondary)); }
+.np-auth-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 16px 0 8px; }
+.np-save-state { padding-top: 4px; }
+.np-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); font-size: 14px; font-weight: 500; transition: background-color 160ms; }
+.np-primary { border-color: rgb(var(--action-primary)); background: rgb(var(--action-primary)); color: rgb(var(--action-on-primary)); }
+.np-button:disabled { opacity: .5; cursor: not-allowed; }
+.np-button:focus-visible, .np-check input:focus-visible, .np-auth summary:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
+.np-feedback { border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
+.np-feedback button { margin-left: 12px; }
+.np-error, .np-credential-error, .np-test-result.is-failed { color: rgb(var(--status-danger)); }
+.np-error { background: rgb(var(--status-danger-surface)); }
+.np-credential-error { font-size: 12px; }
+.np-note { color: rgb(var(--content-secondary)); background: rgb(var(--surface-page)); }
+.np-test-result.is-success { color: rgb(var(--status-success)); }
+.np-test-list { display: grid; gap: 8px; max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.np-test-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto 36px; align-items: center; gap: 12px; min-height: 72px; padding: 12px; border-radius: 12px; background: rgb(var(--surface-page)); color: rgb(var(--content-primary)); }
+.np-test-logo { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; background: rgb(var(--surface-hover)); }
+.np-test-logo img { max-width: 28px; max-height: 28px; object-fit: contain; }
+.np-test-info { min-width: 0; }
+.np-test-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.np-test-route { font-size: 12px; font-weight: 400; color: rgb(var(--content-secondary)); }
+.np-test-result { font-size: 12px; line-height: 1.7; color: rgb(var(--content-secondary)); overflow-wrap: anywhere; }
+.np-test-message { display: block; }
+.np-test-latency { font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.np-test-action { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; color: rgb(var(--content-secondary)); }
+.np-test-action:disabled { opacity: .5; cursor: not-allowed; }
+.np-test-action:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+.np-spin { animation: np-spin 1s linear infinite; }
+@keyframes np-spin { to { transform: rotate(360deg); } }
+@media (hover: hover) {
+  .np-button:not(:disabled):hover { background: rgb(var(--surface-hover)); }
+  .np-primary:not(:disabled):hover { border-color: rgb(var(--action-primary-hover)); background: rgb(var(--action-primary-hover)); }
+  .np-service:has(input:enabled):not(.is-selected):hover { background: rgb(var(--surface-hover)); }
+  .np-test-action:not(:disabled):hover { color: rgb(var(--selection-content)); background: rgb(var(--selection-surface)); }
+}
+@media (max-width: 639px) {
+  .np-layout :deep(.management-heading) { grid-template-columns: minmax(0, 1fr); }
+  .np-layout :deep(.management-heading > div) { grid-row: 3; flex-wrap: wrap; }
+  .np-layout :deep(.management-heading > p) { grid-column: 1; }
+  .np-fields { gap: 16px; }
+  .np-section { padding-top: 16px; }
+  .np-auth-fields { grid-template-columns: minmax(0, 1fr); }
+  .np-field input { font-size: 16px; }
+  .np-button, .np-check, .np-auth summary { min-height: 44px; }
+  .np-services { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .np-service { padding: 8px; font-size: 13px; }
+  .np-test-row { grid-template-columns: 28px minmax(0, 1fr) auto 44px; gap: 8px; padding: 8px; }
+  .np-test-logo { width: 28px; height: 28px; }
+  .np-test-logo img { max-width: 24px; max-height: 24px; }
+  .np-test-name { font-size: 13px; }
+  .np-test-latency { font-size: 12px; }
+  .np-test-action { width: 44px; height: 44px; }
+}
+@media (max-width: 359px) { .np-services { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .np-spin { animation: none; } .np-button { transition: none; } }
 </style>
