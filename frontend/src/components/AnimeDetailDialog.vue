@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { useRoute } from 'vue-router'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
@@ -19,8 +20,7 @@ const loading = ref(false), error = ref(''), relationsLoading = ref(false), rela
 const relationsOpen = ref(remembered?.relationsOpen || false), relationsLimit = ref(remembered?.relationsLimit || 12), synopsisOpen = ref(remembered?.synopsisOpen || false), imageFailed = ref(false)
 const subject = computed(() => details.value?.subject || current.value)
 const stale = computed(() => details.value && (details.value.metadata.stale || details.value.metadata.expiresAt <= Date.now()))
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 let subjectController = new AbortController(), relationsController = new AbortController()
 let disposed = false, backdropDown = false
 
@@ -80,7 +80,7 @@ function trapFocus(event: KeyboardEvent) {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
 }
 onMounted(() => {
-  dialog.value?.showModal(); document.body.style.overflow = 'hidden'
+  dialogLifecycle.acquire(); dialog.value?.showModal()
   closeButton.value?.focus({ preventScroll: true })
   void loadSubject()
   if (relationsOpen.value) void loadRelations()
@@ -89,8 +89,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (ownerToken === portalToken.value && ownerID === portalUser.value?.id && portalUser.value?.role === 'admin') rememberAnimeDetail({ current: current.value, history: history.value, relationsOpen: relationsOpen.value, relationsLimit: relationsLimit.value, synopsisOpen: synopsisOpen.value, top: body.value?.scrollTop || 0 })
   disposed = true; subjectController.abort(); relationsController.abort(); dialog.value?.close()
-  document.body.style.overflow = previousOverflow
-  if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+  dialogLifecycle.release()
 })
 </script>
 

@@ -1,21 +1,14 @@
 <script setup lang="ts">
 import { catalogAPI, isPortalAdmin } from '../composables/usePortalAuth'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
-import BotSearchDialog from '../components/BotSearchDialog.vue'
-import TelegramChannelSearchDialog from '../components/TelegramChannelSearchDialog.vue'
-import GyingSearchDialog from '../components/GyingSearchDialog.vue'
-import WoniuSearchDialog from '../components/WoniuSearchDialog.vue'
-import AnimeResourceSearchDialog from '../components/AnimeResourceSearchDialog.vue'
-import RE0SearchDialog from '../components/RE0SearchDialog.vue'
 import FollowButton from '../components/FollowButton.vue'
 import SearchPill from '../components/SearchPill.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import SeasonEpisodeList from '../components/SeasonEpisodeList.vue'
 import SeasonLibraryProgress from '../components/SeasonLibraryProgress.vue'
-import TMDBEpisodeGroupDialog from '../components/TMDBEpisodeGroupDialog.vue'
 import { numberingLabel, type NumberingInfo } from '../types/tvNumbering'
 import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import HistoryBackButton from '../components/HistoryBackButton.vue'
@@ -38,6 +31,14 @@ import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
 import { telegramUserRequest, type TelegramUserStatus, type TelegramChannelConfig } from '../types/telegramUser'
 import { gyingRequest, type GyingConfigView } from '../types/gying'
 import { woniuRequest, type WoniuConfigView } from '../types/woniu'
+
+const BotSearchDialog = defineAsyncComponent(() => import('../components/BotSearchDialog.vue'))
+const TelegramChannelSearchDialog = defineAsyncComponent(() => import('../components/TelegramChannelSearchDialog.vue'))
+const GyingSearchDialog = defineAsyncComponent(() => import('../components/GyingSearchDialog.vue'))
+const WoniuSearchDialog = defineAsyncComponent(() => import('../components/WoniuSearchDialog.vue'))
+const AnimeResourceSearchDialog = defineAsyncComponent(() => import('../components/AnimeResourceSearchDialog.vue'))
+const RE0SearchDialog = defineAsyncComponent(() => import('../components/RE0SearchDialog.vue'))
+const TMDBEpisodeGroupDialog = defineAsyncComponent(() => import('../components/TMDBEpisodeGroupDialog.vue'))
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
 const versionCache = provideEmbyVersionCache()
@@ -77,7 +78,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
 watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; channelSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
-const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
+const emit = defineEmits<{ logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError, refresh: refreshEmbyMedia, lastReadSucceeded: embyReadSucceeded } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
 interface CastMember { id: number; name: string; character: string; profileUrl: string }

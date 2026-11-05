@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import type { P115Account } from '../types/p115Accounts'
 
@@ -6,13 +7,11 @@ const props = defineProps<{ account: P115Account; mode: 'rename'; busy: boolean;
 const emit = defineEmits<{ close: []; save: [name: string] }>()
 const dialog = ref<HTMLDialogElement>(), name = ref(props.account.name)
 const titleID = useId()
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 function close() { if (!props.busy) emit('close') }
-onMounted(() => { document.body.style.overflow = 'hidden'; dialog.value?.showModal() })
+onMounted(() => { dialogLifecycle.acquire(); dialog.value?.showModal() })
 onBeforeUnmount(() => {
-  dialog.value?.close(); document.body.style.overflow = previousOverflow
-  if (previousFocus?.isConnected) previousFocus.focus()
+  dialog.value?.close(); dialogLifecycle.release()
 })
 </script>
 

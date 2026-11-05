@@ -1,5 +1,6 @@
 // Isolated UI validation: every API is mocked; no real cloud operations.
 const assert = require('node:assert/strict')
+const { inputValue } = require('./select-menu-helpers.cjs')
 const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
@@ -92,10 +93,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await picker.getByRole('combobox', { name: '字幕所属季', exact: true }).click()
     await page.getByRole('option', { name: '第 2 季', exact: true }).click()
     assert.equal(await subtitle.getByRole('checkbox').isChecked(), true)
-    assert.equal(await subtitle.getByRole('combobox', { name: /对应视频/ }).inputValue(), 'c')
+    assert.equal(await inputValue(subtitle.getByRole('combobox', { name: /对应视频/ })), 'c')
     await picker.getByRole('combobox', { name: '字幕所属季', exact: true }).click()
     await page.getByRole('option', { name: '第 1 季', exact: true }).click()
-    assert.equal(await subtitle.getByRole('combobox', { name: /对应视频/ }).inputValue(), 'c', 'season switch preserves association')
+    assert.equal(await inputValue(subtitle.getByRole('combobox', { name: /对应视频/ })), 'c', 'season switch preserves association')
     await picker.getByRole('button', { name: '使用所选字幕', exact: true }).click()
     // Only season 2 remains staged; season 1 is still checked in the editor.
     assert.equal(await confirmed.locator('.confirmed-group').count(), 1)

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle, restoreDialogFocus } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { memberRequest, type MemberPlayback } from '../types/memberPlayback'
 import { playbackTargetName, playbackTargetSource, type UserPlaybackSession as Session, type PlaybackSessionsSnapshot } from '../types/userPlayback'
@@ -15,7 +16,8 @@ const stale = computed(() => !!readError.value || loaded.value && now.value - ch
 const filteredSessions = computed(() => sessions.value.filter(session => !userFilter.value || session.userId === userFilter.value))
 const filteredName = computed(() => props.members.find(member => member.userId === userFilter.value)?.embyName || 'Emby 用户')
 const controller = new AbortController()
-let timer: ReturnType<typeof setTimeout> | undefined, previousOverflow = '', backdropStarted = false
+const dialogLifecycle = createDialogLifecycle()
+let timer: ReturnType<typeof setTimeout> | undefined, backdropStarted = false
 let clockTimer: ReturnType<typeof setInterval> | undefined, returnFocus: HTMLElement | null = null
 let readController: AbortController | undefined, readVersion = 0
 let releaseTrigger: HTMLElement | null = null
@@ -77,7 +79,7 @@ async function openForUser(userId = '', origin?: HTMLElement) {
  if (opened.value) return
  userFilter.value = userId
  returnFocus = origin || trigger.value || null
- previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; opened.value = true
+ dialogLifecycle.acquire(returnFocus); opened.value = true
  await nextTick()
  if (!controller.signal.aborted) { dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true }) }
  if (stale.value || !loaded.value) void load()
@@ -88,9 +90,8 @@ defineExpose({ openForUser })
 function closeDialog() {
  if (releasing.value) return
  dialog.value?.close(); opened.value = false; selected.value = undefined; releaseError.value = ''; notice.value = ''
- document.body.style.overflow = previousOverflow
- if (returnFocus?.isConnected && returnFocus.getClientRects().length) returnFocus.focus({ preventScroll: true })
- else trigger.value?.focus({ preventScroll: true })
+ dialogLifecycle.release(false)
+ if (!restoreDialogFocus(returnFocus)) restoreDialogFocus(trigger.value)
  returnFocus = null
 }
 function outsideDialog(event: MouseEvent) {
@@ -142,7 +143,7 @@ function tick() {
 }
 function onVisible() { tick(); if (!document.hidden) void load() }
 onMounted(() => { void poll(); clockTimer = setInterval(tick, 5000); document.addEventListener('visibilitychange', onVisible) })
-onBeforeUnmount(() => { controller.abort(); readController?.abort(); clearTimeout(timer); clearInterval(clockTimer); document.removeEventListener('visibilitychange', onVisible); if (opened.value) { dialog.value?.close(); document.body.style.overflow = previousOverflow } })
+onBeforeUnmount(() => { controller.abort(); readController?.abort(); clearTimeout(timer); clearInterval(clockTimer); document.removeEventListener('visibilitychange', onVisible); if (opened.value) dialog.value?.close(); dialogLifecycle.release(false) })
 </script>
 
 <template>

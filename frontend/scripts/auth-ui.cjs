@@ -87,6 +87,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('alert').waitFor()
     assert.equal(requests.at(-1).endpoint, '/api/auth/login')
     await page.getByRole('link', { name: '有邀请码？创建 Emby 账号' }).click()
+    await page.getByLabel('邀请码', { exact: true }).waitFor()
     assert.equal(new URL(page.url()).searchParams.get('redirect'), '/follows')
     assert.equal(await page.getByLabel('Emby 用户名', { exact: true }).count(), 0)
     passed.push('keyboard-login-password-toggle-and-registration-redirect')

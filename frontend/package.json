@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test:segmented-control-ui": "node scripts/segmented-control-ui.cjs",
+    "test:dialog-lifecycle-ui": "node scripts/dialog-lifecycle-ui.cjs",
+    "test:select-menu-ui": "node scripts/select-menu-ui.cjs",
     "test:dashboard-navigation-ui": "node scripts/dashboard-navigation-ui.cjs",
     "test:folder-monitor-ui": "node scripts/folder-monitor-ui.cjs",
     "test:drive-strm-ui": "node scripts/drive-strm-ui.cjs",
@@ -17,6 +20,7 @@
     "test:media-organize-history-ui": "node scripts/media-organize-history-ui.cjs",
     "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",
+    "test:magnet-download-toast-ui": "node scripts/magnet-download-toast-ui.cjs",
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",
     "test:garden-organize-ui": "node scripts/download-organize-ui.cjs",
     "test:download-confirmation-ui": "node scripts/download-confirmation-ui.cjs",
@@ -49,6 +53,7 @@
     "test:telegram-account-ui": "node scripts/telegram-account-ui.cjs",
     "test:telegram-bot-modules-ui": "node scripts/telegram-bot-modules-ui.cjs",
     "test:toast": "node --test tests/toast.test.mjs",
+    "test:toast-ui": "node scripts/toast-ui.cjs",
     "test:assrt-ui": "node scripts/download-organize-ui.cjs garden assrt",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
@@ -79,6 +84,7 @@
     "vue": "^3.5.13",
     "vue-draggable-plus": "^0.6.1",
     "vue-router": "^4.6.4",
+    "vue-sonner": "^2.0.9",
     "yaml": "^2.9.1"
   },
   "devDependencies": {

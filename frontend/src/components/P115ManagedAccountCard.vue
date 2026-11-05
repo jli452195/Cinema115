@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import SelectMenu from './SelectMenu.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
-import { IconChevronDown, IconCopy, IconPencil, IconSitemap } from '@tabler/icons-vue'
+import { IconCopy, IconPencil, IconSitemap } from '@tabler/icons-vue'
 import type { P115Account } from '../types/p115Accounts'
 import { loginClientLabel } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
@@ -72,10 +73,8 @@ function check() {
     emit('changed')
   })
 }
-function changeMode(event: Event) {
-  const select = event.target as HTMLSelectElement, value = select.value
-  select.value = props.account.pool?.mode || 'enabled'
-  if (disabled.value || value === select.value) return
+function changeMode(value: string) {
+  if (disabled.value || value === (props.account.pool?.mode || 'enabled')) return
   if (value === 'disabled') poolDisable.value = props.account.revision
   else emit('poolMode', value, props.account.revision)
 }
@@ -201,7 +200,7 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
         <p v-if="needsDirectory" class="mt-2 text-xs leading-5 text-red-700 dark:text-red-300">{{ account.configured ? '设置后才能参与调度，用于保存播放秒传文件。' : '请先登录，再设置秒传目录，完成后才能参与调度。' }}</p>
         </div>
       </div>
-      <label v-if="maxSessions !== undefined" class="pool-mode-row"><IconSitemap aria-hidden="true" /><span class="sr-only">调度模式</span><span class="pool-mode-control"><select :value="account.pool?.mode || 'enabled'" :disabled="disabled" :aria-label="account.name + ' 调度状态'" class="pool-mode-select disabled:opacity-40" @change="changeMode"><option value="enabled">参与调度</option><option value="draining">停止新分配</option><option value="disabled">禁用</option></select><IconChevronDown aria-hidden="true" /></span></label>
+      <div v-if="maxSessions !== undefined" class="pool-mode-row"><IconSitemap aria-hidden="true" /><SelectMenu :model-value="account.pool?.mode || 'enabled'" :disabled="disabled" :label="account.name + ' 调度状态'" @change="changeMode" :options="[{ value: 'enabled', label: '参与调度' }, { value: 'draining', label: '停止新分配' }, { value: 'disabled', label: '禁用' }]" /></div>
       <p v-if="account.pool?.retryAt" class="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">最早复查：{{ new Date(account.pool.retryAt).toLocaleString() }}</p>
     </template>
     <div class="account-controls flex min-w-0 items-center gap-2">
@@ -281,9 +280,6 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .pool-icon-button:disabled { opacity:.4; }
 .pool-mode-row { display:flex; align-items:center; gap:7px; min-height:30px; margin-top:7px; color:rgb(var(--color-slate-700)); font-size:11px; font-weight:600; }
 .pool-mode-row > :deep(svg) { width:16px; height:16px; flex-shrink:0; }
-.pool-mode-control { position:relative; display:inline-flex; min-width:0; }
-.pool-mode-control > :deep(svg) { position:absolute; right:2px; top:50%; width:13px; height:13px; transform:translateY(-50%); pointer-events:none; }
-.pool-mode-select { min-width:0; max-width:100%; appearance:none; border:0; border-radius:5px; padding:5px 20px 5px 0; background:transparent; font:inherit; cursor:pointer; }
 .pool-card .account-controls { margin-top:12px; border-top:1px solid rgb(var(--color-slate-200) / 85%); padding-top:10px; }
 .pool-footer { display:flex; width:100%; min-width:0; align-items:center; justify-content:space-between; gap:8px; }
 .pool-update { display:flex; min-width:0; align-items:center; gap:5px; color:rgb(var(--color-slate-500)); font-size:10px; font-variant-numeric:tabular-nums; }
@@ -293,7 +289,7 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .pool-card .account-menu { position:absolute; top:13px; right:13px; }
 .pool-card .account-menu-trigger { width:28px; height:28px; border:1px solid rgb(var(--color-slate-200)); background:rgb(var(--color-slate-50) / 85%); }
 .pool-card .account-menu-trigger :deep(svg) { width:16px; height:16px; }
-.pool-icon-button:focus-visible, .pool-mode-select:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:2px; }
+.pool-icon-button:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:2px; }
 .dark .pool-badges span { background:rgb(var(--color-slate-800)); color:rgb(var(--color-slate-300)); }
 .dark .pool-stat { border-color:rgb(var(--color-slate-700)); background:rgb(var(--color-slate-800) / 55%); }
 .dark .pool-stat-label, .dark .pool-details, .dark .pool-update { color:rgb(var(--color-slate-400)); }

@@ -3,7 +3,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconBroadcast, IconRobot, IconSearch, IconUsers } from '@tabler/icons-vue'
 import FloatingDialog from './AnimeFloatingDialog.vue'
 import TelegramAvatar from './TelegramAvatar.vue'
-import { telegramRelayRequest, type TelegramRelayPeer, type TelegramRelayPeerPage } from '../types/telegramRelay'
+import { telegramRelayRequest } from '../lib/telegram-relay-api'
+import type { TelegramRelayPeer, TelegramRelayPeerPage } from '../types/telegramRelay'
 
 const props = defineProps<{ token: string; role: 'source' | 'target'; excludedId?: string }>()
 const emit = defineEmits<{ close: []; select: [peer: TelegramRelayPeer, selectionToken: string] }>()

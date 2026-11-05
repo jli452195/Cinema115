@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-vue'
 import type { NumberingChoices, NumberingInfo, NumberingPreview } from '../types/tvNumbering'
@@ -25,8 +26,7 @@ const lifecycle = new AbortController()
 let previewController: AbortController | undefined
 let loadEpoch = 0
 let backdropPointerDown = false
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 const candidates = computed(() => {
   const items = [...(choices.value?.groups || [])], snapshot = choices.value?.snapshot
   if (snapshot && !items.some(item => item.id === snapshot.id)) items.unshift(snapshot)
@@ -200,8 +200,8 @@ async function save() {
     }
   } finally { if (!lifecycle.signal.aborted) saving.value = false }
 }
-onMounted(() => { mobileQuery = window.matchMedia('(max-width: 639px)'); isMobile.value = mobileQuery.matches; mobileQuery.addEventListener('change', updateViewport); document.body.style.overflow = 'hidden'; dialog.value?.showModal(); void load() })
-onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); clearTimeout(copyTimer); previewController?.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected && previousFocus !== document.body) previousFocus.focus({ preventScroll: true }) })
+onMounted(() => { mobileQuery = window.matchMedia('(max-width: 639px)'); isMobile.value = mobileQuery.matches; mobileQuery.addEventListener('change', updateViewport); dialogLifecycle.acquire(); dialog.value?.showModal(); void load() })
+onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); clearTimeout(copyTimer); previewController?.abort(); dialog.value?.close(); dialogLifecycle.release() })
 </script>
 
 <template>

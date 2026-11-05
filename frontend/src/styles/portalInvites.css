@@ -212,7 +212,7 @@
   .portal-invites-page .invite-header-link { font-size: 12px; }
   .invite-workspace { gap: 14px; }
   .invite-card { padding: 16px; }
-  .invite-generate-form { gap: 12px; }
+  .invite-generate-form { gap: 8px; }
   .invite-source-choice { padding: 10px; }
   .invite-source-title { font-size: 12px; }
   .invite-source-caption { font-size: 10px; }

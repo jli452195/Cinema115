@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 // Mock all API traffic: no real QR sessions, Cookie changes or 115 requests.
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
@@ -57,7 +58,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await mainCard.getByText(/客户端：115 iPad/).waitFor()
     await page.reload(); await mainCard.getByText(/客户端：115 iPad/).waitFor()
     assert.equal(await mainCard.locator('select').count(), 0)
-    await openQR(); await page.getByLabel('登录设备', { exact: true }).selectOption('115-ios')
+    await openQR(); await selectOption(page.getByLabel('登录设备', { exact: true }), '115-ios')
     assert(await mainCard.getByText(/客户端：115 iPad/).isVisible())
     await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({state:'detached'})
     passed.push('detect-persist-and-selection-isolation')
@@ -80,7 +81,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       for (const dark of [false, true]) {
         await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
         await openQR()
-        await page.getByLabel('登录设备', { exact: true }).selectOption('115-ipad')
+        await selectOption(page.getByLabel('登录设备', { exact: true }), '115-ipad')
         await page.getByRole('dialog').getByRole('img', { name: '115 登录二维码' }).waitFor()
         assert.equal(writes.filter(w=>w.path.endsWith('/qrcode')&&w.body?.clientType).at(-1).body.clientType, '115-ipad')
         const box = await page.getByRole('dialog').boundingBox()

@@ -2,6 +2,12 @@ import { p115Request } from './p115-api'
 
 interface CloudDownloadReceipt { accepted: boolean; removedOldTask?: boolean }
 
+export function loadCloudDownloadConfig(token: string, signal: AbortSignal) {
+  return p115Request<{ accountId: string; targetCID: string; targetPath: string }>(token, 'cloud-download/config', {
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+  })
+}
+
 // 网页、观影和蜜柑共用提交预算及提示；旧任务处理由后端统一决定。
 export async function submitCloudDownload(token: string, accountId: string, url: string, targetCID: string, signal: AbortSignal): Promise<CloudDownloadReceipt> {
   if (!accountId) throw new Error('请先在 115 助手中配置并登录主账号')

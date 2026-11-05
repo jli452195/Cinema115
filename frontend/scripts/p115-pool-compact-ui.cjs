@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 const path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict')
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async()=>{
@@ -49,7 +50,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(os.homedir(),'
   await card.getByRole('button',{name:'修改名称',exact:true}).click();await page.getByRole('dialog').getByLabel('名称',{exact:true}).fill('小号 B');assert.equal((await card.boundingBox()).height,cardHeight);await page.getByRole('button',{name:'保存名称'}).click();await card.getByRole('heading',{name:'小号 B'}).waitFor()
   passed.push('compact-card-and-rename')
   await card.getByRole('button',{name:'扫码登录',exact:true}).click()
-  await page.getByRole('dialog').getByLabel('登录设备',{exact:true}).selectOption('115-ipad')
+  await selectOption(page.getByRole('dialog').getByLabel('登录设备',{exact:true}), '115-ipad')
   await page.getByText('原 UID：111 → 新 UID：999',{exact:true}).waitFor()
   assert.equal(account.uid,'111');assert.equal(account.playbackParentCid,'123')
   await page.getByRole('button',{name:'选择新网盘中的秒传目录'}).click()

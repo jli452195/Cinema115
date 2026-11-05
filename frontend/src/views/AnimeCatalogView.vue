@@ -8,7 +8,7 @@ import AnibtAnimeCard from '../components/AnibtAnimeCard.vue'
 import MikanAnimeCard from '../components/MikanAnimeCard.vue'
 import AnimeProviderButton from '../components/AnimeProviderButton.vue'
 import AnimeCatalogCategories from '../components/AnimeCatalogCategories.vue'
-import SelectMenu from '../components/SelectMenu.vue'
+import AnimeQuarterNavigation from '../components/AnimeQuarterNavigation.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { animeScroll, rememberAnimeQuery, rememberAnimeScroll } from '../composables/useAnimeDiscovery'
 import { catalogDraft, catalogQuery, catalogSnapshot, catalogSeasonsSnapshot, rememberCatalogDraft, rememberCatalogQuery, requestCatalog, requestCatalogSeasons } from '../composables/useAnimeCatalog'
@@ -109,8 +109,6 @@ const seasons = computed(() => {
   if (result.value?.provider === provider.value && result.value.season === season.value && mode.value === 'calendar' && result.value.days.some(group => group.items.length)) values.add(season.value)
   return [...values].sort().reverse().map(value => ({ value, label: seasonLabel(value) }))
 })
-const previousSeason = computed(() => seasons.value.find(option => option.value < season.value)?.value)
-const nextSeason = computed(() => [...seasons.value].reverse().find(option => option.value > season.value)?.value)
 function selectSeason(value?: string) { if (value) navigate({ view: 'calendar', season: value, day: 'all', page: undefined, item: undefined }) }
 let seasonsController: AbortController | undefined
 async function loadSeasons(refresh = false) {
@@ -222,13 +220,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
         <form class="anime-search-form catalog-search" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit"><label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label><div class="anime-search-input"><IconSearch :size="19" aria-hidden="true" /><input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="`在${providerName}搜索番剧`" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" /><button v-if="input || mode === 'search'" type="button" class="anime-input-clear" aria-label="清空搜索并返回日历" @click="clearSearch"><IconX :size="17" aria-hidden="true" /></button></div><button type="submit" class="anime-search-submit">搜索</button></form>
         <p v-if="inputError" id="catalog-input-error" role="alert" class="anime-context text-red-600">{{ inputError }}</p>
         <div class="catalog-controls">
-          <div v-if="mode === 'calendar'" class="catalog-quarter-nav" role="group" :aria-label="`${providerName}季度浏览`">
-            <button type="button" class="catalog-quarter-step" aria-label="上一季" :title="previousSeason ? `切换到 ${seasonLabel(previousSeason)}` : '没有更早的已收录季度'" :disabled="!previousSeason" @click="selectSeason(previousSeason)"><IconChevronLeft :size="20" aria-hidden="true" /></button>
-            <SelectMenu class="catalog-season" variant="anime" :model-value="season" :options="seasons" :placeholder="seasonLabel(season)" :label="`${providerName}季度`" :disabled="!seasons.length" @change="selectSeason">
-              <template #trigger="{ label: selectedSeasonLabel }"><span class="catalog-season-content"><IconCalendar :size="17" class="catalog-season-icon" aria-hidden="true" /><span class="catalog-season-label">{{ selectedSeasonLabel }}</span><span v-if="season === currentSeason" class="catalog-current-season">当季</span></span></template>
-            </SelectMenu>
-            <button type="button" class="catalog-quarter-step" aria-label="下一季" :title="nextSeason ? `切换到 ${seasonLabel(nextSeason)}` : '没有更晚的已收录季度'" :disabled="!nextSeason" @click="selectSeason(nextSeason)"><IconChevronRight :size="20" aria-hidden="true" /></button>
-          </div>
+          <AnimeQuarterNavigation v-if="mode === 'calendar'" :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
           <template v-else><button type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="17" aria-hidden="true" />季度浏览</button><span class="anime-context catalog-scope">{{ providerName }}搜索结果</span></template>
         </div>
         <p v-if="mode === 'calendar'" class="catalog-range">{{ providerName }}季度收录，范围以原站为准。<span v-if="seasonsError">季度目录暂时无法更新。<button type="button" :disabled="seasonsLoading" @click="loadSeasons(true)">重试目录</button></span><span v-else-if="seasonsLoading">正在读取季度目录…</span></p>
@@ -271,19 +263,6 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
 .catalog-providers { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
 .catalog-search { max-width: 740px; }
 .catalog-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
-.catalog-quarter-nav { display: inline-flex; max-width: 100%; align-items: center; gap: 6px; }
-.catalog-quarter-step, .catalog-season :deep(.select-menu-trigger) { box-shadow: 0 2px 0 rgb(148 163 184 / .18), 0 2px 5px rgb(15 23 42 / .025); transition: transform .2s cubic-bezier(.34, 1.56, .64, 1), border-color .16s ease, box-shadow .16s ease; }
-.catalog-quarter-step { display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; align-items: center; justify-content: center; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); }
-.catalog-quarter-step:disabled { opacity: .35; box-shadow: none; cursor: default; }
-.catalog-quarter-nav .catalog-season { flex: 1 1 180px; width: 180px; min-width: 0; }
-.catalog-season :deep(.select-menu-trigger) { gap: 7px; min-height: 44px; padding: 8px 10px; }
-.catalog-season-content { display: inline-flex; min-width: 0; align-items: center; gap: 7px; white-space: nowrap; }
-.catalog-season-icon { flex: none; color: rgb(var(--action-link)); }
-.catalog-season-label { overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 650; color: rgb(var(--content-primary)); font-variant-numeric: tabular-nums; }
-.catalog-current-season { flex: none; border-radius: 5px; padding: 2px 5px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-size: 11px; font-weight: 600; line-height: 16px; }
-@media (hover: hover) and (pointer: fine) { .catalog-quarter-step:hover:not(:disabled), .catalog-season :deep(.select-menu-trigger:hover:not(:disabled)) { transform: translateY(-1px); box-shadow: 0 3px 0 rgb(148 163 184 / .14), 0 4px 8px rgb(15 23 42 / .04); } .catalog-quarter-step:hover:not(:disabled) { background: rgb(var(--surface-hover)); } }
-.catalog-quarter-step:active:not(:disabled), .catalog-season :deep(.select-menu-trigger:active:not(:disabled)) { transform: translateY(1px); box-shadow: none; }
-.catalog-quarter-step:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
 .catalog-calendar-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; border-radius: 10px; padding: 0 12px; background: rgb(148 163 184 / .08); color: rgb(var(--color-slate-600)); font-size: 12px; }
 .catalog-calendar-toggle[aria-pressed="true"] { color: #2563eb; font-weight: 500; }
 .catalog-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; margin-top: 8px; min-height: 24px; font-size: 11px; color: rgb(var(--color-slate-500)); }
@@ -295,10 +274,7 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
 .catalog-status-error button { min-height: 44px; color: #2563eb; }
 .dark .catalog-status-error button { color: #93c5fd; }
 .dark .catalog-calendar-toggle[aria-pressed="true"] { color: #93c5fd; }
-.dark .catalog-quarter-step, .dark .catalog-season :deep(.select-menu-trigger) { box-shadow: 0 2px 0 rgb(0 0 0 / .2), 0 2px 5px rgb(0 0 0 / .08); }
-.dark .catalog-quarter-step:disabled { box-shadow: none; }
 .dark .catalog-range button { color: #93c5fd; }
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) { .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; } }
-@media (prefers-reduced-motion: reduce) { .catalog-quarter-step, .catalog-season :deep(.select-menu-trigger) { transition: none; transform: none !important; } }
 </style>

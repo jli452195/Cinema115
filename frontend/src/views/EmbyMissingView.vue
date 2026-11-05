@@ -6,9 +6,9 @@ import EmbyMissingCard from '../components/EmbyMissingCard.vue'
 import EmbyMissingDetails from '../components/EmbyMissingDetails.vue'
 import EmbyMissingStatus from '../components/EmbyMissingStatus.vue'
 import PaginationControl from '../components/PaginationControl.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import { getEmbyMissingSession, MISSING_PAGE_SIZE, type MissingMode } from '../composables/useEmbyMissingSession'
 import { providePosterCache } from '../composables/useLazyPoster'
-import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { embyRequest, type EmbyMissingPage, type EmbyMissingSeries, type EmbyMissingExclusion, type EmbyMissingExcludedPage } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
@@ -26,8 +26,10 @@ const currentPage = computed(() => excludedMode.value ? excluded.value : page.va
 const excludedCount = computed(() => session.value.excludedCount.value ?? 0)
 const pageNumber = computed(() => Math.floor((currentPage.value?.offset || 0) / MISSING_PAGE_SIZE) + 1)
 const pageCount = computed(() => Math.max(1, Math.ceil((currentPage.value?.total || 0) / MISSING_PAGE_SIZE)))
-const viewNav = ref<HTMLElement>()
-const { indicatorStyle } = useSlidingIndicator(viewNav, '[aria-pressed="true"]', [excludedMode, excludedCount])
+const viewOptions = computed(() => [
+  { value: 'results' as const, label: '缺集结果' },
+  { value: 'excluded' as const, label: '已排除', count: `${excludedCount.value} 项` },
+])
 const detailNotices = computed(() => page.value?.notices.filter(item => item.level === 'info' || item.code === 'episodes_incomplete') || [])
 const warningNotices = computed(() => page.value?.notices.filter(item => item.level === 'warning' && item.code !== 'episodes_incomplete') || [])
 const lifecycle = new AbortController()
@@ -204,11 +206,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort(); writer?.abort(); ses
         <p>{{ currentPage ? '操作或读取失败，当前保留上次结果：' : '读取失败：' }}{{ error }}</p><button type="button" :disabled="loading || !!restoring" class="min-h-9 underline disabled:opacity-50" @click="refresh">重新读取列表</button>
       </div>
       <div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <nav ref="viewNav" class="relative flex w-max max-w-full gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60" aria-label="检测视图">
-          <div aria-hidden="true" class="pointer-events-none absolute rounded-lg bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700" :style="indicatorStyle"></div>
-          <button type="button" :aria-pressed="!excludedMode" :disabled="!!restoring" :class="!excludedMode ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" class="relative z-10 min-h-11 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset disabled:opacity-50" @click="switchView('results')">缺集结果</button>
-          <button type="button" :aria-pressed="excludedMode" :disabled="!!restoring" :class="excludedMode ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" class="relative z-10 min-h-11 rounded-lg px-4 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-inset disabled:opacity-50" @click="switchView('excluded')">已排除 <span class="ml-1 text-xs tabular-nums opacity-60">{{ excludedCount }} 项</span></button>
-        </nav>
+        <SegmentedControl :model-value="mode" :options="viewOptions" label="检测视图" :disabled="!!restoring" @update:model-value="switchView" />
           <form role="search" class="flex w-full min-w-0 gap-2 sm:w-80" @submit.prevent="filter()">
             <div class="relative min-w-0 flex-1">
               <input v-model="query" type="search" :aria-label="excludedMode ? '搜索已排除条目' : '搜索缺集剧集'" :disabled="!!restoring" maxlength="100" placeholder="剧名或 TMDB ID" class="min-h-11 w-full min-w-0 rounded-lg border border-slate-200 bg-white py-2.5 pl-3 pr-10 text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-400/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 [&::-webkit-search-cancel-button]:appearance-none" @search="nativeSearch" />

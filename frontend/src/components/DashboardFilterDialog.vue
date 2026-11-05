@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import DashboardYearPicker from './DashboardYearPicker.vue'
 import type { DashboardGenre } from '../utils/dashboardPreferences'
@@ -14,8 +15,7 @@ const draftYear = ref(props.year)
 const draftSort = ref(props.sort)
 const changed = computed(() => draftGenre.value !== props.genre || draftRegion.value !== props.region || draftYear.value !== props.year || draftSort.value !== props.sort)
 const summary = computed(() => [props.genres.find(item => String(item.id) === draftGenre.value)?.name, props.regions.find(item => item.id === draftRegion.value && item.id)?.name, draftYear.value ? draftYear.value + ' 年' : '', draftSort.value !== 'popular' ? props.sorts.find(item => item.id === draftSort.value)?.name : ''].filter(Boolean).join(' · '))
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 function close() { emit('close') }
 function reset() { draftGenre.value = ''; draftRegion.value = ''; draftYear.value = ''; draftSort.value = 'popular' }
 function apply() {
@@ -27,8 +27,8 @@ function backdropClick(event: MouseEvent) {
   const rect = dialog.value.getBoundingClientRect()
   if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close()
 }
-onMounted(() => { document.body.style.overflow = 'hidden'; dialog.value?.showModal() })
-onBeforeUnmount(() => { dialog.value?.close(); document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) })
+onMounted(() => { dialogLifecycle.acquire(); dialog.value?.showModal() })
+onBeforeUnmount(() => { dialog.value?.close(); dialogLifecycle.release() })
 </script>
 
 <template>

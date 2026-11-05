@@ -27,11 +27,12 @@ const props = defineProps<{
   themeColors?: Record<string, string>
   animationLibrary?: boolean; originalTitle?: string
 }>()
-const emit = defineEmits<{ close: []; submitted: [keys: string[]]; uncertain: [keys: string[]] }>()
+const emit = defineEmits<{ close: []; submitted: [keys: string[], shareSTRM: boolean]; uncertain: [keys: string[], shareSTRM: boolean] }>()
 const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
+defineExpose({ busy })
 const subtitleOpen = ref(false), externalSubtitles = ref<LibrarySubtitleSelection[]>([]), subtitleVersion = ref<SubtitleVersion>()
 const localSubtitles = ref<LocalSubtitleSelection[]>([])
 const subtitleScope = ref<number>()
@@ -270,12 +271,12 @@ async function start(sharing = false) {
       job.value = created.jobs[0]
     } else job.value = await p115Request<OrganizeJob>(props.token, 'download-organize/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
     confirming.value = false
-    emit('submitted', selectedKeys.value)
+    emit('submitted', selectedKeys.value, shareAction.value)
   } catch (e) {
     if (!lifecycle.signal.aborted) {
       const status = (e as { status?: number }).status
       if (creationAttempt && (!status || status >= 500)) {
-        confirming.value = true; emit('uncertain', selectedKeys.value)
+        confirming.value = true; emit('uncertain', selectedKeys.value, shareAction.value)
         error.value = '创建结果暂未确认，请点击“确认任务状态”读取同一任务，或在整理任务记录中核对。'
       } else {
         confirming.value = false
@@ -331,7 +332,7 @@ onBeforeUnmount(() => lifecycle.abort())
       <div ref="numberingAnchor" aria-hidden="true" class="pointer-events-none h-px !-mb-px"></div>
       <div ref="numberingBar" class="numbering-bar !mt-0" :class="{ 'is-stuck': numberingStuck }">
       <div v-if="kind === 'tv'" class="batch-editor"><button type="button" class="batch-toggle" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">批量编号 <IconChevronDown :size="14" aria-hidden="true" :class="{ 'rotate-180': batchOpen }" /></button><div v-show="batchOpen" class="mapping-bar">
-        <label>目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
+        <label>目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" density="compact" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
         <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
         <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
         <button type="button" class="secondary" :aria-label="`应用偏移（${editing.length} 项）`" :disabled="editDisabled || !editing.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ editing.length }} 项）</span></span></button>
@@ -419,7 +420,6 @@ onBeforeUnmount(() => lifecycle.abort())
 .mapping-bar { @apply flex flex-wrap items-center gap-2 text-xs; }.mapping-bar label { @apply flex items-center gap-1; }.mapping-bar input { @apply w-16 rounded-lg border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }.season-select { @apply w-40; }
 .numbering-bar { @apply sticky top-0 z-10 -mx-[22px] flex items-start gap-2 px-[22px] py-2; background: transparent; }
 .numbering-bar.is-stuck { background: color-mix(in srgb, var(--floating-surface-container) 95%, var(--floating-surface-text)); box-shadow: 0 1px 0 rgb(148 163 184 / .16); }
-.season-select :deep(.select-menu-trigger) { height: var(--ae-control-height); min-height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
 .batch-editor { @apply flex min-w-0 flex-1 flex-wrap items-start gap-x-3 gap-y-1; }.batch-toggle { @apply flex shrink-0 items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-300; min-height: var(--ae-control-height); }.stage-action { @apply ml-auto; }
 .secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300/70 bg-white font-medium text-slate-700 transition-colors enabled:hover:border-slate-400 enabled:hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600/70 dark:bg-slate-900 dark:text-slate-200 dark:enabled:hover:border-slate-500 dark:enabled:hover:bg-slate-800; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
 .secondary.tool-action { @apply border-transparent bg-transparent text-slate-600 enabled:hover:border-transparent enabled:hover:bg-slate-200/60 enabled:hover:text-blue-600 dark:border-transparent dark:bg-transparent dark:text-slate-300 dark:enabled:hover:border-transparent dark:enabled:hover:bg-slate-700/60 dark:enabled:hover:text-blue-400; }

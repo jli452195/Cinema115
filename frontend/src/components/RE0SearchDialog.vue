@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import SelectMenu from './SelectMenu.vue'
+import { useToast } from '../composables/useToast'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { nanShareRequest, type RE0Resource, type RE0SearchResult, type RE0ShareOptions, type RE0Submission, type RE0Transfer, type RE0TransferOptions } from '../types/nanshare'
@@ -10,8 +13,8 @@ const dialog = ref<HTMLDialogElement>()
 const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
 const lifecycle = new AbortController()
-const previousFocus = document.activeElement as HTMLElement | null
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
+const toast = useToast()
 const result = ref<RE0SearchResult>()
 const error = ref('')
 const errorSlug = ref('')
@@ -42,7 +45,7 @@ async function revealSelectionPanel() {
   await nextTick()
   const panel = dialog.value?.querySelector<HTMLElement>('.re0-selection')
   panel?.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })
-  panel?.querySelector<HTMLElement>('select, input, button')?.focus({ preventScroll: true })
+  panel?.querySelector<HTMLElement>('[role="combobox"], input, button')?.focus({ preventScroll: true })
 }
 async function focusResourceAction(slug: string, action: 'transfer' | 'share') {
   await nextTick()
@@ -118,6 +121,7 @@ async function send(input: SubmitInput) {
     if (lifecycle.signal.aborted) return
     result.value.submissions[slug] = receipt; selected.value = undefined; delete pendingRequests.value[slug]
     if (receipt.state === 'accepted') {
+      toast.success('任务已提交给 NanShare，生成进度请在 NanShare 查看。', { title: 'STRM 任务已提交' })
       phase.value = 'search'
       try {
         const updated = await nanShareRequest<RE0SearchResult>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: Number(props.tmdbId), refresh: true })
@@ -182,6 +186,7 @@ async function sendTransfer(input: TransferInput) {
     if (!lifecycle.signal.aborted) {
       result.value.transfers = { ...result.value.transfers, [input.slug]: receipt }
       delete transferPending.value[input.slug]
+      if (receipt.state === 'accepted' || receipt.state === 'already_saved') toast.success(receipt.message, { title: receipt.state === 'already_saved' ? '已转存过' : '转存完成' })
     }
   } catch (reason) {
     if (!lifecycle.signal.aborted) {
@@ -205,12 +210,12 @@ onMounted(() => {
   syncVisualViewport()
   window.visualViewport?.addEventListener('resize', syncVisualViewport)
   window.visualViewport?.addEventListener('scroll', syncVisualViewport)
-  document.body.style.overflow = 'hidden'; dialog.value?.showModal(); void search()
+  dialogLifecycle.acquire(); dialog.value?.showModal(); void search()
 })
 onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', syncVisualViewport)
   window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  lifecycle.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; previousFocus?.focus()
+  lifecycle.abort(); dialog.value?.close(); dialogLifecycle.release()
 })
 </script>
 
@@ -307,20 +312,15 @@ onBeforeUnmount(() => {
                 </div>
               </div>
               <p v-if="error && errorSlug === item.slug" role="alert" class="re0-notice re0-error">{{ error }}</p>
-              <p v-if="(phase === 'options' && selected?.slug === item.slug) || (phase === 'transfer-options' && transferSelected?.slug === item.slug)" role="status" class="re0-notice re0-info">{{ phase === 'options' ? '读取分享 STRM 配置…' : '读取转存配置…' }}</p>
-              <p v-if="writing && (selected?.slug === item.slug || transferSelected?.slug === item.slug)" role="status" class="re0-notice re0-info">{{ phase === 'transfer' ? '正在通过 NanShare 转存，请等待转存结果…' : '正在提交给 NanShare，请等待提交结果…' }}</p>
-              <p v-if="result?.submissions[item.slug]" role="status" class="re0-notice" :class="result.submissions[item.slug]?.state === 'accepted' ? 're0-success' : result.submissions[item.slug]?.state === 'failed' ? 're0-error' : 're0-warning'">{{ result.submissions[item.slug]?.message }}</p>
-              <p v-if="result?.transfers?.[item.slug]" role="status" class="re0-notice" :class="['accepted', 'already_saved'].includes(result.transfers[item.slug]!.state) ? 're0-success' : result.transfers[item.slug]?.state === 'failed' ? 're0-error' : 're0-warning'">{{ result.transfers[item.slug]?.message }}</p>
+              <p v-if="result?.submissions[item.slug] && result.submissions[item.slug]?.state !== 'accepted'" role="status" class="re0-notice" :class="result.submissions[item.slug]?.state === 'failed' ? 're0-error' : 're0-warning'">{{ result.submissions[item.slug]?.message }}</p>
+              <p v-if="result?.transfers?.[item.slug] && !['accepted', 'already_saved'].includes(result.transfers[item.slug]!.state)" role="status" class="re0-notice" :class="result.transfers[item.slug]?.state === 'failed' ? 're0-error' : 're0-warning'">{{ result.transfers[item.slug]?.message }}</p>
 
               <section v-if="transferSelected?.slug === item.slug && transferOptions && transferOptions.folders.length > 1 && !writing" aria-label="一键转存目录" class="re0-selection">
                 <h4>选择转存目录</h4>
                 <p>使用 NanShare 的 115 转存助手配置，积分限制由 NanShare 校验。</p>
                 <form @submit.prevent="submitTransfer">
                   <label class="re0-field">转存目录
-                    <select v-model="transferFolder" required :disabled="!!phase">
-                      <option disabled value="">请选择转存目录</option>
-                      <option v-for="folder in transferOptions.folders" :key="folder.id" :value="folder.id">{{ folder.name || folder.path || folder.id }}</option>
-                    </select>
+                    <SelectMenu v-model="transferFolder" required :disabled="!!phase" label="转存目录" class="w-full" :options="[{ value: '', label: '请选择转存目录', disabled: true }, ...transferOptions.folders.map(folder => ({ value: folder.id, label: (folder.name || folder.path || folder.id) }))]" />
                   </label>
                   <div class="re0-form-actions">
                     <button type="submit" :disabled="!transferFolder || !!phase" class="re0-button re0-primary-button">开始转存</button>
@@ -336,16 +336,10 @@ onBeforeUnmount(() => {
                 <form v-if="options" @submit.prevent="submit">
                   <fieldset :disabled="!!phase">
                     <label class="re0-field">生成模式
-                      <select v-model="mode" required>
-                        <option disabled value="">请选择模式</option>
-                        <option v-for="value in options.modes" :key="value" :value="value">{{ value === 'reshare' ? '转存再分享' : '普通分享' }}</option>
-                      </select>
+                      <SelectMenu v-model="mode" required label="生成模式" class="w-full" :options="[{ value: '', label: '请选择模式', disabled: true }, ...options.modes.map(value => ({ value: value, label: (value === 'reshare' ? '转存再分享' : '普通分享') }))]" />
                     </label>
                     <label class="re0-field">输出目录
-                      <select v-model="folderIndex" required>
-                        <option disabled value="">请选择输出目录</option>
-                        <option v-for="folder in options.folders" :key="folder.index" :value="String(folder.index)">{{ folder.name || '输出目录' }} · {{ folder.path }}</option>
-                      </select>
+                      <SelectMenu v-model="folderIndex" required label="输出目录" class="w-full" :options="[{ value: '', label: '请选择输出目录', disabled: true }, ...options.folders.map(folder => ({ value: String(folder.index), label: (folder.name || '输出目录') + ' · ' + (folder.path) }))]" />
                     </label>
                     <div class="re0-form-actions">
                       <button type="submit" :disabled="!canSubmit" class="re0-button re0-primary-button">提交分享 STRM</button>
@@ -459,7 +453,6 @@ onBeforeUnmount(() => {
 .re0-selection form { margin-top: 16px; }
 .re0-selection fieldset { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .re0-field { display: flex; flex-direction: column; gap: 8px; min-width: 0; color: var(--re0-muted); font-size: 12px; }
-.re0-field select { width: 100%; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid var(--re0-outline); border-radius: 12px; background: var(--re0-surface); color: var(--re0-text); font-size: 13px; }
 .re0-form-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .re0-selection fieldset .re0-form-actions { margin-top: 0; }
 .re0-text-button { min-height: 48px; padding: 10px 16px; border: 0; border-radius: 24px; background: transparent; color: var(--re0-primary); font-size: 12px; line-height: 20px; font-weight: 600; }
@@ -477,7 +470,7 @@ onBeforeUnmount(() => {
 .re0-dialog button { cursor: pointer; }
 .re0-dialog button:disabled { cursor: default; opacity: .45; }
 .re0-dialog input:disabled { opacity: .6; }
-.re0-dialog button:focus-visible, .re0-dialog a:focus-visible, .re0-dialog select:focus-visible, .re0-dialog input[type="checkbox"]:focus-visible, .re0-resource:focus-visible { outline: 2px solid var(--re0-primary); outline-offset: 3px; }
+.re0-dialog button:focus-visible, .re0-dialog a:focus-visible, .re0-dialog input[type="checkbox"]:focus-visible, .re0-resource:focus-visible { outline: 2px solid var(--re0-primary); outline-offset: 3px; }
 .re0-spinning { animation: re0-spin 1s linear infinite; }
 @keyframes re0-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
@@ -498,7 +491,6 @@ onBeforeUnmount(() => {
   .re0-resource { padding: 16px; border-radius: 18px; }
   .re0-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .re0-metrics { gap: 10px 20px; }
-  .re0-field select { font-size: 16px; }
 }
 @media (max-width: 359px) {
   .re0-actions { grid-template-columns: minmax(0, 1fr); }

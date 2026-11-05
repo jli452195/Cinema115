@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 // Isolated UI acceptance: all API requests use synthetic fixtures; no NAS/115 writes.
 const assert = require('node:assert/strict'), path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
@@ -87,14 +88,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     heldSchedule.release()
     await page.waitForFunction(() => { const el = document.querySelector('[role="switch"][aria-label="自动监控"]'); return el.checked && !el.disabled })
     assert.equal(scheduleCalls().at(-1).body.enabled, true)
-    await Promise.all([page.waitForResponse(response => response.url().endsWith('/one/schedule') && response.request().postDataJSON().intervalSeconds === 1800), interval().selectOption('1800')])
+    await Promise.all([page.waitForResponse(response => response.url().endsWith('/one/schedule') && response.request().postDataJSON().intervalSeconds === 1800), selectOption(interval(), '1800')])
     assert.equal(scheduleCalls().at(-1).body.intervalSeconds, 1800)
-    await reload(); assert.equal(await toggle().isChecked(), true); assert.equal(await interval().inputValue(), '1800')
+    await reload(); assert.equal(await toggle().isChecked(), true); assert.equal(await inputValue(interval()), '1800')
     failSchedule = true; await flip()
     await page.getByRole('alert').filter({ hasText: '模拟监控设置保存失败' }).waitFor()
     assert.equal(await toggle().isChecked(), true, 'failed disabling must keep the saved switch enabled')
     failSchedule = true
-    await Promise.all([page.waitForResponse(response => response.url().endsWith('/one/schedule') && response.status() === 409), interval().selectOption('600')])
+    await Promise.all([page.waitForResponse(response => response.url().endsWith('/one/schedule') && response.status() === 409), selectOption(interval(), '600')])
     await page.waitForFunction(() => { const el = document.querySelector('select'); return el.value === '1800' && !el.disabled })
     passed.push('schedule save failure rollback, switch and interval persistence')
 
@@ -107,13 +108,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const output = page.getByRole('dialog', { name: '选择 STRM 输出目录', exact: true })
     await output.getByRole('button', { name: /^影视/ }).click()
     await output.getByRole('button', { name: '选择此目录', exact: true }).click(); await output.waitFor({ state: 'hidden' })
-    assert.equal(await dialog().getByLabel('STRM 播放地址', { exact: true }).inputValue(), 'http://updated.example:8080', 'nested directory selection must preserve the generation draft')
+    assert.equal(await inputValue(dialog().getByLabel('STRM 播放地址', { exact: true })), 'http://updated.example:8080', 'nested directory selection must preserve the generation draft')
     assert.equal(await page.evaluate(() => document.body.style.overflow), 'hidden', 'closing the nested picker must retain the parent dialog scroll lock')
     await dialog().screenshot({ path: 'test-results/folder-monitor/settings-desktop.png', animations: 'disabled' })
     settings.botId = 'changed-elsewhere'; settings.reviewRetryMax = 9
     failGeneration = true; await dialog().getByRole('button', { name: '保存设置', exact: true }).click()
     await dialog().getByRole('alert').filter({ hasText: '模拟生成设置保存失败' }).waitFor()
-    assert.equal(await dialog().getByLabel('STRM 播放地址', { exact: true }).inputValue(), 'http://updated.example:8080')
+    assert.equal(await inputValue(dialog().getByLabel('STRM 播放地址', { exact: true })), 'http://updated.example:8080')
     await dialog().getByRole('button', { name: '保存设置', exact: true }).click(); await dialog().waitFor({ state: 'hidden' })
     assert.equal(await page.evaluate(() => document.body.style.overflow), initialOverflow, 'closing the parent after nested selection must release all scroll locks')
     assert.equal(settings.generation.baseUrl, 'http://updated.example:8080')
@@ -169,7 +170,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const source = page.getByRole('dialog')
     await source.getByRole('button', { name: '新目录', exact: true }).click()
     await source.locator('.dp-content[aria-busy="false"]').waitFor()
-    assert.equal(await source.getByRole('textbox', { name: '目录路径', exact: true }).inputValue(), '/新目录')
+    assert.equal(await inputValue(source.getByRole('textbox', { name: '目录路径', exact: true })), '/新目录')
     const sourceSaved = page.waitForResponse(response => new URL(response.url()).pathname === endpoint && response.request().method() === 'POST' && response.ok())
     await source.getByRole('button', { name: '选择此目录', exact: true }).click()
     await sourceSaved

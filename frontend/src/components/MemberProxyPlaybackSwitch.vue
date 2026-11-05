@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle, restoreDialogFocus } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useToast } from '../composables/useToast'
 import type { MemberProxyPlaybackState } from '../types/memberPlayback'
@@ -10,7 +11,7 @@ const pending = ref(false), uncertain = ref(false), opened = ref(false), error =
 const dialog = ref<HTMLDialogElement>(), cancelButton = ref<HTMLButtonElement>(), trigger = ref<HTMLButtonElement>()
 const titleID = useId(), descriptionID = useId()
 const blocked = computed(() => pending.value || props.disabled)
-let previousOverflow = ''
+const dialogLifecycle = createDialogLifecycle()
 watch(() => pending.value || opened.value, value => emit('busy', value), { flush: 'sync' })
 
 const switchTitle = computed(() => pending.value ? '正在保存反代播放设置' : props.disabled ? '请先完成当前操作' :
@@ -22,14 +23,14 @@ function validState(value: unknown): value is MemberProxyPlaybackState {
 function close() {
  if (pending.value) return
  dialog.value?.close(); opened.value = false
- document.body.style.overflow = previousOverflow
- void nextTick(() => { if (trigger.value?.isConnected && !trigger.value.disabled) trigger.value.focus({ preventScroll: true }) })
+ dialogLifecycle.release(false)
+ void nextTick(() => restoreDialogFocus(trigger.value))
 }
 async function open() {
  if (blocked.value) return
  if (uncertain.value) { await request(); return }
  if (!props.enabled) { await request(true); return }
- previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'
+ dialogLifecycle.acquire(trigger.value)
  opened.value = true; error.value = ''
  await nextTick()
  if (lifecycle.signal.aborted) return
@@ -68,7 +69,8 @@ async function request(enabled?: boolean) {
 }
 onBeforeUnmount(() => {
  lifecycle.abort()
- if (opened.value) { dialog.value?.close(); document.body.style.overflow = previousOverflow }
+ if (opened.value) dialog.value?.close()
+ dialogLifecycle.release(false)
  emit('busy', false)
 })
 </script>

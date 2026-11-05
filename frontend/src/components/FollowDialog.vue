@@ -1,16 +1,15 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps<{ title: string; busy?: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 function close() { if (!props.busy) emit('close') }
-onMounted(() => { document.body.style.overflow = 'hidden'; dialog.value?.showModal() })
+onMounted(() => { dialogLifecycle.acquire(); dialog.value?.showModal() })
 onBeforeUnmount(() => {
-  dialog.value?.close(); document.body.style.overflow = previousOverflow
-  if (previousFocus?.isConnected) previousFocus.focus()
+  dialog.value?.close(); dialogLifecycle.release()
 })
 </script>
 

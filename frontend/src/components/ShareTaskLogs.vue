@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from './SelectMenu.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{ token: string }>()
@@ -94,14 +95,14 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); window.clearInterv
 <template>
   <section aria-label="分享任务日志" class="space-y-4">
     <div class="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
-      <select v-model="status" aria-label="状态" class="min-w-36 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm text-slate-700 dark:text-slate-300"><option value="">全部状态</option><option v-for="(label, value) in statuses" :key="value" :value="value">{{ label }}</option></select>
-      <select v-model="mode" aria-label="模式" class="min-w-36 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm text-slate-700 dark:text-slate-300"><option value="">全部模式</option><option value="direct">普通分享</option><option value="reshare">转存再分享</option></select>
+      <SelectMenu v-model="status" label="状态" class="min-w-36 flex-1" :options="[{ value: '', label: '全部状态' }, ...Object.entries(statuses).map(([value, label]) => ({ value: value, label: (label) }))]" />
+      <SelectMenu v-model="mode" label="模式" class="min-w-36 flex-1" :options="[{ value: '', label: '全部模式' }, { value: 'direct', label: '普通分享' }, { value: 'reshare', label: '转存再分享' }]" />
       <input v-model="search" aria-label="搜索链接" placeholder="搜索链接" maxlength="1000" class="min-w-40 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 px-3 py-2.5 text-sm outline-none focus:border-blue-500"/>
       <button type="button" :disabled="clearing" class="rounded-lg border border-red-200 px-3 py-2 text-xs text-red-500 hover:bg-red-50 disabled:opacity-50" @click="confirmClear = 'all'">清空全部</button>
       <button type="button" :aria-pressed="selecting" class="rounded-lg border border-slate-200 dark:border-slate-700 px-3 py-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500" @click="selecting = !selecting">{{ selecting ? '取消选择' : '批量选择' }}</button>
     </div>
     <div v-if="selecting" class="flex flex-wrap items-center gap-4 px-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-500">
-      <select v-model="selectionMode" aria-label="批量操作" class="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"><option value="retry">选择可重试任务</option><option value="clear">选择可清理任务</option></select>
+      <SelectMenu v-model="selectionMode" label="批量操作" :options="[{ value: 'retry', label: '选择可重试任务' }, { value: 'clear', label: '选择可清理任务' }]" />
       <label class="flex items-center gap-2"><input type="checkbox" :checked="allSelected" @change="toggleAll"/>全选当前页</label>
       <button v-if="selectionMode === 'retry'" :disabled="!selected.length || retrying" class="text-blue-600 disabled:opacity-40" @click="retry([...selected])">重试所选（{{ selected.length }}）</button>
       <button v-else :disabled="!selected.length" class="text-red-500 disabled:opacity-40" @click="confirmClear = 'selected'">清理所选（{{ selected.length }}）</button>

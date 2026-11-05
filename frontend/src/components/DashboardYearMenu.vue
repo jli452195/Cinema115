@@ -2,7 +2,7 @@
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import DashboardYearPicker from './DashboardYearPicker.vue'
 
-const props = defineProps<{ modelValue: string; recentYears: string[] }>()
+defineProps<{ modelValue: string; recentYears: string[] }>()
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const id = useId()
 const trigger = ref<HTMLButtonElement>()

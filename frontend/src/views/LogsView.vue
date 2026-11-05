@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from '../components/SelectMenu.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { IconChevronRight, IconDownload, IconRefresh, IconSearch, IconX } from '@tabler/icons-vue'
@@ -7,7 +8,7 @@ import PlaybackDiagnostics from '../components/PlaybackDiagnostics.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ openDashboard: []; home: []; openP115: []; openTelegram: []; logout: [] }>()
+const emit = defineEmits<{ logout: [] }>()
 const levels = ['ALL', 'INFO', 'DEBUG', 'ERROR', 'WARNING'] as const
 type Level = typeof levels[number]
 const modules = ['ALL', 'STRM', 'Telegram', '订阅', '搜索', '整理', 'Emby', 'Emby 302'] as const
@@ -187,7 +188,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
               <input ref="searchInputRef" v-model="search" type="search" aria-label="搜索日志" placeholder="搜索日志" title="可搜索内容、任务编号、来源或详情" autocomplete="off" :spellcheck="false" />
               <button v-if="search" type="button" class="logs-clear" aria-label="清空搜索" @click="clearSearch"><IconX :size="16" stroke="1.75" aria-hidden="true" focusable="false" /></button>
             </div>
-            <select v-model="module" aria-label="日志模块" class="logs-module"><option v-for="item in modules" :key="item" :value="item">{{ item === 'ALL' ? '全部模块' : item }}</option></select>
+            <SelectMenu v-model="module" label="日志模块" class="logs-module w-full min-w-0" :options="modules.map(item => ({ value: item, label: item === 'ALL' ? '全部模块' : item }))" />
           </div>
           <div class="logs-filter-row">
             <nav ref="levelNavRef" class="logs-levels relative flex max-w-full overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700 p-1" role="group" aria-label="日志等级">
@@ -277,7 +278,6 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 .logs-search input::-webkit-search-cancel-button { -webkit-appearance: none; }
 .logs-search:has(input:focus-visible) { outline: 2px solid var(--logs-focus); outline-offset: 2px; }
 .logs-clear { display: grid; place-items: center; width: 32px; min-height: 44px; border-radius: 8px; cursor: pointer; }
-.logs-module { width: 100%; min-width: 0; min-height: 44px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--logs-soft); color: var(--logs-text); font-size: 13px; cursor: pointer; }
 .logs-retry { display: inline-flex; min-width: 88px; min-height: 44px; margin-left: auto; padding: 0 12px; align-items: center; justify-content: center; gap: 7px; flex-shrink: 0; border: 0; border-radius: 10px; background: var(--logs-action); color: var(--logs-action-text); font-size: 13px; font-weight: 500; cursor: pointer; transition: background-color 180ms ease-out, box-shadow 180ms ease-out; }
 .logs-retry[aria-disabled="true"] { cursor: wait; }
 .logs-retry svg { flex-shrink: 0; }
@@ -338,7 +338,7 @@ onBeforeUnmount(() => { mounted = false; window.clearTimeout(timer); lifecycle.a
 .logs-details :deep(button) { min-height: 36px; padding: 0 8px; border-radius: 8px; color: var(--logs-action-text); }
 .logs-more { padding: 12px 24px 20px; text-align: center; }
 .logs-more button { min-height: 44px; padding: 0 20px; border-radius: 10px; background: var(--logs-soft); color: var(--logs-action-text); font-size: 13px; cursor: pointer; }
-.logs-module:focus-visible, .logs-clear:focus-visible, .logs-retry:focus-visible, .logs-task-filter button:focus-visible, .logs-levels button:focus-visible, .logs-details summary:focus-visible, .logs-details :deep(button:focus-visible), .logs-more button:focus-visible, .logs-history > summary:focus-visible, .logs-history-action:focus-visible { outline: 2px solid var(--logs-focus); outline-offset: -2px; }
+.logs-clear:focus-visible, .logs-retry:focus-visible, .logs-task-filter button:focus-visible, .logs-levels button:focus-visible, .logs-details summary:focus-visible, .logs-details :deep(button:focus-visible), .logs-more button:focus-visible, .logs-history > summary:focus-visible, .logs-history-action:focus-visible { outline: 2px solid var(--logs-focus); outline-offset: -2px; }
 .logs-footnote { margin-top: 16px; color: rgb(var(--color-slate-500)); font-size: 12px; line-height: 24px; }
 .dark .logs-panel { --logs-soft: rgb(var(--color-slate-950) / 60%); --logs-text: rgb(var(--color-slate-300)); --logs-muted: rgb(var(--color-slate-400)); --logs-action: #29394d; --logs-action-hover: #334961; --logs-action-text: #bad2f4; --logs-focus: #94b8e5; background: rgb(var(--color-slate-900)); box-shadow: 0 1px 4px rgb(0 0 0 / 15%); }
 .dark .logs-toolbar { background: rgb(var(--color-slate-950) / 20%); }

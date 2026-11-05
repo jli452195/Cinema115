@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
@@ -44,8 +45,7 @@ const linkErrors = ref<Record<string, string>>({})
 const linkRequests = new Map<string, Promise<string[]>>()
 let linkQueue: Promise<unknown> = Promise.resolve()
 const busy = computed(() => searchBusy.value || shareRuns.preparing.value > 0 || Object.values(linkPending.value).some(Boolean))
-const previousFocus = document.activeElement as HTMLElement | null
-const previousOverflow = document.body.style.overflow
+const dialogLifecycle = createDialogLifecycle()
 const resources = computed(() => {
   const items = result.value?.items.filter(item => item.kind === 'resource') || []
   if (items.length) return items.map(item => ({ ...item, direct: '' }))
@@ -183,7 +183,7 @@ onMounted(async () => {
   window.visualViewport?.addEventListener('resize', syncVisualViewport)
   window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   countdown = setInterval(() => { clockNow.value = Date.now() }, 1000)
-  document.body.style.overflow = 'hidden'; dialog.value?.showModal()
+  dialogLifecycle.acquire(); dialog.value?.showModal()
   try { state.value = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', lifecycle.signal) }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '配置读取失败' }
   finally { checking.value = false }
@@ -192,7 +192,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', syncVisualViewport)
   window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  clearInterval(countdown); lifecycle.abort(); dialog.value?.close(); document.body.style.overflow = previousOverflow; previousFocus?.focus()
+  clearInterval(countdown); lifecycle.abort(); dialog.value?.close(); dialogLifecycle.release()
 })
 </script>
 <template>

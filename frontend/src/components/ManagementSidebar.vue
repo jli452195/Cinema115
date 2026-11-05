@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle, restoreDialogFocus } from '../lib/dialog-lifecycle'
 import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { isNavigationFailure, NavigationFailureType, RouterLink, useRouter } from 'vue-router'
 import ManagementNavigation from './ManagementNavigation.vue'
@@ -9,11 +10,12 @@ import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 const props = defineProps<{ desktop: boolean; collapsed?: boolean; mobileOnly?: boolean }>()
 const router = useRouter(), drawer = ref<HTMLDialogElement>(), opened = ref(false), closeButton = ref<HTMLButtonElement>()
 const titleID = useId(), drawerID = useId()
-let trigger: HTMLElement | undefined, previousOverflow = '', backdropStarted = false
+const dialogLifecycle = createDialogLifecycle()
+let trigger: HTMLElement | undefined, backdropStarted = false
 async function openDrawer(event: MouseEvent) {
   if (props.desktop || opened.value) return
   trigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : undefined
-  previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'
+  dialogLifecycle.acquire(trigger)
   opened.value = true
   await nextTick()
   if (!opened.value) return
@@ -22,11 +24,11 @@ async function openDrawer(event: MouseEvent) {
 function closeDrawer(returnFocus = true) {
   if (!opened.value) return
   drawer.value?.close(); opened.value = false
-  document.body.style.overflow = previousOverflow
+  dialogLifecycle.release(false)
   if (returnFocus) void nextTick(() => {
     const target = trigger?.isConnected && trigger.getClientRects().length ? trigger
       : document.querySelector<HTMLElement>('#management-desktop-navigation a[aria-current]') || document.querySelector<HTMLElement>('#management-desktop-navigation a[href]')
-    target?.focus({ preventScroll: true })
+    restoreDialogFocus(target)
   })
 }
 function toggleDrawer(event: MouseEvent) {

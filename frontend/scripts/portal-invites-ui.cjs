@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 const path = require('node:path')
 const os = require('node:os')
 const assert = require('node:assert/strict')
@@ -132,7 +133,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.locator('.invite-source-choice').filter({ hasText: '管理员共享小号池' }).click()
     assert.equal(await page.getByRole('radio', { name: /管理员共享小号池/ }).isChecked(), true)
     await page.getByLabel('数量', { exact: true }).fill('2')
-    await page.getByRole('combobox', { name: /有效期/ }).selectOption('30')
+    await selectOption(page.getByRole('combobox', { name: /有效期/ }), '30')
     await page.getByLabel('备注选填', { exact: true }).fill('批量测试')
     failGenerate = true
     await page.getByRole('button', { name: '生成邀请', exact: true }).click()

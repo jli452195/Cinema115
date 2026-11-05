@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, useId, watch } from 'vue'
 import P115Icon from './P115Icon.vue'
 
@@ -6,7 +7,7 @@ const props = defineProps<{ title: string; contentKey?: string; description: str
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>(), titleID = useId(), descriptionID = useId()
 const heading = ref<HTMLElement>(), scrollBody = ref<HTMLElement>()
-let previousFocus: HTMLElement | null = null, previousOverflow = ''
+const dialogLifecycle = createDialogLifecycle()
 function close() { if (!props.busy) emit('close') }
 function backdrop(event: MouseEvent) {
   if (event.target !== dialog.value) return
@@ -19,13 +20,11 @@ watch(() => props.contentKey ?? props.title, async () => {
   heading.value?.focus()
 })
 onMounted(() => {
-  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  previousOverflow = document.body.style.overflow
-  document.body.style.overflow = 'hidden'
+  dialogLifecycle.acquire()
   dialog.value?.showModal()
 })
 onBeforeUnmount(() => dialog.value?.close())
-onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus() })
+onUnmounted(() => { dialogLifecycle.release() })
 </script>
 <template>
   <Teleport to="body">

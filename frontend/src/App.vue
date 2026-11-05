@@ -7,7 +7,6 @@ import GlobalToast from './components/GlobalToast.vue'
 import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
-import { rememberedDashboardHome } from './utils/dashboardPreferences'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
@@ -24,18 +23,10 @@ function handleRegistered(name: string) {
   registeredUsername.value = name
   void router.replace({ path: '/login', query: route.query })
 }
-const username = computed(() => portalUser.value?.username || '')
 // 登录完成到路由重定向之间也不挂载普通用户无权访问的管理页面。
 const canViewRoute = computed(() => portalUser.value?.role === 'admin' || portalBrowseRoutes.has(String(route.name)))
-// 分类页只接收用户名，避免把令牌作为未声明属性落到页面 DOM 上。
-const viewProps = computed(() => route.meta.categoryPage ? { username: username.value } : { token: token.value })
-
-function openCategory(category: 'p115' | 'telegram') {
-  void router.push(category === 'telegram' ? '/telegram' : '/115')
-}
-function openP115() { void router.push(route.name === 'p115-category' ? '/helper115' : '/115') }
-function openTelegram() { void router.push(route.name === 'telegram-category' ? '/telegram/bot' : '/telegram') }
-function back() { openCategory(route.name === 'telegram' ? 'telegram' : 'p115') }
+// 分类页无需会话属性，避免令牌透传到页面 DOM 上。
+const viewProps = computed(() => route.meta.categoryPage ? {} : { token: token.value })
 
 async function handleLoggedIn(value: string) {
   const target = loginReturnPath(route.query.redirect)
@@ -91,7 +82,7 @@ onBeforeUnmount(() => {
   <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
     <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" />
     <RouterView v-slot="{ Component }">
-      <component :is="Component" v-bind="viewProps" @home="router.push(rememberedDashboardHome)" @back="back" @category="openCategory" @open-dashboard="router.push(rememberedDashboardHome)" @open-p115="openP115" @open-share="router.push('/115/share')" @open-telegram="openTelegram" @open-logs="router.push('/logs')" @logout="logout" />
+      <component :is="Component" v-bind="viewProps" @logout="logout" />
     </RouterView>
   </div>
   <ReloadPrompt />

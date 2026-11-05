@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import P115Icon from './P115Icon.vue'
-import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 const props = defineProps<{ title: string; busy?: boolean; size?: 'wide'; layout?: 'contained' }>()
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>(), titleID = useId()
-const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-let unlock: (() => void) | undefined
+const dialogLifecycle = createDialogLifecycle()
 function close() { if (!props.busy) emit('close') }
-onMounted(() => { unlock = lockAnimeDialogScroll(); dialog.value?.showModal() })
-onBeforeUnmount(() => { dialog.value?.close(); unlock?.(); if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true }) })
+onMounted(() => { dialogLifecycle.acquire(); dialog.value?.showModal() })
+onBeforeUnmount(() => { dialog.value?.close(); dialogLifecycle.release() })
 </script>
 <template>
   <Teleport to="body">

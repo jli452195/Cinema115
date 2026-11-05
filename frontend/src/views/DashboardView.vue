@@ -14,7 +14,7 @@ import { cacheGenres, cachedGenres, rememberDashboardPath, type DashboardGenre, 
 import { cacheDashboard, cachedDashboard, dashboardBrowseScope, dashboardCacheLifetime, dashboardLayoutReady, isDashboardPath, rememberDashboardScroll } from '../utils/dashboardBrowseState'
 
 const props = defineProps<{ token: string; kind: 'tv' | 'movie' }>()
-const emit = defineEmits<{ home: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
+const emit = defineEmits<{ logout: [] }>()
 const kind = computed(() => props.kind)
 const route = useRoute(), router = useRouter()
 const categories = computed(() => kind.value === 'tv'

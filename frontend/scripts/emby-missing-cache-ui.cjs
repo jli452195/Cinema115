@@ -54,7 +54,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       assert.equal(await pageInput().inputValue(), String(value))
       await cards.first().getByRole('heading', { name: items[(value - 1) * 24].title, exact: true }).waitFor()
     }
-    async function excludedTab() { await page.getByRole('button', { name: /^已排除 \d+ 项$/ }).evaluate(el => el.click()); await idle() }
+    async function excludedTab() { await page.getByRole('button', { name: '已排除', exact: true }).evaluate(el => el.click()); await idle() }
     async function resultTab() { await page.getByRole('button', { name: '缺集结果', exact: true }).evaluate(el => el.click()); await idle() }
     async function leave() { await page.getByRole('navigation', { name: '上级导航', exact: true }).getByRole('link', { name: '返回 Emby', exact: true }).click(); await page.locator('main').getByRole('link', { name: '缺集检测', exact: true }).waitFor() }
     async function enter() { await page.locator('main').getByRole('link', { name: '缺集检测', exact: true }).click(); await idle() }
@@ -149,7 +149,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await resultSearch().fill('保留结果草稿')
     excludedDelay = 400
     const pendingExcluded = page.waitForRequest(req => new URL(req.url()).pathname.endsWith('/missing/exclusions'))
-    await page.getByRole('button', { name: /^已排除 \d+ 项$/ }).evaluate(el => el.click()); await pendingExcluded
+    await page.getByRole('button', { name: '已排除', exact: true }).evaluate(el => el.click()); await pendingExcluded
     await resultTab()
     assert.equal(await resultSearch().inputValue(), '保留结果草稿')
     excludedDelay = 0

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import EmbyUserAvatar from './EmbyUserAvatar.vue'
 import MemberDriveSourceIcon from './MemberDriveSourceIcon.vue'
@@ -66,7 +67,8 @@ const sourceOptions = computed(() => [
 ])
 const dialog = ref<HTMLDialogElement>(), trigger = ref<HTMLButtonElement>(), closeButton = ref<HTMLButtonElement>(), continueButton = ref<HTMLButtonElement>()
 const opened = ref(false), confirmClose = ref(false), titleID = useId(), dialogID = useId()
-let previousOverflow = '', backdropStarted = false
+const dialogLifecycle = createDialogLifecycle()
+let backdropStarted = false
 let lastField: HTMLElement | null = null
 
 watch(changed, value => { emit('dirty', value); if (!value) confirmClose.value = false }, { flush: 'sync' })
@@ -77,16 +79,15 @@ function reset(member: MemberPlayback) {
 function cancel() { reset(props.member); error.value = ''; notice.value = '' }
 async function openDialog() {
  if (locked.value || opened.value) return
- cancel(); confirmClose.value = false; lastField = null; previousOverflow = document.body.style.overflow
- document.body.style.overflow = 'hidden'; opened.value = true
+ cancel(); confirmClose.value = false; lastField = null; dialogLifecycle.acquire(trigger.value)
+ opened.value = true
  await nextTick()
  if (lifecycle.signal.aborted) return
  dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true })
 }
 function closeDialog() {
  dialog.value?.close(); opened.value = false; confirmClose.value = false
- document.body.style.overflow = previousOverflow
- if (trigger.value?.isConnected) trigger.value.focus({ preventScroll: true })
+ dialogLifecycle.release()
 }
 async function requestClose() {
  if (action.value) return
@@ -145,7 +146,8 @@ async function mutate(suffix: string, body: object, save = false) {
 function save() { if (available.value && !props.member.playbackOnly && changed.value && !confirmClose.value) void mutate('/settings', { ...draft.value, expected: initial.value }, true) }
 onBeforeUnmount(() => {
  lifecycle.abort()
- if (opened.value) { dialog.value?.close(); document.body.style.overflow = previousOverflow }
+ if (opened.value) dialog.value?.close()
+ dialogLifecycle.release(false)
  emit('dirty', false); emit('busy', false)
 })
 </script>

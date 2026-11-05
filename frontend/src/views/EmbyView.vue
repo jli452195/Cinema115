@@ -7,7 +7,7 @@ import { invalidateEmbyMissingCache, observeEmbyMissingSync } from '../composabl
 import '../styles/emby-library.css'
 
 const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ home: []; openDashboard: []; openP115: []; openTelegram: []; openLogs: []; logout: [] }>()
+const emit = defineEmits<{ logout: [] }>()
 interface Library { ItemId: string; Name: string; CollectionType: string }
 interface LibraryResult { libraries: Library[]; server: { Id: string; ServerName: string; Version: string } }
 const config = ref<EmbyConfig>()

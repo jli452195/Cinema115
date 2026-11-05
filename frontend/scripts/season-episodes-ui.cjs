@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 // All API requests are intercepted; this suite never reads or changes a real library.
 const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
@@ -105,7 +106,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await summaries().nth(2).waitFor()
     assert.deepEqual(reads.slice(-2), ['1/1/2', '1/1/2'])
     await summaries().first().click()
-    await page.getByRole('combobox', { name: '选择音轨' }).selectOption('1')
+    await selectOption(page.getByRole('combobox', { name: '选择音轨' }), '1')
     await page.getByRole('region', { name: /版本 1/ }).getByText('chi', { exact: true }).waitFor()
     await closeEpisode()
     assert.equal(await button(1).evaluate(el => el === document.activeElement), true)

@@ -5,6 +5,7 @@ import { IconCode, IconDeviceFloppy, IconRefresh, IconRestore, IconUpload } from
 import ClassificationRuleEditor from '../components/ClassificationRuleEditor.vue'
 import ClassificationImportDialog from '../components/ClassificationImportDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import { portalUser } from '../composables/usePortalAuth'
 import { classificationRequest } from '../lib/classification-api'
 import { classificationIssue, classificationSignature, parseClassification, validateClassification, writeClassification, type ClassificationEditorDocument } from '../utils/classificationDocument'
@@ -177,10 +178,10 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 <template>
     <div class="classification-settings">
       <header class="cs-toolbar">
-        <div v-if="mode === 'visual'" class="cs-kind" role="group" aria-label="作品类型"><button v-for="option in [{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :key="option.value" type="button" :disabled="locked || !settings" :aria-pressed="kind === option.value" @click="kind = option.value">{{ option.label }}</button></div>
+        <SegmentedControl v-if="mode === 'visual'" v-model="kind" class="cs-kind" role="group" label="作品类型" density="compact" :options="[{ value: 'movie' as const, label: '电影' }, { value: 'tv' as const, label: '剧集' }]" :disabled="locked || !settings" />
         <p v-else class="cs-scope-label">完整分类配置<span>电影和剧集</span></p>
         <div class="cs-tools">
-          <div class="cs-mode" role="group" aria-label="编辑模式"><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'visual'" @click="chooseMode('visual')">可视化</button><button type="button" :disabled="locked || !settings" :aria-pressed="mode === 'source'" @click="chooseMode('source')">YAML</button></div>
+          <SegmentedControl class="cs-mode" role="group" label="编辑模式" density="compact" :model-value="mode" :options="[{ value: 'visual' as const, label: '可视化' }, { value: 'source' as const, label: 'YAML' }]" :disabled="locked || !settings" @update:model-value="chooseMode" />
           <div class="cs-actions"><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="importing = true"><IconUpload :size="15" aria-hidden="true" />导入 MP YAML</button><button class="cs-button cs-secondary" type="button" :disabled="locked || !settings" @click="dialog = 'reset'"><IconRestore :size="15" aria-hidden="true" />恢复默认</button><button class="cs-button cs-primary" type="button" :disabled="locked || !settings || !dirty" @click="save"><IconDeviceFloppy :size="15" aria-hidden="true" />{{ saving ? '保存中…' : '保存规则' }}</button></div>
         </div>
       </header>
@@ -218,12 +219,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 .cs-toolbar { justify-content: space-between; gap: 12px; flex-wrap: wrap; min-height: 40px; }
 .cs-tools { gap: 18px; min-width: 0; }
 .cs-actions { gap: 8px; }
-.cs-kind { display: inline-flex; gap: 5px; }
-.cs-kind button { min-height: 40px; padding: 8px 16px; font-size: 14px; color: rgb(var(--color-slate-500)); }
-.cs-kind button[aria-pressed=true] { color: #1d4ed8; font-weight: 600; box-shadow: inset 0 -2px currentColor; }
-.cs-mode { display: inline-flex; width: fit-content; gap: 2px; padding: 3px; border-radius: 8px; background: rgb(148 163 184 / .12); }
-.cs-mode button { min-height: 30px; padding: 5px 11px; border-radius: 5px; font-size: 12px; color: rgb(var(--color-slate-500)); }
-.cs-mode button[aria-pressed=true] { background: #fff; color: rgb(var(--color-slate-800)); }
 .cs-scope-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 14px; font-weight: 600; color: rgb(var(--color-slate-800)); }
 .cs-scope-label span { font-size: 12px; font-weight: 400; color: rgb(var(--color-slate-500)); }
 .cs-button { display: inline-flex; justify-content: center; align-items: center; gap: 6px; min-height: 36px; padding: 7px 12px; border-radius: 8px; background: rgb(148 163 184 / .12); font-size: 12px; white-space: nowrap; color: rgb(var(--color-slate-700)); }
@@ -231,7 +226,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 .cs-primary { background: #2563eb; color: #fff; }
 .cs-button:hover:not(:disabled) { filter: brightness(.96); }
 .cs-secondary:hover:not(:disabled) { background: rgb(148 163 184 / .1); }
-.cs-button:disabled, .cs-mode button:disabled, .cs-kind button:disabled, .cs-read:disabled { opacity: .45; cursor: default; }
+.cs-button:disabled, .cs-read:disabled { opacity: .45; cursor: default; }
 .cs-status, .cs-feedback { font-size: 12px; color: rgb(var(--color-slate-500)); line-height: 1.8; }
 .cs-feedback { overflow-wrap: anywhere; }
 .cs-feedback-actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; }
@@ -241,10 +236,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
 .cs-warning { font-size: 12px; line-height: 1.8; color: #92400e; background: #fffbeb; border-radius: 10px; padding: 12px; overflow-wrap: anywhere; }
 .cs-error { color: #b91c1c; }
 .classification-settings :focus-visible, .cs-button:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
-.dark .cs-mode { background: rgb(148 163 184 / .12); }
-.dark .cs-mode button, .dark .cs-kind button { color: rgb(var(--color-slate-400)); }
-.dark .cs-mode button[aria-pressed=true] { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-100)); }
-.dark .cs-kind button[aria-pressed=true] { color: #93c5fd; }
 .dark .cs-scope-label, .dark .cs-button:not(.cs-primary) { color: rgb(var(--color-slate-200)); }
 .dark .cs-status, .dark .cs-feedback { color: rgb(var(--color-slate-400)); }
 .dark .cs-read { color: #93c5fd; }
@@ -254,8 +245,6 @@ onBeforeUnmount(() => { lifecycle.abort(); window.removeEventListener('beforeunl
   .cs-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px 8px; }
   .cs-tools { display: contents; }
   .cs-mode { justify-self: end; }
-  .cs-kind button { min-height: 42px; padding-inline: 12px; }
-  .cs-mode button { min-height: 36px; padding-inline: 9px; }
   .cs-actions { grid-column: 1 / -1; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   .cs-feedback .cs-actions { justify-content: flex-start; }
   .cs-scope-label { font-size: 13px; gap: 2px 8px; }

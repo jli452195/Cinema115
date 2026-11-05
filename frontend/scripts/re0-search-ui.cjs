@@ -1,4 +1,5 @@
-// Mock remote submission: no real unlocks, points consumption or STRM writes.
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
+// 远程提交全部模拟，不执行真实解锁、积分消耗或 STRM 写入。
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async () => {
@@ -12,6 +13,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const receipts = {}
     const transfers = {}, transferCalls = []
     let transferState = 'accepted', transferMultiple = false, transferDrop = false
+    const createGate = () => { let release; const promise = new Promise(resolve => { release = resolve }); return { promise, release } }
+    let transferOptionsGate, transferGate, shareOptionsGate, submissionGate
     const resources = [{ slug: 'one', key: 'one', name: '1-192 周更', remark: '', title: '凡人修仙传', pan_type: '115', video_resolution: ['4K'], resource_sources: [], share_size: '402.32GB', publisher: '发布者', publish_time: '2026-09-24', subtitle_language: ['简中'], subtitle_type: ['内封'], unlock_points: 10, is_unlocked: false, unlocked_users_count: 2, is_official: false, validate_status: 'invalid' }, { slug: 'two', key: 'two', name: '高清合集', pan_type: '115', unlock_points: 0, video_resolution: null, subtitle_language: null, subtitle_type: null, is_unlocked: true }]
     await page.route('**/api/**', async route => {
       const req = route.request(), u = new URL(req.url()); let data = {}, status = 200
@@ -25,14 +28,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         else if (!configured) { status = 400; data = { error: '请先登录 NanShare' } }
         else data = { id: 'search-one', items: empty ? [] : resources, submissions: receipts, transfers, expiresAt: new Date(Date.now()+900000).toISOString() }
         if (req.postDataJSON().refresh && unlockOnRefresh) resources[0].is_unlocked = true
-      } else if (u.pathname.includes('/nanshare/transfer-options/')) data = { accountId: 'remote-primary', folders: transferMultiple ? [{ id: '3486868885414610176', name: '电影' }, { id: '3486868885414610177', name: '剧集' }] : [{ id: '3486868885414610176', name: '转存目录' }] }
+      } else if (u.pathname.includes('/nanshare/transfer-options/')) {
+        if (transferOptionsGate) await transferOptionsGate.promise
+        data = { accountId: 'remote-primary', folders: transferMultiple ? [{ id: '3486868885414610176', name: '电影' }, { id: '3486868885414610177', name: '剧集' }] : [{ id: '3486868885414610176', name: '转存目录' }] }
+      }
       else if (u.pathname.endsWith('/nanshare/transfer')) {
         const input = req.postDataJSON(); transferCalls.push(input)
+        if (transferGate) await transferGate.promise
         if (transferDrop) { transferDrop = false; return route.abort('failed') }
-        data = transfers[input.slug] = { requestId: input.requestId, state: transferState, message: ({ accepted: '转存成功，共 1 个', points_unknown: '无法确认资源积分，已按积分限制策略跳过', already_saved: '该文件已转存过，请在网盘核查' })[transferState] }
-      } else if (u.pathname.includes('/nanshare/share-options/')) data = { version: 'snapshot', accountId: missingAccount ? '' : 'remote-115', modes: multiple ? ['normal', 'reshare'] : ['reshare'], folders: multiple ? [{ index: 0, name: 'strm', path: '/strm/待整理' }, { index: 3, name: 'movie', path: '/strm/电影' }] : [{ index: 0, name: 'strm', path: '/strm/待整理' }] }
+        data = transfers[input.slug] = { requestId: input.requestId, state: transferState, message: ({ accepted: '转存成功，共 1 个', points_unknown: '无法确认资源积分，已按积分限制策略跳过', already_saved: '该文件已转存过，请在网盘核查', unknown: '未确认转存结果，请先在 NanShare 核查', partial: '部分文件已转存，请先核查剩余文件' })[transferState] }
+      } else if (u.pathname.includes('/nanshare/share-options/')) {
+        if (shareOptionsGate) await shareOptionsGate.promise
+        data = { version: 'snapshot', accountId: missingAccount ? '' : 'remote-115', modes: multiple ? ['normal', 'reshare'] : ['reshare'], folders: multiple ? [{ index: 0, name: 'strm', path: '/strm/待整理' }, { index: 3, name: 'movie', path: '/strm/电影' }] : [{ index: 0, name: 'strm', path: '/strm/待整理' }] }
+      }
       else if (u.pathname.endsWith('/nanshare/submit')) {
         const input = req.postDataJSON(); submissions.push(input)
+        if (submissionGate) await submissionGate.promise
         if (dropNext) { dropNext = false; failRecovery = true; return route.abort('failed') }
         if (changed) { status = 409; data = { error: 'NanShare 配置已变化，请刷新搜索并重新选择' } }
         else { receipts[input.slug] = { requestId: input.requestId, state: unknownNext ? 'unknown' : 'accepted', message: unknownNext ? '未确认提交结果，请先核对 NanShare 任务' : '已提交给 NanShare，生成进度请在 NanShare 查看' }; unknownNext = false; data = receipts[input.slug] }
@@ -45,51 +56,86 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goto(base + '/tv/106449')
     const open = () => page.getByRole('button', { name: 'RE0 搜索', exact: true }).click()
     await open()
-    const modal = page.getByRole('dialog', { name: 'RE0 搜索', exact: true })
+    const modal = page.getByRole('dialog', { name: 'RE0 资源搜索', exact: true })
     const rows = modal.locator('[aria-label="RE0 资源列表"] > li')
+    const toasts = page.locator('[data-sonner-toaster] [data-sonner-toast]')
+    const height = row => row.evaluate(element => element.getBoundingClientRect().height)
+    const assertHeight = async (row, expected, stage) => assert.ok(Math.abs(await height(row) - expected) < .5, `${stage}不应撑高资源卡片`)
+    const dismissToasts = async () => {
+      await toasts.getByRole('button', { name: '关闭提示', exact: true }).evaluateAll(buttons => buttons.forEach(button => button.click()))
+      await page.waitForFunction(() => document.querySelectorAll('[data-sonner-toaster] [data-sonner-toast]').length === 0)
+    }
     await rows.first().waitFor()
     resources[1].is_unlocked = false
     await modal.getByRole('button', { name: '刷新搜索', exact: true }).click()
     await rows.nth(1).locator('[data-unlock-status]').filter({ hasText: '免费' }).waitFor()
-    assert.ok((await rows.nth(1).locator('[data-unlock-status]').getAttribute('class')).includes('text-emerald-700'))
+    assert.ok((await rows.nth(1).locator('[data-unlock-status]').getAttribute('class')).includes('re0-success'))
     assert.equal(await rows.count(), 2)
     assert.deepEqual(searches[0], { kind: 'tv', tmdbId: 106449, refresh: false })
     assert.equal(submissions.length, 0)
     assert.equal(await modal.getByRole('button', { name: '一键转存', exact: true }).count(), 2)
+    const transferHeight = await height(rows.first())
+    transferOptionsGate = createGate(); transferGate = createGate()
     await rows.first().getByRole('button', { name: '一键转存', exact: true }).click()
-    await rows.first().getByText('转存成功，共 1 个', { exact: true }).waitFor()
+    await rows.first().getByRole('button', { name: '读取配置…', exact: true }).waitFor()
+    await assertHeight(rows.first(), transferHeight, '读取转存配置')
+    transferOptionsGate.release(); transferOptionsGate = undefined
+    await rows.first().getByRole('button', { name: '转存中…', exact: true }).waitFor()
+    await assertHeight(rows.first(), transferHeight, '正在转存')
+    assert.equal(await rows.first().getByRole('button', { name: '转存中…', exact: true }).isDisabled(), true)
+    transferGate.release(); transferGate = undefined
+    const transferToast = toasts.filter({ hasText: '转存成功，共 1 个' })
+    await transferToast.waitFor()
     assert.equal(await rows.first().getByRole('button', { name: '已转存', exact: true }).isDisabled(), true)
+    await assertHeight(rows.first(), transferHeight, '转存成功')
+    assert.equal(await rows.first().getByText('转存成功，共 1 个', { exact: true }).count(), 0)
+    assert.equal(await modal.evaluate(element => element.matches(':modal')), true)
+    await transferToast.getByRole('button', { name: '关闭提示', exact: true }).click()
+    await transferToast.waitFor({ state: 'hidden' })
     assert.equal(transferCalls[0].folderId, '3486868885414610176')
     assert.equal(transferCalls[0].accountId, 'remote-primary')
     assert.equal(submissions.length, 0, 'transfer must not create STRM')
     transferMultiple = true; transferState = 'points_unknown'
     await rows.nth(1).getByRole('button', { name: '一键转存', exact: true }).click()
-    await modal.getByLabel('转存目录', { exact: true }).selectOption('3486868885414610177')
+    await selectOption(modal.getByLabel('转存目录', { exact: true }), '3486868885414610177')
     await modal.getByRole('button', { name: '开始转存', exact: true }).click()
     await rows.nth(1).getByText('无法确认资源积分，已按积分限制策略跳过', { exact: true }).waitFor()
     assert.equal(transferCalls[1].folderId, '3486868885414610177')
     transferMultiple = false; transferState = 'already_saved'; transferDrop = true
     await rows.nth(1).getByRole('button', { name: '一键转存', exact: true }).click()
     await rows.nth(1).getByRole('button', { name: '获取转存结果', exact: true }).click()
-    await rows.nth(1).getByText('该文件已转存过，请在网盘核查', { exact: true }).waitFor()
+    await toasts.filter({ hasText: '该文件已转存过，请在网盘核查' }).waitFor()
     assert.equal(transferCalls[2].requestId, transferCalls[3].requestId, 'lost response must reuse request ID')
+    await dismissToasts()
     await modal.getByLabel('筛选当前结果').fill('高清')
     assert.equal(await rows.count(), 1)
     await modal.getByLabel('筛选当前结果').fill('')
-    assert.equal(await rows.first().locator('[data-unlock-status]').textContent(), '10 积分')
+    assert.equal((await rows.first().locator('[data-unlock-status]').textContent()).trim(), '10 积分')
+    const submissionHeight = await height(rows.first())
+    shareOptionsGate = createGate(); submissionGate = createGate()
     await rows.first().getByRole('button', { name: '分享 STRM', exact: true }).click()
+    await rows.first().getByRole('button', { name: '读取配置…', exact: true }).waitFor()
+    await assertHeight(rows.first(), submissionHeight, '读取分享配置')
+    shareOptionsGate.release(); shareOptionsGate = undefined
+    await rows.first().getByRole('button', { name: '提交中…', exact: true }).waitFor()
+    await assertHeight(rows.first(), submissionHeight, '正在提交分享')
+    submissionGate.release(); submissionGate = undefined
     await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).waitFor()
     await page.waitForFunction(() => [...document.querySelectorAll('[aria-label="RE0 资源列表"] button')].some(button => button.textContent.trim() === '再次生成 STRM' && !button.disabled))
+    await toasts.filter({ hasText: 'STRM 任务已提交' }).waitFor()
+    await assertHeight(rows.first(), submissionHeight, '分享任务已提交')
+    await dismissToasts()
     assert.equal(await modal.locator('[aria-label="分享 STRM 配置"]').count(), 0)
     assert.equal(await modal.getByLabel('NanShare 已绑定的 115 账号').count(), 0)
     assert.equal(submissions.length, 1)
     assert.match(submissions[0].requestId, /^[0-9a-f]{32}$/)
     assert.deepEqual(submissions[0], { requestId: submissions[0].requestId, searchId: 'search-one', slug: 'one', version: 'snapshot', accountId: 'remote-115', mode: 'reshare', folderIndex: 0 })
     assert.equal(await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).isDisabled(), false)
-    assert.equal(await rows.first().locator('[data-unlock-status]').textContent(), '10 积分', 'submission alone must not imply unlocked')
+    assert.equal((await rows.first().locator('[data-unlock-status]').textContent()).trim(), '10 积分', 'submission alone must not imply unlocked')
     await modal.getByRole('button', { name: '关闭 RE0 搜索' }).click()
     await open()
     await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).waitFor()
+    assert.equal(await toasts.count(), 0, '重新打开不应重复播报已有成功回执')
     changed = true
     await rows.nth(1).getByRole('button', { name: '分享 STRM', exact: true }).click()
     await modal.getByRole('alert').filter({ hasText: '配置已变化' }).waitFor()
@@ -103,10 +149,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await modal.getByLabel('生成模式', { exact: true }).waitFor()
     assert.equal(submissions.length, 2)
     assert.equal(await modal.getByLabel('NanShare 已绑定的 115 账号').count(), 0)
-    assert.equal(await modal.getByLabel('生成模式', { exact: true }).inputValue(), 'normal')
-    assert.equal(await modal.getByLabel('输出目录', { exact: true }).inputValue(), '0')
-    await modal.getByLabel('生成模式', { exact: true }).selectOption('reshare')
-    await modal.getByLabel('输出目录', { exact: true }).selectOption('3')
+    assert.equal(await inputValue(modal.getByLabel('生成模式', { exact: true })), 'normal')
+    assert.equal(await inputValue(modal.getByLabel('输出目录', { exact: true })), '0')
+    await selectOption(modal.getByLabel('生成模式', { exact: true }), 'reshare')
+    await selectOption(modal.getByLabel('输出目录', { exact: true }), '3')
     await modal.getByRole('button', { name: '提交分享 STRM', exact: true }).click()
     await rows.nth(1).getByRole('button', { name: '再次生成 STRM', exact: true }).waitFor()
     assert.equal(submissions.length, 3)
@@ -118,7 +164,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await rows.first().locator('[data-unlock-status]').filter({ hasText: '已解锁' }).waitFor()
     assert.equal(submissions.length, 4)
     assert.notEqual(submissions[0].requestId, submissions[3].requestId)
-    assert.ok((await rows.first().locator('[data-unlock-status]').getAttribute('class')).includes('text-blue-600'))
+    assert.ok((await rows.first().locator('[data-unlock-status]').getAttribute('class')).includes('re0-info'))
     refreshFails = true
     await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).click()
     await modal.getByRole('status').filter({ hasText: '解锁状态暂未刷新' }).waitFor()
@@ -144,6 +190,30 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await rows.first().getByRole('button', { name: '重试获取提交结果', exact: true }).click()
     await rows.first().getByRole('button', { name: '再次生成 STRM', exact: true }).waitFor()
     assert.equal(submissions.at(-1).requestId, submissions.at(-2).requestId, 'network retry must reuse request ID')
+    await dismissToasts()
+    // 模拟服务端返回未知和部分完成回执，刷新及重开只能读取，不能重新转存。
+    delete transfers.one; delete transfers.two
+    await modal.getByRole('button', { name: '刷新搜索', exact: true }).click()
+    await rows.first().getByRole('button', { name: '一键转存', exact: true }).waitFor()
+    transferState = 'unknown'
+    await rows.first().getByRole('button', { name: '一键转存', exact: true }).click()
+    await rows.first().getByText('未确认转存结果，请先在 NanShare 核查', { exact: true }).waitFor()
+    transferState = 'partial'
+    await rows.nth(1).getByRole('button', { name: '一键转存', exact: true }).click()
+    await rows.nth(1).getByText('部分文件已转存，请先核查剩余文件', { exact: true }).waitFor()
+    const beforeBlockedRefresh = transferCalls.length
+    assert.equal(await rows.first().getByRole('button', { name: '结果待核查', exact: true }).isDisabled(), true)
+    assert.equal(await rows.nth(1).getByRole('button', { name: '部分完成', exact: true }).isDisabled(), true)
+    assert.equal(await toasts.count(), 0, '未知和部分完成不能播报成功')
+    await modal.getByRole('button', { name: '刷新搜索', exact: true }).click()
+    await rows.first().getByText('未确认转存结果，请先在 NanShare 核查', { exact: true }).waitFor()
+    await modal.getByRole('button', { name: '关闭 RE0 搜索' }).click()
+    await open()
+    await rows.nth(1).getByText('部分文件已转存，请先核查剩余文件', { exact: true }).waitFor()
+    assert.equal(await rows.first().getByRole('button', { name: '结果待核查', exact: true }).isDisabled(), true)
+    assert.equal(await rows.nth(1).getByRole('button', { name: '部分完成', exact: true }).isDisabled(), true)
+    assert.equal(transferCalls.length, beforeBlockedRefresh)
+    assert.equal(await toasts.count(), 0)
     await page.setViewportSize({ width: 390, height: 844 })
     assert.equal(await modal.evaluate(el => el.scrollWidth > el.clientWidth), false)
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
@@ -152,7 +222,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.evaluate(() => document.body.style.overflow), '')
     empty = true
     await open()
-    await modal.getByText('RE0 没有找到该影视的 115 资源。').waitFor()
+    await modal.getByText('RE0 暂未收录该影视的 115 资源', { exact: true }).waitFor()
     await page.keyboard.press('Escape')
     configured = false
     await open()
@@ -166,6 +236,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.locator('h1').filter({ hasText: '凡人修仙传' }).waitFor()
     assert.equal(await page.getByRole('button', { name: 'RE0 搜索', exact: true }).count(), 0)
     assert.deepEqual(errors, [])
-    console.log('RE0 UI passed: one-click transfer, folder selection, points policy, duplicate receipts, same-ID transfer recovery, STRM repeat generation and recovery, unlock refresh, mobile and access control')
+    console.log('RE0 UI passed: stable card heights, modal toast interaction, one-click transfer, folder selection, points policy, uncertain receipts, same-ID recovery, STRM generation, unlock refresh, mobile and access control')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

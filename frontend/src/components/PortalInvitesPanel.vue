@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from './SelectMenu.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 const props = defineProps<{ token: string; registrationPaused?: boolean; registrationError?: string }>()
@@ -151,7 +152,7 @@ onBeforeUnmount(() => { lifecycle.abort(); listController?.abort() })
       </fieldset>
       <div class="invite-form-grid">
         <label class="invite-field-label">数量<input v-model.number="count" type="number" inputmode="numeric" required min="1" max="20" step="1" :disabled="busy" class="invite-input" /></label>
-        <label class="invite-field-label">有效期<select v-model.number="days" :disabled="busy" class="invite-input"><option :value="1">1 天</option><option :value="7">7 天</option><option :value="30">30 天</option></select></label>
+        <label class="invite-field-label">有效期<SelectMenu v-model="days" :disabled="busy" label="有效期" class="mt-[7px] block w-full" :options="[{ value: 1, label: '1 天' }, { value: 7, label: '7 天' }, { value: 30, label: '30 天' }]" /></label>
         <label class="invite-field-label invite-field-wide">备注<span class="invite-muted invite-optional">选填</span><input v-model="note" maxlength="200" placeholder="例如：给朋友小王" :disabled="busy" class="invite-input" /></label>
       </div>
       <div class="invite-address">

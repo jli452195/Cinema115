@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from '../components/SelectMenu.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import ManagementLayout from '../components/ManagementLayout.vue'
@@ -253,7 +254,7 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
         <div v-if="state?.pendingDrive" class="pp-warning mb-4">已有一项绑定待完成，请继续确认目录，或取消该绑定后重新扫码。</div>
         <div class="pp-info"><PersonalDriveDisclosure /></div>
         <label class="pp-check my-5"><input v-model="consent" :disabled="busy || !!qrID" type="checkbox" />我同意保存凭据用于本人播放和只读秒传校验，并在专用目录保存播放文件。</label>
-        <label class="pp-field">登录客户端<select v-model="clientType" class="pp-input" :disabled="busy || state?.pendingDrive" @change="changeClient"><option v-for="client in p115LoginClients" :key="client.value" :value="client.value">{{ client.label }}</option></select></label>
+        <label class="pp-field">登录客户端<SelectMenu v-model="clientType" :disabled="busy || state?.pendingDrive" @change="changeClient" label="登录客户端" class="mt-1 block w-full" :options="p115LoginClients.map(client => ({ value: client.value, label: (client.label) }))" /></label>
         <p class="pp-muted mt-2">切换客户端后需重新获取二维码。关闭面板停止扫码轮询；已经保存的待绑定可在主页继续。</p>
         <div v-if="qrImage" class="mt-5 flex flex-col items-center gap-3"><img :src="qrImage" alt="115 登录二维码" width="224" height="224" class="rounded-xl bg-white" /><p class="pp-muted">请使用相应手机客户端扫码并确认</p></div>
         <p v-if="qrStatus" role="status" class="mt-4 text-sm text-slate-600 dark:text-slate-300">{{ qrStatus }}</p>

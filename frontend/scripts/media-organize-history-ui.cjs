@@ -527,6 +527,7 @@ async function loadingModels(browser) {
     assert.equal(records.filter(item => item.status === 'done').length, 2)
     assert.equal(records.filter(item => item.status === 'running').length, 1)
     assert.ok(records.some(item => item.fileId === 'video-303'))
+    await page.waitForURL(url => !url.searchParams.has('page'))
     assert.equal(new URL(page.url()).searchParams.get('page') || '1', '1')
     passed.push('清理全部失败覆盖分页和搜索以外的记录；取消不提交，确认只按失败状态清理，保留成功、整理中及正在操作的记录')
 

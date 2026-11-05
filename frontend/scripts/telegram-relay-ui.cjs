@@ -212,6 +212,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(calls.some(call => /\/(jobs|retry)(\/|$)/.test(call.endpoint)), false)
     assert.ok(avatarRequests.length > 0); assert.equal(avatarRequests.every(request => request.authorization === 'Bearer mock' && !request.url.includes('mock') && request.photo), true)
     await page.getByRole('link', { name: '管理登录', exact: true }).click()
+    await page.getByRole('heading', { name: 'Telegram 用户账号', exact: true }).waitFor()
     assert.equal(await page.evaluate(() => window.avatarObjects.created.every(value => window.avatarObjects.revoked.includes(value))), true)
     passed.push('desktop/light and 375px/dark without overflow; unauthenticated account prompts login; no test or message-send endpoints invoked')
     console.log(JSON.stringify({ passed, artifact }, null, 2))

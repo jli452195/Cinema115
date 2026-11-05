@@ -11,7 +11,6 @@ const emit = defineEmits<{ close: []; loaded: [settings: AnimeSettingsView]; cha
 const storage = useAnimeStorageSettings(props.token, settings => emit('changed', settings))
 const { settings, loading, readError, error, notice, pending, saving, locked } = storage
 const directoryKind = ref<'download' | 'organize'>('download'), directoryOpen = ref(false), feedback = ref<HTMLElement>()
-const previousOverflow = document.body.style.overflow
 const unavailable = computed(() => settings.value?.readiness.issues.includes('ACCOUNT_SNAPSHOT_CHANGED'))
 watch(settings, value => { if (value) emit('loaded', value) })
 watch([saving, pending], () => emit('blocked', saving.value || !!pending.value), { immediate: true })
@@ -33,9 +32,7 @@ async function confirmPending() {
   if (trigger instanceof HTMLElement && !trigger.isConnected && document.activeElement === document.body) feedback.value?.focus({ preventScroll: true })
 }
 onMounted(() => { void storage.readSettings() })
-// Both native dialogs restore their own lock. A route change can unmount the
-// outer dialog first, so restore the original value after both children finish.
-onUnmounted(() => { if (!props.inline) document.body.style.overflow = previousOverflow; emit('blocked', false) })
+onUnmounted(() => emit('blocked', false))
 </script>
 
 <template>

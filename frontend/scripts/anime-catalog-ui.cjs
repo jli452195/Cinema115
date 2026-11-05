@@ -81,6 +81,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   try {
     const s=await session(),{page,state,calls}=s
     await s.go()
+    const seasonLabel=page.locator('.catalog-season-label')
+    assert.equal(await seasonLabel.innerText(),'2026 秋季')
+    assert.equal(await seasonLabel.evaluate(el=>el.scrollWidth<=el.clientWidth),true,'季度文字应完整显示')
+    await page.locator('.catalog-controls').screenshot({path:'test-results/anime-quarter-controls-desktop.png'})
     assert.equal(s.count(),1)
     assert.equal(calls.some(c=>c.endpoint.includes('/sources/')||c.endpoint.includes('/discovery/')),false)
     await page.getByRole('button',{name:'周日',exact:true}).click()
@@ -357,6 +361,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const mobile=await session({width:320,height:760},'admin',{hasTouch:true,isMobile:true})
     await mobile.go()
     assert.equal(await mobile.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
+    assert.equal(await mobile.page.locator('.catalog-season-label').evaluate(el=>el.scrollWidth<=el.clientWidth),true,'320px 下季度文字应完整显示')
     await mobile.page.locator('.catalog-controls').screenshot({path:'test-results/anime-quarter-controls-mobile.png'})
     const rowHeight=await mobile.page.locator('.catalog-days').evaluate(el=>el.getBoundingClientRect().height)
     await mobile.page.getByRole('button',{name:'OVA',exact:true}).focus()

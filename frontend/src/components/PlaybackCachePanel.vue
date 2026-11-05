@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from './SelectMenu.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { embyRequest } from '../types/emby'
 const props = defineProps<{ token: string }>()
@@ -85,8 +86,8 @@ onBeforeUnmount(() => lifecycle.abort())
     <div class="mt-4 flex flex-wrap gap-2 text-slate-700 dark:text-slate-200">
       <input v-model="search" type="search" aria-label="搜索复用记录" :placeholder="tab === 'copies' ? '搜索文件名、SHA1 或 UID' : '搜索文件名或 SHA1'" class="min-w-0 flex-[1_1_220px] rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950" />
       <template v-if="tab === 'copies'">
-        <select v-model="uid" aria-label="筛选 115 UID" class="min-w-0 max-w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部 UID</option><option v-for="id in uidOptions" :key="id" :value="id">UID {{ id }}</option></select>
-        <select v-model="status" aria-label="筛选记录状态" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"><option value="all">全部状态</option><option value="ready">已验证记录</option><option value="attention">需关注</option></select>
+        <SelectMenu v-model="uid" label="筛选 115 UID" class="min-w-0 max-w-full" :options="[{ value: 'all', label: '全部 UID' }, ...uidOptions.map(id => ({ value: id, label: 'UID ' + (id) }))]" />
+        <SelectMenu v-model="status" label="筛选记录状态" :options="[{ value: 'all', label: '全部状态' }, { value: 'ready', label: '已验证记录' }, { value: 'attention', label: '需关注' }]" />
       </template>
     </div>
     <p class="my-3 text-xs leading-5 text-slate-500 dark:text-slate-400">{{ tab === 'copies' ? '按最近使用排序' : '按最近验证排序 · 相同校验范围可直接复用片段哈希，新范围仍需读取文件来源' }}</p>

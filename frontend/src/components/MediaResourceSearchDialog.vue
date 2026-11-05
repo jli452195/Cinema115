@@ -1,21 +1,17 @@
 <script setup lang="ts">
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRouter } from 'vue-router'
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
-import type { DownloadFiles, DownloadOrganizeResource, DownloadResourceInput } from '../types/organize'
-import { magnetKey } from '../lib/cloud-download-batch'
-import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
-import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
-import { p115Request } from '../lib/p115-api'
-import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
-import { gyingRequest } from '../types/gying'
-import { woniuRequest, WoniuError } from '../types/woniu'
-import { mergeResourcePage, type ResourceSearchConfig as GyingConfigView, type ResourceLink as GyingResourceLink, type ResourceSearchAttempt as GyingSearchAttempt, type ResourceSearchItem as GyingSearchItem, type ResourceSearchResult as GyingSearchResponse } from '../types/resourceSearch'
-import { normalize115Share } from '../utils/shareLink'
+import type { ResourceLink as GyingResourceLink, ResourceSearchAttempt as GyingSearchAttempt, ResourceSearchItem as GyingSearchItem } from '../types/resourceSearch'
+import { useMediaResourceSearch } from '../composables/useMediaResourceSearch'
+import { useMediaResourceActions } from '../composables/useMediaResourceActions'
+import { useToast } from '../composables/useToast'
+import { requestErrorMessage } from '../utils/requestErrorMessage'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
 
@@ -23,12 +19,10 @@ const props = defineProps<{ source: 'gying' | 'woniu'; token: string; kind: 'mov
 const sourceLabel = props.source === 'woniu' ? '蜗牛' : '观影'
 const sourceLogo = props.source === 'woniu' ? woniuLogo : gyingLogo
 const settingsPath = '/' + props.source
-const request = props.source === 'woniu' ? woniuRequest : gyingRequest
 function methodLabel(method?: string) { return method === 'imdb' ? 'IMDb' : props.source === 'woniu' && method === 'title' ? '名称' : '原名' }
-const errorCode = ref('')
-const searchEnabled = computed(() => config.value?.configured)
 const emit = defineEmits<{ close: [] }>()
 const dialog = ref<HTMLDialogElement>()
+const organizeDialog = ref<InstanceType<typeof DownloadOrganizeDialog>>()
 const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
 const mobileViewport = ref(window.matchMedia('(max-width: 639px)').matches)
@@ -37,20 +31,21 @@ const scrollBody = ref<HTMLElement>()
 const filterAnchor = ref<HTMLElement>()
 const filtersStuck = useStickySurface(scrollBody, filterAnchor)
 const displayLimit = ref(30)
-const config = ref<GyingConfigView>()
-const result = ref<GyingSearchResponse>()
 const activeItemId = ref('all')
 const activeResourceType = ref('all')
 const activeMagnetSubType = ref('all')
-type LoadPhase = '' | 'config' | 'search' | 'more'
-const phase = ref<LoadPhase>('')
 const lifecycle = new AbortController()
-const shareRuns = useShareSTRMRun(props.token, lifecycle.signal, { scope: `${props.source}/${props.kind}/${props.tmdbId}` })
-const busy = computed(() => phase.value !== '' || shareRuns.preparing.value > 0 || !!preparingOrganize.value || organizeEntries.value.length > 0)
-const elapsedSeconds = ref(0)
-const error = ref('')
-const moreError = ref('')
-const moreErrorCode = ref('')
+const router = useRouter()
+const toast = useToast()
+const searchState = useMediaResourceSearch(props, lifecycle.signal)
+const { config, result, searchEnabled, phase, elapsedSeconds, error, errorCode, moreError, moreErrorCode } = searchState
+const resourceActions = useMediaResourceActions(props, lifecycle.signal, () => phase.value !== '')
+const {
+  shareRuns, cloudBusy, cloudSubmitting, cloudStatuses, organizeEntries, preparingOrganize, organizeNotices,
+  shareResourceID, canShareSTRM, restoreShareRuns, shareSTRM, stopShareRun,
+  canCloudDownload, cloudResourceID, canOrganize, downloadBlocked, openOrganize, organized: recordOrganized, closeOrganize, cloudDownload: submitCloudDownload,
+} = resourceActions
+const busy = computed(() => phase.value !== '' || resourceActions.busy.value)
 const copied = ref('')
 const copyError = ref('')
 const coverErrors = ref<Record<string, boolean>>({})
@@ -60,13 +55,7 @@ function coverSource(item: GyingSearchItem) {
   if (props.source === 'woniu') return /^\/api\/woniu\/image\/(?:vod|[0-9]{8}(?:-[1-9][0-9]{0,3})?)\/[a-fA-F0-9]{32}\.(jpg|jpeg|png|webp)$/.test(source) ? source : ''
   return /^\/api\/gying\/image\/(mv|tv|ac|zy)\/[A-Za-z0-9]{1,64}\.webp$/.test(source) ? source : ''
 }
-type CloudDownloadConfig = { accountId: string; targetCID: string; targetPath: string }
-type CloudDownloadStatus = { success: boolean; message: string; needsConfig?: boolean; uncertain?: boolean; organize?: boolean }
-const cloudSubmitting = ref<Record<string, boolean>>({})
-const cloudStatuses = ref<Record<string, CloudDownloadStatus>>({})
-let progressTimer: number | undefined
-const previousFocus = document.activeElement as HTMLElement | null
-let unlockScroll: (() => void) | undefined
+const dialogLifecycle = createDialogLifecycle()
 const mediaLabels: Record<string, string> = { movie: '电影', tv: '剧集', anime: '动漫', other: '其他' }
 const defaultResourceOrder = ['magnet', 'aliyun', 'quark', 'baidu', 'xunlei', 'mobile', '115', '123', 'guangya', 'uc', 'tianyi', 'other']
 const magnetSubTypeOrder = ['720P', '中字720P', '1080P', '中字1080P', '4K', '中字4K', '原盘', '未知']
@@ -78,108 +67,44 @@ function resourceRank(type: string) {
 function sortResourceLinks(links: GyingResourceLink[]) {
   return links.map((link, index) => ({ link, index })).sort((a, b) => resourceRank(a.link.type) - resourceRank(b.link.type) || a.index - b.index).map(item => item.link)
 }
-function shareResource(item: GyingSearchItem, link: GyingResourceLink): ShareSTRMResource {
-  const normalized = normalize115Share(link.url)
-  const password = link.password?.trim() || ''
-  return {
-    id: `${item.id}\u0000${normalized}\u0000${password}`,
-    identity: `${props.source}/${props.kind}/${props.tmdbId}/${item.id}/${normalized}/${password}`,
-    load: async () => [{ url: link.url, password }],
-  }
+function closeDialog() { if (!organizeEntries.value.length && !cloudBusy.value) emit('close') }
+function canLeave() { return !cloudBusy.value && !organizeDialog.value?.busy }
+onBeforeRouteLeave(canLeave)
+onBeforeRouteUpdate(canLeave)
+
+function openTask(path: string, event: MouseEvent) {
+  if (!canLeave()) { event.preventDefault(); return }
+  void router.push(path)
 }
-function shareResourceID(item: GyingSearchItem, link: GyingResourceLink) { return shareResource(item, link).id }
-function canShareSTRM(link: GyingResourceLink) { return link.type === '115' && normalize115Share(link.url) !== '' }
-function allShareResources() {
-  return resultItems.value.flatMap(item => item.links.filter(canShareSTRM).map(link => shareResource(item, link)))
+
+function cloudTask(item: GyingSearchItem, link: GyingResourceLink) {
+  const status = cloudStatuses.value[cloudResourceID(item, link)]
+  return status?.shareSTRM ? { path: '/115/share/logs', label: '查看分享 STRM 日志' }
+    : status?.organize ? { path: '/115/download-organize', label: '查看下载整理任务' }
+      : { path: '/115/cloud-download', label: '查看云下载' }
 }
-function restoreShareRuns() { void shareRuns.restore(allShareResources()) }
-function shareSTRM(item: GyingSearchItem, link: GyingResourceLink) { void shareRuns.submit(shareResource(item, link)) }
-function stopShareRun() { void shareRuns.stop() }
-function canCloudDownload(link: GyingResourceLink) { return link.type === 'magnet' && link.category === 'torrent' }
-function cloudResourceID(item: GyingSearchItem, link: GyingResourceLink) { return magnetKey(link.url) || `${item.id}\u0000${link.url}` }
-const organizeEntries = ref<DownloadOrganizeResource[]>([])
-const preparingOrganize = ref('')
-const organizeNotices = ref<Record<string, string>>({})
-let organizeTrigger: HTMLElement | undefined
-function canOrganize(link: GyingResourceLink) { return props.source === 'gying' && !!link.hasTorrent && canCloudDownload(link) && Number(props.tmdbId) > 0 }
-function downloadBlocked(item: GyingSearchItem, link: GyingResourceLink) {
-  const id = cloudResourceID(item, link), status = cloudStatuses.value[id]
-  return busy.value || cloudSubmitting.value[id] || status?.success || status?.uncertain
+
+async function organized(keys: string[], shareSTRM = false) {
+  recordOrganized(keys, false, shareSTRM)
+  await closeOrganize()
+  if (lifecycle.signal.aborted) return
+  toast.success(shareSTRM ? '已创建分享 STRM 任务，后台继续执行。' : '已创建下载整理任务，后台继续执行。', {
+    title: '任务已创建', key: `organize:${keys.join(',')}`,
+    action: { label: shareSTRM ? '查看分享 STRM 日志' : '查看任务', onClick: event => openTask(shareSTRM ? '/115/share/logs' : '/115/download-organize', event) },
+  })
 }
-async function openOrganize(item: GyingSearchItem, link: GyingResourceLink, event: MouseEvent) {
-  if (!canOrganize(link) || downloadBlocked(item, link)) return
-  const id = cloudResourceID(item, link)
-  organizeTrigger = event.currentTarget as HTMLElement
-  organizeTrigger.focus({ preventScroll: true })
-  preparingOrganize.value = id
-  delete organizeNotices.value[id]
-  delete cloudStatuses.value[id]
-  const [provider, providerId] = item.id.split(':')
-  const source: DownloadResourceInput = { source: 'gying', title: link.workTitle || item.title, provider, providerId: providerId || '', magnet: link.url }
-  try {
-    const files = await p115Request<DownloadFiles>(props.token, 'download-organize/files', { method: 'POST', body: JSON.stringify(source), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
-    if (!files.files.length) { organizeNotices.value[id] = files.reason || '没有可整理的视频，可使用普通离线'; return }
-    preparingOrganize.value = ''
-    await nextTick()
-    if (lifecycle.signal.aborted) return
-    organizeTrigger.focus({ preventScroll: true })
-    organizeEntries.value = [{ resource: { id, title: source.title!, magnet: link.url }, source, files }]
-  } catch (e) {
-    if (!lifecycle.signal.aborted) {
-      const message = requestErrorMessage(e, '读取种子清单').replace(/。+$/, '')
-      organizeNotices.value[id] = message.includes('普通离线') ? message : `${message}。可使用普通离线。`
-    }
-  } finally {
-    preparingOrganize.value = ''
-    if (!organizeEntries.value.length && !lifecycle.signal.aborted) {
-      await nextTick()
-      if (document.activeElement === document.body) organizeTrigger?.focus({ preventScroll: true })
-    }
-  }
-}
-function organized(keys: string[], uncertain = false) {
-  for (const key of keys) cloudStatuses.value[key] = { success: !uncertain, uncertain, organize: true, message: uncertain ? '任务创建结果待核对，请查看整理任务记录。' : '已创建下载整理任务，可在整理任务记录查看进度。' }
-}
-async function closeOrganize() {
-  organizeEntries.value = []
-  await nextTick()
-  if (lifecycle.signal.aborted || !organizeTrigger?.isConnected) return
-  const target = organizeTrigger.matches(':disabled') ? organizeTrigger.closest('[data-resource-row]')?.querySelector<HTMLElement>('[data-gy-action="open"]') : organizeTrigger
-  target?.focus({ preventScroll: true })
-}
-function closeDialog() { if (!organizeEntries.value.length) emit('close') }
-function cloudErrorNeedsConfig(reason: unknown) {
-  const message = reason instanceof Error ? reason.message : ''
-  return /请先.*(?:选择|配置)|尚未登录|账号.*不存在|配置|凭据/.test(message)
-}
+
 async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
-  if (!canCloudDownload(link)) return
-  const id = cloudResourceID(item, link)
-  if (downloadBlocked(item, link)) return
-  cloudSubmitting.value = { ...cloudSubmitting.value, [id]: true }
-  const clearedStatuses = { ...cloudStatuses.value }
-  delete clearedStatuses[id]
-  cloudStatuses.value = clearedStatuses
-  delete organizeNotices.value[id]
-  try {
-    // 提交前读取云下载明确绑定的账号和目录，弹窗不改写配置。
-    const config = await p115Request<CloudDownloadConfig>(props.token, 'cloud-download/config', {
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
+  const status = await submitCloudDownload(item, link)
+  if (!status || lifecycle.signal.aborted) return
+  const key = `cloud:${cloudResourceID(item, link)}`
+  if (status.success) {
+    toast.success(status.message || '已提交到 115 云下载，提交成功不代表下载已完成。', {
+      title: '已提交云下载', key,
+      action: { label: '查看云下载', onClick: event => openTask('/115/cloud-download', event) },
     })
-    if (!config.accountId || !config.targetCID) {
-      throw Object.assign(new Error('请先配置主账号，并在“115 云下载”保存下载目录'), { needsConfig: true })
-    }
-    const receipt = await submitCloudDownload(props.token, config.accountId, link.url, config.targetCID, lifecycle.signal)
-    cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: true, message: cloudDownloadNotice(receipt, config.targetPath) } }
-  } catch (reason) {
-    if (!lifecycle.signal.aborted) {
-      const message = reason instanceof Error ? reason.message : '提交 115 云下载失败'
-      cloudStatuses.value = { ...cloudStatuses.value, [id]: { success: false, message, uncertain: Boolean((reason as { outcomeUncertain?: boolean })?.outcomeUncertain), needsConfig: Boolean((reason as { needsConfig?: boolean; uncertain?: boolean })?.needsConfig) || cloudErrorNeedsConfig(reason) } }
-    }
-  } finally {
-    const next = { ...cloudSubmitting.value }
-    delete next[id]
-    cloudSubmitting.value = next
+  } else if (!status.uncertain && !status.needsConfig) {
+    toast.error(status.message || '提交 115 云下载失败', { key })
   }
 }
 const resultItems = computed(() => result.value?.items || [])
@@ -203,8 +128,7 @@ const magnetSubTypeOptions = computed(() => {
   const values = new Map<string, { type: string; label: string; count: number }>()
   for (const item of selectedItems.value) for (const link of item.links) {
     if (link.type !== 'magnet') continue
-    // Group by the site's label so missing/unrecognized codes form one
-    // Unknown option, and matching labels across film entries combine.
+    // 按站点标签合并分类，缺失或未知编码统一归入未知分类。
     const type = magnetSubType(link)
     const label = type
     const current = values.get(type)
@@ -285,29 +209,6 @@ function attemptDescription(attempt: GyingSearchAttempt) {
   return `站点匹配 ${attempt.total} 个条目，${detail}${attempt.unavailable ? `，已跳过 ${attempt.unavailable} 个下架或不可用条目` : ''}${attempt.failed ? `，另有 ${attempt.failed} 个详情读取失败` : ''}`
 }
 
-function beginPhase(next: Exclude<LoadPhase, ''>) {
-  finishPhase()
-  phase.value = next
-  elapsedSeconds.value = 0
-  const started = Date.now()
-  progressTimer = window.setInterval(() => { elapsedSeconds.value = Math.floor((Date.now() - started) / 1000) }, 1000)
-}
-
-function finishPhase(expected?: Exclude<LoadPhase, ''>) {
-  if (expected && phase.value !== expected) return
-  if (progressTimer !== undefined) {
-    window.clearInterval(progressTimer)
-    progressTimer = undefined
-  }
-  phase.value = ''
-}
-
-function requestErrorMessage(value: unknown, action: string) {
-  if (value instanceof Error && value.name === 'TimeoutError') return `${action}超时，请稍后重新尝试。`
-  if (value instanceof Error && value.name === 'AbortError') return `${action}已取消，请重新尝试。`
-  return value instanceof Error ? value.message : `${action}失败`
-}
-
 function selectItem(id: string) {
   activeItemId.value = id
   activeResourceType.value = 'all'
@@ -322,46 +223,29 @@ function selectResourceType(type: string) {
 }
 
 async function search(refresh = false) {
-  if (busy.value) return
-  beginPhase('search'); error.value = ''; errorCode.value = ''; moreError.value = ''; moreErrorCode.value = ''; copied.value = ''
-  try {
-    result.value = await request<GyingSearchResponse>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: props.tmdbId, refresh })
+  if (busy.value || lifecycle.signal.aborted) return
+  copied.value = ''
+  if (await searchState.search(refresh)) {
     coverErrors.value = {}
     activeItemId.value = 'all'; activeResourceType.value = 'all'; activeMagnetSubType.value = 'all'
     displayLimit.value = 30; copyError.value = ''
     await nextTick()
-    const body = dialog.value?.querySelector<HTMLElement>('.gy-body')
-    if (body) body.scrollTop = 0
-  } catch (e) { if (!lifecycle.signal.aborted) { error.value = requestErrorMessage(e, sourceLabel + '搜索'); errorCode.value = e instanceof WoniuError ? e.code : '' } }
-  finally { finishPhase('search') }
-  if (result.value && !lifecycle.signal.aborted) restoreShareRuns()
+    if (scrollBody.value) scrollBody.value.scrollTop = 0
+  }
+  if (result.value && !lifecycle.signal.aborted) restoreShareRuns(resultItems.value)
 }
 
 async function loadNextPage() {
   if (busy.value || !result.value?.hasMore || !result.value.nextPage) return
-  beginPhase('more'); moreError.value = ''; moreErrorCode.value = ''
-  try {
-    const next = await request<GyingSearchResponse>(props.token, 'search', lifecycle.signal, 'POST', { kind: props.kind, tmdbId: props.tmdbId, page: result.value.nextPage, method: result.value.matchedBy })
-    result.value = mergeResourcePage(result.value, next)
-    displayLimit.value = Math.max(displayLimit.value, result.value.items.reduce((sum, item) => sum + item.links.length, 0))
-  } catch (e) { if (!lifecycle.signal.aborted) { moreError.value = requestErrorMessage(e, '加载更多'); moreErrorCode.value = e instanceof WoniuError ? e.code : '' } }
-  finally { finishPhase('more') }
-  if (result.value && !lifecycle.signal.aborted) restoreShareRuns()
+  if (await searchState.loadNextPage()) {
+    displayLimit.value = Math.max(displayLimit.value, resultItems.value.reduce((sum, item) => sum + item.links.length, 0))
+  }
+  if (result.value && !lifecycle.signal.aborted) restoreShareRuns(resultItems.value)
 }
 
 async function initialize() {
   if (busy.value) return
-  beginPhase('config'); error.value = ''
-  let shouldSearch = false
-  try {
-    config.value = await request<GyingConfigView>(props.token, 'config', lifecycle.signal)
-    shouldSearch = Boolean(searchEnabled.value)
-  } catch (e) {
-    if (!lifecycle.signal.aborted) error.value = requestErrorMessage(e, '读取' + sourceLabel + '配置')
-  } finally {
-    finishPhase('config')
-  }
-  if (shouldSearch && !lifecycle.signal.aborted) await search()
+  if (await searchState.loadConfig()) await search()
 }
 
 async function copyLink(link: GyingResourceLink) {
@@ -369,9 +253,11 @@ async function copyLink(link: GyingResourceLink) {
   copied.value = ''; copyError.value = ''
   try {
     await copyText(text, dialog.value)
+    if (lifecycle.signal.aborted) return
     copied.value = link.url
+    toast.success(`${link.category === 'torrent' ? '磁力' : '链接'}${link.password ? '及提取码' : ''}已复制`, { title: '复制成功', key: `copy:${link.url}` })
   }
-  catch { copied.value = ''; copyError.value = link.url }
+  catch { if (!lifecycle.signal.aborted) { copied.value = ''; copyError.value = link.url } }
 }
 
 function syncVisualViewport() {
@@ -391,12 +277,11 @@ onMounted(async () => {
   window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   window.addEventListener('resize', syncVisualViewport)
   try {
-    unlockScroll = lockAnimeDialogScroll()
+    dialogLifecycle.acquire()
     if (!dialog.value) throw new Error(sourceLabel + '搜索弹窗初始化失败')
     if (!dialog.value.open) dialog.value.showModal()
   } catch (e) {
     error.value = requestErrorMessage(e, '打开' + sourceLabel + '搜索弹窗')
-    finishPhase()
     return
   }
   await initialize()
@@ -406,10 +291,8 @@ onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
   window.removeEventListener('resize', syncVisualViewport)
   lifecycle.abort()
-  finishPhase()
   if (dialog.value?.open) dialog.value.close()
-  unlockScroll?.()
-  previousFocus?.focus()
+  dialogLifecycle.release()
 })
 </script>
 
@@ -426,7 +309,7 @@ onBeforeUnmount(() => {
               <span v-if="result" class="gy-search-caption" :class="{ 'gy-cached-caption': result.cached && phase !== 'search' && !error }">{{ phase === 'search' ? '搜索中' : error ? '上次结果' : result.cached ? '已复用缓存' : methodLabel(result.matchedBy) + '搜索' }}</span>
             </div>
           </div>
-          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" class="gy-icon-button" @click="closeDialog">
+          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" :disabled="cloudBusy" :title="cloudBusy ? '正在等待云下载回执，请稍候' : undefined" class="gy-icon-button" @click="closeDialog">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
           </button>
         </header>
@@ -442,7 +325,7 @@ onBeforeUnmount(() => {
               {{ phase === 'search' ? '搜索中 ' + elapsedSeconds + ' 秒' : '重搜' }}
             </button>
             <button v-else-if="!config && error" type="button" :disabled="busy" class="gy-tool-button" @click="initialize">重试</button>
-            <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'" @click="emit('close')">
+            <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'" @click="closeDialog">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--gy-container)" /><circle cx="15" cy="17" r="3" fill="var(--gy-container)" /></svg>
               配置
             </RouterLink>
@@ -451,7 +334,7 @@ onBeforeUnmount(() => {
         <div ref="scrollBody" class="gy-body">
           <div v-if="config && !searchEnabled" class="gy-setup">
             <h3>登录{{ sourceLabel }}后搜索资源</h3><p>请先在资源配置中保存{{ sourceLabel }}账号并登录。</p>
-            <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="emit('close')">配置{{ sourceLabel }}搜索</RouterLink>
+            <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="closeDialog">配置{{ sourceLabel }}搜索</RouterLink>
           </div>
           <p v-if="phase === 'config'" role="status" class="gy-notice gy-info">正在读取{{ sourceLabel }}搜索配置…<span v-if="elapsedSeconds >= 10">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
           <p v-else-if="phase === 'search'" role="status" class="gy-notice gy-info">{{ source === 'woniu' ? '正在搜索影片名称并读取网盘资源…' : '正在搜索影视原名并读取资源详情…' }}
@@ -463,7 +346,7 @@ onBeforeUnmount(() => {
             <div><strong>{{ shareRuns.activeRunID.value ? 'STRM 任务在后台执行' : '正在准备 STRM 任务' }}</strong><span>{{ shareRuns.activeRunID.value ? '可以继续选择其他资源，关闭窗口不影响已提交任务。' : '提交成功后可关闭窗口。' }}</span></div>
             <button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="gy-text-button" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止已提交批次' }}</button>
           </div>
-          <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="emit('close')">前往配置</RouterLink></p>
+          <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="closeDialog">前往配置</RouterLink></p>
           <template v-if="result">
             <section v-if="!resultItems.length" class="gy-search-process" aria-label="搜索过程">
               <div class="gy-process-heading"><span>搜索过程</span><span v-if="result.cached && phase !== 'search' && !error" class="gy-cache">已复用缓存</span></div>
@@ -560,9 +443,13 @@ onBeforeUnmount(() => {
                           <component :is="preparingOrganize === cloudResourceID(item, link) ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'gy-spinning': preparingOrganize === cloudResourceID(item, link) }" />
                           {{ preparingOrganize === cloudResourceID(item, link) ? '解析中…' : '115 整理' }}
                         </button>
-                        <button v-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="downloadBlocked(item, link)" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
+                        <RouterLink v-if="canCloudDownload(link) && cloudStatuses[cloudResourceID(item, link)]?.success" :to="cloudTask(item, link).path" data-gy-action="cloud-task" class="gy-button gy-primary-button" :aria-label="'已提交，' + cloudTask(item, link).label" @click="closeDialog">
+                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg>
+                          已提交
+                        </RouterLink>
+                        <button v-else-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="downloadBlocked(item, link)" :aria-busy="!!cloudSubmitting[cloudResourceID(item, link)]" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18H6a4 4 0 0 1-.7-7.94 7 7 0 0 1 13.4 0A4 4 0 0 1 18 18h-1M12 12v9m-4-4 4 4 4-4" /></svg>
-                          {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.success ? '已提交' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : organizeNotices[cloudResourceID(item, link)] ? '普通离线' : '115 云下载' }}
+                          {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : organizeNotices[cloudResourceID(item, link)] ? '普通离线' : '115 云下载' }}
                         </button>
                         <button v-if="canShareSTRM(link)" type="button" data-gy-action="strm" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="gy-button gy-primary-button" @click="shareSTRM(item, link)">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
@@ -575,8 +462,8 @@ onBeforeUnmount(() => {
                       <textarea :value="link.url + (link.password ? '  提取码：' + link.password : '')" readonly aria-label="手动复制资源链接" @focus="($event.target as HTMLTextAreaElement).select()" />
                     </div>
                     <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
-                    <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-error">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
-                    <p v-if="cloudStatuses[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.success ? 'gy-success' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink v-if="cloudStatuses[cloudResourceID(item, link)]?.needsConfig || cloudStatuses[cloudResourceID(item, link)]?.organize" :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : '前往配置' }}</RouterLink></p>
+                    <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-warning">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
+                    <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
                     <p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'gy-success' : 'gy-info'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p>
                   </li>
                 </ul>
@@ -591,14 +478,14 @@ onBeforeUnmount(() => {
               <button type="button" class="gy-button gy-outlined-button" :disabled="busy" @click="loadNextPage">{{ phase === 'more' ? '读取下一页…' : moreError ? '重试加载更多' : '加载更多条目' }}</button>
               <span role="status">已加载 {{ result.page || 1 }} 页，{{ resultItems.length }} 个条目</span>
             </div>
-            <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="emit('close')">前往配置</RouterLink></p>
+            <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="closeDialog">前往配置</RouterLink></p>
           </template>
         </div>
         <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
       </div>
     </dialog>
   </Teleport>
-  <DownloadOrganizeDialog :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => organized(keys, true)" />
+  <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="(keys, shareSTRM) => recordOrganized(keys, true, shareSTRM)" />
 </template>
 
 <style scoped>

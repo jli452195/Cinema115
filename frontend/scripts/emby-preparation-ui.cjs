@@ -121,8 +121,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '秒传验证', exact: true }).click()
     assert.equal(await page.locator('dialog').evaluate(el => getComputedStyle(el).animationName), 'none')
     const target = page.getByLabel('目标用户', { exact: true })
-    await target.locator('option[value="pool-user"]').waitFor({ state: 'attached' })
-    assert.deepEqual(await target.locator('option').evaluateAll(els => els.map(el => el.value)), ['', 'pool-user'])
+    assert.deepEqual((await require('./select-menu-helpers.cjs').selectOptions(target)).map(option => option.value), ['', 'pool-user'])
     await page.locator('#instant-strm').fill('http://nas/api/?share_code=abc&id=123')
     runDelay = 2000
     await page.getByRole('button', { name: '开始单文件秒传', exact: true }).click()

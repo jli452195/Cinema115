@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import SelectMenu from './SelectMenu.vue'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { P115Account } from '../types/p115Accounts'
 import { embyRequest } from '../types/emby'
@@ -17,7 +19,7 @@ const strm = ref(''), error = ref(''), notice = ref(''), requestId = ref('')
 const showAll = ref(false), dialog = ref<HTMLDialogElement>(), isOpen = ref(false)
 const lifecycle = new AbortController()
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
-let previousOverflow = '', previousFocus: HTMLElement | null = null
+const dialogLifecycle = createDialogLifecycle()
 let backdropPointer = false
 const dirty = computed(() => loaded.value && JSON.stringify(config.value) !== JSON.stringify(saved.value))
 const blocked = computed(() => busy.value || running.value || !loaded.value)
@@ -72,14 +74,12 @@ async function run() {
 }
 function open() {
   if (!dialog.value || isOpen.value) return
-  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  previousOverflow = document.body.style.overflow
-  dialog.value.showModal(); isOpen.value = true; document.body.style.overflow = 'hidden'
+  dialogLifecycle.acquire()
+  dialog.value.showModal(); isOpen.value = true
 }
 function restorePage() {
   if (!isOpen.value) return
-  isOpen.value = false; document.body.style.overflow = previousOverflow
-  if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+  isOpen.value = false; dialogLifecycle.release()
 }
 function close() { dialog.value?.close(); restorePage() }
 function backdropClick(event: MouseEvent) {
@@ -111,7 +111,7 @@ onBeforeUnmount(() => { clearTimeout(refreshTimer); close(); lifecycle.abort() }
           <p v-if="notice" role="status" class="proxy-alert is-success mb-4">{{ notice }}</p>
           <div class="proxy-upload-target">
             <form class="space-y-3" @submit.prevent="save">
-              <label class="block text-sm">目标用户<select v-model="config.userId" aria-label="目标用户" :disabled="blocked" class="proxy-input mt-2" required @change="requestId = ''"><option value="" disabled>请选择动态池用户</option><option v-for="binding in bindings" :key="binding.userId" :value="binding.userId">{{ binding.userName }} · 动态小号池</option></select></label>
+              <label class="block text-sm">目标用户<SelectMenu v-model="config.userId" label="目标用户" :disabled="blocked" required @change="requestId = ''" class="mt-2 block w-full" :options="[{ value: '', label: '请选择动态池用户', disabled: true }, ...bindings.map(binding => ({ value: binding.userId, label: (binding.userName) + ' · 动态小号池' }))]" /></label>
               <p class="proxy-help">目标网盘和已验证目录在启动时自动选择并固定。</p>
               <p v-if="loaded && !bindings.length" class="proxy-help">暂无可用的动态池用户，请先配置用户来源。</p>
               <p v-if="!accounts.some(a => a.primary && a.configured)" class="proxy-help">需要先配置主账号和动态小号池。</p>

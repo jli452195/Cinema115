@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import SelectMenu from './SelectMenu.vue'
 import { onBeforeUnmount, onMounted, onUnmounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import { p115LoginClients } from '../lib/p115-login-clients'
@@ -19,8 +21,7 @@ const sessionID = ref('')
 let generation = 0
 let controller: AbortController | undefined
 let timer: number | undefined, expiryTimer: number | undefined
-let previousFocus: HTMLElement | null = null
-let previousOverflow = ''
+const dialogLifecycle = createDialogLifecycle()
 
 function cancelSession(id: string) {
   if (!id) return
@@ -124,12 +125,11 @@ async function confirm() {
   }
 }
 onMounted(() => {
-  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; dialog.value?.showModal()
+  dialogLifecycle.acquire(); dialog.value?.showModal()
   if (snapshot.mode === 'cookie') { phase.value = 'cookie'; controller = new AbortController() } else void createQRCode()
 })
 onBeforeUnmount(() => { stop(); clearSession(); cookie.value = ''; dialog.value?.close() })
-onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previousFocus?.isConnected) previousFocus.focus() })
+onUnmounted(() => { dialogLifecycle.release() })
 </script>
 
 <template>
@@ -156,7 +156,7 @@ onUnmounted(() => { document.body.style.overflow = previousOverflow; if (previou
           <button :disabled="!cookie.trim() || phase === 'saving'" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">{{ phase === 'saving' ? '验证中…' : '验证并继续' }}</button>
         </form>
         <template v-else>
-          <label class="block text-sm">登录设备<select v-model="client" aria-label="登录设备" :disabled="phase === 'saving'" class="mt-2 block w-full rounded-xl border border-slate-200 bg-transparent px-3 py-2 dark:border-slate-700" @change="createQRCode"><option v-for="item in p115LoginClients" :key="item.value" :value="item.value">{{ item.label }}</option></select></label>
+          <label class="block text-sm">登录设备<SelectMenu v-model="client" label="登录设备" :disabled="phase === 'saving'" @change="createQRCode" class="mt-2 block w-full" :options="p115LoginClients.map(item => ({ value: item.value, label: (item.label) }))" /></label>
           <div :aria-busy="phase === 'loading'" class="mx-auto flex aspect-square w-full max-w-64 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-white p-2">
             <img v-if="qrImage" :src="qrImage" alt="115 登录二维码" width="256" height="256" class="h-full w-full object-contain" />
             <span v-else class="px-4 text-sm text-slate-500">{{ phase === 'loading' ? '正在获取二维码…' : '请重新获取二维码' }}</span>

@@ -10,7 +10,7 @@ import AnimeSourceNaming from './AnimeSourceNaming.vue'
 import type { AnimeNamingTarget } from '../types/animeSubscription'
 import { animeProviderName, animeOriginLabel, animeBindingConfirmed, type SourceForm } from '../utils/animeSourceForm'
 const props = defineProps<{ source: SourceForm; chapterTitle: string; disabled: boolean; previewBusy: boolean; now: number; namingTarget?: AnimeNamingTarget; selectionOnly?: boolean }>()
-const emit = defineEmits<{ search: [source: SourceForm]; choose: [source: SourceForm, id: string, title: string]; group: [source: SourceForm]; remove: []; open: [source: SourceForm]; sample: [source: SourceForm]; cancel: [source: SourceForm]; apply: [source: SourceForm]; childOpen: [open: boolean]; close: [] }>()
+const emit = defineEmits<{ search: [source: SourceForm]; choose: [source: SourceForm, id: string]; group: [source: SourceForm]; remove: []; open: [source: SourceForm]; sample: [source: SourceForm]; cancel: [source: SourceForm]; apply: [source: SourceForm]; childOpen: [open: boolean]; close: [] }>()
 const editing = ref<SourceForm>()
 const confirmRemoval = ref(false)
 const prefix = computed(() => `anime-source-${props.source.ref}`)
@@ -65,5 +65,5 @@ onBeforeUnmount(close)
       <p v-if="source.ruleError" :id="`${prefix}-rule-error`" class="ae-error" role="alert">{{ source.ruleError.message }}</p>
     </fieldset>
   </div>
-  <AnimeSourcePicker v-if="editing" :key="editing.provider" :source="editing" :chapter-title="chapterTitle" :disabled="disabled || previewBusy" :now="now" @close="closePicker" @provider="selectSite" @search="$emit('search', editing)" @choose="(id, title) => editing && $emit('choose', editing, id, title)" @group="$emit('group', editing)" @sample="$emit('sample', editing)" @confirm="apply" />
+  <AnimeSourcePicker v-if="editing" :key="editing.provider" :source="editing" :chapter-title="chapterTitle" :disabled="disabled || previewBusy" :now="now" @close="closePicker" @provider="selectSite" @search="$emit('search', editing)" @choose="id => editing && $emit('choose', editing, id)" @group="$emit('group', editing)" @sample="$emit('sample', editing)" @confirm="apply" />
 </template>

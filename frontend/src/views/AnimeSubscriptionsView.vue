@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import { portalUser } from '../composables/usePortalAuth'
 import { animeSubscriptionsVersion, animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
@@ -22,6 +23,7 @@ const bangumiId = computed(() => /^[1-9]\d{0,11}$/.test(String(route.query.bangu
 const returnTo = computed(() => animeReturnPath(route.query.returnTo))
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(1000000, Math.max(1, Number(route.query.page))) : 1)
 const input = ref(keyword.value), inputError = ref('')
+const statusOptions = [{ value: '', label: '全部' }, { value: 'enabled', label: '已启用' }, { value: 'paused', label: '已暂停' }, { value: 'archived', label: '已归档' }]
 const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}${bangumiId.value ? `&bangumiId=${bangumiId.value}` : ''}`)
 const result = ref<AnimeSubscriptionPage>(), loading = ref(false), error = ref(''), fetchedAt = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
@@ -84,7 +86,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
     <div class="anime-browser">
       <p v-if="bangumiId" class="anime-context">当前篇章的订阅配置（Bangumi {{ bangumiId }}）<RouterLink :to="{ path: '/anime/subscriptions', query: query({ bangumiId: undefined, page: undefined }) }" class="as-link">查看全部</RouterLink></p>
       <div class="as-toolbar">
-        <div class="as-filters" role="group" aria-label="订阅状态"><button v-for="option in [{ value: '', label: '全部' }, { value: 'enabled', label: '已启用' }, { value: 'paused', label: '已暂停' }, { value: 'archived', label: '已归档' }]" :key="option.value" type="button" :aria-pressed="status === option.value" @click="filter(option.value)">{{ option.label }}</button></div>
+        <SegmentedControl :model-value="status" :options="statusOptions" label="订阅状态" role="group" @update:model-value="filter" />
         <form class="as-search" role="search" aria-label="搜索本地订阅" @submit.prevent="submitSearch"><label class="sr-only" for="subscription-keyword">订阅名称</label><input id="subscription-keyword" v-model="input" type="search" placeholder="搜索订阅名称" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'subscription-search-error' : undefined" /><button type="submit"><IconSearch :size="16" aria-hidden="true" />搜索</button></form>
       </div>
       <p v-if="inputError" id="subscription-search-error" role="alert" class="text-xs text-red-600 dark:text-red-400">{{ inputError }}</p>

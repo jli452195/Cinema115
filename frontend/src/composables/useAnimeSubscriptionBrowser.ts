@@ -24,7 +24,6 @@ export function invalidateAnimeSubscriptions(id?: string) {
   animeSubscriptionsVersion.value++
   if (id) cache.delete(`subscriptions/${encodeURIComponent(id)}`)
 }
-export function animeSubscriptionQuery() { return lastQuery ? { ...lastQuery } : undefined }
 export function animeSubscriptionLocation() { return lastQuery ? { path: lastID ? `/anime/subscriptions/${encodeURIComponent(lastID)}` : '/anime/subscriptions', query: { ...lastQuery } } : undefined }
 export function rememberSubscriptionQuery(query: Record<string, string>, id = '') {
   if (!portalToken.value || portalUser.value?.role !== 'admin') return

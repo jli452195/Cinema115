@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
-import { useSlidingIndicator } from '../composables/useSlidingIndicator'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import FollowDialog from '../components/FollowDialog.vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import type { Follow } from '../types/follows'
@@ -29,10 +29,7 @@ let reader: AbortController | undefined
 const labels: Record<string, string> = FOLLOW_STATUS_LABELS
 const statusTabs = ['pending', 'processing', 'caught_up', 'closed', 'completed']
 
-const statusNavRef = ref<HTMLElement>()
-const kindNavRef = ref<HTMLElement>()
-const { indicatorStyle: statusIndicatorStyle } = useSlidingIndicator(statusNavRef, '[aria-pressed="true"]', [status])
-const { indicatorStyle: kindIndicatorStyle } = useSlidingIndicator(kindNavRef, '[aria-pressed="true"]', [kind])
+const statusFilters = computed(() => statusTabs.map(value => ({ value, label: labels[value]!, count: counts.value[value] })))
 
 const kindOptions = [{ value: '', label: '全部类型' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
 const statusOptions = [{ value: 'pending', label: '待处理' }, { value: 'processing', label: '处理中' }, { value: 'closed', label: '已关闭' }]
@@ -129,18 +126,8 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         </form>
       </section>
       <div class="flex flex-wrap gap-4 sm:gap-6">
-        <nav ref="statusNavRef" aria-label="处理状态筛选" class="relative flex w-max max-w-full overflow-x-auto gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60">
-          <div class="absolute z-0 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="statusIndicatorStyle"></div>
-          <button v-for="tab in statusTabs" :key="tab" type="button" :aria-pressed="status === tab" :disabled="busy" class="relative z-10 flex min-w-[76px] shrink-0 items-center justify-center rounded-[8px] px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset disabled:opacity-50" :class="status === tab ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" @click="status = tab; filter()">
-            {{ labels[tab] }} <span v-if="counts[tab] !== undefined" class="ml-1.5 text-[11px] opacity-60">{{ counts[tab] }}</span>
-          </button>
-        </nav>
-        <nav ref="kindNavRef" aria-label="影视类型筛选" class="relative flex w-max max-w-full overflow-x-auto gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/60">
-          <div class="absolute z-0 rounded-[8px] bg-white shadow-[0_2px_8px_rgba(0,0,0,0.08)] dark:bg-slate-700 dark:shadow-[0_2px_8px_rgba(0,0,0,0.3)]" :style="kindIndicatorStyle"></div>
-          <button v-for="tab in kindOptions" :key="tab.value" type="button" :aria-pressed="kind === tab.value" :disabled="busy" class="relative z-10 flex min-w-[64px] shrink-0 items-center justify-center rounded-[8px] px-4 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset disabled:opacity-50" :class="kind === tab.value ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-200'" @click="kind = tab.value; filter()">
-            {{ tab.label }}
-          </button>
-        </nav>
+        <SegmentedControl v-model="status" label="处理状态筛选" :options="statusFilters" :disabled="busy" @change="filter()" />
+        <SegmentedControl v-model="kind" label="影视类型筛选" :options="kindOptions" :disabled="busy" @change="filter()" />
       </div>
       <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
         <input v-model="query" aria-label="搜索追更申请" maxlength="100" placeholder="片名或 TMDB ID" class="min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-sm" /><button class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">搜索</button><button type="button" :disabled="loading || busy" class="px-2 text-sm text-blue-600 disabled:opacity-50" @click="editing = undefined; error = ''; load()">刷新</button>

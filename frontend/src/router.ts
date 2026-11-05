@@ -1,44 +1,45 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import DashboardView from './views/DashboardView.vue'
-import SearchView from './views/SearchView.vue'
-import CollectionView from './views/CollectionView.vue'
-import PersonView from './views/PersonView.vue'
-import MediaDetailView from './views/MediaDetailView.vue'
-import HomeView from './views/HomeView.vue'
-import P115View from './views/P115View.vue'
-import ShareView from './views/ShareView.vue'
-import CloudDownloadView from './views/CloudDownloadView.vue'
-import FolderMonitorView from './views/FolderMonitorView.vue'
-import DownloadOrganizeView from './views/DownloadOrganizeView.vue'
-import TelegramView from './views/TelegramView.vue'
-import TelegramUserView from './views/TelegramUserView.vue'
-import LogsView from './views/LogsView.vue'
-import EmbyView from './views/EmbyView.vue'
-import EmbyMissingView from './views/EmbyMissingView.vue'
-import EmbyProxyView from './views/EmbyProxyView.vue'
-import EmbyCacheView from './views/EmbyCacheView.vue'
-import EmbyUsersView from './views/EmbyUsersView.vue'
-import PortalSettingsView from './views/PortalSettingsView.vue'
-import RegisterView from './views/RegisterView.vue'
-import LoginView from './views/LoginView.vue'
-import AdminLoginView from './views/AdminLoginView.vue'
-import PersonalPlaybackView from './views/PersonalPlaybackView.vue'
-import MyFollowsView from './views/MyFollowsView.vue'
-import NotificationsView from './views/NotificationsView.vue'
-import FollowManagementView from './views/FollowManagementView.vue'
-import UpdatesView from './views/UpdatesView.vue'
-import GyingView from './views/GyingView.vue'
-import WoniuView from './views/WoniuView.vue'
-import NanShareView from './views/NanShareView.vue'
-import ResourceConfigView from './views/ResourceConfigView.vue'
-import SubtitleSettingsView from './views/SubtitleSettingsView.vue'
-import AnimeWorkspaceView from './views/AnimeWorkspaceView.vue'
-import AnimeSettingsView from './views/AnimeSettingsView.vue'
 import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { rememberedDashboardHome } from './utils/dashboardPreferences'
 import { dashboardScrollPosition, isDashboardPath, prepareDashboardNavigation } from './utils/dashboardBrowseState'
 import { ensurePortalSession, portalAuthError, portalBrowseRoutes, portalToken, portalUser } from './composables/usePortalAuth'
+
+const DashboardView = () => import('./views/DashboardView.vue')
+const SearchView = () => import('./views/SearchView.vue')
+const CollectionView = () => import('./views/CollectionView.vue')
+const PersonView = () => import('./views/PersonView.vue')
+const MediaDetailView = () => import('./views/MediaDetailView.vue')
+const HomeView = () => import('./views/HomeView.vue')
+const P115View = () => import('./views/P115View.vue')
+const ShareView = () => import('./views/ShareView.vue')
+const CloudDownloadView = () => import('./views/CloudDownloadView.vue')
+const FolderMonitorView = () => import('./views/FolderMonitorView.vue')
+const DownloadOrganizeView = () => import('./views/DownloadOrganizeView.vue')
+const TelegramView = () => import('./views/TelegramView.vue')
+const TelegramUserView = () => import('./views/TelegramUserView.vue')
+const LogsView = () => import('./views/LogsView.vue')
+const EmbyView = () => import('./views/EmbyView.vue')
+const EmbyMissingView = () => import('./views/EmbyMissingView.vue')
+const EmbyProxyView = () => import('./views/EmbyProxyView.vue')
+const EmbyCacheView = () => import('./views/EmbyCacheView.vue')
+const EmbyUsersView = () => import('./views/EmbyUsersView.vue')
+const PortalSettingsView = () => import('./views/PortalSettingsView.vue')
+const RegisterView = () => import('./views/RegisterView.vue')
+const LoginView = () => import('./views/LoginView.vue')
+const AdminLoginView = () => import('./views/AdminLoginView.vue')
+const PersonalPlaybackView = () => import('./views/PersonalPlaybackView.vue')
+const MyFollowsView = () => import('./views/MyFollowsView.vue')
+const NotificationsView = () => import('./views/NotificationsView.vue')
+const FollowManagementView = () => import('./views/FollowManagementView.vue')
+const UpdatesView = () => import('./views/UpdatesView.vue')
+const GyingView = () => import('./views/GyingView.vue')
+const WoniuView = () => import('./views/WoniuView.vue')
+const NanShareView = () => import('./views/NanShareView.vue')
+const ResourceConfigView = () => import('./views/ResourceConfigView.vue')
+const SubtitleSettingsView = () => import('./views/SubtitleSettingsView.vue')
+const AnimeWorkspaceView = () => import('./views/AnimeWorkspaceView.vue')
+const AnimeSettingsView = () => import('./views/AnimeSettingsView.vue')
 
 // 使用路径路由，NAS 由 Go 返回前端入口，直接访问和刷新均可恢复页面。
 export const router = createRouter({

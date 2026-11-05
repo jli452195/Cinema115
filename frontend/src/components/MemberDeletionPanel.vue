@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle, restoreDialogFocus } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { memberRequest, type MemberEmbyState } from '../types/memberPlayback'
 
@@ -15,7 +16,8 @@ const dialog = ref<HTMLDialogElement>(), trigger = ref<HTMLButtonElement>(), clo
 const titleID = useId(), dialogID = useId(), formID = useId()
 const lifecycle = new AbortController()
 let listController: AbortController | undefined, previewController: AbortController | undefined, listVersion = 0, previewVersion = 0
-let returnFocus: HTMLElement | null = null, previousOverflow = '', backdropStarted = false
+const dialogLifecycle = createDialogLifecycle()
+let returnFocus: HTMLElement | null = null, backdropStarted = false
 const submitting = computed(() => action.value === 'submit')
 const sortedJobs = computed(() => [...jobs.value].sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)))
 const unfinished = computed(() => sortedJobs.value.filter(job => job.stage !== 'completed'))
@@ -63,7 +65,7 @@ async function read() {
 async function openDialog() {
  if (!opened.value) {
   returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-  previousOverflow = document.body.style.overflow; document.body.style.overflow = 'hidden'; opened.value = true
+  dialogLifecycle.acquire(returnFocus); opened.value = true
  }
  await nextTick()
  if (!lifecycle.signal.aborted && opened.value) { if (!dialog.value?.open) dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true }) }
@@ -71,8 +73,8 @@ async function openDialog() {
 function closeDialog() {
  if (submitting.value) return
  invalidatePreview(); dialog.value?.close(); opened.value = false; preview.value = undefined; confirmation.value = ''; cascade.value = false
- document.body.style.overflow = previousOverflow
- void nextTick(() => (returnFocus?.isConnected ? returnFocus : trigger.value)?.focus({ preventScroll: true }))
+ dialogLifecycle.release(false)
+ void nextTick(() => { if (!restoreDialogFocus(returnFocus)) restoreDialogFocus(trigger.value) })
 }
 async function openTasks() {
  mode.value = 'list'; preview.value = undefined; error.value = ''; notice.value = ''; uncertain.value = false
@@ -128,7 +130,7 @@ function outsideDialog(event: MouseEvent) {
 function backdropClick(event: MouseEvent) { if (backdropStarted && outsideDialog(event)) closeDialog(); backdropStarted = false }
 defineExpose({ inspect })
 onMounted(() => { void read() })
-onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); listController?.abort(); if (opened.value) { dialog.value?.close(); document.body.style.overflow = previousOverflow }; emit('busy', false) })
+onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); listController?.abort(); if (opened.value) dialog.value?.close(); dialogLifecycle.release(false); emit('busy', false) })
 </script>
 
 <template>

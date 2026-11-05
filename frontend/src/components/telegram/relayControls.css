@@ -1,0 +1,10 @@
+.relay-button { @apply bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 12px; border-radius: 9px; font-size: 12px; font-weight: 500; }
+.relay-button:hover:not(:disabled) { background: rgb(148 163 184 / .22); }
+.relay-button.relay-primary { background: #2563eb; color: #fff; }
+.relay-button.relay-primary:hover:not(:disabled) { background: #1d4ed8; }
+.relay-button:disabled { opacity: .45; cursor: default; }
+.relay-error { @apply bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300; padding: 11px 13px; border-radius: 9px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.relay-button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+@media (max-width: 639px) {
+  .relay-button { min-height: 42px; }
+}

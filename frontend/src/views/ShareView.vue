@@ -4,6 +4,7 @@ import { useToast } from '../composables/useToast'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import ShareTaskLogs from '../components/ShareTaskLogs.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import { cancelShareRun, generateShareSTRM } from '../utils/shareGeneration'
 import { p115Request } from '../lib/p115-api'
@@ -30,7 +31,7 @@ const tabs = [
 const reviewRetryEnabled = ref(false)
 const reviewRetryMinutes = ref(30)
 const reviewRetryMax = ref(6)
-defineEmits<{ back: []; openTelegram: []; logout: [] }>()
+defineEmits<{ logout: [] }>()
 interface ShareFile { sha1: string; id: string; name: string; size: number; directory: boolean }
 const shareURL = ref('')
 const password = ref('')
@@ -431,9 +432,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
             <template v-else>
               <div class="share-generation w-full min-w-0 space-y-4">
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <div class="inline-flex shrink-0 rounded-lg bg-slate-100 p-1 dark:bg-slate-800" aria-label="生成方式">
-                  <button v-for="mode in [{ id: 'direct', label: '直接生成' }, { id: 'reshare', label: '转存再分享' }] as const" :key="mode.id" type="button" :aria-pressed="generationMode === mode.id" class="rounded-md px-4 py-2 text-sm transition" :class="generationMode === mode.id ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-700 dark:text-blue-300' : 'text-slate-600 dark:text-slate-400'" @click="generationMode = mode.id">{{ mode.label }}</button>
-                </div>
+                <SegmentedControl v-model="generationMode" label="生成方式" :options="[{ value: 'direct', label: '直接生成' }, { value: 'reshare', label: '转存再分享' }] as const" />
                 <p class="text-sm text-slate-500 dark:text-slate-400">{{ generationMode === 'direct' ? '使用原分享生成 STRM，无需转存。' : '转存到主网盘并创建长期分享，再生成 STRM。' }}</p>
                 </div>
                 <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">分享链接<input v-model="shareURL" required type="text" autocomplete="off" class="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-normal outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950" placeholder="粘贴 115 分享链接或包含提取码的分享文本" @change="parseShareText" /></label>
@@ -500,20 +499,16 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 .settings-grid .settings-help {
   @apply mt-1.5;
 }
-.outlined-field,
-.share-bot-select {
+.outlined-field {
   @apply relative block min-w-0;
 }
-.outlined-field > span,
-.share-bot-select :deep(label) {
+.outlined-field > span {
   @apply absolute -top-2 left-3 z-[1] max-w-[calc(100%-1.5rem)] rounded-sm bg-white px-1 text-xs font-normal leading-4 text-slate-500 dark:bg-slate-900 dark:text-slate-400;
 }
-.outlined-field input,
-.share-bot-select :deep(select) {
+.outlined-field input {
   @apply h-11 w-full min-w-0 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-200 dark:focus:ring-blue-900;
 }
-.outlined-field:focus-within > span,
-.share-bot-select:focus-within :deep(label) {
+.outlined-field:focus-within > span {
   @apply text-blue-600 dark:text-blue-400;
 }
 .automation-options {
@@ -575,9 +570,6 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
 }
 .settings-details p {
   @apply mt-1;
-}
-.share-bot-select :deep(select) {
-  @apply mt-0;
 }
 @media (max-width: 639px) {
   .retry-fields {

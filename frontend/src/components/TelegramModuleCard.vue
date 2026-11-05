@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from './SelectMenu.vue'
 import { computed, ref } from 'vue'
 import { IconBell, IconChevronDown, IconCloudDownload, IconDownload, IconGripVertical, IconHeartbeat, IconShare, IconUnlink } from '@tabler/icons-vue'
 import type { TelegramBotConfig, TelegramBotModule } from '../types/telegramBots'
@@ -78,10 +79,7 @@ function assign() {
       <span class="text-[11px] text-slate-500 dark:text-slate-400">待分配</span>
       <button v-if="!choosing" type="button" class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-40 dark:bg-blue-950/60 dark:text-blue-300 dark:hover:bg-blue-900/60" :disabled="busy || !availableBots.length" @click="choosing = true">选择 Bot<IconChevronDown :size="13" aria-hidden="true" /></button>
       <div v-else class="flex min-w-0 flex-1 items-center justify-end gap-2">
-        <select v-model="target" class="min-w-0 max-w-40 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" :disabled="busy" :aria-label="`选择使用${module.name}的 Bot`">
-          <option value="" disabled>选择 Bot</option>
-          <option v-for="bot in availableBots" :key="bot.id" :value="bot.id">{{ bot.name }}{{ !bot.configured ? '（未配置 Token）' : !bot.enabled ? '（已停用）' : '' }}</option>
-        </select>
+        <SelectMenu v-model="target" :disabled="busy" :label="`选择使用${module.name}的 Bot`" class="min-w-0 max-w-40" :options="[{ value: '', label: '选择 Bot', disabled: true }, ...availableBots.map(bot => ({ value: bot.id, label: (bot.name) + (!bot.configured ? '（未配置 Token）' : !bot.enabled ? '（已停用）' : '') }))]" />
         <button type="button" class="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40" :disabled="busy || !target" @click="assign">分配</button>
         <button type="button" class="rounded-md px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800" :disabled="busy" @click="choosing = false">取消</button>
       </div>

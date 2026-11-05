@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from '../components/SelectMenu.vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
@@ -102,7 +103,7 @@ onBeforeUnmount(() => { lifecycle.abort(); password.value = '' })
     </section>
     <section v-if="config?.configured" class="mt-5 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5 sm:p-7">
       <h2 class="font-semibold text-slate-900 dark:text-slate-100">测试 RE0 搜索</h2><p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">输入影视的 TMDB 编号，检查是否能获取资源列表。仅搜索，不解锁资源或生成 STRM。</p>
-      <form class="mt-5" @submit.prevent="search"><fieldset :disabled="!!busy || connectionDirty || !config.session.ok || !config.re0.ok" class="flex flex-wrap items-end gap-4"><label class="text-sm text-slate-700 dark:text-slate-300">影视类型<select v-model="searchKind" class="mt-2 block rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"><option value="tv">剧集</option><option value="movie">电影</option></select></label><label class="min-w-0 text-sm text-slate-700 dark:text-slate-300">TMDB 编号<input v-model="searchID" required inputmode="numeric" pattern="[1-9][0-9]*" class="mt-2 block w-full max-w-56 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"/></label><button type="submit" class="rounded-lg bg-blue-600 px-4 py-3 text-sm text-white disabled:opacity-40">{{ busy === 'search' ? '搜索中…' : '测试搜索' }}</button></fieldset></form>
+      <form class="mt-5" @submit.prevent="search"><fieldset :disabled="!!busy || connectionDirty || !config.session.ok || !config.re0.ok" class="flex flex-wrap items-end gap-4"><label class="text-sm text-slate-700 dark:text-slate-300">影视类型<SelectMenu v-model="searchKind" label="影视类型" class="mt-2 block" :options="[{ value: 'tv', label: '剧集' }, { value: 'movie', label: '电影' }]" /></label><label class="min-w-0 text-sm text-slate-700 dark:text-slate-300">TMDB 编号<input v-model="searchID" required inputmode="numeric" pattern="[1-9][0-9]*" class="mt-2 block w-full max-w-56 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 p-3"/></label><button type="submit" class="rounded-lg bg-blue-600 px-4 py-3 text-sm text-white disabled:opacity-40">{{ busy === 'search' ? '搜索中…' : '测试搜索' }}</button></fieldset></form>
       <p v-if="searchResult" role="status" class="mt-5 rounded-xl bg-emerald-50 p-4 text-sm leading-6 text-emerald-700">搜索调用成功：{{ searchResult.kind === 'tv' ? '剧集' : '电影' }} {{ searchResult.id }}，共 {{ searchResult.total }} 条资源，其中 115 资源 {{ searchResult.p115 }} 条。</p>
     </section>
   </ManagementLayout>

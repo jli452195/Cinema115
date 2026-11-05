@@ -1,3 +1,4 @@
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async () => {
@@ -46,12 +47,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/account/playback')
     assert.equal(await page.locator('main input').count(), 0)
     await page.getByRole('button', { name: '开始绑定' }).click()
-    await page.getByLabel('登录客户端').selectOption('wechat-miniapp')
+    await selectOption(page.getByLabel('登录客户端'), 'wechat-miniapp')
     await page.getByRole('checkbox', { name: /我同意保存凭据/ }).check()
     await page.getByRole('button', { name: '获取二维码', exact: true }).click()
     await page.getByAltText('115 登录二维码').waitFor()
     assert.deepEqual(writes[0], { replace: true, clientType: 'wechat-miniapp', accountId: '', revision: 0 })
-    await page.getByLabel('登录客户端').selectOption('115-ios')
+    await selectOption(page.getByLabel('登录客户端'), '115-ios')
     assert.equal(await page.getByAltText('115 登录二维码').count(), 0)
     pollStatus = 'success'
     await page.getByRole('button', { name: '获取二维码', exact: true }).click()
@@ -62,7 +63,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.reload()
     await page.getByRole('button', { name: '继续选择目录', exact: true }).click()
     await page.getByLabel('秒传保存目录 ID').pressSequentially('321')
-    assert.equal(await page.getByLabel('秒传保存目录 ID').inputValue(), '321')
+    assert.equal(await inputValue(page.getByLabel('秒传保存目录 ID')), '321')
     assert.equal(await page.getByLabel('秒传保存目录 ID').isVisible(), true, 'manual directory input must remain expanded while typing')
     await page.getByRole('button', { name: '选择秒传目录', exact: true }).click()
     let dialog = page.getByRole('dialog')
@@ -89,7 +90,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '保存秒传目录', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '目录校验失败' }).waitFor()
     assert.equal(state.directoryId, '123')
-    assert.equal(await page.getByLabel('秒传保存目录 ID').inputValue(), '456')
+    assert.equal(await inputValue(page.getByLabel('秒传保存目录 ID')), '456')
     await page.getByRole('dialog').getByRole('button', { name: '关闭', exact: true }).click()
     rejectSave = false
     await page.getByRole('button', { name: '更换秒传目录', exact: true }).click()

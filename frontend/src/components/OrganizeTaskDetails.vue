@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
+import SegmentedControl from './SegmentedControl.vue'
 import { historyDuration, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 
 const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
@@ -94,7 +95,7 @@ async function copy(value: string) {
       </details>
 
       <section aria-label="文件明细" class="detail-panel">
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold">文件明细</h3><div class="flex gap-1" role="group" aria-label="明细筛选"><button class="filter" :aria-pressed="filter === 'all'" @click="filter = 'all'">全部 {{ counts.total }}</button><button class="filter" :aria-pressed="filter === 'attention'" @click="filter = 'attention'">需关注 {{ counts.attention }}</button></div></div>
+        <div class="mb-3 flex flex-wrap items-center justify-between gap-3"><h3 class="text-sm font-semibold">文件明细</h3><SegmentedControl v-model="filter" role="group" label="明细筛选" density="compact" :options="[{ value: 'all', label: '全部', count: counts.total }, { value: 'attention', label: '需关注', count: counts.attention }]" /></div>
         <p v-if="!items.length" class="rounded-lg bg-slate-50 px-3 py-6 text-center text-xs text-slate-500 dark:bg-slate-950 dark:text-slate-400">{{ filter === 'attention' ? '没有需要关注的条目，可切换查看全部。' : '此任务没有文件明细。' }}</p>
         <ul class="divide-y divide-slate-200 dark:divide-slate-700">
           <li v-for="item in items" :key="item.id" class="py-4 first:pt-0">
@@ -130,13 +131,10 @@ async function copy(value: string) {
   .task-detail-footer { flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
   .task-detail-footer > p { flex-basis: 100%; line-height: 18px; }
   .task-detail-footer .action, .task-detail-footer .resume { min-height: 44px; }
-  .filter { min-height: 44px; }
 }
 @media (max-width: 639px), (pointer: coarse) { .path-copy { min-height: 44px; margin-block: 0; } }
 .action { @apply min-h-9 shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800; }
 .resume { @apply inline-flex min-h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-blue-500 dark:hover:bg-blue-600; }
-.filter { @apply rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800; }
-.filter[aria-pressed="true"] { @apply bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/50 dark:text-blue-300; }
 .badge { @apply inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium; }
 .badge-active { @apply bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300; }
 .badge-success { @apply px-0 text-slate-600 dark:text-slate-300; }

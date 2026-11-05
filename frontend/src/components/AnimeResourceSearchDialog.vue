@@ -1,33 +1,25 @@
 <script setup lang="ts">
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
-import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/organize'
 import { copyText } from '../utils/clipboard'
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
-import { matchesResourceSpec, resourceSpecOptions, type ResourceSearchSpec, type ResourceSpecSelection, type ResourceSpecOption } from '../utils/resourceSpecFilters'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
-import { useCloudDownloadBatch, type BatchStatus } from '../composables/useCloudDownloadBatch'
+import { useCloudDownloadBatch } from '../composables/useCloudDownloadBatch'
 import { magnetKey } from '../lib/cloud-download-batch'
-import { p115Request } from '../lib/p115-api'
-import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
 import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 import AnimeProviderBrand from './AnimeProviderBrand.vue'
-import { searchGardenResources } from '../lib/garden-search'
-import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+
+import { useAnimeResourceSearch } from '../composables/useAnimeResourceSearch'
+import { useAnimeResourceActions } from '../composables/useAnimeResourceActions'
+import type { AnimeResourceItem as Item, AnimeResourceBangumi as Bangumi } from '../types/animeResourceSearch'
 
 const props = withDefaults(defineProps<{ token: string; title: string; originalTitle: string; provider?: 'mikan' | 'garden'; animationLibrary?: boolean; themeColors?: Record<string, string>; tmdbId?: number; kind?: 'movie' | 'tv'; date?: string; seasons?: { number: number; name: string; episodeCount: number }[] }>(), { provider: 'mikan' })
 const emit = defineEmits<{ close: [] }>()
-const isGarden = computed(() => props.provider === 'garden')
-const providerName = computed(() => isGarden.value ? 'Garden' : '蜜柑')
-interface Item { id: string; title: string; size: string; updatedAt: string; magnet: string; url: string; torrentUrl: string; resolution: string; spec?: ResourceSearchSpec; groupId?: string; originName?: string; publisher?: string; fansub?: string }
-interface Group { id: string; name: string; origin?: string; originName?: string; kind?: string }
-interface Bangumi { id: string; title: string; coverUrl: string; url: string }
-interface Expansion { groupId: string; take: number }
-interface Result { items: Item[]; groups: Group[]; bangumis?: Bangumi[]; bangumi?: Bangumi; more?: Expansion[]; query: string; group: string; cached: boolean; fetchedAt: string; expiresAt: string; attempts: { query: string; count: number; cached: boolean }[]; page?: number; hasMore?: boolean }
 const dialog = ref<HTMLDialogElement>()
 const viewportStyle = ref<Record<string, string>>({})
 const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
@@ -35,67 +27,29 @@ const shortViewport = ref(false)
 const scrollBody = ref<HTMLElement>()
 const filterAnchor = ref<HTMLElement>()
 const filtersStuck = useStickySurface(scrollBody, filterAnchor)
-const query = ref(props.title || props.originalTitle)
-const group = ref('')
-const groups = ref<Group[]>([])
-const result = ref<Result>()
-const busy = ref(false)
-const preparingItem = ref('')
-const retainedItems = ref<Item[]>()
-const loadingMessage = ref('')
-const error = ref('')
-const filter = ref('')
-const resolution = ref('全部')
-const specFilters = reactive<ResourceSpecSelection>({ resolution: [], language: [], external: false })
-const specOptions = computed(() => resourceSpecOptions((result.value?.items || []).map(item => item.spec)))
-const specActive = computed(() => !!(specFilters.resolution.length || specFilters.language.length || specFilters.external))
-function resetSpecFilters() { specFilters.resolution = []; specFilters.language = []; specFilters.external = false }
-function withSpecs(data: Result & { specs?: Record<string, ResourceSearchSpec> }): Result {
-  return { ...data, items: data.items.map(item => { const spec = data.specs?.[item.id]; return { ...item, spec, resolution: spec?.resolution?.toUpperCase() || '未知' } }) }
-}
-const visible = ref(50)
 const copied = ref('')
 const copyError = ref('')
-const selectedBangumi = ref<Bangumi>()
 const brokenCovers = ref<Record<string, boolean>>({})
 const coverRetries = ref<Record<string, number>>({})
-const searchSnapshot = ref<{ result: Result; query: string; group: string; groups: Group[]; filter: string; resolution: string; specFilters: ResourceSpecSelection; visible: number }>()
-// 字幕组检索只更新资源；保留同一关键词的番剧入口，避免顶部条目收缩。
-const bangumis = ref<Bangumi[]>([])
+const lifecycle = new AbortController()
+const batch = useCloudDownloadBatch(props.token, lifecycle.signal)
+const { mode: batchMode, running: batchRunning, selected: batchSelected, notice: batchNotice, count: batchCount } = batch
+
+const searchState = useAnimeResourceSearch(props, lifecycle.signal, {
+  batchMode,
+  blocked: () => actions.busy.value,
+  resetResultPosition,
+  appendedResults: focusAppendedResults,
+})
+const { isGarden, interactionBusy, query, group, groups, result, busy, loadingMessage, error, filter, resolution, specOptions, specActive, resetSpecFilters, visible, selectedBangumi, bangumis, expansions, groupOptions, resolutionOptions, filtered, siteURL, specChecked, toggleSpecOption, search, searchGarden, selectGroup, useTitle, backToSearch, loadBangumi, selectBangumi } = searchState
+const actions = useAnimeResourceActions({ ...props, searching: () => busy.value, filtered: () => filtered.value, groups: () => groups.value }, lifecycle.signal, batch)
+const { preparingItem, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizingBatch, organizeHiddenCount, prepareNotices, openBatchOrganize, openOrganize, organizeUncertain, organized, submit } = actions
+const providerName = computed(() => isGarden.value ? 'Garden' : '蜜柑')
 const itemStrip = ref<HTMLElement>()
 const activeBangumiId = computed(() => selectedBangumi.value?.id || 'all')
 const { indicatorStyle: itemIndicatorStyle } = useSlidingIndicator(itemStrip, '[aria-pressed="true"]', [activeBangumiId, bangumis])
 const hasBrokenCovers = computed(() => bangumis.value.some(card => brokenCovers.value[card.id]))
-const expansions = computed(() => (result.value?.more || []).filter(item => !group.value || item.groupId === group.value))
-const lifecycle = new AbortController()
-const batch = useCloudDownloadBatch(props.token, lifecycle.signal)
-const { mode: batchMode, running: batchRunning, selected: batchSelected, notice: batchNotice, count: batchCount } = batch
-const interactionBusy = computed(() => busy.value || batchRunning.value || !!preparingItem.value)
-const previousFocus = document.activeElement as HTMLElement | null
-let unlockScroll: (() => void) | undefined
-const submissions = ref<Record<string, BatchStatus & { organize?: boolean }>>({})
-const singleSubmitting = computed(() => Object.values(submissions.value).some(state => state.busy))
-function submission(item: Item) { return batch.statuses.value[magnetKey(item.magnet)] || submissions.value[magnetKey(item.magnet)] }
-function canSelect(item: Item) { return batch.eligible(item) && !submission(item)?.success && !submission(item)?.busy && !submission(item)?.uncertain }
-const availableSelection = computed(() => [...new Map(filtered.value.filter(canSelect).map(item => [magnetKey(item.magnet), item])).values()])
-const allFilteredSelected = computed(() => availableSelection.value.length > 0 && availableSelection.value.every(item => batchSelected.value.has(magnetKey(item.magnet))))
-const hiddenSelectionCount = computed(() => {
-  const shown = new Set(filtered.value.map(item => magnetKey(item.magnet)))
-  return [...batchSelected.value.keys()].filter(key => !shown.has(key)).length
-})
-function toggleResource(item: Item) {
-  if (interactionBusy.value || !canSelect(item)) return
-  batch.toggle(item)
-}
-function specChecked(option: ResourceSpecOption) { return option.group === 'external' ? specFilters.external : specFilters[option.group].includes(option.value) }
-function toggleSpecOption(option: ResourceSpecOption) {
-  if (interactionBusy.value) return
-  if (option.group === 'external') specFilters.external = !specFilters.external
-  else {
-    const values = specFilters[option.group]
-    specFilters[option.group] = values.includes(option.value) ? values.filter(value => value !== option.value) : [...values, option.value]
-  }
-}
+const dialogLifecycle = createDialogLifecycle()
 function selectCard(item: Item, event: MouseEvent) {
   if (!batchMode.value || (event.target as HTMLElement).closest('button, a, input, textarea, label, summary')) return
   toggleResource(item)
@@ -107,168 +61,14 @@ async function startBatch() {
   dialog.value?.querySelector<HTMLElement>('.mikan-batch-actions button')?.focus({ preventScroll: true })
   await task
   await nextTick()
-  // The stop button is removed when the queue finishes; leave focus on a
-  // stable summary instead of sending keyboard users back to the page.
+  // 队列结束会移除停止按钮；将焦点留在稳定的摘要上，避免回落到页面。
   if (document.activeElement === document.body) dialog.value?.querySelector<HTMLElement>('.mikan-batch-count')?.focus({ preventScroll: true })
 }
-function allowReselectAfterCheck() {
-  batch.allowReselectAfterCheck()
-  for (const [key, state] of Object.entries(submissions.value)) if (state.uncertain) delete submissions.value[key]
-}
-const organizeEntries = ref<DownloadOrganizeResource[]>([])
-const organizingBatch = ref(false), organizeHiddenCount = ref(0)
-const prepareNotices = ref<Record<string, string>>({})
-function organizeSource(item: Item): DownloadResourceInput {
-  const fansub = item.fansub || groups.value.find(group => (!isGarden.value || group.kind === 'fansub') && (group.id === item.groupId || item.title.startsWith(`[${group.name}]`) || item.title.startsWith(`【${group.name}】`)))?.name
-  if (!isGarden.value) return { source: 'mikan', title: item.title, fansub, providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
-  const [provider, providerId] = item.id.split(':')
-  return { source: 'garden', title: item.title, fansub, provider, providerId: providerId || '', magnet: item.magnet }
-}
-function organizeEntry(item: Item, files?: DownloadFiles): DownloadOrganizeResource {
-  return { resource: item, source: organizeSource(item), files }
-}
-function openBatchOrganize(event: MouseEvent) {
-  if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !props.tmdbId || !batchCount.value) return
-  const entries = ([...batchSelected.value.values()] as Item[]).filter(canSelect).map(item => organizeEntry(item))
-  if (!entries.length) return
-  ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
-  organizingBatch.value = true; organizeHiddenCount.value = hiddenSelectionCount.value; organizeEntries.value = entries
-}
-async function openOrganize(item: Item, event: MouseEvent) {
-  if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !props.tmdbId || submission(item)?.success || submission(item)?.uncertain) return
-  const returnFocus = event.currentTarget as HTMLElement
-  returnFocus.focus({ preventScroll: true })
-  preparingItem.value = item.id
-  delete prepareNotices.value[item.id]
-  try {
-    const data = await p115Request<DownloadFiles>(props.token, 'download-organize/files', { method: 'POST', body: JSON.stringify(organizeSource(item)), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(50000)]) })
-    if (!data.files.length) { prepareNotices.value[item.id] = data.reason || '没有可整理的文件清单，可使用普通离线'; return }
-    preparingItem.value = ''
-    await nextTick()
-    if (lifecycle.signal.aborted) return
-    returnFocus?.focus({ preventScroll: true })
-    organizingBatch.value = false; organizeHiddenCount.value = 0; organizeEntries.value = [organizeEntry(item, data)]
-  } catch (e) { if (!lifecycle.signal.aborted) prepareNotices.value[item.id] = e instanceof Error ? e.message : '读取文件清单失败，可使用普通离线' }
-  finally {
-    if (!lifecycle.signal.aborted) {
-      preparingItem.value = ''
-      await nextTick()
-      if (!organizeEntries.value.length && returnFocus.isConnected && document.activeElement === document.body) returnFocus.focus({ preventScroll: true })
-    }
-  }
-}
-function organizeUncertain(keys: string[]) {
-  for (const key of keys) {
-    submissions.value[key] = { organize: true, uncertain: true, message: '下载整理任务创建结果待确认，请在原编辑页重试确认或查看整理任务记录。' }
-    batch.statuses.value[key] = submissions.value[key]!
-  }
-}
-function organized(keys: string[]) {
-  for (const key of keys) {
-    submissions.value[key] = { organize: true, success: true, message: `已创建下载整理任务：${props.title}。可在下载整理的任务记录查看进度。` }
-    batch.statuses.value[key] = submissions.value[key]!
-    batchSelected.value.delete(key)
-  }
-}
 function closeDialog() { if (organizeEntries.value.length) return; batch.stop(); emit('close') }
-const resolutions = computed(() => ['全部', ...[...new Set(result.value?.items.map(item => item.resolution))].sort((a, b) => b.localeCompare(a, 'en', { numeric: true }))])
-const groupOptions = computed(() => [{ value: '', label: isGarden.value ? '全部发布方' : '全部字幕组' }, ...groups.value.map(item => ({ value: item.id, label: isGarden.value ? `${item.name} · ${item.originName} · ${item.kind === 'fansub' ? '字幕组' : '发布者'}` : item.name }))])
-const resolutionOptions = computed(() => resolutions.value.map(value => ({ value, label: value === '全部' ? '全部分辨率' : value })))
-const filtered = computed(() => {
-  if (busy.value && retainedItems.value) return retainedItems.value
-  const words = filter.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
-  return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (batchMode.value ? matchesResourceSpec(item.spec, specFilters) : resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
-})
-const siteURL = computed(() => {
-  if (isGarden.value) {
-    const params = new URLSearchParams({ search: result.value?.query || query.value })
-    const selected = groups.value.find(item => item.id === group.value)
-    if (selected?.origin) { params.set('provider', selected.origin); params.set(selected.kind || 'publisher', selected.name) }
-    return `https://animes.garden/resources/1?${params}`
-  }
-  if (selectedBangumi.value) return selectedBangumi.value.url
-  const params = new URLSearchParams({ searchstr: result.value?.query || query.value })
-  if (result.value?.group) params.set('subgroupid', result.value.group)
-  return `https://mikanani.me/Home/Search?${params}`
-})
-watch([filter, resolution], () => { visible.value = 50 }, { flush: 'sync' })
-watch(specFilters, () => { visible.value = 50 }, { flush: 'sync' })
-
-async function search(refresh = false, selectedGroup = '') {
-  if (isGarden.value) { await searchGarden(refresh, selectedGroup); return }
-  if (interactionBusy.value || !query.value.trim()) return
-  const previousGroup = group.value
-  const previousBangumi = selectedBangumi.value
-  retainedItems.value = filtered.value
-  loadingMessage.value = selectedGroup ? `正在读取 ${groups.value.find(item => item.id === selectedGroup)?.name || '该字幕组'} 的搜索结果…` : '正在搜索蜜柑…'
-  busy.value = true
-  error.value = ''
-  group.value = selectedGroup
-  // 保留列表、番剧和筛选节点，避免弹窗收缩、滚动跳动及选中按钮失焦。
-  try {
-    const q = query.value.trim()
-    // 只有默认中文标题搜索才自动使用原名兜底，手动改词和字幕组筛选保留用户意图。
-    const fallback = q === props.title.trim() && !selectedGroup ? props.originalTitle : ''
-    const response = await fetch('/api/admin/mikan/search', {
-      method: 'POST', cache: 'no-store',
-      headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: q, fallback, group: selectedGroup, refresh }),
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(75000)]),
-    })
-    const data = await response.json().catch(() => null)
-    if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 403 ? '仅管理员可使用蜜柑搜索' : data?.error || `蜜柑搜索失败（HTTP ${response.status}）`)
-    if (!selectedGroup || data.query !== result.value?.query) bangumis.value = data.bangumis || []
-    result.value = withSpecs(data)
-    resetSpecFilters()
-    selectedBangumi.value = undefined
-    query.value = data.query
-    if (!selectedGroup) groups.value = data.groups
-    searchSnapshot.value = undefined
-    visible.value = 50
-    resolution.value = '全部'
-    await resetResultPosition()
-  } catch (e) {
-    group.value = previousGroup
-    selectedBangumi.value = previousBangumi
-    if (!lifecycle.signal.aborted) error.value = e instanceof Error && e.name === 'TimeoutError' ? '蜜柑搜索超时，请稍后重试' : e instanceof Error ? e.message : '蜜柑搜索失败，请稍后重试'
-  } finally { busy.value = false; retainedItems.value = undefined }
-}
-async function searchGarden(refresh = false, selectedGroup = '', page = 1) {
-  if (interactionBusy.value || page === 1 && !query.value.trim()) return
-  const q = page > 1 ? result.value?.query || query.value.trim() : query.value.trim()
-  const selected = groups.value.find(item => item.id === selectedGroup)
-  const previousVisible = Math.min(visible.value, filtered.value.length)
-  let appended = false
-  retainedItems.value = filtered.value; busy.value = true; error.value = ''; loadingMessage.value = '正在搜索 Garden…'
-  try {
-    const data = await searchGardenResources(props.token, { query: q, fallback: q === props.title.trim() && !selectedGroup && page === 1 ? props.originalTitle : '', group: selectedGroup, groupName: selected?.name || '', page, refresh }, lifecycle.signal)
-    if (lifecycle.signal.aborted) return
-    result.value = page > 1 && result.value ? { ...data, items: [...new Map([...result.value.items, ...data.items].map(item => [item.id, item])).values()] } : data
-    if (!selectedGroup) groups.value = page > 1 ? [...new Map([...groups.value, ...data.groups].map(item => [item.id, item])).values()] : data.groups
-    query.value = data.query; group.value = selectedGroup
-    if (page > 1) { visible.value += 50; appended = true }
-    else { visible.value = 50; resolution.value = '全部'; resetSpecFilters(); filter.value = ''; await resetResultPosition() }
-  } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : 'Garden 搜索失败，请重试' }
-  finally {
-    busy.value = false; retainedItems.value = undefined
-    if (appended && !lifecycle.signal.aborted) {
-      await nextTick()
-      dialog.value?.querySelectorAll<HTMLElement>('.mikan-resource')[previousVisible]?.querySelector<HTMLElement>('button, a')?.focus({ preventScroll: true })
-    }
-  }
-}
-function selectGroup(value: string) {
-  if (interactionBusy.value) return
-  if (isGarden.value) { void searchGarden(false, value); return }
-  if (selectedBangumi.value) { group.value = value; visible.value = 50 }
-  else void search(false, value)
-}
-function useTitle(value: string) { if (interactionBusy.value) return; query.value = value; void search() }
-function refreshCurrent() {
-  if (isGarden.value) { void searchGarden(true, group.value); return }
-  retryCovers()
-  if (selectedBangumi.value) void loadBangumi(selectedBangumi.value, true)
-  else void search(true, group.value)
+function refreshCurrent() { retryCovers(); searchState.refreshCurrent() }
+async function focusAppendedResults(previousVisible: number) {
+  await nextTick()
+  dialog.value?.querySelectorAll<HTMLElement>('.mikan-resource')[previousVisible]?.querySelector<HTMLElement>('button, a')?.focus({ preventScroll: true })
 }
 function retryCovers() {
   for (const card of bangumis.value) {
@@ -301,94 +101,10 @@ async function showMore() {
     body.scrollTop += row.getBoundingClientRect().top - contentTop - 12
   }
 }
-function backToSearch() {
-  if (interactionBusy.value || !searchSnapshot.value) return
-  const saved = searchSnapshot.value
-  result.value = saved.result
-  query.value = saved.query
-  group.value = saved.group
-  groups.value = saved.groups
-  filter.value = saved.filter
-  resolution.value = saved.resolution
-  Object.assign(specFilters, saved.specFilters)
-  visible.value = saved.visible
-  selectedBangumi.value = undefined
-  searchSnapshot.value = undefined
-  error.value = ''
-  void resetResultPosition()
-}
-async function loadBangumi(card: Bangumi, refresh = false, expansion?: Expansion) {
-  if (interactionBusy.value) return
-  const previousBangumi = selectedBangumi.value
-  const previousSnapshot = searchSnapshot.value
-  retainedItems.value = filtered.value
-  if (!selectedBangumi.value && result.value) {
-    // 进入番剧前保留搜索结果及筛选，返回时无需重新搜索。
-    searchSnapshot.value = { result: result.value, query: query.value, group: group.value, groups: groups.value, filter: filter.value, resolution: resolution.value, specFilters: { ...specFilters }, visible: visible.value }
-  }
-  selectedBangumi.value = card
-  loadingMessage.value = expansion ? '正在加载该字幕组的更多资源…' : `正在读取 ${card.title} 的番剧资源…`
-  busy.value = true
-  error.value = ''
-  try {
-    const response = await fetch('/api/admin/mikan/bangumi', {
-      method: 'POST', cache: 'no-store',
-      headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: card.id, group: expansion?.groupId || '', take: expansion?.take || 0, refresh }),
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(75000)]),
-    })
-    const data = await response.json().catch(() => null)
-    if (!response.ok || !data) throw new Error(response.status === 401 ? '管理员登录已过期，请重新登录' : response.status === 403 ? '仅管理员可使用蜜柑搜索' : data?.error || `蜜柑番剧读取失败（HTTP ${response.status}）`)
-    const next = withSpecs(data)
-    if (expansion && result.value) {
-      // 原站返回该字幕组的累积列表；替换该组并按磁力去重，保留其他组及其加载进度。
-      const rows = [...result.value.items.filter(item => item.groupId !== expansion.groupId), ...next.items]
-      result.value = { ...result.value, items: [...new Map(rows.map(item => [item.id, item])).values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), more: [...(result.value.more || []).filter(item => item.groupId !== expansion.groupId), ...(next.more || [])] }
-    } else {
-      result.value = next
-      groups.value = next.groups
-      if (previousBangumi?.id !== card.id) filter.value = ''
-      group.value = ''
-      resolution.value = '全部'
-      resetSpecFilters()
-      visible.value = 50
-      await resetResultPosition()
-    }
-  } catch (e) {
-    selectedBangumi.value = previousBangumi
-    searchSnapshot.value = previousSnapshot
-    if (!lifecycle.signal.aborted) error.value = e instanceof Error && e.name === 'TimeoutError' ? '蜜柑番剧读取超时，可重试或返回搜索结果' : e instanceof Error ? e.message : '蜜柑番剧读取失败，请稍后重试'
-  } finally { busy.value = false; retainedItems.value = undefined }
-}
-function selectBangumi(card: Bangumi) {
-  if (selectedBangumi.value?.id !== card.id) void loadBangumi(card)
-}
 async function copy(item: Item) {
   copyError.value = ''; copied.value = ''
   try { await copyText(item.magnet, dialog.value); copied.value = item.id }
   catch { copied.value = ''; copyError.value = item.id }
-}
-async function submit(item: Item) {
-  if (interactionBusy.value || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain) return
-  const key = magnetKey(item.magnet)
-  delete batch.statuses.value[key]
-  submissions.value[key] = { busy: true }
-  try {
-    // 复用云下载功能明确绑定的账号和目录，不选择默认账号，也不改写配置。
-    const config = await p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', {
-      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
-    })
-    if (!config.accountId || !config.targetCID) throw new Error('请先配置主账号，并在“115 云下载”保存下载目录')
-    const receipt = await submitCloudDownload(props.token, config.accountId, item.magnet, config.targetCID, lifecycle.signal)
-    submissions.value[key] = { success: true, message: cloudDownloadNotice(receipt, config.targetPath) }
-    batchSelected.value.delete(magnetKey(item.magnet))
-  } catch (e) {
-    if (lifecycle.signal.aborted) return
-    const message = e instanceof Error ? e.message : '提交失败'
-    const uncertain = !!(e as { outcomeUncertain?: boolean; responseData?: { outcomeUncertain?: boolean } })?.outcomeUncertain || !!(e as { responseData?: { outcomeUncertain?: boolean } })?.responseData?.outcomeUncertain
-    submissions.value[key] = { message, uncertain, needsConfig: /请先.*(?:选择|配置)|尚未登录|账号.*不存在|配置|凭据/.test(message) }
-    if (uncertain) { batch.statuses.value[key] = submissions.value[key]; batchSelected.value.delete(key) }
-  }
 }
 function syncVisualViewport() {
   const viewport = window.visualViewport
@@ -407,7 +123,7 @@ onMounted(() => {
   window.visualViewport?.addEventListener('resize', syncVisualViewport)
   window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   window.addEventListener('resize', syncVisualViewport)
-  unlockScroll = lockAnimeDialogScroll()
+  dialogLifecycle.acquire()
   dialog.value?.showModal()
   void search()
 })
@@ -417,8 +133,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', syncVisualViewport)
   lifecycle.abort()
   dialog.value?.close()
-  unlockScroll?.()
-  previousFocus?.focus()
+  dialogLifecycle.release()
 })
 </script>
 

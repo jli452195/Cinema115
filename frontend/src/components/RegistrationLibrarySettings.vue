@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { memberRequest } from '../types/memberPlayback'
 
@@ -14,8 +15,7 @@ const closeButton = ref<HTMLButtonElement>()
 const continueButton = ref<HTMLButtonElement>()
 const editorOpen = ref(false), confirmClose = ref(false)
 const lifecycle = new AbortController()
-let previousFocus: HTMLElement | undefined
-let previousOverflow = ''
+const dialogLifecycle = createDialogLifecycle()
 let backdropPressed = false
 
 const missingLibraries = computed(() => libraryLoaded.value ? libraryIds.value.filter(id => !libraries.value.some(library => library.ItemId === id)) : [])
@@ -36,17 +36,14 @@ function reset() { libraryIds.value = [...initialLibraryIds.value]; confirmClose
 function openEditor() {
   if (editorOpen.value || !dialog.value) return
   reset(); query.value = ''; notice.value = ''
-  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
-  previousOverflow = document.body.style.overflow
+  dialogLifecycle.acquire()
   editorOpen.value = true
-  document.body.style.overflow = 'hidden'
   dialog.value.showModal()
 }
 function closeEditor() {
   dialog.value?.close()
   editorOpen.value = false; confirmClose.value = false
-  document.body.style.overflow = previousOverflow
-  if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+  dialogLifecycle.release()
 }
 function requestClose() {
   if (saving.value) return

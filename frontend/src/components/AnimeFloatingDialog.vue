@@ -1,23 +1,21 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { IconX } from '@tabler/icons-vue'
-import { lockAnimeDialogScroll } from '../lib/anime-dialog-lock'
+import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 defineOptions({ inheritAttrs: false })
 const props = defineProps<{ title: string; closeLabel: string; size?: 'config' | 'preview' | 'organize'; closeDisabled?: boolean }>()
 const emit = defineEmits<{ close: []; scroll: [top: number] }>()
 const dialog = ref<HTMLDialogElement>(), body = ref<HTMLElement>(), closeButton = ref<HTMLButtonElement>()
 const headingID = useId()
-let previousFocus: HTMLElement | null = null
-let unlock: (() => void) | undefined
+const dialogLifecycle = createDialogLifecycle()
 const nested = ref(false)
 let backdropDown = false
 function close() { if (!props.closeDisabled) emit('close') }
 function backdrop(event: MouseEvent) { if (backdropDown && event.target === dialog.value) close(); backdropDown = false }
-onMounted(() => { previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null; nested.value = [...document.querySelectorAll('dialog[open]')].some(el => el !== dialog.value); unlock = lockAnimeDialogScroll(); dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true }) })
+onMounted(() => { nested.value = [...document.querySelectorAll('dialog[open]')].some(el => el !== dialog.value); dialogLifecycle.acquire(); dialog.value?.showModal(); closeButton.value?.focus({ preventScroll: true }) })
 onBeforeUnmount(() => {
   dialog.value?.close()
-  unlock?.()
-  if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true })
+  dialogLifecycle.release()
 })
 defineExpose({ body, scrollTo: (top: number) => body.value?.scrollTo({ top, behavior: 'instant' }) })
 </script>

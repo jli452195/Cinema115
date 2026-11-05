@@ -7,8 +7,8 @@ import embyIcon from '../assets/emby.svg'
 import telegramIcon from '../assets/telegram/telegram.svg'
 import { managementCategories } from '../utils/managementFeatures'
 
-const props = defineProps<{ username: string; category: keyof typeof managementCategories }>()
-const emit = defineEmits<{ openDashboard: []; category: [value: 'p115' | 'telegram']; openP115: []; openShare: []; openTelegram: []; openLogs: []; logout: [] }>()
+const props = defineProps<{ category: keyof typeof managementCategories }>()
+const emit = defineEmits<{ logout: [] }>()
 // 分类页只展示功能入口，不加载业务配置或启动状态轮询。
 const current = computed(() => managementCategories[props.category])
 </script>

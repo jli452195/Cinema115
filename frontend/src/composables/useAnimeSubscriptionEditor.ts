@@ -198,7 +198,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     } catch (reason) { if (!controller.signal.aborted) { source.searchError = animeConfigMessage(reason); setCooldown(source, reason, 'search') } }
     finally { if (searchControllers.get(source.ref) === controller) source.searchBusy = false }
   }
-  async function chooseEntry(source: SourceForm, id: string, title: string) {
+  async function chooseEntry(source: SourceForm, id: string) {
     if (locked.value || previewBusy.value || source.lockedItem && source.itemId !== id || source.cooldown > Date.now()) return
     if (source.entry?.id === id) return
     searchControllers.get(source.ref)?.abort(); const controller = new AbortController(); searchControllers.set(source.ref, controller)
@@ -244,7 +244,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     void readSample(source)
   }
   function openSource(source: SourceForm) {
-    if (source.itemId && !source.entry) void chooseEntry(source, source.itemId, source.itemTitle)
+    if (source.itemId && !source.entry) void chooseEntry(source, source.itemId)
     else if (!source.itemId && source.keyword.trim() && !source.search && !source.searchBusy) void search(source)
     if (source.groupId) void readSample(source)
   }
