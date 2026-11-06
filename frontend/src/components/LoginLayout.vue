@@ -16,18 +16,20 @@ withDefaults(defineProps<{
 <template>
   <main class="auth-page">
     <PatternBackground v-if="patternBackground" />
-    <div class="auth-theme-toggle">
-      <ThemeSwitcher />
-    </div>
-    <div class="auth-content">
-      <header class="auth-brand">
-        <div class="auth-brand-name">
-          <h1><CinemaLogo large /></h1>
-        </div>
-        <p>{{ subtitle }}</p>
-      </header>
-      <slot />
-      <nav v-if="$slots.footer" aria-label="登录入口" class="auth-footer"><slot name="footer" /></nav>
+    <div class="auth-foreground" data-theme-foreground>
+      <div class="auth-theme-toggle">
+        <ThemeSwitcher />
+      </div>
+      <div class="auth-content">
+        <header class="auth-brand">
+          <div class="auth-brand-name">
+            <h1><CinemaLogo large /></h1>
+          </div>
+          <p>{{ subtitle }}</p>
+        </header>
+        <slot />
+        <nav v-if="$slots.footer" aria-label="登录入口" class="auth-footer"><slot name="footer" /></nav>
+      </div>
     </div>
   </main>
 </template>

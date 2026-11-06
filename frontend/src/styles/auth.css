@@ -21,9 +21,23 @@
   display: flex;
   min-height: 100vh;
   min-height: 100svh;
-  padding: 48px 20px;
+  padding: 0;
   color: var(--auth-text);
   background: radial-gradient(ellipse at 50% 0, rgb(59 130 246 / 7%), transparent 65%), var(--auth-bg);
+}
+
+/* 表单单独参与主题转场，维持点阵在输入框后方的层级。 */
+.auth-foreground {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 48px 20px;
+  padding-top: calc(var(--app-safe-top) + 48px);
+  padding-left: max(20px, var(--app-safe-left));
+  padding-right: max(20px, var(--app-safe-right));
+  padding-bottom: max(48px, var(--app-safe-bottom));
 }
 
 .dark .auth-page {
@@ -423,8 +437,8 @@
 /* 登录/认证页面右上角独立主题切换入口（无侵入悬浮，随页面自然滚动） */
 .auth-theme-toggle {
   position: absolute;
-  top: max(20px, env(safe-area-inset-top, 0px));
-  right: max(20px, env(safe-area-inset-right, 0px));
+  top: calc(var(--app-safe-top) + 20px);
+  right: calc(var(--app-safe-right) + 20px);
   z-index: 2;
 }
 
@@ -478,14 +492,15 @@
 
 /* 移动端响应式适配：确保无卡片样式与 0 内边距，避让右上角切换入口防止遮挡 Logo */
 @media (max-width: 639px) {
-  .auth-page {
-    padding-top: max(56px, calc(env(safe-area-inset-top, 0px) + 48px));
-    padding-inline: 16px;
-    padding-bottom: 32px;
+  .auth-foreground {
+    padding-top: max(56px, calc(var(--app-safe-top) + 48px));
+    padding-left: max(16px, var(--app-safe-left));
+    padding-right: max(16px, var(--app-safe-right));
+    padding-bottom: max(32px, var(--app-safe-bottom));
   }
   .auth-theme-toggle {
-    top: max(12px, env(safe-area-inset-top, 0px));
-    right: max(12px, env(safe-area-inset-right, 0px));
+    top: calc(var(--app-safe-top) + 12px);
+    right: calc(var(--app-safe-right) + 12px);
   }
   .auth-brand {
     margin-bottom: 22px;
@@ -506,12 +521,13 @@
 }
 
 @media (max-width: 359px) {
-  .auth-page {
-    padding-inline: 12px;
+  .auth-foreground {
+    padding-left: max(12px, var(--app-safe-left));
+    padding-right: max(12px, var(--app-safe-right));
   }
   .auth-theme-toggle {
-    top: max(8px, env(safe-area-inset-top, 0px));
-    right: max(8px, env(safe-area-inset-right, 0px));
+    top: calc(var(--app-safe-top) + 8px);
+    right: calc(var(--app-safe-right) + 8px);
   }
   .auth-card {
     padding: 0;

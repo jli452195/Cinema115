@@ -121,7 +121,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     for (const width of [1440, 640, 390, 320]) {
       await page.setViewportSize({ width, height: width === 640 ? 360 : 844 })
       for (const dark of [false, true]) {
-        await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+        await page.evaluate(async dark => {
+          const code = await (await fetch('/src/components/ThemeSwitcher.vue')).text()
+          const moduleURL = code.match(/["']([^"']*\/composables\/useTheme\.ts[^"']*)["']/)[1]
+          const { useTheme } = await import(moduleURL)
+          await useTheme().setTheme(dark ? 'dark' : 'light')
+        }, dark)
         await open(); await personalMenu(false)
         const bounds = await menu().locator('.account-surface').boundingBox()
         assert(bounds.x >= 0 && bounds.x + bounds.width <= width)
@@ -133,11 +138,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
     }
     await open()
-    const themeButton = menu().locator('.theme-menu-button')
-    const previousTheme = await themeButton.getAttribute('aria-label')
+    // 主题切换前菜单应彻底移除，快照不能包含退场中的菜单。
+    await page.evaluate(async () => {
+      const code = await (await fetch('/src/components/ThemeSwitcher.vue')).text()
+      const moduleURL = code.match(/["']([^"']*\/composables\/useTheme\.ts[^"']*)["']/)[1]
+      const { useTheme } = await import(moduleURL)
+      await useTheme().setTheme('light')
+      const start = document.startViewTransition.bind(document)
+      window.themeSnapshotMenus = []
+      document.startViewTransition = callback => {
+        window.themeSnapshotMenus.push(!!document.querySelector('#header-management'))
+        return start(callback)
+      }
+    })
+    const themeButton = menu().locator('.theme-toggle')
+    const themeBounds = await trigger().boundingBox()
     await themeButton.click()
-    await page.waitForFunction(previous => document.querySelector('#header-management .theme-menu-button')?.getAttribute('aria-label') !== previous, previousTheme)
-    assert.equal(await menu().isVisible(), true)
+    await menu().waitFor({ state: 'detached' })
+    await page.waitForFunction(() => window.themeSnapshotMenus.length === 1)
+    assert.deepEqual(await page.evaluate(() => window.themeSnapshotMenus), [false])
+    assert(await trigger().evaluate(el => document.activeElement === el))
+    const revealOrigin = await page.evaluate(() => document.documentElement.style.getPropertyValue('--theme-reveal-origin'))
+    const [themeX, themeY] = revealOrigin.split(' ').map(parseFloat)
+    assert(Math.abs(themeX - themeBounds.x - themeBounds.width / 2) < 1)
+    assert(Math.abs(themeY - themeBounds.y - themeBounds.height / 2) < 1)
+    await page.waitForFunction(() => !document.documentElement.classList.contains('theme-reveal'))
+    await open()
     await menu().getByRole('link', { name: /站内通知/ }).click()
     await page.waitForURL('**/notifications'); await menu().waitFor({ state: 'detached' })
     await page.emulateMedia({ reducedMotion: 'reduce' }); await open(); await close()
@@ -146,7 +172,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     role = 'user'
     await go('/movie/123'); await open(); await personalMenu(true)
     assert.equal(await menu().getByText('普通用户', { exact: true }).count(), 1)
-    assert.equal(await menu().locator('.account-row:visible').count(), 5)
+    assert.equal(await menu().locator('.account-row:visible').count(), 4)
     await close()
     await page.locator('.brand-link').click(); await drawer.waitFor()
     assert.deepEqual(await drawer.getByRole('link').allTextContents(), ['我的播放', '我的追更'])

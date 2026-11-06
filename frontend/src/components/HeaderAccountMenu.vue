@@ -6,8 +6,13 @@ import NavigationIcon from './NavigationIcon.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
 import { websiteUnread } from '../composables/useWebsiteNotifications'
 import { isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
+import type { ThemeTransitionOrigin } from '../composables/useTheme'
 
 const emit = defineEmits<{ close: []; logout: [] }>()
+defineProps<{
+  beforeThemeChange?: () => void | Promise<void>
+  themeRevealOrigin?: () => ThemeTransitionOrigin | undefined
+}>()
 const route = useRoute()
 const personalLinks = computed<AccountLink[]>(() => [
   ...(!isPortalAdmin.value ? [{ label: '我的播放', to: '/account/playback', icon: 'playback' as const }] : []),
@@ -44,7 +49,7 @@ function logout() {
           <span>站内通知</span>
           <span v-if="websiteUnread" class="account-unread" :aria-label="`${websiteUnread} 条未读`">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
         </RouterLink>
-        <ThemeSwitcher show-label class="account-row ambient-glow" />
+        <ThemeSwitcher show-label :before-change="beforeThemeChange" :reveal-origin="themeRevealOrigin" />
       </div>
 
       <div class="account-group" role="group" aria-label="个人">

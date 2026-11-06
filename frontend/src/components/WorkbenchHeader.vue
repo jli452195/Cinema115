@@ -73,6 +73,9 @@ onBeforeUnmount(() => {
 const header = ref<HTMLElement>()
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
+const closingForTheme = ref(false)
+let accountLeave: Promise<void> | undefined
+let finishAccountLeave: (() => void) | undefined
 const scrollY = ref(0)
 watch(() => [props.tonalSurface, props.overBackdrop], onScroll, { flush: 'post' })
 const highlightOverBackdrop = computed(() => props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
@@ -99,6 +102,33 @@ const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
 
 function closePanels() { accountOpen.value = false }
 
+function accountThemeOrigin() {
+  // 菜单项复用工具栏按钮圆心，关闭菜单后仍保持同一个视觉锚点。
+  const bounds = accountButton.value?.getBoundingClientRect()
+  return bounds ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 } : undefined
+}
+
+async function prepareThemeChange() {
+  const restoreFocus = !!header.value?.querySelector('#header-management')?.contains(document.activeElement)
+  closingForTheme.value = true
+  closePanels()
+  try {
+    await nextTick()
+    // 也等待已经开始的退场，防止菜单残留被收进主题快照。
+    await accountLeave
+    if (restoreFocus) accountButton.value?.focus({ preventScroll: true })
+  } finally {
+    closingForTheme.value = false
+  }
+}
+
+function completeAccountLeave() {
+  finishAccountLeave?.()
+  finishAccountLeave = undefined
+  accountLeave = undefined
+}
+onBeforeUnmount(completeAccountLeave)
+
 function toggleAccount() { accountOpen.value = !accountOpen.value }
 
 function isWithinAccount(target: EventTarget | null) {
@@ -117,6 +147,8 @@ function activateAccountMenu(element: Element) {
   element.removeAttribute('aria-hidden')
 }
 function deactivateAccountMenu(element: Element) {
+  completeAccountLeave()
+  accountLeave = new Promise(resolve => { finishAccountLeave = resolve })
   element.setAttribute('inert', '')
   element.setAttribute('aria-hidden', 'true')
 }
@@ -136,7 +168,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
   <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
-    <div class="header-inner relative flex h-[var(--workbench-header-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
+    <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
       <button v-if="!desktopSidebar" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" :title="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
       </button>
@@ -154,15 +186,15 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink to="/search" class="icon-button" :class="{ selected: route.path === '/search' }" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </RouterLink>
-        <div class="hidden sm:block"><ThemeSwitcher /></div>
+        <div class="hidden sm:block"><ThemeSwitcher :before-change="prepareThemeChange" /></div>
         <button ref="accountButton" type="button" class="icon-button relative" :class="{ selected: accountOpen }" :aria-label="websiteUnread ? `更多功能，${websiteUnread} 条未读通知` : '更多功能'" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
           <svg class="h-5 w-5 sm:hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
           <svg class="hidden h-6 w-6 sm:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
           <span v-if="websiteUnread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 sm:hidden" aria-hidden="true"></span>
         </button>
       </div>
-      <Transition name="account-menu-motion" @before-enter="activateAccountMenu" @before-leave="deactivateAccountMenu">
-        <HeaderAccountMenu v-if="accountOpen" @close="closePanels" @logout="emit('logout')" />
+      <Transition name="account-menu-motion" :css="!closingForTheme" @before-enter="activateAccountMenu" @before-leave="deactivateAccountMenu" @after-leave="completeAccountLeave" @leave-cancelled="completeAccountLeave">
+        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" :theme-reveal-origin="accountThemeOrigin" @close="closePanels" @logout="emit('logout')" />
       </Transition>
     </div>
   </header>
@@ -172,15 +204,18 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 
 <style>
 :root {
-  --header-bg: 255 255 255;
+  --header-bg: var(--app-chrome-color);
   --header-border: var(--color-slate-200);
 }
 .dark {
-  --header-bg: var(--color-slate-900);
+  --header-bg: var(--app-chrome-color);
   --header-border: var(--color-border);
 }
 </style>
 <style scoped>
+/* 背景覆盖顶部安全区，工具栏与页面偏移仍共用准确的总高度。 */
+.workbench-header { padding-top: var(--app-safe-top); }
+.header-inner { padding-left: max(16px, var(--app-safe-left)); padding-right: max(16px, var(--app-safe-right)); }
 .with-management-sidebar .header-inner { justify-content: flex-end; }
 .workbench-header.over-backdrop { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
 .workbench-header.immersive-surface {
@@ -189,7 +224,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 .dark .workbench-header.immersive-surface { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
 .workbench-header.tonal-surface {
-  --header-tonal-bg: 248 250 252;
+  --header-tonal-bg: var(--app-chrome-color);
   --header-tonal-alpha: 0.9;
   --header-surface-progress: 1;
   --header-edge-progress: 1;
@@ -199,7 +234,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
   transition: none;
 }
 .dark .workbench-header.tonal-surface {
-  --header-tonal-bg: 24 25 28;
+  --header-tonal-bg: var(--app-chrome-color);
   --header-tonal-alpha: 0.88;
 }
 .workbench-header.immersive-surface {
@@ -284,12 +319,15 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .header-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .workbench-header.tonal-surface :is(.top-link, .icon-button) { transition: none; }
 }
-@media (min-width: 640px) { .top-link { padding-inline: 1.25rem; } }
+@media (min-width: 640px) {
+  .top-link { padding-inline: 1.25rem; }
+  .header-inner { padding-left: max(24px, var(--app-safe-left)); padding-right: max(24px, var(--app-safe-right)); }
+}
 @media (max-width: 639px) {
   .desktop-action { display: none; }
 }
 @media (max-width: 420px) {
-  .header-inner { gap: 0.25rem; padding-inline: 0.75rem; }
+  .header-inner { gap: 0.25rem; padding-left: max(12px, var(--app-safe-left)); padding-right: max(12px, var(--app-safe-right)); }
   .top-link { padding-inline: 0.5rem; }
   .icon-button { width: 2rem; height: 2rem; }
 }

@@ -38,7 +38,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         else if (loginMode === 'success') data = { token: 'mock-auth-token' }
         else { status = 401; data = { error: 'Emby 账号或密码不正确，或账号已停用' } }
       } else if (endpoint === '/api/auth/me') data = { user: { id: 'mock-user', role: 'user', username: 'testuser' } }
-      else if (endpoint.startsWith('/api/follows')) data = { items: [], hasMore: false }
+      else if (endpoint.startsWith('/api/me/follows')) data = { items: [], hasMore: false }
       await route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(data) })
     })
     const go = url => page.goto(origin + url, { waitUntil: 'networkidle' })
@@ -245,6 +245,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '登录个人中心', exact: true }).click()
     await page.waitForURL(url => url.pathname === '/follows')
     await page.getByRole('heading', { name: '我的追更', exact: true }).waitFor()
+    // 等待登录后的列表完成加载，避免接口返回前就结束页面错误检查。
+    await page.getByText('暂无进行中的追更', { exact: true }).waitFor()
     passed.push('successful-recovery-login-emits-session-and-returns-to-original-page')
     assert.deepEqual(pageErrors, [])
     passed.push('independent-admin-endpoint-and-no-page-errors')

@@ -52,7 +52,14 @@
     --status-warning-surface: 255 251 235;
     --status-danger: 185 28 28;
     --status-danger-surface: 254 242 242;
-    --workbench-header-height: 4rem;
+    /* 浏览器开放的安全区由背景承接，交互内容单独避让。 */
+    --app-safe-top: env(safe-area-inset-top, 0px);
+    --app-safe-right: env(safe-area-inset-right, 0px);
+    --app-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --app-safe-left: env(safe-area-inset-left, 0px);
+    --app-chrome-color: var(--color-slate-50);
+    --workbench-toolbar-height: 4rem;
+    --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top));
     --scrollbar-thumb: rgb(var(--color-slate-300));
     --scrollbar-track: rgb(var(--color-slate-50));
     color-scheme: light;
@@ -95,11 +102,12 @@
     --status-danger-surface: 53 28 32;
     --scrollbar-thumb: rgb(var(--color-slate-600));
     --scrollbar-track: rgb(var(--color-slate-950));
+    --app-chrome-color: var(--color-slate-950);
     color-scheme: dark;
   }
   @screen lg {
     :root {
-      --workbench-header-height: 4.5rem;
+      --workbench-toolbar-height: 4.5rem;
     }
   }
   body {
@@ -117,31 +125,180 @@
   }
 }
 
-/* Capture both themes at identical geometry, then reveal only the new snapshot. */
+/* 视图过渡：在相同几何结构下捕获主题快照，禁用 DOM 原生过渡以防动画冲突 */
+@property --theme-reveal-mask-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 html.theme-reveal *,
 html.theme-reveal *::before,
 html.theme-reveal *::after {
   transition: none !important;
 }
-html.theme-reveal::view-transition-group(root) {
+html.theme-reveal::view-transition-group(*) {
   animation: none;
 }
-html.theme-reveal::view-transition-old(root) {
-  animation: none;
+html.theme-reveal::view-transition-old(*),
+html.theme-reveal::view-transition-new(*) {
   mix-blend-mode: normal;
+}
+/* 锚点仅用于读取快照坐标，不显示图像，也不参与主题遮罩动画。 */
+html.theme-reveal::view-transition-group(theme-reveal-anchor) {
+  visibility: hidden;
+}
+html.theme-reveal::view-transition-old(theme-reveal-anchor),
+html.theme-reveal::view-transition-new(theme-reveal-anchor) {
+  animation: none !important;
+  mask-image: none !important;
+  clip-path: none !important;
+}
+
+/* 扩散动画（expand）：新视图位于顶层 (z-index: 2)，旧视图位于底层 (z-index: 1) 无动画 */
+html.theme-reveal[data-theme-reveal='expand']::view-transition-old(*) {
+  animation: none;
   z-index: 1;
 }
-html.theme-reveal::view-transition-new(root) {
-  animation: theme-reveal 450ms cubic-bezier(.2, .7, .2, 1) both;
-  mix-blend-mode: normal;
+html.theme-reveal[data-theme-reveal='expand']::view-transition-new(*) {
+  animation: theme-reveal-expand 400ms cubic-bezier(0.455, 0.03, 0.515, 0.955) both;
   z-index: 2;
 }
-@keyframes theme-reveal {
-  from { clip-path: circle(0px at var(--theme-reveal-origin)); }
-  to { clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin)); }
+
+/* 收缩动画（contract）：旧视图位于顶层 (z-index: 2)；新视图位于底层 (z-index: 1) 无动画 */
+html.theme-reveal[data-theme-reveal='contract']::view-transition-old(*) {
+  animation: theme-reveal-contract 400ms cubic-bezier(0.455, 0.03, 0.515, 0.955) both;
+  z-index: 2;
 }
+html.theme-reveal[data-theme-reveal='contract']::view-transition-new(*) {
+  animation: none;
+  z-index: 1;
+}
+
+/* 兜底圆形剪裁动画关键帧 */
+@keyframes theme-reveal-expand {
+  from {
+    clip-path: circle(0px at var(--theme-reveal-origin));
+  }
+  to {
+    clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin));
+  }
+}
+
+@keyframes theme-reveal-contract {
+  from {
+    clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin));
+  }
+  to {
+    clip-path: circle(0px at var(--theme-reveal-origin));
+  }
+}
+
+/* 柔和羽化遮罩（soft）：仅遮罩顶层活动快照，通过注册属性插值半径，底层快照无遮罩 */
+/* 收缩末帧的浮点误差可能产生微小负数，限制实际半径，避免渐变失效后露出整张旧快照。 */
+html.theme-reveal[data-theme-reveal-mask='soft'][data-theme-reveal='expand']::view-transition-new(*) {
+  clip-path: none;
+  -webkit-mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation-name: theme-reveal-expand-soft;
+}
+
+html.theme-reveal[data-theme-reveal-mask='soft'][data-theme-reveal='contract']::view-transition-old(*) {
+  clip-path: none;
+  -webkit-mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation-name: theme-reveal-contract-soft;
+}
+
+@keyframes theme-reveal-expand-soft {
+  from {
+    --theme-reveal-mask-radius: 0px;
+  }
+  to {
+    --theme-reveal-mask-radius: var(--theme-reveal-radius);
+  }
+}
+
+@keyframes theme-reveal-contract-soft {
+  from {
+    --theme-reveal-mask-radius: var(--theme-reveal-radius);
+  }
+  to {
+    --theme-reveal-mask-radius: 0px;
+  }
+}
+
+/* 登录背景独立成层，旧新点阵用同步的 CSS 背景替代静态快照。 */
+html.theme-reveal-pattern [data-theme-pattern] {
+  view-transition-name: auth-pattern;
+}
+html.theme-reveal-pattern [data-theme-foreground] {
+  view-transition-name: auth-foreground;
+}
+html.theme-reveal-pattern::view-transition-group(root) {
+  z-index: 0;
+}
+html.theme-reveal-pattern::view-transition-group(auth-pattern) {
+  z-index: 1;
+  -webkit-mask-image: var(--theme-pattern-mask);
+  mask-image: var(--theme-pattern-mask);
+}
+html.theme-reveal-pattern::view-transition-group(auth-foreground) {
+  z-index: 2;
+}
+html.theme-reveal-pattern::view-transition-image-pair(auth-pattern) {
+  isolation: auto;
+  --theme-reveal-origin: var(--theme-pattern-origin);
+}
+html.theme-reveal-pattern::view-transition-image-pair(auth-foreground) {
+  isolation: auto;
+  --theme-reveal-origin: var(--theme-foreground-origin);
+}
+/* 透明层保留互补遮罩以清除旧文字和亮点；使用普通混合，减少移动端加亮合成。
+   羽化处的透明部分由下方不透明的 root 快照承接。 */
+html.theme-reveal-pattern[data-theme-reveal='expand']::view-transition-old(auth-pattern),
+html.theme-reveal-pattern[data-theme-reveal='expand']::view-transition-old(auth-foreground),
+html.theme-reveal-pattern[data-theme-reveal='contract']::view-transition-new(auth-pattern),
+html.theme-reveal-pattern[data-theme-reveal='contract']::view-transition-new(auth-foreground) {
+  clip-path: none;
+  -webkit-mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), transparent 60%, #000 100%);
+  mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), transparent 60%, #000 100%);
+  animation: theme-reveal-expand-soft 400ms cubic-bezier(0.455, 0.03, 0.515, 0.955) both;
+}
+html.theme-reveal-pattern[data-theme-reveal='contract']::view-transition-new(auth-pattern),
+html.theme-reveal-pattern[data-theme-reveal='contract']::view-transition-new(auth-foreground) {
+  animation-name: theme-reveal-contract-soft;
+}
+html.theme-reveal-pattern::view-transition-old(auth-pattern),
+html.theme-reveal-pattern::view-transition-new(auth-pattern) {
+  /* 只移开快照图像，保留伪元素背景、主题遮罩及固定的椭圆渐隐。 */
+  object-position: 100000px 100000px;
+  background-size: var(--theme-pattern-size);
+  background-position: var(--theme-pattern-position);
+  background-repeat: repeat;
+  width: 100%;
+  height: 100%;
+}
+html.theme-reveal-pattern::view-transition-old(auth-pattern) {
+  background-image: var(--theme-pattern-old-image);
+}
+html.theme-reveal-pattern::view-transition-new(auth-pattern) {
+  background-image: var(--theme-pattern-new-image);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  body { transition: none; }
+  body {
+    transition: none;
+  }
+  html.theme-reveal::view-transition-group(*),
+  html.theme-reveal::view-transition-old(*),
+  html.theme-reveal::view-transition-new(*) {
+    animation: none !important;
+  }
 }
 
 /* Include the root scrollbar and use the same sizing in both themes. */

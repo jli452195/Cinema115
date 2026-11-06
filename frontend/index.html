@@ -2,17 +2,32 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Cinema115</title>
     <link rel="icon" type="image/svg+xml" href="/brand/cinema115-mark.svg">
     <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <meta name="description" content="影视资源与媒体自动化平台">
     <meta name="color-scheme" content="light dark">
-    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)">
-    <meta name="theme-color" content="#18191c" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#f8fafc">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <style id="theme-bootstrap-style">
+      html { background: #f8fafc; color-scheme: light; }
+      html.dark { background: #18191c; color-scheme: dark; }
+    </style>
+    <script>
+      // 主应用加载前恢复主题，避免已选择深色时先绘制浅色页面和系统栏。
+      (() => {
+        let theme = 'system'
+        try { theme = localStorage.getItem('cinema115-theme') || 'system' } catch {}
+        const dark = theme === 'dark' || (theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.classList.toggle('dark', dark)
+        for (const meta of document.querySelectorAll('meta[name="theme-color"]')) {
+          meta.content = dark ? '#18191c' : '#f8fafc'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

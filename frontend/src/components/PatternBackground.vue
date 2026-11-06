@@ -26,7 +26,7 @@ interface Props {
   size?: 'sm' | 'md' | 'lg' | 'xl' | number
   /** 遮罩样式：'ellipse' 为边缘柔和渐隐，'none' 为全铺无渐隐 */
   mask?: 'ellipse' | 'none'
-  /** 动效循环时长（毫秒），默认 17000ms */
+  /** 动效循环时长（毫秒），默认 40000ms */
   speed?: number
   /** 圆点半径（px），默认 1px */
   dotRadius?: number
@@ -105,7 +105,7 @@ const canvasStyle = computed(() => {
 </script>
 
 <template>
-  <div class="pattern-bg-wrapper" aria-hidden="true" tabindex="-1">
+  <div class="pattern-bg-wrapper" data-theme-pattern aria-hidden="true" tabindex="-1">
     <div
       class="pattern-bg-canvas"
       :class="[

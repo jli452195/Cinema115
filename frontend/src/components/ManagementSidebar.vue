@@ -89,16 +89,16 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 
 <style scoped>
 .management-sidebar { position: fixed; z-index: 45; inset: 0 auto 0 0; display: flex; width: var(--management-sidebar-width); height: 100dvh; min-height: 0; flex-direction: column; border-right: 1px solid rgb(var(--color-slate-200) / calc(0.6 * var(--management-sidebar-progress))); background: rgb(241 244 249 / var(--management-sidebar-progress)); padding-bottom: env(safe-area-inset-bottom, 0px); }
-.management-sidebar-brand { position: relative; display: grid; width: 100%; min-width: 0; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-items: start; padding: 0 14px; }
+.management-sidebar-brand { position: relative; display: grid; width: 100%; min-width: 0; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-items: start; padding: var(--app-safe-top) 14px 0; }
 .management-sidebar-home { display: inline-flex; min-height: 44px; align-items: center; border-radius: 10px; }
 .management-sidebar-home:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
 .management-brand-toggle { display: inline-flex; min-width: 0; min-height: 44px; align-items: center; border-radius: 10px; cursor: pointer; }
 .management-brand-toggle:focus-visible { outline: 2px solid #78a2db; outline-offset: 2px; }
-.management-drawer-heading { display: flex; min-height: var(--workbench-header-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 16px; }
+.management-drawer-heading { display: flex; min-height: var(--workbench-toolbar-height); flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 16px; }
 .management-sidebar-control { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 10px; color: rgb(var(--color-slate-500)); cursor: pointer; }.management-sidebar-control svg { width: 19px; height: 19px; }.management-sidebar-control:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
-.management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }
+.management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: var(--app-safe-top) max(4px, var(--app-safe-right)) var(--app-safe-bottom) max(4px, var(--app-safe-left)); }
 .management-sidebar-footer { display: flex; height: 36px; min-width: 0; flex-shrink: 0; margin-top: auto; align-items: center; padding: 0 16px; overflow: hidden; }
 .management-sidebar.is-collapsed .management-sidebar-footer { display: none; }
 .dark .management-sidebar { background: rgb(29 32 37 / var(--management-sidebar-progress)); border-color: rgb(var(--color-slate-700) / calc(0.55 * var(--management-sidebar-progress))); }
