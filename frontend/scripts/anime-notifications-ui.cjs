@@ -13,11 +13,12 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   const defaultTemplate = '{icon} <b>动漫订阅 · {event}</b>\n\n<b>{title}</b>\n🎞 集数：{episode}\n🏷 字幕组：{group}\n\n<blockquote>{resource}</blockquote>\n\n📁 <code>{path}</code>\n🕒 {time}'
   let settings = { revision: 1, botId: '', downloadComplete: false, organized: true, failed: true, template: '', imageMode: 'cover', imageUrl: '' }, conflict = false, writes = 0, legacyBackend = false, legacyPreview = false
   const samplePhoto = 'https://images.example.com/covers/anime.jpg'
-  await page.route('https://images.example.com/**', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="260"><rect width="420" height="260" fill="#dbeafe"/><rect x="30" y="30" width="360" height="200" rx="16" fill="#bfdbfe"/><text x="210" y="140" text-anchor="middle" font-size="24" fill="#1e40af">Anime Cover</text></svg>' }))
+  await page.route('https://images.example.com/**', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="420" height="600"><rect width="420" height="600" fill="#dbeafe"/><rect x="30" y="30" width="360" height="540" rx="16" fill="#bfdbfe"/><text x="210" y="300" text-anchor="middle" font-size="24" fill="#1e40af">Anime Cover</text></svg>' }))
   const bot = { id: 'anime-bot', name: '追番 Bot', configured: true, enabled: true, allowedChatIDs: '42', notificationChatID: '-10042', revision: 1, connected: true, identity: { id: 123, first_name: '追番', username: 'anime_bot' } }
   const values = { icon: '✅', event: '整理完成', title: '葬送的芙莉莲', episode: '第 07 集', group: '示例字幕组', resource: '[示例字幕组] 葬送的芙莉莲 - 07 [1080p]', path: '/动漫/葬送的芙莉莲/Season 01', time: '2026-11-05 20:30:00 +08:00' }
   const html = (template, event = 'organized') => (template || defaultTemplate).replace(/\{([a-z_]+)\}/g, (_, key) => key === 'event' ? { organized: '整理完成', downloaded: '下载完成', failed: '异常提醒' }[event] : values[key] || '示例')
-  const config = () => ({ settings, defaultTemplate, maxTemplateLength: 2800, variables: [{ name: 'title', label: '动漫名称' }, { name: 'episode', label: '发布集数' }], preview: { html: html(settings.template), photoUrl: settings.imageMode === 'none' ? '' : settings.imageMode === 'custom' ? settings.imageUrl : samplePhoto } })
+  const variables = Object.entries({ icon: '状态图标', event: '事件名称', title: '动漫名称', episode: '发布集数', group: '字幕组', provider: '资源站点', resource: '资源名称', path: '下载或整理目录', reason: '状态说明', time: '发生时间（北京时间）', job_id: '任务编号' }).map(([name, label]) => ({ name, label }))
+  const config = () => ({ settings, defaultTemplate, maxTemplateLength: 2800, variables, preview: { html: html(settings.template), photoUrl: settings.imageMode === 'none' ? '' : settings.imageMode === 'custom' ? settings.imageUrl : samplePhoto } })
   await page.route('**/api/**', async route => {
     const request = route.request(), endpoint = new URL(request.url()).pathname, method = request.method()
     calls.push({ endpoint, method })
@@ -94,12 +95,70 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(new URL(page.url()).pathname, '/anime/settings')
     await save.click(); await panel.getByText('通知设置已保存', { exact: true }).waitFor()
     await fs.mkdir('test-results', { recursive: true })
-    for (const width of [1440, 390, 320]) {
-      await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 })
+    await page.evaluate(() => window.scrollTo({ top: 300, behavior: 'instant' }))
+    await page.setViewportSize({ width: 320, height: 1000 })
+    await page.waitForFunction(() => {
+      const nav = document.querySelector('.ars-tabs'), active = nav.querySelector('[aria-current="page"]').getBoundingClientRect(), box = nav.getBoundingClientRect()
+      return active.left >= box.left - 1 && active.right <= box.right + 1
+    })
+    assert.ok(Math.abs(await page.evaluate(() => scrollY) - 300) < 2, '分类栏适配宽度时不应改变页面纵向滚动位置')
+    const layouts = []
+    const saveIsReachable = () => save.evaluate(button => {
+      const box = button.getBoundingClientRect()
+      const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+      return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth && (hit === button || button.contains(hit))
+    })
+    for (const width of [2560, 1920, 1440, 1024, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: width >= 1024 ? 1080 : 844 })
+      await page.waitForFunction(() => document.querySelector('.management-layout').classList.contains('has-management-sidebar') === (innerWidth >= 1024))
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
       for (const dark of [false, true]) {
         await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+        assert.equal(await saveIsReachable(), true, `首屏应可直接保存 ${width}`)
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `页面溢出 ${width}`)
+        assert.equal(await page.locator('.ars-tabs').evaluate(nav => {
+          const box = nav.getBoundingClientRect(), active = nav.querySelector('[aria-current="page"]').getBoundingClientRect()
+          return active.left >= box.left - 1 && active.right <= box.right + 1
+        }), true, `当前分类应滚入可见范围 ${width}`)
+        const layout = await panel.evaluate(panel => {
+          const rect = selector => {
+            const box = panel.querySelector(selector).getBoundingClientRect()
+            return { x: box.x, y: box.y + scrollY, right: box.right, width: box.width, bottom: box.bottom + scrollY }
+          }
+          const toolbar = rect('.ant-variables'), image = panel.querySelector('.ant-photo')
+          return {
+            panel: panel.getBoundingClientRect().width,
+            editor: rect('.ant-editor-pane'), preview: rect('.ant-preview-pane'),
+            variablesFit: [...panel.querySelectorAll('.ant-variables button')].every(button => {
+              const box = button.getBoundingClientRect()
+              return box.x >= toolbar.x && box.right <= toolbar.right + 1
+            }),
+            imageLoaded: image.complete && image.naturalHeight > image.naturalWidth,
+            imageFit: getComputedStyle(image).objectFit,
+          }
+        })
+        assert.equal(layout.variablesFit, true, `变量按钮溢出 ${width}`)
+        assert.equal(layout.imageLoaded, true, `竖版封面未加载 ${width}`)
+        assert.equal(layout.imageFit, 'contain', `竖版封面裁切 ${width}`)
+        if (width >= 1920) {
+          assert.ok(layout.panel > 1100, `宽屏通知面板未充分展开 ${width}`)
+          assert.ok(layout.editor.width > 500 && layout.preview.width > 400, `编辑或预览过窄 ${width}`)
+          assert.ok(Math.abs(layout.editor.y - layout.preview.y) < 2, `编辑与预览未并排 ${width}`)
+          assert.ok(layout.editor.y < 700, `模板区域仍然过低 ${width}`)
+        } else if (width <= 768) {
+          assert.ok(layout.preview.y >= layout.editor.bottom, `窄屏编辑与预览未上下排列 ${width}`)
+        }
+        if (!dark) layouts.push({ width, panel: Math.round(layout.panel), editor: Math.round(layout.editor.width), preview: Math.round(layout.preview.width), templateTop: Math.round(layout.editor.y) })
         await page.screenshot({ path: `test-results/anime-notifications-${width}-${dark ? 'dark' : 'light'}.png`, fullPage: true })
+        for (const position of ['editor', 'bottom']) {
+          await page.evaluate(position => {
+            const top = position === 'editor' ? document.querySelector('.ant-editor-pane').getBoundingClientRect().top + scrollY - 100 : document.documentElement.scrollHeight
+            window.scrollTo({ top, behavior: 'instant' })
+          }, position)
+          assert.equal(await saveIsReachable(), true, `编辑及预览区域应可直接保存 ${width} ${position}`)
+          if (!dark && position === 'editor' && [1440, 390].includes(width)) await page.screenshot({ path: `test-results/anime-notifications-save-${width}.png` })
+        }
+        await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
       }
     }
     await page.setViewportSize({ width: 1440, height: 1000 })
@@ -122,6 +181,6 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await panel.getByRole('button', { name: '重新读取通知设置', exact: true }).click()
     await panel.locator('.ant-bubble').waitFor()
     assert.deepEqual(errors, [])
-    console.log(JSON.stringify({ passed: ['Bot 与事件设置保存', '自动封面、自定义图片、纯文字及无效图片地址', '三种事件预览与变量插入', '无效模板禁止保存', '并发冲突保留输入并重读版本', '切换设置保留草稿且离开需确认', '1440/390/320 深浅主题无溢出', 'Bot 模块直达模板', '预览移除可执行 HTML', '旧后台与旧预览接口明确提示更新且禁止保存'], writes, apiCalls: calls.length, errors }, null, 2))
+    console.log(JSON.stringify({ passed: ['Bot 与事件设置保存', '自动封面、自定义图片、纯文字及无效图片地址', '三种事件预览与变量插入', '无效模板禁止保存', '并发冲突保留输入并重读版本', '切换设置保留草稿且离开需确认', '320 至 2560px 深浅主题无溢出，完整变量折行，竖版封面不裁切', '首屏、编辑区及底部保存按钮可见且未被遮挡', '宽屏编辑预览并排展开，窄屏上下排列', 'Bot 模块直达模板', '预览移除可执行 HTML', '旧后台与旧预览接口明确提示更新且禁止保存'], layouts, writes, apiCalls: calls.length, errors }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

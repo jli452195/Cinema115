@@ -74,6 +74,27 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(calls.filter(c => c.endpoint.includes('/cloud-download')).length, 0)
     await page.screenshot({ path: 'test-results/anime-settings-desktop.png' })
     passed.push('独立设置页按需读取本地配置，保留选番返回位置，初始零115请求')
+    const categories = page.getByRole('navigation', { name: '动漫设置分类' })
+    const categoryLayout = await categories.evaluate(nav => {
+      const box = nav.getBoundingClientRect(), panel = document.querySelector('.ars-panel').getBoundingClientRect()
+      const buttons = [...nav.querySelectorAll('button')].map(button => button.getBoundingClientRect())
+      return { width: box.width, bottom: box.bottom, panelTop: panel.top, sameRow: buttons.every(button => Math.abs(button.top - buttons[0].top) < 1) }
+    })
+    assert.ok(categoryLayout.width > 1000 && categoryLayout.bottom <= categoryLayout.panelTop, '分类栏应在内容上方通栏显示')
+    assert.equal(categoryLayout.sameRow, true, '桌面分类应保持横向一行')
+    await categories.getByRole('button', { name: 'RSS 设置', exact: true }).focus()
+    await page.keyboard.press('ArrowRight')
+    assert.equal(await categories.getByRole('button', { name: '下载与整理', exact: true }).evaluate(button => button === document.activeElement), true)
+    await page.keyboard.press('Home')
+    assert.equal(await categories.getByRole('button', { name: 'RSS 设置', exact: true }).evaluate(button => button === document.activeElement), true)
+    await toRSS()
+    await categories.getByRole('button', { name: '下载与整理', exact: true }).focus()
+    await page.keyboard.press('Home')
+    assert.equal(await categories.getByRole('button', { name: 'RSS 设置', exact: true }).evaluate(button => button === document.activeElement), true, '当前已选 RSS 时 Home 也应从其他分类移回焦点')
+    await categories.getByRole('button', { name: '下载与整理', exact: true }).focus()
+    await page.keyboard.press('ArrowLeft')
+    assert.equal(await categories.getByRole('button', { name: 'RSS 设置', exact: true }).evaluate(button => button === document.activeElement), true, '方向键应从实际焦点计算相邻分类')
+    passed.push('分类栏置顶横排，方向键与 Home 可移动焦点')
     await minutes.fill('9'); assert.equal(await save.isDisabled(), true)
     await minutes.fill('1441'); assert.equal(await save.isDisabled(), true)
     await minutes.fill('abc'); assert.equal(await save.isDisabled(), true)
@@ -134,11 +155,15 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await storage.getByText('模拟配置读取失败', { exact: true }).waitFor(); state.failRead = false
     await storage.getByRole('button', { name: '重新读取设置' }).click(); await storage.locator('.storage-directory').first().waitFor()
     passed.push('缺主账号不回退，换号要求先选下载目录，本地目录配置读取失败可重试')
-    for (const width of [320, 390]) {
+    for (const width of [1920, 1440, 1280, 1100, 1024, 768, 390, 320]) {
       await page.setViewportSize({ width, height: 844 })
       for (const dark of [false, true]) {
         await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
         await toRSS(); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+        assert.equal(await categories.evaluate(nav => {
+          const buttons = [...nav.querySelectorAll('button')].map(button => button.getBoundingClientRect())
+          return buttons.every(button => Math.abs(button.top - buttons[0].top) < 1) && nav.getBoundingClientRect().height < 70
+        }), true, `分类栏应保持单行 ${width}`)
         assert.equal(await minutes.evaluate(el => el.getBoundingClientRect().width), 82)
         assert.equal(await page.getByRole('heading', { level: 1, name: '动漫订阅设置' }).evaluate(el => el.getBoundingClientRect().height < 40), true)
         await page.screenshot({ path: `test-results/anime-settings-${width}-${dark ? 'dark' : 'light'}.png`, fullPage: true })
@@ -150,7 +175,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     assert.equal(await storage.locator('.storage-path').first().evaluate(el => getComputedStyle(el).color), 'rgb(226, 232, 240)')
     await page.screenshot({ path: 'test-results/anime-settings-storage-dark.png', fullPage: true })
-    passed.push('320px与390px深浅主题无横向溢出，输入尺寸固定，长目录折行且文字可读')
+    passed.push('320 至 1920px 深浅主题分类栏保持单行且页面无横向溢出，输入尺寸固定，长目录折行且文字可读')
     await toRSS(); await minutes.fill('90')
     let release; state.gate = new Promise(resolve => { release = resolve }); await save.click()
     assert.equal(await rssPanel.getByRole('button', { name: '保存中…', exact: true }).isDisabled(), true); assert.equal(await minutes.isDisabled(), true)

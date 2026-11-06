@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import '../styles/auth.css'
 import CinemaLogo from './CinemaLogo.vue'
+import PatternBackground from './PatternBackground.vue'
 
-defineProps<{ subtitle: string }>()
+withDefaults(defineProps<{
+  subtitle: string
+  /** 登录与注册共用点阵动效背景，可按页面单独关闭 */
+  patternBackground?: boolean
+}>(), {
+  patternBackground: true,
+})
 </script>
 
 <template>
   <main class="auth-page">
+    <PatternBackground v-if="patternBackground" />
     <div class="auth-content">
       <header class="auth-brand">
         <div class="auth-brand-name">

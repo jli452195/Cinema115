@@ -13,6 +13,8 @@
   --auth-success-bg: #ecfdf5;
   --auth-warning: #92400e;
   --auth-warning-bg: #fffbeb;
+  --auth-pattern-dot: rgb(148 163 184 / 45%);
+  position: relative;
   display: flex;
   min-height: 100vh;
   min-height: 100svh;
@@ -34,8 +36,9 @@
   --auth-success-bg: #152e26;
   --auth-warning: #fcd34d;
   --auth-warning-bg: #302719;
+  --auth-pattern-dot: rgb(148 163 184 / 18%);
 }
-.auth-content { width: 100%; max-width: 440px; margin: auto; min-width: 0; }
+.auth-content { position: relative; z-index: 1; width: 100%; max-width: 440px; margin: auto; min-width: 0; }
 .auth-brand { margin-bottom: 28px; text-align: center; }
 .auth-brand-name { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .auth-brand h1 { font-size: 28px; font-weight: 650; letter-spacing: -.8px; line-height: 1.2; }
