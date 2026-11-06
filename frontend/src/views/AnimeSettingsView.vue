@@ -396,10 +396,13 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 22px rgb(15 23 42 / 0.04);
 }
 
-/* 通知工作台释放全宽，吃满 1600px 主容器全部空间 */
+/* 通知工作台去除外层面板包裹，让左侧表单与右侧仿真预览直接呈现在页面底色上 */
 .ars-panel--wide {
   max-width: 100%;
-  padding: 24px 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .ars-panel-constrained {
@@ -663,6 +666,11 @@ onBeforeUnmount(() => {
 }
 
 .dark .ars-settings {
+  /* 设置页跟随全站中性深色主题，覆盖动漫编辑器的独立蓝灰色板。 */
+  --ae-surface: rgb(var(--surface-card));
+  --ae-inset: rgb(var(--surface-elevated));
+  --ae-ink: rgb(var(--content-primary));
+  --ae-muted: rgb(var(--content-secondary));
   --ae-blue: #93c5fd;
 }
 
@@ -691,10 +699,12 @@ onBeforeUnmount(() => {
     padding: 4px 8px;
     font-size: 11.5px;
   }
-  .ars-panel,
-  .ars-panel--wide {
+  .ars-panel {
     padding: 18px 16px;
     border-radius: 14px;
+  }
+  .ars-panel--wide {
+    padding: 0;
   }
   .ars-row {
     flex-wrap: wrap;

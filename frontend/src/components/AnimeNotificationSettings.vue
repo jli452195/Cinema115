@@ -2,7 +2,7 @@
 import SelectMenu from './SelectMenu.vue'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { IconBell, IconBrandTelegram, IconCheck, IconCode, IconEye, IconPhoto, IconRefresh } from '@tabler/icons-vue'
+import { IconBrandTelegram, IconCheck, IconCode, IconEye, IconPhoto, IconRefresh } from '@tabler/icons-vue'
 import P115ActionDialog from './P115ActionDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import type { TelegramBotConfig } from '../types/telegramBots'
@@ -14,6 +14,9 @@ const config = ref<AnimeNotificationConfig>(), settings = ref<AnimeNotificationS
 const template = ref(''), baseline = ref(''), loading = ref(false), saving = ref(false), readError = ref(''), error = ref(''), notice = ref('')
 const previewKind = ref<AnimeNotificationKind>('organized'), previewHTML = ref(''), previewError = ref(''), previewing = ref(false)
 const previewPhoto = ref(''), photoFailed = ref(false)
+const photoLoading = ref(false), previewResolved = ref(false)
+// 首次响应前预留配图空间，后续刷新保留上一版已完成的消息。
+const showPreviewPhoto = computed(() => previewResolved.value ? !!previewPhoto.value : settings.value?.imageMode !== 'none')
 const editor = ref<HTMLTextAreaElement>(), discard = ref(false)
 const lifecycle = new AbortController()
 let previewController: AbortController | undefined, previewTimer: ReturnType<typeof setTimeout> | undefined, previewGeneration = 0
@@ -75,7 +78,7 @@ async function load() {
 }
 
 async function save() {
-  if (!settings.value || !config.value || saving.value || !dirty.value) return
+  if (!settings.value || !config.value || loading.value || saving.value || !dirty.value || previewing.value || previewError.value) return
   saving.value = true; error.value = ''; notice.value = ''
   try {
     const body = { ...settings.value, template: template.value === config.value.defaultTemplate ? '' : template.value }
@@ -104,7 +107,7 @@ async function readLatestRevision() {
 async function preview() {
   const current = ++previewGeneration
   previewController?.abort(); previewController = new AbortController()
-  previewing.value = true; previewError.value = ''; previewHTML.value = ''; previewPhoto.value = ''; photoFailed.value = false
+  previewing.value = true; previewError.value = ''
   try {
     const result = await telegramRequest<{ html: string; photoUrl: string }>(props.token, 'anime-notifications/preview', {
       method: 'POST', body: JSON.stringify({ template: template.value, event: previewKind.value, imageMode: settings.value?.imageMode || 'cover', imageUrl: settings.value?.imageUrl || '' }),
@@ -112,7 +115,12 @@ async function preview() {
     })
     if (current === previewGeneration && !lifecycle.signal.aborted) {
       if (typeof result.photoUrl !== 'string') throw new Error('后台尚未提供图片预览，请更新并重启后端。')
+      if (result.photoUrl !== previewPhoto.value) {
+        photoFailed.value = false
+        photoLoading.value = !!result.photoUrl
+      }
       previewHTML.value = safePreview(result.html); previewPhoto.value = result.photoUrl
+      previewResolved.value = true
     }
   } catch (reason) { if (current === previewGeneration && !lifecycle.signal.aborted) previewError.value = reason instanceof Error ? reason.message : '模板无法预览' }
   finally { if (current === previewGeneration) previewing.value = false }
@@ -134,8 +142,9 @@ onBeforeRouteLeave(() => {
   return new Promise<boolean>(resolve => { leaveDecision?.(false); leaveDecision = resolve })
 })
 watch([template, previewKind, () => settings.value?.imageMode, () => settings.value?.imageUrl], () => {
-  clearTimeout(previewTimer); previewController?.abort(); previewGeneration++; previewHTML.value = ''; previewError.value = ''; previewPhoto.value = ''
-  if (config.value) { previewing.value = true; previewTimer = setTimeout(() => { void preview() }, 350) }
+  clearTimeout(previewTimer); previewController?.abort(); previewGeneration++; previewError.value = ''
+  // 输入立即更新，只对预览请求做防抖，避免光标延迟和预览反复清空。
+  if (config.value && !lifecycle.signal.aborted) { previewing.value = true; previewTimer = setTimeout(() => { void preview() }, 150) }
 })
 watch(dirty, value => emit('dirty', value), { immediate: true })
 watch(saving, value => emit('blocked', value), { immediate: true })
@@ -146,25 +155,6 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
 
 <template>
   <div class="ant-settings" :aria-busy="loading || saving">
-    <!-- 顶部标题栏：紧凑排布 + 状态徽章 -->
-    <header class="ant-heading">
-      <div class="ant-heading-main">
-        <div class="ant-heading-icon">
-          <IconBell :size="20" aria-hidden="true" />
-        </div>
-        <div>
-          <h2>Telegram 通知</h2>
-          <p>把追番进度送到聊天，按自己的喜好调整消息。</p>
-        </div>
-      </div>
-      <div v-if="settings && config" class="ant-heading-status">
-        <span class="ant-status-pill" :class="{ 'is-dirty': dirty }">
-          <span class="ant-status-dot" aria-hidden="true"></span>
-          {{ dirty ? '有未保存的修改' : '当前配置已保存' }}
-        </span>
-      </div>
-    </header>
-
     <p v-if="loading && !config" class="ant-muted ant-loading-state" role="status">
       正在读取通知配置…
     </p>
@@ -177,126 +167,128 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
     </div>
 
     <form v-if="settings && config" @submit.prevent="save">
-      <fieldset :disabled="saving || loading" class="ant-form">
-        <!-- 第一层：推送目标 & 通知图片 双栏并排卡片 -->
-        <div class="ant-top-grid">
-          <!-- 左卡：推送 Bot -->
-          <div class="ant-card ant-destination">
-            <div class="ant-card-header">
-              <label class="ant-label" for="anime-notification-bot">
-                <IconBrandTelegram :size="16" aria-hidden="true" />
-                推送 Bot
-              </label>
-              <RouterLink to="/telegram/bot" class="ant-text-link">管理 Bot</RouterLink>
+      <div class="ant-workspace">
+        <!-- 左侧：统一配置表单卡片 (约 60%) -->
+        <div class="ant-config-card">
+          <fieldset :disabled="saving || loading" class="ant-form-fields">
+            <!-- 分组 1：推送 Bot 与通知配图模式 -->
+            <div class="ant-section">
+              <div class="ant-section-grid">
+                <!-- 推送 Bot -->
+                <div class="ant-field-group">
+                  <div class="ant-field-header">
+                    <label class="ant-label" for="anime-notification-bot">
+                      <IconBrandTelegram :size="16" aria-hidden="true" />
+                      推送 Bot
+                    </label>
+                    <RouterLink to="/telegram/bot" class="ant-text-link">管理 Bot</RouterLink>
+                  </div>
+                  <SelectMenu
+                    id="anime-notification-bot"
+                    v-model="settings.botId"
+                    label="推送 Bot"
+                    class="mt-1.5 mb-1.5 w-full"
+                    :options="[
+                      { value: '', label: '关闭动漫订阅通知' },
+                      ...(settings.botId && !selectedBot
+                        ? [{ value: settings.botId, label: '原配置已删除', disabled: true }]
+                        : []),
+                      ...bots.map(bot => ({
+                        value: bot.id,
+                        label:
+                          bot.name +
+                          (!bot.configured
+                            ? '（未配置 Token）'
+                            : !bot.enabled
+                              ? '（已停用）'
+                              : !bot.notificationChatID
+                                ? '（缺少通知聊天）'
+                                : ''),
+                      })),
+                    ]"
+                  />
+                  <p class="ant-muted ant-field-hint">{{ botHint }}</p>
+                </div>
+
+                <!-- 通知配图模式 -->
+                <div class="ant-field-group">
+                  <div class="ant-field-header">
+                    <h3 class="ant-label">
+                      <IconPhoto :size="16" aria-hidden="true" />
+                      通知配图模式
+                    </h3>
+                    <span class="ant-badge">上限 1024 字同发</span>
+                  </div>
+                  <label class="sr-only" for="anime-notification-image-mode">通知图片</label>
+                  <SelectMenu
+                    id="anime-notification-image-mode"
+                    v-model="settings.imageMode"
+                    label="通知图片"
+                    class="mt-1.5 mb-1.5 w-full"
+                    :options="[
+                      { value: 'cover', label: '自动附带动漫封面' },
+                      { value: 'custom', label: '使用自定义图片 URL' },
+                      { value: 'none', label: '仅发送纯文字' },
+                    ]"
+                  />
+                  <div v-if="settings.imageMode === 'custom'" class="ant-custom-url">
+                    <label class="sr-only" for="anime-notification-image-url">图片 URL</label>
+                    <input
+                      id="anime-notification-image-url"
+                      v-model="settings.imageUrl"
+                      type="url"
+                      maxlength="2048"
+                      placeholder="https://example.com/anime-banner.jpg (需公网可访问)"
+                      :required="settings.imageMode === 'custom'"
+                    />
+                  </div>
+                  <p class="ant-muted ant-field-hint">
+                    {{
+                      settings.imageMode === 'cover'
+                        ? '优先使用订阅动漫封面，无封面时自动退回纯文字。'
+                        : settings.imageMode === 'custom'
+                          ? '请填写 Telegram 服务器可访问的公开 HTTP/HTTPS 图片直链。'
+                          : '不附带任何图片，仅以纯文字消息推送模板内容。'
+                    }}
+                    文案超 1024 字符时图片与长文将分两条发送。
+                  </p>
+                </div>
+              </div>
             </div>
-            <SelectMenu
-              id="anime-notification-bot"
-              v-model="settings.botId"
-              label="推送 Bot"
-              class="mt-1.5 mb-1.5 w-full"
-              :options="[
-                { value: '', label: '关闭动漫订阅通知' },
-                ...(settings.botId && !selectedBot
-                  ? [{ value: settings.botId, label: '原配置已删除', disabled: true }]
-                  : []),
-                ...bots.map(bot => ({
-                  value: bot.id,
-                  label:
-                    bot.name +
-                    (!bot.configured
-                      ? '（未配置 Token）'
-                      : !bot.enabled
-                        ? '（已停用）'
-                        : !bot.notificationChatID
-                          ? '（缺少通知聊天）'
-                          : ''),
-                })),
-              ]"
-            />
-            <p class="ant-muted ant-card-hint">{{ botHint }}</p>
-          </div>
 
-          <!-- 右卡：通知图片策略 -->
-          <div class="ant-card ant-image-settings">
-            <div class="ant-card-header">
-              <h3 class="ant-label">
-                <IconPhoto :size="16" aria-hidden="true" />
-                通知配图模式
-              </h3>
-              <span class="ant-badge">上限 1024 字同发</span>
+            <!-- 分组 2：触发通知事件 -->
+            <div class="ant-section ant-section--divided">
+              <div class="ant-events-header">
+                <h3 class="ant-label">触发通知事件</h3>
+                <details class="ant-policy-details">
+                  <summary>防骚扰与异常复核机制</summary>
+                  <p>
+                    默认仅推送「整理完成」和「异常提醒」，避免每集重复打扰。初始化与等待结果不报警；临时错误连续失败至少 3 次且持续 5 分钟才提醒，需人工处理的已确认失败及时提醒。发送前会自动复核，已恢复的异常不再发送。仅对保存后新发生的事件生效。
+                  </p>
+                </details>
+              </div>
+
+              <div class="ant-events">
+                <label
+                  v-for="event in events"
+                  :key="event.key"
+                  class="ant-event"
+                  :class="{ 'is-selected': settings[event.key] }"
+                >
+                  <input v-model="settings[event.key]" type="checkbox" />
+                  <span class="ant-event-body">
+                    <strong>{{ event.title }}</strong>
+                    <small>{{ event.description }}</small>
+                  </span>
+                  <span class="ant-event-check" aria-hidden="true">
+                    <IconCheck v-if="settings[event.key]" :size="14" />
+                  </span>
+                </label>
+              </div>
             </div>
-            <label class="sr-only" for="anime-notification-image-mode">通知图片</label>
-            <SelectMenu
-              id="anime-notification-image-mode"
-              v-model="settings.imageMode"
-              label="通知图片"
-              class="mt-1.5 mb-1.5 w-full"
-              :options="[
-                { value: 'cover', label: '自动附带动漫封面' },
-                { value: 'custom', label: '使用自定义图片 URL' },
-                { value: 'none', label: '仅发送纯文字' },
-              ]"
-            />
-            <div v-if="settings.imageMode === 'custom'" class="ant-custom-url">
-              <label class="sr-only" for="anime-notification-image-url">图片 URL</label>
-              <input
-                id="anime-notification-image-url"
-                v-model="settings.imageUrl"
-                type="url"
-                maxlength="2048"
-                placeholder="https://example.com/anime-banner.jpg (需公网可访问)"
-                :required="settings.imageMode === 'custom'"
-              />
-            </div>
-            <p class="ant-muted ant-card-hint">
-              {{
-                settings.imageMode === 'cover'
-                  ? '优先使用订阅动漫封面，无封面时自动退回纯文字。'
-                  : settings.imageMode === 'custom'
-                    ? '请填写 Telegram 服务器可访问的公开 HTTP/HTTPS 图片直链。'
-                    : '不附带任何图片，仅以纯文字消息推送模板内容。'
-              }}
-              文案超 1024 字符时图片与长文将分两条发送。
-            </p>
-          </div>
-        </div>
 
-        <!-- 第二层：通知事件触发器（紧凑三列 + 折叠说明） -->
-        <div class="ant-events-section">
-          <div class="ant-events-header">
-            <h3 class="ant-label">触发通知事件</h3>
-            <details class="ant-policy-details">
-              <summary>防骚扰与异常复核机制</summary>
-              <p>
-                默认仅推送「整理完成」和「异常提醒」，避免每集重复打扰。初始化与等待结果不报警；临时错误连续失败至少 3 次且持续 5 分钟才提醒，需人工处理的已确认失败及时提醒。发送前会自动复核，已恢复的异常不再发送。仅对保存后新发生的事件生效。
-              </p>
-            </details>
-          </div>
-
-          <div class="ant-events">
-            <label
-              v-for="event in events"
-              :key="event.key"
-              class="ant-event"
-              :class="{ 'is-selected': settings[event.key] }"
-            >
-              <input v-model="settings[event.key]" type="checkbox" />
-              <span class="ant-event-body">
-                <strong>{{ event.title }}</strong>
-                <small>{{ event.description }}</small>
-              </span>
-              <span class="ant-event-check" aria-hidden="true">
-                <IconCheck v-if="settings[event.key]" :size="14" />
-              </span>
-            </label>
-          </div>
-        </div>
-
-        <!-- 第三层：消息模板与实时预览双栏工作台 -->
-        <div class="ant-workbench">
-          <div class="ant-composer">
-            <!-- 左侧：模板编辑器（含前置变量工具栏） -->
-            <div class="ant-editor-pane">
+            <!-- 分组 3：消息模板与变量 -->
+            <div class="ant-section ant-section--divided ant-editor-pane">
               <div class="ant-pane-header">
                 <div class="ant-pane-title">
                   <h3 class="ant-label">
@@ -338,7 +330,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
                   id="anime-notification-template"
                   ref="editor"
                   v-model="template"
-                  rows="14"
+                  rows="13"
                   :maxlength="templateLimit"
                   spellcheck="false"
                   aria-describedby="anime-template-help"
@@ -365,120 +357,127 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
                 </div>
               </div>
             </div>
+          </fieldset>
 
-            <!-- 右侧：Telegram 实时仿真预览窗 -->
-            <div class="ant-preview-pane">
-              <div class="ant-pane-header">
-                <span class="ant-label">
-                  <IconEye :size="16" aria-hidden="true" />
-                  消息预览
-                </span>
-                <div class="ant-preview-SimControl">
-                  <SelectMenu
-                    v-model="previewKind"
-                    label="预览通知事件"
-                    class="min-w-[120px] max-w-40"
-                    :options="previewKinds"
-                  />
+          <!-- 反馈提示横幅：移至 fieldset 外，避免保存失败后重试按钮被整组禁用 -->
+          <div
+            v-if="error || notice"
+            class="ant-bar-feedback"
+            :class="{ 'is-error': !!error, 'is-notice': !!notice }"
+            role="status"
+            aria-live="polite"
+          >
+            <div class="ant-bar-feedback-text">
+              <p v-if="error" class="ant-error">{{ error }} 输入已保留，可调整后重试。</p>
+              <p v-else-if="notice" class="ant-notice">{{ notice }}</p>
+            </div>
+            <button
+              v-if="error"
+              type="button"
+              class="ae-button ant-bar-retry-btn"
+              :disabled="loading || saving"
+              @click="readLatestRevision"
+            >
+              读取最新版本，保留输入
+            </button>
+          </div>
+
+          <!-- 分组 4：保存与状态（对应 .ars-footer 风格） -->
+          <footer class="ant-footer">
+            <div class="ant-footer-status">
+              <span class="ant-status-pill" :class="{ 'is-dirty': dirty }">
+                <span class="ant-status-dot" aria-hidden="true"></span>
+                {{ dirty ? '有未保存的修改' : '当前配置已保存' }}
+              </span>
+              <span v-if="previewError" class="ant-footer-warning">
+                模板预览异常，请修正后再保存
+              </span>
+            </div>
+
+            <div class="ant-footer-actions">
+              <button
+                type="submit"
+                class="ae-button ae-primary ant-save-btn"
+                :disabled="loading || saving || !dirty || !!previewError || previewing"
+              >
+                {{ saving ? '保存中…' : '保存通知设置' }}
+              </button>
+            </div>
+          </footer>
+        </div>
+
+        <!-- 右侧：Telegram 消息模拟独立卡片 (约 40%) -->
+        <aside class="ant-preview-pane">
+          <!-- 内层容器：在右侧网格范围内居中缩小，常规最大宽度约 400px，高度较矮时收窄至 360px -->
+          <div class="ant-preview-content">
+            <!-- 顶部轻量操作栏 -->
+            <div class="ant-preview-header">
+              <div class="ant-preview-title">
+                <IconEye :size="16" aria-hidden="true" />
+                <span>消息预览</span>
+              </div>
+              <div class="ant-preview-control">
+                <SelectMenu
+                  v-model="previewKind"
+                  label="预览通知事件"
+                  class="min-w-[120px] max-w-40"
+                  :options="previewKinds"
+                />
+              </div>
+            </div>
+
+            <!-- 状态行：保留 40px 最低高度，长错误自然换行，不设内部滚动 -->
+            <div class="ant-preview-status" role="status" aria-live="polite">
+              <p v-if="previewError" class="ant-preview-status--error">
+                {{ previewError }}
+              </p>
+              <p v-else-if="previewing" class="ant-preview-status--loading">
+                正在更新预览…
+              </p>
+              <p v-else class="ant-preview-status--hint">
+                示例数据预览，不会发送 Telegram 消息。
+              </p>
+            </div>
+
+            <!-- 只保留图文消息本体，完整展示封面与正文 -->
+            <div class="ant-sim-card">
+              <!-- 固定图片占位，骨架与图片同级挂载，完整展示竖版海报 -->
+              <div v-if="showPreviewPhoto" class="ant-photo-frame">
+                <img
+                  v-if="previewPhoto && !photoFailed"
+                  :key="previewPhoto"
+                  class="ant-photo"
+                  :src="previewPhoto"
+                  alt="通知图片预览"
+                  referrerpolicy="no-referrer"
+                  @load="photoLoading = false"
+                  @error="photoFailed = true; photoLoading = false"
+                />
+                <div v-if="photoFailed" class="ant-photo-failed" role="alert">
+                  <p>图片暂时无法预览，请检查图片地址或网络。</p>
                 </div>
+                <div
+                  v-if="photoLoading || !previewPhoto"
+                  class="ant-photo-skeleton"
+                  aria-hidden="true"
+                ></div>
               </div>
 
-              <div class="ant-chat">
-                <div class="ant-chat-header">
-                  <div class="ant-chat-avatar" aria-hidden="true">
-                    <IconBrandTelegram :size="16" />
-                  </div>
-                  <div class="ant-chat-meta">
-                    <strong>Cinema115</strong>
-                    <span>示例数据预览，不会发送 Telegram 消息。</span>
-                  </div>
-                  <small class="ant-chat-badge">BOT</small>
-                </div>
-
-                <div class="ant-chat-viewport">
-                  <template v-if="previewHTML">
-                    <div class="ant-message-card">
-                      <img
-                        v-if="previewPhoto && !photoFailed"
-                        class="ant-photo"
-                        :src="previewPhoto"
-                        alt="通知图片预览"
-                        referrerpolicy="no-referrer"
-                        @error="photoFailed = true"
-                      />
-                      <p v-if="previewPhoto && photoFailed" class="ant-muted ant-photo-failed">
-                        图片暂时无法预览，请检查图片地址或网络。
-                      </p>
-                      <div
-                        class="ant-bubble"
-                        :class="{ 'has-photo': !!previewPhoto && !photoFailed }"
-                        v-html="previewHTML"
-                      ></div>
-                    </div>
-                  </template>
-                  <div
-                    v-else
-                    class="ant-chat-empty"
-                    :role="previewError ? 'alert' : 'status'"
-                  >
-                    <p :class="{ 'ant-error': !!previewError }">
-                      {{ previewError || (previewing ? '正在渲染预览…' : '编辑模板后查看效果') }}
-                    </p>
+              <!-- 正文随内容自然展开，整张消息跟随页面滚动 -->
+              <div class="ant-preview-body">
+                <div v-if="previewHTML" class="ant-bubble" v-html="previewHTML"></div>
+                <div v-else class="ant-bubble ant-bubble-placeholder">
+                  <div class="ant-bubble-skeleton" aria-hidden="true">
+                    <span class="ant-skeleton-line" style="width: 45%"></span>
+                    <span class="ant-skeleton-line" style="width: 90%"></span>
+                    <span class="ant-skeleton-line" style="width: 70%"></span>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      </fieldset>
-
-      <!-- 底部吸附操作栏：首屏直观、滚动常驻、反馈就近 -->
-      <footer class="ant-sticky-bar">
-        <!-- 错误与反馈提示区：支持长错误展示与冲突重读按钮 -->
-        <div
-          v-if="error || notice"
-          class="ant-bar-feedback"
-          :class="{ 'is-error': !!error, 'is-notice': !!notice }"
-          role="status"
-          aria-live="polite"
-        >
-          <div class="ant-bar-feedback-text">
-            <p v-if="error" class="ant-error">{{ error }} 输入已保留，可调整后重试。</p>
-            <p v-else-if="notice" class="ant-notice">{{ notice }}</p>
-          </div>
-          <button
-            v-if="error"
-            type="button"
-            class="ae-button ant-bar-retry-btn"
-            :disabled="loading || saving"
-            @click="readLatestRevision"
-          >
-            读取最新版本，保留输入
-          </button>
-        </div>
-
-        <div class="ant-bar-main">
-          <div class="ant-bar-status">
-            <span class="ant-status-pill" :class="{ 'is-dirty': dirty }">
-              <span class="ant-status-dot" aria-hidden="true"></span>
-              {{ dirty ? '有未保存的修改' : '当前配置已保存' }}
-            </span>
-            <span v-if="previewError" class="ant-bar-warning">
-              模板预览异常，请修正后再保存
-            </span>
-          </div>
-
-          <div class="ant-bar-actions">
-            <button
-              type="submit"
-              class="ae-button ae-primary ant-save-btn"
-              :disabled="loading || saving || !dirty || !!previewError || previewing"
-            >
-              {{ saving ? '保存中…' : '保存通知设置' }}
-            </button>
-          </div>
-        </div>
-      </footer>
+        </aside>
+      </div>
     </form>
 
     <P115ActionDialog v-if="discard" title="放弃未保存的通知修改？" @close="decideLeave(false)">
@@ -494,54 +493,17 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
 </template>
 
 <style scoped>
-/* 顶部标题栏 */
-.ant-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 16px;
-  padding-bottom: 18px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid rgb(148 163 184 / 0.14);
+.ant-settings {
+  width: 100%;
+  min-width: 0;
+  color: var(--ae-ink);
+  font-size: 13px;
 }
 
-.ant-heading-main {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.ant-heading-icon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 40px;
-  height: 40px;
-  border-radius: 11px;
-  color: var(--ae-blue);
-  background: rgb(59 130 246 / 0.1);
-  border: 1px solid rgb(59 130 246 / 0.16);
-}
-
-.ant-heading h2 {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.3;
-}
-
-.ant-heading p,
 .ant-muted {
   font-size: 12px;
   color: var(--ae-muted);
   line-height: 1.65;
-}
-
-.ant-heading p {
-  margin-top: 3px;
-}
-
-.ant-heading-status {
-  flex: none;
 }
 
 .ant-status-pill {
@@ -578,40 +540,91 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   padding: 24px 0;
 }
 
-/* 表单主网格：大幅收紧纵向间距 */
-.ant-form {
+/* 独立双栏工作台布局：>=1024px 左约60% 右约40%，<1024px 上下堆叠 */
+.ant-workspace {
   display: grid;
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
   min-width: 0;
 }
 
-/* 第一层：Bot 与图片设置双列并排 */
-.ant-top-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  align-items: stretch;
+@media (min-width: 1024px) {
+  .ant-workspace {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 24px;
+  }
 }
 
-.ant-card {
+/* 左侧：唯一统一表单卡片，支持命名容器查询实现卡片宽度自适应 */
+.ant-config-card {
+  container-type: inline-size;
+  container-name: config-card;
+  min-width: 0;
+  padding: 24px 26px;
+  border-radius: 18px;
+  background: var(--ae-surface);
+  border: 1px solid rgb(148 163 184 / 0.14);
+  box-shadow: 0 4px 20px rgb(15 23 42 / 0.04);
+}
+
+.dark .ant-config-card {
+  box-shadow: 0 4px 20px rgb(0 0 0 / 0.25);
+  border-color: rgb(148 163 184 / 0.14);
+}
+
+.ant-form-fields {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 14px 16px;
-  border-radius: 13px;
-  background: rgb(148 163 184 / 0.04);
-  border: 1px solid rgb(148 163 184 / 0.16);
+  border: 0;
+  padding: 0;
+  margin: 0;
 }
 
-.ant-card-header {
+/* 内部组间细分隔线与间距 */
+.ant-section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ant-section--divided {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid rgb(148 163 184 / 0.12);
+}
+
+/* 推送 Bot 与配图模式并排（移动端或窄卡单列） */
+.ant-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+@media (max-width: 640px) {
+  .ant-section-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+}
+
+.ant-field-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ant-field-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+  min-height: 24px;
 }
 
-.ant-card-hint {
+.ant-field-hint {
   margin-top: auto;
   padding-top: 6px;
   font-size: 11px;
@@ -663,7 +676,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   margin: 6px 0 2px;
 }
 
-.ant-image-settings input {
+.ant-custom-url input {
   width: 100%;
   min-height: 38px;
   padding: 7px 11px;
@@ -674,21 +687,14 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   color: var(--ae-ink);
 }
 
-/* 第二层：通知事件与折叠说明 */
-.ant-events-section {
-  padding: 14px 16px;
-  border-radius: 13px;
-  background: rgb(148 163 184 / 0.04);
-  border: 1px solid rgb(148 163 184 / 0.16);
-}
-
+/* 通知事件触发器 */
 .ant-events-header {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px 16px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .ant-policy-details {
@@ -708,8 +714,8 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: 9px;
-  background: var(--ae-surface);
-  border: 1px solid rgb(148 163 184 / 0.16);
+  background: rgb(148 163 184 / 0.06);
+  border: 1px solid rgb(148 163 184 / 0.14);
   font-size: 11px;
   line-height: 1.7;
   color: var(--ae-muted);
@@ -721,6 +727,13 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   gap: 10px;
 }
 
+@media (max-width: 680px) {
+  .ant-events {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
 .ant-event {
   display: flex;
   align-items: center;
@@ -728,7 +741,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   padding: 10px 12px;
   border: 1px solid rgb(148 163 184 / 0.2);
   border-radius: 10px;
-  background: var(--ae-surface);
+  background: rgb(148 163 184 / 0.04);
   cursor: pointer;
   min-width: 0;
   transition: border-color 0.15s, background-color 0.15s;
@@ -765,6 +778,12 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   text-overflow: ellipsis;
 }
 
+@media (max-width: 680px) {
+  .ant-event small {
+    white-space: normal;
+  }
+}
+
 .ant-event-check {
   display: grid;
   place-items: center;
@@ -787,27 +806,9 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   background: rgb(59 130 246 / 0.12);
 }
 
-/* 第三层：模板编辑 + 实时预览工作台 */
-.ant-workbench {
+/* 消息模板编辑器 */
+.ant-editor-pane {
   min-width: 0;
-}
-
-.ant-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr);
-  gap: 20px;
-  align-items: start;
-  min-width: 0;
-}
-
-.ant-editor-pane,
-.ant-preview-pane {
-  min-width: 0;
-}
-
-.ant-preview-pane {
-  position: sticky;
-  top: calc(var(--workbench-header-height, 64px) + 20px);
 }
 
 .ant-pane-header {
@@ -826,12 +827,11 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   gap: 6px 12px;
 }
 
-/* IDE 风格一体化编辑器容器 */
 .ant-editor-box {
   display: flex;
   flex-direction: column;
   border-radius: 13px;
-  border: 1px solid rgb(148 163 184 / 0.26);
+  border: 1px solid rgb(148 163 184 / 0.24);
   background: var(--ae-surface);
   overflow: hidden;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -842,7 +842,52 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   box-shadow: 0 0 0 3px rgb(59 130 246 / 0.12);
 }
 
-/* 前置变量工具栏 */
+.ant-variables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: rgb(148 163 184 / 0.06);
+  border-bottom: 1px solid rgb(148 163 184 / 0.16);
+  min-width: 0;
+}
+
+.ant-variables-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ae-muted);
+}
+
+.ant-variables-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ant-variables button {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: center;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid rgb(148 163 184 / 0.24);
+  border-radius: 7px;
+  background: var(--ae-surface);
+  font-size: 11.5px;
+  color: var(--ae-ink);
+  cursor: pointer;
+  white-space: normal;
+  text-align: left;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  transition: border-color 0.14s, background-color 0.14s, transform 0.1s;
+}
 
 @media (hover: hover) {
   .ant-variables button:hover:not(:disabled) {
@@ -860,17 +905,19 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
   font-weight: 600;
+  word-break: break-all;
 }
 
 .ant-variables button span {
   color: var(--ae-muted);
   font-size: 10.5px;
+  word-break: break-word;
 }
 
 .ant-editor-box textarea {
   width: 100%;
   resize: vertical;
-  min-height: 310px;
+  min-height: 280px;
   padding: 14px 16px;
   border: 0;
   background: transparent;
@@ -882,7 +929,6 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   outline: none;
 }
 
-/* 编辑器底部状态栏与标签提示 */
 .ant-editor-statusbar {
   display: flex;
   flex-wrap: wrap;
@@ -922,213 +968,16 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   color: #d97706;
 }
 
-/* 右侧：Telegram 聊天仿真窗口 */
-.ant-chat {
-  display: flex;
-  flex-direction: column;
-  border-radius: 13px;
-  overflow: hidden;
-  border: 1px solid rgb(59 130 246 / 0.18);
-  background:
-    radial-gradient(circle at 100% 0%, rgb(59 130 246 / 0.08), transparent 55%),
-    rgb(15 23 42 / 0.03);
-}
-
-:global(.dark) .ant-chat {
-  background:
-    radial-gradient(circle at 100% 0%, rgb(59 130 246 / 0.12), transparent 60%),
-    rgb(15 23 42 / 0.45);
-  border-color: rgb(148 163 184 / 0.16);
-}
-
-.ant-chat-header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: rgb(59 130 246 / 0.06);
-  border-bottom: 1px solid rgb(59 130 246 / 0.1);
-}
-
-.ant-chat-avatar {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: var(--ae-blue);
-  color: #fff;
-  flex: none;
-}
-
-:global(.dark) .ant-chat-avatar {
-  color: #0f172a;
-}
-
-.ant-chat-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.ant-chat-meta strong {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ae-ink);
-  line-height: 1.25;
-}
-
-.ant-chat-meta span {
-  font-size: 10.5px;
-  color: var(--ae-muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.ant-chat-badge {
-  margin-left: auto;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: rgb(59 130 246 / 0.12);
-  color: var(--ae-blue);
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  font-weight: 700;
-}
-
-.ant-chat-viewport {
-  padding: 16px 14px;
-  min-height: 368px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-}
-
-/* 限制气泡最大宽度，还原真实 Telegram 消息比例 */
-.ant-message-card {
-  width: 100%;
-  max-width: 430px;
-}
-
-.ant-photo-failed {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: rgb(148 163 184 / 0.1);
-  margin-bottom: 8px;
-  font-size: 11px;
-}
-
-.ant-bubble {
-  border: 1px solid rgb(148 163 184 / 0.16);
-  border-radius: 4px 13px 13px 13px;
-  padding: 12px 14px;
-  background: var(--ae-surface);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 12.5px;
-  line-height: 1.75;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 0.04);
-}
-
-.ant-bubble.has-photo {
-  border-radius: 0 0 13px 13px;
-}
-
-.ant-bubble :deep(blockquote) {
-  display: block;
-  border-left: 3px solid #60a5fa;
-  padding: 5px 10px;
-  border-radius: 4px;
-  background: rgb(59 130 246 / 0.07);
-  margin: 6px 0;
-}
-
-.ant-bubble :deep(code),
-.ant-bubble :deep(pre) {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 11.5px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.ant-bubble :deep(code) {
-  background: rgb(148 163 184 / 0.12);
-  border-radius: 4px;
-  padding: 1px 4px;
-}
-
-.ant-bubble :deep(pre) {
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgb(148 163 184 / 0.1);
-  margin: 6px 0;
-}
-
-.ant-chat-empty {
-  margin: auto 0;
-  text-align: center;
-  padding: 28px 12px;
-  color: var(--ae-muted);
-  font-size: 12px;
-}
-
-/* 顶部配置读取错误横幅 */
-.ant-feedback--banner {
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: rgb(220 38 38 / 0.06);
-  border: 1px solid rgb(220 38 38 / 0.2);
-  margin-bottom: 16px;
-  font-size: 12px;
-  line-height: 1.7;
-}
-
-.ant-feedback--banner button {
-  margin-top: 8px;
-}
-
-.ant-error {
-  color: #dc2626;
-  font-weight: 500;
-}
-
-.ant-notice {
-  color: #059669;
-  font-weight: 500;
-}
-
-/* 底部吸附操作栏：首屏直观、滚动常驻、反馈就近 */
-.ant-sticky-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 20;
-  margin-top: 24px;
-  padding: 12px 16px;
-  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
-  border-top: 1px solid rgb(148 163 184 / 0.2);
-  background: var(--ae-surface);
-  background: color-mix(in srgb, var(--ae-surface) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 -4px 16px rgb(15 23 42 / 0.06);
-  border-radius: 12px 12px 0 0;
-}
-
-:global(.dark) .ant-sticky-bar {
-  border-top-color: rgb(148 163 184 / 0.16);
-  box-shadow: 0 -4px 20px rgb(0 0 0 / 0.4);
-}
-
+/* 反馈横幅提示 */
 .ant-bar-feedback {
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px 12px;
-  padding: 8px 12px;
-  border-radius: 9px;
-  margin-bottom: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-top: 16px;
   font-size: 11.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
@@ -1164,15 +1013,18 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   white-space: nowrap;
 }
 
-.ant-bar-main {
+/* 左侧卡片底部：与 RSS .ars-footer 风格一致 */
+.ant-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
-  min-width: 0;
+  gap: 14px;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid rgb(148 163 184 / 0.12);
 }
 
-.ant-bar-status {
+.ant-footer-status {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -1180,17 +1032,17 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   min-width: 0;
 }
 
-.ant-bar-warning {
+.ant-footer-warning {
   font-size: 11.5px;
   color: #dc2626;
   font-weight: 500;
 }
 
-:global(.dark) .ant-bar-warning {
+.dark .ant-footer-warning {
   color: #fca5a5;
 }
 
-.ant-bar-actions {
+.ant-footer-actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1198,11 +1050,330 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
 }
 
 .ant-save-btn {
-  min-height: 36px;
-  padding: 6px 18px;
+  min-height: 38px;
+  padding: 6px 20px;
   font-weight: 600;
   font-size: 13px;
   white-space: nowrap;
+}
+
+/* 左侧卡片基于自身可用宽度的自适应布局（避免 1024/1280px 带侧栏时挤压溢出） */
+@container config-card (max-width: 500px) {
+  .ant-section-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  .ant-events {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .ant-event small {
+    white-space: normal;
+  }
+
+  .ant-pane-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 12px;
+  }
+
+  .ant-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .ant-footer-status {
+    justify-content: space-between;
+  }
+
+  .ant-footer-actions {
+    width: 100%;
+  }
+
+  .ant-save-btn {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .ant-bar-feedback {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ant-bar-retry-btn {
+    width: 100%;
+  }
+}
+
+/* ================== 右侧：仿真预览 ================== */
+.ant-preview-pane {
+  min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .ant-preview-pane {
+    position: sticky;
+    top: calc(var(--workbench-header-height, 64px) + 16px);
+    align-self: start;
+  }
+}
+
+/* 预览内层容器：居中缩小，常规最大宽度约 400px，高度较矮时收窄至 360px */
+.ant-preview-content {
+  width: 100%;
+  max-width: 400px;
+  margin-inline: auto;
+}
+
+@media (max-height: 850px) {
+  .ant-preview-content {
+    max-width: 360px;
+  }
+}
+
+/* 顶部轻量操作栏 */
+.ant-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 36px;
+  margin-bottom: 6px;
+}
+
+.ant-preview-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--ae-ink);
+}
+
+.ant-preview-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* 状态行：保留 40px 最低高度稳定布局，长错误自然换行，不设内部滚动或截断 */
+.ant-preview-status {
+  box-sizing: border-box;
+  min-height: 40px;
+  margin-bottom: 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  display: flex;
+  align-items: center;
+}
+
+.ant-preview-status p {
+  margin: auto 0;
+  width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.ant-preview-status--hint {
+  color: var(--ae-muted);
+}
+
+.ant-preview-status--loading {
+  color: var(--ae-blue);
+}
+
+.ant-preview-status--error {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.dark .ant-preview-status--error {
+  color: #fca5a5;
+}
+
+/* 消息气泡卡片：白色正文气泡，深色主题中性色，轻量原生圆角 */
+.ant-sim-card {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgb(148 163 184 / 0.18);
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgb(15 23 42 / 0.06);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dark .ant-sim-card {
+  background: rgb(var(--surface-card));
+  border-color: rgb(var(--line-default));
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+}
+
+/* 媒体区域：固定 16/9 占位比例槽，淡灰背景 */
+.ant-photo-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #e2e8f0;
+  overflow: hidden;
+  border-bottom: 1px solid rgb(148 163 184 / 0.12);
+  flex: none;
+}
+
+.dark .ant-photo-frame {
+  background: rgb(var(--surface-page));
+  border-bottom-color: rgb(var(--line-default));
+}
+
+/* 竖版海报居中 contain 完整显示，两侧留白，禁止 cover 裁切 */
+.ant-photo {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+
+.ant-photo-skeleton {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgb(148 163 184 / 0.08) 25%,
+    rgb(148 163 184 / 0.16) 50%,
+    rgb(148 163 184 / 0.08) 75%
+  );
+  background-size: 200% 100%;
+  animation: ant-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ant-skeleton-pulse {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.ant-photo-failed {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ae-muted);
+  background: rgb(148 163 184 / 0.06);
+  z-index: 2;
+}
+
+.ant-photo-failed p {
+  margin: 0;
+}
+
+/* 正文预览区：完全随内容自然撑开，取消所有高度限制与内部滚动 */
+.ant-preview-body {
+  width: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+}
+
+.ant-bubble {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ae-ink);
+}
+
+.ant-bubble :deep(blockquote) {
+  display: block;
+  border-left: 3px solid #60a5fa;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgb(59 130 246 / 0.07);
+  margin: 5px 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.ant-bubble :deep(code),
+.ant-bubble :deep(pre) {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.ant-bubble :deep(code) {
+  background: rgb(148 163 184 / 0.12);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.ant-bubble :deep(pre) {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgb(148 163 184 / 0.1);
+  margin: 5px 0;
+}
+
+/* 初始无文本骨架屏 */
+.ant-bubble-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.ant-skeleton-line {
+  display: block;
+  height: 11px;
+  border-radius: 5px;
+  background: rgb(148 163 184 / 0.12);
+  animation: ant-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+/* 顶部配置读取错误横幅 */
+.ant-feedback--banner {
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgb(220 38 38 / 0.06);
+  border: 1px solid rgb(220 38 38 / 0.2);
+  margin-bottom: 16px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.ant-feedback--banner button {
+  margin-top: 8px;
+}
+
+.ant-error {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.ant-notice {
+  color: #059669;
+  font-weight: 500;
 }
 
 .ant-settings :focus-visible {
@@ -1215,163 +1386,38 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   opacity: 0.55;
 }
 
-:global(.dark) .ant-error {
+.dark .ant-error {
   color: #fca5a5;
 }
 
-:global(.dark) .ant-notice {
+.dark .ant-notice {
   color: #6ee7b7;
 }
 
-/* 按通知面板真实宽度响应 */
-
-.ant-settings {
-  container: ant-panel / inline-size;
-  width: 100%;
-  min-width: 0;
-  color: var(--ae-ink);
-  font-size: 13px;
-}
-
-/* 防止卡片头部与下拉菜单挤压溢出 */
-
-.ant-card-header,
-.ant-pane-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px 12px;
-  min-width: 0;
-}
-
-.ant-preview-SimControl {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  max-width: 100%;
-}
-
-/* 变量快捷插入栏 */
-
-.ant-variables {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: rgb(148 163 184 / 0.06);
-  border-bottom: 1px solid rgb(148 163 184 / 0.16);
-}
-
-.ant-variables-label {
-  flex: none;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--ae-muted);
-}
-
-.ant-variables-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.ant-variables button {
-  display: inline-flex;
-  gap: 5px;
-  align-items: center;
-  min-height: 32px;
-  padding: 4px 10px;
-  border: 1px solid rgb(148 163 184 / 0.24);
-  border-radius: 7px;
-  background: var(--ae-surface);
-  font-size: 11.5px;
-  color: var(--ae-ink);
-  cursor: pointer;
-  transition: border-color 0.14s, background-color 0.14s, transform 0.1s;
-}
-
-.ant-variables button:focus-visible {
-  outline: 2px solid #60a5fa;
-  outline-offset: 2px;
-}
-
-/* 竖版封面完整显示 */
-
-.ant-photo {
-  display: block;
-  width: 100%;
-  max-height: 280px;
-  object-fit: contain;
-  border: 1px solid rgb(148 163 184 / 0.18);
-  border-bottom: 0;
-  border-radius: 12px 12px 0 0;
-  background: rgb(15 23 42 / 0.04);
-}
-
-:global(.dark) .ant-photo {
-  background: rgb(15 23 42 / 0.5);
-}
-
-/* 当面板实宽 <= 980px 时：编辑与预览改为 1:1 等宽 */
-
-@container ant-panel (max-width: 980px) {
-  .ant-composer {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 16px;
-  }
-}
-
-/* 当面板实宽 <= 820px 时（如 1024~1280px 屏幕带主侧栏+设置侧栏）：
-   编辑器与预览提前解耦为上下单列，避免 300px 窄列挤压溢出 */
-
-@container ant-panel (max-width: 820px) {
-  .ant-composer {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .ant-preview-pane {
-    position: static;
-  }
-  .ant-chat-viewport {
-    min-height: 240px;
-  }
-  .ant-message-card {
-    max-width: 460px;
-  }
-}
-
-/* 当面板实宽 <= 680px 时：顶部双卡（Bot + 配图）与 3 个通知事件转为单列 */
-
-@container ant-panel (max-width: 680px) {
-  .ant-top-grid {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
-  .ant-events {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 8px;
-  }
-  .ant-event small {
-    white-space: normal;
-  }
-}
-
-/* 当面板实宽 <= 520px 时（窄屏/手机）：头部、输入框与吸附操作栏全宽适配 */
-
-@container ant-panel (max-width: 520px) {
-  .ant-heading {
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 16px;
+/* 窄屏响应式处理 (手机 320px ~ 640px) */
+@media (max-width: 640px) {
+  .ant-config-card {
+    padding: 16px 14px;
+    border-radius: 14px;
   }
   .ant-editor-box textarea {
-    min-height: 240px;
+    min-height: 220px;
     padding: 12px;
   }
-  .ant-message-card {
+  .ant-sim-card {
     max-width: 100%;
+  }
+  .ant-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .ant-footer-status {
+    justify-content: space-between;
+  }
+  .ant-save-btn {
+    width: 100%;
+    min-height: 42px;
   }
   .ant-bar-feedback {
     flex-direction: column;
@@ -1380,22 +1426,9 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   .ant-bar-retry-btn {
     width: 100%;
   }
-  .ant-bar-main {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-  .ant-bar-status {
-    justify-content: space-between;
-  }
-  .ant-save-btn {
-    width: 100%;
-    min-height: 42px;
-  }
 }
 
-/* 触屏设备加大点击热区 */
-
+/* 触屏热区适配 */
 @media (pointer: coarse) {
   .ant-variables button {
     min-height: 38px;
@@ -1416,8 +1449,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   }
 }
 
-/* 减少动效模式 */
-
+/* 减少动效模式支持 */
 @media (prefers-reduced-motion: reduce) {
   .ant-text-button,
   .ant-event,
@@ -1428,6 +1460,10 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController?.abort(); clearTime
   }
   .ant-variables button:active:not(:disabled) {
     transform: none;
+  }
+  .ant-photo-skeleton,
+  .ant-skeleton-line {
+    animation: none;
   }
 }
 </style>

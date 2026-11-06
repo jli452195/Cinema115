@@ -27,7 +27,7 @@ const titleID = useId()
 .editor-panel h2 { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; color: rgb(var(--color-slate-900)); }
 .editor-panel header p { margin-top: 4px; font-size: 12px; line-height: 1.7; color: rgb(var(--color-slate-500)); }
 .editor-panel-body { min-height: 0; padding: 18px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.dark .editor-panel { background: #202833; box-shadow: none; }
-.dark .editor-panel h2 { color: rgb(var(--color-slate-100)); }
-.dark .editor-panel header p { color: rgb(var(--color-slate-400)); }
+.dark .editor-panel { background: rgb(var(--surface-card)); box-shadow: none; }
+.dark .editor-panel h2 { color: rgb(var(--content-primary)); }
+.dark .editor-panel header p { color: rgb(var(--content-secondary)); }
 </style>
