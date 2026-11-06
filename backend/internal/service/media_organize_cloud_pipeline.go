@@ -20,6 +20,7 @@ func mediaInScope(relative, scope string) bool {
 // 同一执行器按子目录先完成、父目录后收尾，完整读取一个目录后才整理其中的文件。
 func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) (processErr error) {
 	run.Status, run.streaming = "scanning", true
+	files.deferSubtitles = true
 	files.naming = make(map[string]preparedMediaNaming)
 	files.recognized = make(map[string]bool)
 	files.cloudEmpty = nil
@@ -29,6 +30,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 	}
 	defer func() {
 		run.streaming = false
+		files.deferSubtitles = false
 		files.scan115ID, files.scan115Relative, files.shallow115 = "", "", false
 		files.cd2ScanPath, files.cd2Shallow = "", false
 		files.cleanupScope, files.partialCleanup = "", false
@@ -44,6 +46,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 	}
 	visited := make(map[string]bool)
 	candidates := make([]OrganizeFile, 0)
+	subtitles := make([]MediaOrganizeEntry, 0)
 	directories := make([]MediaOrganizeEntry, 0)
 	settling, pending := make(map[string]bool), make(map[string]bool)
 	cleanupRoots := make(map[string]bool, len(run.scanScopes))
@@ -85,7 +88,16 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 		maps.Copy(pending, files.localPending)
 		unrelated := slices.Clone(files.unrelated)
 		immediate, deferred := make([]MediaOrganizeEntry, 0, len(entries)), make([]MediaOrganizeEntry, 0)
+		matcher := organizeSubtitleMatcher(files.localCandidates)
 		for _, entry := range entries {
+			if entry.File.MediaType == "subtitle" {
+				owners, _ := organizeSubtitleCandidates(entry.File, files.localCandidates, matcher)
+				if len(owners) == 0 {
+					// 跨目录字幕留到本轮扫描结束，完整候选集避免依赖目录遍历顺序。
+					subtitles = append(subtitles, entry)
+					continue
+				}
+			}
 			if _, _, shared := mediaAttachmentFolder(entry.File); entry.File.MediaType == "attachment" && shared {
 				deferred = append(deferred, entry)
 			} else {
@@ -207,11 +219,24 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 			return err
 		}
 	}
+	run.streaming = false
+	files.deferSubtitles = false
+	files.localCandidates, files.settlingVideos, files.localPending = candidates, settling, pending
+	if err := s.processMediaBatch(ctx, files, run, files.holdLocalCompanions(subtitles, pending)); err != nil {
+		return err
+	}
+	files.cleanupScope, files.partialCleanup = "", len(run.scanScopes) > 0
+	files.unrelated = nil
+	if err := s.prepareOrphanCleanup(files, run); err != nil {
+		return err
+	}
+	if err := s.cleanup(ctx, files, run); err != nil {
+		return err
+	}
 	files.scanned = nil
 	if files.cloudEmpty != nil {
 		files.cloudEmpty.complete = true
 	}
-	run.streaming = false
 	mediaFinishRun(run)
 	return nil
 }

@@ -214,7 +214,6 @@ func (a *MediaAuthorization) commitHandoff(ctx context.Context) error {
 		pd.Leases[lease.Key] = lease
 		if !alreadyIssued && health.Sequence == a.poolLease.healthSequence && !a.poolLease.skipHealthRefresh {
 			h := model.PlaybackPoolHealth{Revision: lease.Revision, UID: lease.UID, State: "ready", CheckedAt: now.UnixMilli(), Sequence: health.Sequence + 1, NextProbe: now.Add(5*time.Minute + poolProbeJitter(lease.AccountID)).UnixMilli()}
-			pd.Health[lease.AccountID] = h
 			p.recordHealthEvent(&pd, lease.AccountID, health, h)
 		}
 		if err := a.poolLease.commitAssignment(&pd); err != nil {

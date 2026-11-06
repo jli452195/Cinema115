@@ -348,8 +348,6 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			e.Status, e.Message = "unmatched", "未找到唯一对应的视频，保留来源"
 		}
 		if e.Status == "done" && e.File.MediaType == "video" {
-			name := path.Base(e.Relative)
-			results[e.File.ID] = naming.Result{Directory: path.Dir(e.Relative), Name: name, Stem: strings.TrimSuffix(name, path.Ext(name)), Extension: path.Ext(name), RelativePath: e.Relative}
 			continue
 		}
 		if e.File.MediaType != "video" {
@@ -410,15 +408,20 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 		original = append(original, e.File)
 		positions[e.File.ID] = i
 	}
-	for _, sub := range organizeSubtitles(mediaAttachmentMatchFiles(original)) {
+	matchSubtitles := organizeSubtitles
+	if !run.streaming {
+		original = mediaIncludeVideoCandidates(original, files.localCandidates)
+		matchSubtitles = mediaOrganizeSubtitles
+	}
+	for _, sub := range matchSubtitles(mediaAttachmentMatchFiles(original)) {
 		i := positions[sub.File.ID]
 		e := &run.Entries[i]
 		if e.Status == "done" || e.P115Move != nil || e.AttachmentKeep != nil || !mediaInRunTask(run, *e) {
 			continue
 		}
 		video, ok := results[sub.VideoID]
-		if sub.VideoID != "" {
-			e.Group = run.Entries[positions[sub.VideoID]].Group
+		if position, exists := positions[sub.VideoID]; exists {
+			e.Group = run.Entries[position].Group
 			e.VideoID = sub.VideoID
 		}
 		if !ok {

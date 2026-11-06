@@ -35,15 +35,18 @@ type PlaybackPoolLease struct {
 }
 
 type PlaybackPoolHealth struct {
-	Fault     string `json:"fault,omitempty"`
-	Sequence  uint64 `json:"sequence"`
-	Failures  int    `json:"failures"`
-	NextProbe int64  `json:"nextProbe"`
-	UID       string `json:"uid"`
-	Revision  uint64 `json:"revision"`
-	State     string `json:"state"`
-	Until     int64  `json:"until"`
-	CheckedAt int64  `json:"checkedAt"`
+	FailureSince int64  `json:"failureSince,omitempty"`
+	AlertBotID   string `json:"alertBotId,omitempty"`
+	AlertEventID uint64 `json:"alertEventId,omitempty"`
+	Fault        string `json:"fault,omitempty"`
+	Sequence     uint64 `json:"sequence"`
+	Failures     int    `json:"failures"`
+	NextProbe    int64  `json:"nextProbe"`
+	UID          string `json:"uid"`
+	Revision     uint64 `json:"revision"`
+	State        string `json:"state"`
+	Until        int64  `json:"until"`
+	CheckedAt    int64  `json:"checkedAt"`
 }
 
 // A successful playback fixes the user's target without reserving capacity.
@@ -68,10 +71,12 @@ type PlaybackPoolDocument struct {
 
 // Bounded health history contains only configuration handles and safe enums.
 type PlaybackPoolEvent struct {
-	ID        uint64 `json:"id"`
-	AccountID string `json:"accountId"`
-	State     string `json:"state"`
-	At        int64  `json:"at"`
-	BotID     string `json:"botId,omitempty"`
-	Delivered bool   `json:"delivered,omitempty"`
+	Since      int64  `json:"since,omitempty"`
+	RecoveryOf uint64 `json:"recoveryOf,omitempty"`
+	ID         uint64 `json:"id"`
+	AccountID  string `json:"accountId"`
+	State      string `json:"state"`
+	At         int64  `json:"at"`
+	BotID      string `json:"botId,omitempty"`
+	Delivered  bool   `json:"delivered,omitempty"`
 }

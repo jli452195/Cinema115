@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,24 +63,66 @@ func (s *Store) DueTelegramNotifications(ctx context.Context, botID string, chat
 	return result, rows.Err()
 }
 
-// ValidateTelegramNotification 在每次外部投递前复核动漫任务，丢弃已恢复或旧代次消息。
+// ValidateTelegramNotification 在每次外部投递前复核事件，丢弃已恢复或旧代次消息。
 func (s *Store) ValidateTelegramNotification(ctx context.Context, n model.TelegramNotification) (bool, error) {
-	if n.AnimeJobID == "" && !strings.HasPrefix(n.TaskID, "anime:") {
-		return true, nil
-	}
 	var current bool
-	if n.AnimeJobID != "" {
+	if id, ok := strings.CutPrefix(n.TaskID, "pool-health:"); ok {
+		var err error
+		current, err = s.poolNotificationCurrent(ctx, n, id)
+		if err != nil {
+			return false, fmt.Errorf("复核待发送播放池通知: %w", err)
+		}
+	} else if n.AnimeJobID != "" {
 		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_notifications t JOIN anime_notification_events e ON e.job_id=t.anime_job_id AND e.generation=t.anime_generation AND e.kind=t.anime_kind AND e.phase=t.anime_phase AND e.block_code=t.anime_block_code AND e.bot_id=t.anime_bot_id JOIN anime_download_jobs j ON j.id=e.job_id JOIN anime_subscriptions p ON p.id=e.subscription_id JOIN anime_notification_settings c ON c.id=1 WHERE t.id=? AND t.status='pending' AND e.processed=1 AND e.invalidated=0 AND c.bot_id=e.bot_id AND CASE e.kind WHEN 'downloaded' THEN c.download_complete WHEN 'organized' THEN c.organized WHEN 'failed' THEN c.failed ELSE 0 END AND `+animeNotificationCurrentSQL+`)`, n.ID, time.Now().UnixMilli()).Scan(&current)
 		if err != nil {
 			return false, fmt.Errorf("复核待发送动漫通知: %w", err)
 		}
+	} else if !strings.HasPrefix(n.TaskID, "anime:") {
+		return true, nil
 	}
 	if current {
 		return true, nil
 	}
-	// 旧版本缺少类型化关联的动漫消息不能从正文推断任务授权。
+	// 失效或缺少关联的消息统一终止，不从正文推断事件归属。
 	if err := s.CompleteTelegramNotification(ctx, n.ID, false); err != nil {
 		return false, err
+	}
+	return false, nil
+}
+
+func (s *Store) poolNotificationCurrent(ctx context.Context, n model.TelegramNotification, rawID string) (bool, error) {
+	id, err := strconv.ParseUint(rawID, 10, 64)
+	if err != nil || id == 0 {
+		return false, nil
+	}
+	d, err := s.PlaybackPool(ctx)
+	if err != nil {
+		return false, err
+	}
+	for i, event := range d.Events {
+		if event.ID != id {
+			continue
+		}
+		h := d.Health[event.AccountID]
+		if event.BotID == "" || event.BotID != d.Settings.NotificationBotID || event.Since <= 0 || h.FailureSince != event.Since {
+			return false, nil
+		}
+		// 同毫秒内也可能恢复后再次失败，事件顺序补足时间戳的周期隔离。
+		for _, later := range d.Events[i+1:] {
+			if later.AccountID == event.AccountID && later.State == "ready" {
+				return false, nil
+			}
+		}
+		if event.State != "ready" {
+			return h.State != "ready", nil
+		}
+		if h.State != "ready" || event.RecoveryOf == 0 {
+			return false, nil
+		}
+		// 入队不代表送达，恢复消息仅对应同一 Bot 和聊天已发送的异常。
+		var sent bool
+		err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM telegram_notifications WHERE task_id=? AND bot_id=? AND chat_id=? AND status='sent')`, "pool-health:"+strconv.FormatUint(event.RecoveryOf, 10), n.BotID, n.ChatID).Scan(&sent)
+		return sent, err
 	}
 	return false, nil
 }

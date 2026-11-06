@@ -294,16 +294,23 @@ type OrganizeSubtitle struct {
 	Tail    string       `json:"tail,omitempty"`
 }
 
-// Keep associations based on the complete list, independent of video selection.
-// Tail is already filename-safe so both preview clients and execution append it verbatim.
+// 字幕关联基于完整清单，不受视频选择影响；安全后缀由预览和执行原样复用。
 func organizeSubtitles(files []OrganizeFile) []OrganizeSubtitle {
-	subtitles := make([]OrganizeSubtitle, 0)
+	return organizeSubtitlesWithCandidates(files, organizeSubtitleCandidates)
+}
+
+func organizeSubtitlesWithCandidates(files []OrganizeFile, candidates func(OrganizeFile, []OrganizeFile, *mediafacts.SubtitleMatcher) ([]string, string)) []OrganizeSubtitle {
+	subtitles := make([]OrganizeSubtitle, 0, len(files))
 	matcher := organizeSubtitleMatcher(files)
 	for _, file := range files {
 		if file.MediaType != "subtitle" {
 			continue
 		}
-		owner, tail := organizeSubtitleOwner(file, files, matcher)
+		owners, tail := candidates(file, files, matcher)
+		owner := ""
+		if len(owners) == 1 {
+			owner = owners[0]
+		}
 		if tail = organizeName(tail); tail != "" {
 			tail = "." + tail
 		}
@@ -331,11 +338,23 @@ func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *medi
 }
 
 func organizeSubtitleCandidates(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
+	owners, tail := organizeSubtitleStemCandidates(sub, files, true)
+	if len(owners) == 0 {
+		owners, tail = matcher.Candidates(sub.ParentID, sub.Name)
+		if len(owners) != 1 {
+			tail = ""
+		}
+	}
+	return owners, tail
+}
+
+// 完整视频主文件名优先匹配最长前缀，目录限制由整理入口决定。
+func organizeSubtitleStemCandidates(sub OrganizeFile, files []OrganizeFile, sameDirectory bool) ([]string, string) {
 	var owners []string
 	tail, longest := "", -1
 	stem := []rune(strings.TrimSuffix(sub.Name, path.Ext(sub.Name)))
 	for _, video := range files {
-		if video.MediaType != "video" || video.ParentID != sub.ParentID {
+		if video.MediaType != "video" || sameDirectory && video.ParentID != sub.ParentID {
 			continue
 		}
 		vstem := []rune(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
@@ -347,12 +366,6 @@ func organizeSubtitleCandidates(sub OrganizeFile, files []OrganizeFile, matcher 
 			owners, tail, longest = []string{video.ID}, string(stem[n:]), n
 		} else if n == longest {
 			owners = append(owners, video.ID)
-		}
-	}
-	if longest < 0 {
-		owners, tail = matcher.Candidates(sub.ParentID, sub.Name)
-		if len(owners) != 1 {
-			tail = ""
 		}
 	}
 	return owners, tail

@@ -12,9 +12,10 @@ import (
 )
 
 type poolNotificationFake struct {
-	calls int
-	fail  bool
-	keys  []string
+	calls    int
+	fail     bool
+	keys     []string
+	messages []string
 }
 
 func (f *poolNotificationFake) NotifyPoolHealth(_ context.Context, bot, key, message string) error {
@@ -26,6 +27,7 @@ func (f *poolNotificationFake) NotifyPoolHealth(_ context.Context, bot, key, mes
 		return errors.New("unsafe notification")
 	}
 	f.keys = append(f.keys, key)
+	f.messages = append(f.messages, message)
 	return nil
 }
 
@@ -54,16 +56,30 @@ func TestPoolNotificationOptInRetryAndDeduplication(t *testing.T) {
 	if err := s.Pool.report(ctx, a, nil); err != nil {
 		t.Fatal(err)
 	}
+	s.flushPoolNotifications(ctx)
+	if fake.calls != 0 {
+		t.Fatal("recovery without a previous alert")
+	}
+	if err := s.Pool.report(ctx, a, p115.ErrShareLoginRequired); err != nil {
+		t.Fatal(err)
+	}
 	fake.fail = true
 	s.flushPoolNotifications(ctx)
-	if s.Pool.Events()[1].Delivered {
+	if s.Pool.Events()[2].Delivered {
 		t.Fatal("failed enqueue marked delivered")
 	}
 	fake.fail = false
 	s.flushPoolNotifications(ctx)
 	s.flushPoolNotifications(ctx)
-	if fake.calls != 2 || len(fake.keys) != 1 || !s.Pool.Events()[1].Delivered {
+	if fake.calls != 2 || len(fake.keys) != 1 || !s.Pool.Events()[2].Delivered {
 		t.Fatal("duplicate or lost alert", fake)
+	}
+	if err := s.Pool.report(ctx, a, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.flushPoolNotifications(ctx)
+	if fake.calls != 3 || !strings.Contains(fake.messages[1], "已恢复") || s.Pool.Events()[3].RecoveryOf != s.Pool.Events()[2].ID {
+		t.Fatal("missing paired recovery", fake)
 	}
 }
 

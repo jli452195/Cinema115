@@ -43,7 +43,7 @@ func mediaOrphanEqual(a, b mediaOrphan) bool {
 func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	now := s.localMonitorSettings().now()
 	entries := slices.DeleteFunc(slices.Clone(run.Entries), func(entry MediaOrganizeEntry) bool {
-		return entry.Reference || !mediaInScope(entry.File.SourcePath, files.cleanupScope)
+		return entry.Reference || !mediaInScope(entry.File.SourcePath, files.cleanupScope) || files.deferSubtitles && entry.File.MediaType == "subtitle"
 	})
 	indices := make(map[string]int, len(entries))
 	for i, entry := range run.Entries {
@@ -94,7 +94,7 @@ func (s *MediaOrganizer) prepareOrphanCleanup(files *mediaOrganizeFiles, run *Me
 	}
 	state := mediaOrphanBinding(run.Rule)
 	state.Files = make(map[string]mediaOrphan)
-	if files.partialCleanup {
+	if files.partialCleanup || files.deferSubtitles {
 		state.Files = maps.Clone(previous.Files)
 		if state.Files == nil {
 			state.Files = make(map[string]mediaOrphan)

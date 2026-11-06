@@ -20,6 +20,7 @@ func (s *MediaOrganizer) processCD2Auto(ctx context.Context, files *mediaOrganiz
 func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun, entries []MediaOrganizeEntry) error {
 	wanted := make(map[string]bool)
 	scopes := make([]string, 0)
+	recursiveSubtitles := !run.streaming && slices.ContainsFunc(entries, func(entry MediaOrganizeEntry) bool { return entry.File.MediaType == "subtitle" })
 	for _, entry := range entries {
 		if entry.File.MediaType != "video" {
 			wanted[entry.File.ParentID] = true
@@ -51,7 +52,7 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 			continue
 		}
 		for _, entry := range old.Entries {
-			if entry.File.MediaType != "video" || entry.Status != "done" || entry.Relative == "" || present[entry.File.ID] || !wanted[entry.File.ParentID] && !slices.ContainsFunc(scopes, func(scope string) bool { return mediaAttachmentInScope(entry.File, scope) }) {
+			if entry.File.MediaType != "video" || entry.Status != "done" || entry.Relative == "" || present[entry.File.ID] || !recursiveSubtitles && !wanted[entry.File.ParentID] && !slices.ContainsFunc(scopes, func(scope string) bool { return mediaAttachmentInScope(entry.File, scope) }) {
 				continue
 			}
 			present[entry.File.ID] = true
@@ -72,6 +73,7 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 	for _, ref := range refs {
 		candidates = append(candidates, ref.entry.File)
 	}
+	candidates = mediaIncludeVideoCandidates(candidates, files.localCandidates)
 	owners := mediaLocalCompanionOwners(candidates)
 	required := make(map[string]bool)
 	for _, entry := range entries {

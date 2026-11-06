@@ -95,6 +95,7 @@ type mediaOrganizeFiles struct {
 	cleanupScope         string
 	partialCleanup       bool
 	sourceVacated        bool
+	deferSubtitles       bool
 	cloudEmpty           *media115EmptyState
 }
 

@@ -687,7 +687,6 @@ func (p *DynamicPool) reportChecked(ctx context.Context, a P115Account, err erro
 		}
 		h.NextProbe = max(h.NextProbe, h.Until)
 	}
-	d.Health[a.ID] = h
 	p.recordHealthEvent(&d, a.ID, old, h)
 	return p.save(ctx, d)
 }
@@ -727,7 +726,6 @@ func (l *PoolLease) Commit(ctx context.Context) error {
 	// A late successful request cannot clear a newer observed account failure.
 	if old.Sequence == l.healthSequence && !l.skipHealthRefresh {
 		h := model.PlaybackPoolHealth{Revision: c.Revision, UID: c.UID, State: "ready", CheckedAt: p.now().UnixMilli(), Sequence: old.Sequence + 1, NextProbe: p.now().Add(5*time.Minute + poolProbeJitter(c.AccountID)).UnixMilli()}
-		d.Health[c.AccountID] = h
 		p.recordHealthEvent(&d, c.AccountID, old, h)
 	}
 	if err := p.save(ctx, d); err != nil {
