@@ -5,6 +5,7 @@ import { isNavigationFailure, NavigationFailureType, RouterLink, useRouter } fro
 import ManagementNavigation from './ManagementNavigation.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import CinemaLogo from './CinemaLogo.vue'
+import AppVersion from './AppVersion.vue'
 import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 
 const props = defineProps<{ desktop: boolean; collapsed?: boolean; mobileOnly?: boolean }>()
@@ -69,12 +70,18 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
       <RouterLink :to="rememberedDashboardHome" class="management-sidebar-home" aria-label="Cinema115 首页" title="返回首页"><CinemaLogo sidebar /></RouterLink>
     </div>
     <ManagementNavigation id="management-desktop-navigation" :collapsed="collapsed" />
+    <footer v-if="!collapsed" class="management-sidebar-footer">
+      <AppVersion />
+    </footer>
   </aside>
   <Teleport to="body">
     <dialog v-if="opened" :id="drawerID" ref="drawer" class="management-drawer" :aria-labelledby="titleID" @cancel.prevent="closeDrawer()" @keydown="trapFocus" @pointerdown="pointerDown" @click="backdropClick">
       <div class="management-drawer-body">
         <header class="management-drawer-heading"><h2 :id="titleID" class="sr-only">功能导航</h2><button type="button" class="management-brand-toggle" aria-label="关闭侧栏" title="关闭侧栏" aria-expanded="true" :aria-controls="drawerID" @click="closeDrawer()"><CinemaLogo sidebar /></button><button ref="closeButton" type="button" class="management-sidebar-control" aria-label="关闭功能导航" @click="closeDrawer()"><NavigationIcon name="close" /></button></header>
         <ManagementNavigation mobile />
+        <footer class="management-sidebar-footer">
+          <AppVersion />
+        </footer>
       </div>
     </dialog>
   </Teleport>
@@ -92,6 +99,8 @@ defineExpose({ openDrawer, toggleDrawer, opened, drawerID })
 .management-drawer { box-sizing: border-box; position: fixed; inset: 0 auto 0 0; width: min(288px, calc(100vw - 32px)); max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; border-radius: 0 20px 20px 0; overflow: hidden; background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); box-shadow: 12px 0 60px rgb(15 23 42 / 14%); }
 .management-drawer[open] { animation: management-drawer-in 180ms ease-out; }.management-drawer::backdrop { background: rgb(15 23 42 / 32%); animation: management-backdrop-in 180ms ease-out; }
 .management-drawer-body { display: flex; height: 100%; flex-direction: column; padding: env(safe-area-inset-top, 0px) 4px env(safe-area-inset-bottom, 0px); }
+.management-sidebar-footer { display: flex; height: 36px; min-width: 0; flex-shrink: 0; margin-top: auto; align-items: center; padding: 0 16px; overflow: hidden; }
+.management-sidebar.is-collapsed .management-sidebar-footer { display: none; }
 .dark .management-sidebar { background: rgb(29 32 37 / var(--management-sidebar-progress)); border-color: rgb(var(--color-slate-700) / calc(0.55 * var(--management-sidebar-progress))); }
 .dark .management-drawer { background: rgb(var(--color-slate-900)); color-scheme: dark; }.dark .management-drawer::backdrop { background: rgb(0 0 0 / 45%); }
 @media (hover: hover) { .management-sidebar-control:hover { background: rgb(116 143 180 / 9%); color: #4775b0; } }

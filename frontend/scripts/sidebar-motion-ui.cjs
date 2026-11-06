@@ -144,9 +144,13 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   assert.ok(routeSamples.some(sample => sample.labelOpacity > .05 && sample.labelOpacity < .95), 'Link text must fade while the existing icons stay visible')
   assert.ok(routeSamples.some(sample => sample.collapsed) && routeSamples.some(sample => !sample.collapsed))
   const panel = await navigation().boundingBox(), rail = await sidebar().boundingBox()
+  const footer = await sidebar().locator('.management-sidebar-footer').boundingBox()
   const headerHeight = await page.locator('.workbench-header .header-inner').evaluate(el => el.getBoundingClientRect().height)
-  assert.ok(Math.abs(panel.x) < .5 && Math.abs(panel.y - headerHeight) < .5
-   && Math.abs(panel.width - rail.width) <= 1 && Math.abs(panel.y + panel.height - 900) < .5, JSON.stringify({ panel, rail, headerHeight }))
+  // 展开态下 nav 底部与固定 footer 顶部相邻，footer 底部对齐 900 视口底部
+  assert.ok(footer && Math.abs(panel.x) < .5 && Math.abs(panel.y - headerHeight) < .5
+   && Math.abs(panel.width - rail.width) <= 1
+   && Math.abs(panel.y + panel.height - footer.y) <= 1
+   && Math.abs(footer.y + footer.height - 900) <= 1, JSON.stringify({ panel, rail, headerHeight, footer }))
   fs.mkdirSync('test-results', { recursive: true })
   await page.screenshot({ path: 'test-results/sidebar-expanded-panel-light.png' })
   await page.evaluate(() => document.documentElement.classList.add('dark')); await page.waitForTimeout(350)

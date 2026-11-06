@@ -82,7 +82,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.ok(Math.abs(panel.x) < .5)
     assert.ok(Math.abs(panel.y - headerHeight) < .5)
     assert.ok(Math.abs(panel.x + panel.width - rail.x - rail.width) <= 1)
-    assert.ok(Math.abs(panel.y + panel.height - page.viewportSize().height) < .5)
+    // 桌面展开态：nav 底部与 footer 顶部相邻，footer 底部贴合视口底部，版本值符合契约
+    const footer = sidebar().locator('.management-sidebar-footer')
+    assert.equal(await footer.isVisible(), true)
+    const footerBox = await footer.boundingBox()
+    assert.ok(Math.abs(panel.y + panel.height - footerBox.y) <= 1, 'nav 底部必须与 footer 顶部相邻')
+    assert.ok(Math.abs(footerBox.y + footerBox.height - page.viewportSize().height) <= 1, 'footer 底部必须在视口底部')
+    const appVersion = footer.locator('.app-version')
+    assert.equal(await appVersion.getAttribute('aria-label'), '应用版本')
+    const expectedVersion = await page.evaluate(() => {
+     const meta = document.querySelector('meta[name="cinema115-version"]')
+     const val = meta ? meta.getAttribute('content')?.trim() : ''
+     return (!val || val === 'dev' || val === 'development') ? '开发版' : val
+    })
+    assert.equal((await appVersion.innerText()).trim(), expectedVersion)
+    const versionTitle = await appVersion.getAttribute('title')
+    assert.ok(versionTitle && versionTitle.length > 0, 'AppVersion 必须提供 title 详情')
     const style = await nav().evaluate(el => {
      const css = getComputedStyle(el)
      return { padding: css.paddingTop, horizontal: css.paddingLeft, bottom: css.paddingBottom, border: css.borderTopWidth, radius: css.borderTopLeftRadius }
@@ -90,6 +105,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.deepEqual(style, { padding: '14px', horizontal: '10px', bottom: '16px', border: '0px', radius: '0px' })
    } else {
     assert.ok(Math.abs(mark.x - 14) < .5)
+    // 64px 折叠态时 footer display none 且不占空间
+    const collapsedFooter = sidebar().locator('.management-sidebar-footer')
+    if (await collapsedFooter.count() > 0) {
+     assert.equal(await collapsedFooter.evaluate(el => {
+      const s = getComputedStyle(el), r = el.getBoundingClientRect()
+      return s.display === 'none' && r.width === 0 && r.height === 0
+     }), true)
+     assert.equal(await collapsedFooter.isVisible(), false)
+    }
    }
    const headerSurface = await page.locator('.workbench-header .header-background, .workbench-header .header-surface').boundingBox()
    assert.ok(Math.abs(headerSurface.x) < 1)
@@ -119,7 +143,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await nav().locator('.management-nav-row, .management-nav-link > svg').evaluateAll(elements => Promise.all(elements
     .flatMap(el => el.getAnimations()).filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
     .map(animation => animation.finished.catch(() => {}))))
+   const footer = sidebar().locator('.management-sidebar-footer')
    if (collapsed) {
+    // 64px 折叠态时 footer display: none 且不占空间
+    if (await footer.count() > 0) {
+     assert.equal(await footer.evaluate(el => {
+      const s = getComputedStyle(el), r = el.getBoundingClientRect()
+      return s.display === 'none' && r.width === 0 && r.height === 0
+     }), true, '折叠态 footer 必须 display: none 且不占空间')
+     assert.equal(await footer.isVisible(), false)
+    }
     await page.waitForFunction(() => [...document.querySelectorAll('.management-nav-link')]
      .every(el => Math.abs(el.getBoundingClientRect().height - 44) < .1))
     assert.equal(await sidebar().evaluate(el => getComputedStyle(el).backgroundColor.endsWith(', 0)')), true)
@@ -144,6 +177,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      assert.equal(activeColors.includes(icon.color), icon.active)
     }
    } else {
+    // 桌面展开态 footer 显示且 flex-shrink: 0 不随导航滚走
+    assert.equal(await footer.isVisible(), true)
+    assert.equal(await footer.evaluate(el => getComputedStyle(el).flexShrink === '0'), true)
     assert.equal(await nav().locator('svg').evaluateAll(icons => icons.every(icon => getComputedStyle(icon).strokeWidth === '1.75px')), true)
    }
    await noOverflow()
@@ -257,6 +293,19 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await sidebar().count(), 0)
   await open().click(); await drawer().waitFor()
   assert.equal(await drawer().locator('nav svg').evaluateAll(icons => icons.every(icon => getComputedStyle(icon).strokeWidth === '1.75px')), true)
+  // 移动 drawer 同样包含版本 footer，满足应用版本契约
+  const drawerFooter = drawer().locator('.management-sidebar-footer')
+  assert.equal(await drawerFooter.isVisible(), true)
+  const drawerVersion = drawerFooter.locator('.app-version')
+  assert.equal(await drawerVersion.getAttribute('aria-label'), '应用版本')
+  const expectedDrawerVersion = await page.evaluate(() => {
+   const meta = document.querySelector('meta[name="cinema115-version"]')
+   const val = meta ? meta.getAttribute('content')?.trim() : ''
+   return (!val || val === 'dev' || val === 'development') ? '开发版' : val
+  })
+  assert.equal((await drawerVersion.innerText()).trim(), expectedDrawerVersion)
+  const drawerTitle = await drawerVersion.getAttribute('title')
+  assert.ok(drawerTitle && drawerTitle.length > 0, '移动 drawer AppVersion 必须提供 title 详情')
   assert.equal(await drawer().getByRole('button', { name: '关闭功能导航' }).evaluate(el => el === document.activeElement), true)
   assert.equal(await page.evaluate(() => document.body.style.overflow), 'hidden')
   await screenshot('390-navigation')
@@ -286,11 +335,68 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await drawer().count(), 0)
   assert.equal(await page.evaluate(() => document.body.style.overflow), '')
   assert.equal(await link('/115').evaluate(el => el === document.activeElement), true)
+  // 检查导航滚动条：区分 Chromium WebKit 伪元素与 Firefox 标准 scrollbar-color 渲染路径
+  const inspectNavScrollbar = async () => nav().evaluate(el => {
+   const cs = getComputedStyle(el)
+   const isWebKit = window.CSS?.supports?.('selector(::-webkit-scrollbar)')
+   const isTransparent = c => !c || c === 'transparent' || /rgba\([^)]*,\s*0(?:\.0*)?\s*\)/.test(c)
+   const bar = getComputedStyle(el, '::-webkit-scrollbar')
+   const thumb = getComputedStyle(el, '::-webkit-scrollbar-thumb')
+   const track = getComputedStyle(el, '::-webkit-scrollbar-track')
+   const button = getComputedStyle(el, '::-webkit-scrollbar-button')
+   const corner = getComputedStyle(el, '::-webkit-scrollbar-corner')
+   let isThumbVisible = false, isTrackTransparent = true
+   if (isWebKit && (!cs.scrollbarColor || cs.scrollbarColor === 'auto')) {
+    // Chromium 渲染路径：依 ::-webkit-scrollbar-thumb 实际背景色判显隐，auto 不作颜色处理
+    isThumbVisible = !isTransparent(thumb.backgroundColor)
+    isTrackTransparent = isTransparent(track.backgroundColor) && isTransparent(corner.backgroundColor)
+   } else {
+    // Firefox 标准路径：正则匹配提取完整颜色，避免 split 空格破坏 rgb/rgba
+    const colors = (cs.scrollbarColor || '').match(/rgba?\([^)]+\)|transparent|\S+/g) || []
+    isThumbVisible = Boolean(colors[0] && colors[0] !== 'auto' && !isTransparent(colors[0]))
+    isTrackTransparent = !colors[1] || isTransparent(colors[1])
+   }
+   const barWidth = parseFloat(bar.width) || (cs.scrollbarWidth === 'thin' ? 4 : 0)
+   const isButtonHidden = button.display === 'none'
+   return { clientWidth: el.clientWidth, offsetWidth: el.offsetWidth, barWidth, isTrackTransparent, isThumbVisible, isButtonHidden }
+  })
   await page.setViewportSize({ width: 1024, height: 360 }); await sidebar().waitFor()
   assert.equal(await nav().evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  // 滚动条显隐、轨道透明与布局稳定性真实浏览器检查
+  await page.evaluate(() => document.activeElement?.blur())
+  await page.mouse.move(500, 60); await page.waitForTimeout(100)
+  const restingBar = await inspectNavScrollbar()
+  assert.equal(restingBar.barWidth, 4, '导航滚动条宽度确定为 4px')
+  assert.equal(restingBar.isButtonHidden, true, '滚动条上下箭头按钮必须隐藏')
+  assert.equal(restingBar.isTrackTransparent, true, '常态下导航滚动条轨道及角落必须透明')
+  assert.equal(restingBar.isThumbVisible, false, '常态下导航滚动条滑块必须透明隐形')
+  await nav().hover(); await page.waitForTimeout(100)
+  const hoveredBar = await inspectNavScrollbar()
+  assert.equal(hoveredBar.isTrackTransparent, true, 'hover 时滚动条轨道依然保持透明')
+  assert.equal(hoveredBar.isThumbVisible, true, 'hover 时导航滚动条滑块必须显色可见')
+  assert.equal(hoveredBar.clientWidth, restingBar.clientWidth, 'hover 时导航宽度必须恒定，无布局抖动')
+  await page.mouse.move(500, 60); await page.waitForTimeout(100)
+  const offBar = await inspectNavScrollbar()
+  assert.equal(offBar.isThumbVisible, false, '鼠标移出后滑块恢复透明')
+  assert.equal(offBar.clientWidth, restingBar.clientWidth, '鼠标移出后导航宽度保持恒定')
+  // 键盘聚焦（通过 Tab 触发内部 focus-visible）
+  await link('/115').focus()
+  await page.keyboard.press('Tab'); await page.waitForTimeout(100)
+  const focusedBar = await inspectNavScrollbar()
+  assert.equal(focusedBar.isTrackTransparent, true, '键盘聚焦时滚动条轨道透明')
+  assert.equal(focusedBar.isThumbVisible, true, '导航内部获得 focus-visible 时滚动条滑块显色')
+  assert.equal(focusedBar.clientWidth, restingBar.clientWidth, '键盘聚焦时导航宽度保持恒定')
+  await page.evaluate(() => document.activeElement?.blur())
+  // 短视口检查：nav 仍可滚到最后项且不被 footer 遮挡，footer 位置不因 scrollTop 变化
+  const shortFooter = sidebar().locator('.management-sidebar-footer')
+  assert.equal(await shortFooter.isVisible(), true)
+  const footerBoxBefore = await shortFooter.boundingBox()
+  assert.ok(Math.abs(footerBoxBefore.y + footerBoxBefore.height - 360) <= 1, '短视口下 footer 底部必须位于视口底部')
   await nav().evaluate(el => { el.scrollTop = el.scrollHeight })
+  const footerBoxAfter = await shortFooter.boundingBox()
+  assert.ok(Math.abs(footerBoxAfter.y - footerBoxBefore.y) <= 1, 'nav 滚动时 footer 位置不因 scrollTop 变化且不随导航滚走')
   const last = await link('/emby').boundingBox()
-  assert.ok(last.y >= 72 && last.y + last.height <= 360)
+  assert.ok(last.y >= 72 && last.y + last.height <= footerBoxAfter.y + 0.5, '短视口滚动到底部时最后项仍可见且不被 footer 遮挡')
   // Navigation remembers its own scroll without moving the page.
   const scroll = await nav().evaluate(el => el.scrollTop)
   await link('/emby').click(); await page.waitForURL('**/emby')
