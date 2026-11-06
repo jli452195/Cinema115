@@ -2,6 +2,7 @@
 import '../styles/auth.css'
 import CinemaLogo from './CinemaLogo.vue'
 import PatternBackground from './PatternBackground.vue'
+import ThemeSwitcher from './ThemeSwitcher.vue'
 
 withDefaults(defineProps<{
   subtitle: string
@@ -15,6 +16,9 @@ withDefaults(defineProps<{
 <template>
   <main class="auth-page">
     <PatternBackground v-if="patternBackground" />
+    <div class="auth-theme-toggle">
+      <ThemeSwitcher />
+    </div>
     <div class="auth-content">
       <header class="auth-brand">
         <div class="auth-brand-name">

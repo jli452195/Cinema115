@@ -1,7 +1,10 @@
 .auth-page {
+  /* 基础色彩与点阵参数 */
   --auth-bg: rgb(var(--color-slate-50));
-  --auth-card: #fff;
-  --auth-field: #fff;
+  --auth-card: transparent;
+  --auth-field: #ffffff;
+  --auth-field-border: rgb(15 23 42 / 8%);
+  --auth-field-shadow: 0 1px 2px 0 rgb(15 23 42 / 5%);
   --auth-text: rgb(var(--color-slate-900));
   --auth-muted: rgb(var(--color-slate-600));
   --auth-border: rgb(var(--color-slate-200));
@@ -22,10 +25,13 @@
   color: var(--auth-text);
   background: radial-gradient(ellipse at 50% 0, rgb(59 130 246 / 7%), transparent 65%), var(--auth-bg);
 }
+
 .dark .auth-page {
   --auth-bg: rgb(var(--color-slate-950));
-  --auth-card: rgb(var(--color-slate-900));
-  --auth-field: rgb(var(--color-slate-950));
+  --auth-card: transparent;
+  --auth-field: rgb(var(--color-slate-900));
+  --auth-field-border: rgb(255 255 255 / 8%);
+  --auth-field-shadow: 0 1px 2px 0 rgb(0 0 0 / 30%);
   --auth-text: rgb(var(--color-slate-100));
   --auth-muted: rgb(var(--color-slate-400));
   --auth-border: rgb(var(--color-slate-700));
@@ -38,59 +44,476 @@
   --auth-warning-bg: #302719;
   --auth-pattern-dot: rgb(148 163 184 / 18%);
 }
-.auth-content { position: relative; z-index: 1; width: 100%; max-width: 440px; margin: auto; min-width: 0; }
-.auth-brand { margin-bottom: 28px; text-align: center; }
-.auth-brand-name { display: flex; align-items: center; justify-content: center; gap: 12px; }
-.auth-brand h1 { font-size: 28px; font-weight: 650; letter-spacing: -.8px; line-height: 1.2; }
-.auth-brand p { margin-top: 12px; color: var(--auth-muted); font-size: 14px; line-height: 1.6; }
-.auth-card { padding: 30px; border: 1px solid var(--auth-border); border-radius: 20px; background: var(--auth-card); box-shadow: 0 12px 40px rgb(15 23 42 / 6%); }
-.dark .auth-card { box-shadow: 0 12px 40px rgb(0 0 0 / 12%); }
-.auth-heading { margin-bottom: 24px; }
-.auth-heading h2 { font-size: 23px; font-weight: 650; letter-spacing: -.4px; line-height: 1.4; }
-.auth-heading p { margin-top: 8px; color: var(--auth-muted); font-size: 14px; line-height: 1.7; }
-.auth-fields { display: grid; gap: 20px; min-width: 0; padding: 0; border: 0; }
-.auth-field { min-width: 0; }
-.auth-field > label, .auth-label-row > label { display: block; font-size: 14px; font-weight: 550; line-height: 1.5; }
-.auth-label-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.auth-input { display: block; width: 100%; min-width: 0; min-height: 48px; margin-top: 8px; padding: 11px 13px; border: 1px solid var(--auth-border); border-radius: 10px; outline: none; background: var(--auth-field); color: var(--auth-text); font-size: 16px; line-height: 24px; transition: border-color .15s, box-shadow .15s; }
-.auth-input::placeholder { color: var(--auth-muted); opacity: .8; }
-.auth-input:focus { border-color: var(--auth-blue); box-shadow: 0 0 0 3px rgb(59 130 246 / 15%); }
-.auth-input[aria-invalid="true"] { border-color: var(--auth-error); }
-.auth-input:read-only { color: var(--auth-muted); }
-.auth-input:disabled { opacity: .7; }
-.auth-invite-input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-.auth-password { position: relative; }
-.auth-password .auth-input { padding-right: 50px; }
-.auth-icon-button { position: absolute; top: 2px; right: 2px; display: grid; width: 44px; height: 44px; place-items: center; border-radius: 8px; color: var(--auth-muted); }
-.auth-icon-button:hover { color: var(--auth-link); }
-.auth-icon-button svg { width: 20px; height: 20px; }
-.auth-hint { margin-top: 8px; color: var(--auth-muted); font-size: 12px; line-height: 1.7; }
-.auth-field-error { margin-top: 8px; color: var(--auth-error); font-size: 13px; line-height: 1.6; }
-.auth-button { display: flex; width: 100%; min-height: 48px; align-items: center; justify-content: center; gap: 8px; padding: 11px 16px; border-radius: 10px; background: var(--auth-blue); color: #fff; font-size: 15px; font-weight: 550; line-height: 24px; transition: background .15s; }
-.auth-button:hover { background: #1d4ed8; }
-.auth-button:disabled { cursor: not-allowed; opacity: .65; }
-.auth-button-secondary { border: 1px solid var(--auth-border); background: var(--auth-field); color: var(--auth-text); }
-.auth-button-secondary:hover { background: var(--auth-bg); }
-.auth-link { color: var(--auth-link); font-size: 14px; line-height: 1.6; text-decoration: none; }
-.auth-link:hover { text-decoration: underline; }
-.auth-link:disabled { cursor: not-allowed; opacity: .6; }
-.auth-footer { margin-top: 22px; text-align: center; }
-.auth-footer .auth-link { color: var(--auth-muted); font-size: 13px; }
-.auth-footer .auth-link:hover { color: var(--auth-link); }
-.auth-icon-button:focus-visible, .auth-button:focus-visible, .auth-link:focus-visible { outline: 2px solid var(--auth-blue); outline-offset: 4px; }
-.auth-notice { margin-bottom: 20px; padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
-.auth-notice-error { background: var(--auth-error-bg); color: var(--auth-error); }
-.auth-notice-success { background: var(--auth-success-bg); color: var(--auth-success); }
-.auth-notice-warning { background: var(--auth-warning-bg); color: var(--auth-warning); }
-.auth-notice p + p { margin-top: 6px; }
-.auth-invite-summary { margin-top: 16px; margin-bottom: 0; }
-.auth-invite-summary strong { display: block; font-size: 14px; font-weight: 600; }
-.auth-register-fields { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--auth-border); }
-.auth-actions { display: grid; gap: 12px; margin-top: 24px; }
-.auth-bottom-link { margin-top: 22px; text-align: center; }
-.auth-cooldown { margin-top: 12px; color: var(--auth-muted); font-size: 13px; line-height: 1.6; text-align: center; }
-.auth-spinner { width: 18px; height: 18px; flex: none; animation: auth-spin .9s linear infinite; }
-@keyframes auth-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .auth-spinner { animation: none; } .auth-input, .auth-button { transition: none; } }
-@media (max-width: 639px) { .auth-page { padding: 28px 20px; } .auth-brand { margin-bottom: 22px; } .auth-brand h1 { font-size: 25px; } .auth-brand p { font-size: 13px; } .auth-card { padding: 24px; border-radius: 16px; } .auth-heading h2 { font-size: 21px; } }
-@media (max-width: 359px) { .auth-page { padding-inline: 16px; } .auth-card { padding: 20px; } }
+
+/* 表单主容器：内容宽度约 384px，居中并支持自然滚动 */
+.auth-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 384px;
+  margin: auto;
+  min-width: 0;
+}
+
+.auth-brand {
+  margin-bottom: 28px;
+  text-align: center;
+}
+
+.auth-brand-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.auth-brand h1 {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -.8px;
+  line-height: 1.2;
+}
+
+.auth-brand p {
+  margin-top: 12px;
+  color: var(--auth-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* 无卡片、无边框（borderless cardless）表单容器 */
+.auth-card {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dark .auth-card {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.auth-heading {
+  margin-bottom: 24px;
+}
+
+.auth-heading h2 {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -.4px;
+  line-height: 1.4;
+}
+
+.auth-heading p {
+  margin-top: 8px;
+  color: var(--auth-muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.auth-fields {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+
+.auth-field {
+  min-width: 0;
+}
+
+.auth-field > label,
+.auth-label-row > label {
+  display: block;
+  font-size: 14px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.auth-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* HeroUI 风格输入框：白色/中性底色、圆角约 14px、极轻微边框与柔和投影、保留 48px 触控高度与 16px 字号 */
+.auth-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  margin-top: 8px;
+  padding: 11px 14px;
+  border: 1px solid var(--auth-field-border);
+  border-radius: 14px;
+  outline: none;
+  background: var(--auth-field);
+  color: var(--auth-text);
+  font-size: 16px;
+  line-height: 24px;
+  box-shadow: var(--auth-field-shadow);
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+
+.auth-input::placeholder {
+  color: var(--auth-muted);
+  opacity: .75;
+}
+
+.auth-input:focus {
+  border-color: var(--auth-blue);
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 15%), var(--auth-field-shadow);
+}
+
+.auth-input[aria-invalid="true"] {
+  border-color: var(--auth-error);
+}
+
+.auth-input[aria-invalid="true"]:focus {
+  border-color: var(--auth-error);
+  box-shadow: 0 0 0 3px rgb(239 68 68 / 18%);
+}
+
+.auth-input:read-only {
+  color: var(--auth-muted);
+  background: rgb(var(--color-slate-100) / 60%);
+}
+
+.dark .auth-input:read-only {
+  background: rgb(var(--color-slate-900) / 50%);
+}
+
+.auth-input:read-only:focus {
+  border-color: var(--auth-field-border);
+  box-shadow: var(--auth-field-shadow);
+}
+
+.auth-input:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.auth-invite-input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+/* 密码输入框与眼睛切换按钮对齐 */
+.auth-password {
+  position: relative;
+}
+
+.auth-password .auth-input {
+  padding-right: 50px;
+}
+
+.auth-icon-button {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 4px;
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--auth-muted);
+  transition: color .15s ease, background-color .15s ease;
+}
+
+.auth-icon-button:hover {
+  color: var(--auth-link);
+  background: rgb(15 23 42 / 5%);
+}
+
+.dark .auth-icon-button:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.auth-icon-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.auth-hint {
+  margin-top: 8px;
+  color: var(--auth-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.auth-field-error {
+  margin-top: 8px;
+  color: var(--auth-error);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 操作按钮：圆角 14px 与输入框视觉协调 */
+.auth-button {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-radius: 14px;
+  background: var(--auth-blue);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 550;
+  line-height: 24px;
+  box-shadow: 0 1px 2px 0 rgb(37 99 235 / 20%);
+  transition: background-color .15s ease, box-shadow .15s ease;
+}
+
+.auth-button:hover {
+  background: #1d4ed8;
+}
+
+.auth-button:disabled {
+  cursor: not-allowed;
+  opacity: .65;
+  box-shadow: none;
+}
+
+.auth-button-secondary {
+  border: 1px solid var(--auth-field-border);
+  background: var(--auth-field);
+  color: var(--auth-text);
+  box-shadow: var(--auth-field-shadow);
+}
+
+.auth-button-secondary:hover {
+  background: var(--auth-bg);
+}
+
+.auth-link {
+  color: var(--auth-link);
+  font-size: 14px;
+  line-height: 1.6;
+  text-decoration: none;
+}
+
+.auth-link:hover {
+  text-decoration: underline;
+}
+
+.auth-link:disabled {
+  cursor: not-allowed;
+  opacity: .6;
+}
+
+.auth-footer {
+  margin-top: 22px;
+  text-align: center;
+}
+
+.auth-footer .auth-link {
+  color: var(--auth-muted);
+  font-size: 13px;
+}
+
+.auth-footer .auth-link:hover {
+  color: var(--auth-link);
+}
+
+.auth-icon-button:focus-visible,
+.auth-button:focus-visible,
+.auth-link:focus-visible {
+  outline: 2px solid var(--auth-blue);
+  outline-offset: 4px;
+}
+
+/* 提示条状态 */
+.auth-notice {
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.auth-notice-error {
+  background: var(--auth-error-bg);
+  color: var(--auth-error);
+}
+
+.auth-notice-success {
+  background: var(--auth-success-bg);
+  color: var(--auth-success);
+}
+
+.auth-notice-warning {
+  background: var(--auth-warning-bg);
+  color: var(--auth-warning);
+}
+
+.auth-notice p + p {
+  margin-top: 6px;
+}
+
+.auth-invite-summary {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+.auth-invite-summary strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* 注册补充字段区：去掉分割线边框，仅保留呼吸间距 */
+.auth-register-fields {
+  margin-top: 24px;
+  padding-top: 0;
+  border-top: none;
+}
+
+.auth-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.auth-bottom-link {
+  margin-top: 22px;
+  text-align: center;
+}
+
+.auth-cooldown {
+  margin-top: 12px;
+  color: var(--auth-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.auth-spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  animation: auth-spin .9s linear infinite;
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-spinner {
+    animation: none;
+  }
+  .auth-input,
+  .auth-button,
+  .auth-theme-toggle .icon-button {
+    transition: none;
+  }
+}
+
+/* 登录/认证页面右上角独立主题切换入口（无侵入悬浮，随页面自然滚动） */
+.auth-theme-toggle {
+  position: absolute;
+  top: max(20px, env(safe-area-inset-top, 0px));
+  right: max(20px, env(safe-area-inset-right, 0px));
+  z-index: 2;
+}
+
+/* 覆盖全局 .icon-button 样式：默认透明、无边框、无阴影，仅中性低调图标，至少 44px 触控区 */
+.auth-theme-toggle .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--auth-muted);
+  cursor: pointer;
+  outline: none;
+  transition: color .15s ease, background-color .15s ease;
+}
+
+.auth-theme-toggle .icon-button:hover {
+  color: var(--auth-text);
+  background: rgb(15 23 42 / 6%);
+}
+
+.dark .auth-theme-toggle .icon-button:hover {
+  color: var(--auth-text);
+  background: rgb(255 255 255 / 8%);
+}
+
+.auth-theme-toggle .icon-button:focus-visible {
+  color: var(--auth-text);
+  background: rgb(15 23 42 / 4%);
+  outline: 2px solid var(--auth-blue);
+  outline-offset: 2px;
+}
+
+.dark .auth-theme-toggle .icon-button:focus-visible {
+  background: rgb(255 255 255 / 6%);
+  outline-color: var(--auth-blue);
+}
+
+.auth-theme-toggle .icon-button svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/* 移动端响应式适配：确保无卡片样式与 0 内边距，避让右上角切换入口防止遮挡 Logo */
+@media (max-width: 639px) {
+  .auth-page {
+    padding-top: max(56px, calc(env(safe-area-inset-top, 0px) + 48px));
+    padding-inline: 16px;
+    padding-bottom: 32px;
+  }
+  .auth-theme-toggle {
+    top: max(12px, env(safe-area-inset-top, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+  }
+  .auth-brand {
+    margin-bottom: 22px;
+  }
+  .auth-brand h1 {
+    font-size: 25px;
+  }
+  .auth-brand p {
+    font-size: 13px;
+  }
+  .auth-card {
+    padding: 0;
+    border-radius: 0;
+  }
+  .auth-heading h2 {
+    font-size: 21px;
+  }
+}
+
+@media (max-width: 359px) {
+  .auth-page {
+    padding-inline: 12px;
+  }
+  .auth-theme-toggle {
+    top: max(8px, env(safe-area-inset-top, 0px));
+    right: max(8px, env(safe-area-inset-right, 0px));
+  }
+  .auth-card {
+    padding: 0;
+  }
+}
