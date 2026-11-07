@@ -133,9 +133,12 @@ onBeforeUnmount(() => { lifecycle.abort(); password.value = '' })
         </div>
       </div>
       <p id="gy-order-hint" class="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">从左到右，越靠前越优先；同时用于来源筛选和搜索结果排序。</p>
-      <SortableList id="gy-order-list" v-model="orderedResources" class="gy-order-list mt-4" item-class="!rounded-full" :item-key="item => item.type" :disabled="!!busy" direction="horizontal" role="group" aria-label="观影资源优先级" aria-describedby="gy-order-help" @start="item => selectedResourceType = item.type">
+      <SortableList id="gy-order-list" v-model="orderedResources" class="gy-order-list mt-4" :item-key="item => item.type" :disabled="!!busy" direction="horizontal" role="group" aria-label="观影资源优先级" aria-describedby="gy-order-help" @start="item => selectedResourceType = item.type">
         <template #item="{ item, index }">
-          <button type="button" class="gy-order-chip" data-drag-handle :data-resource-type="item.type" :class="{ selected: selectedResourceType === item.type }" :disabled="!!busy" :aria-label="`${item.label}，优先级 ${index + 1}`" :aria-pressed="selectedResourceType === item.type" @click="selectedResourceType = item.type" @keydown="resourceKey($event, index)"><span class="gy-order-number" aria-hidden="true">{{ index + 1 }}</span>{{ item.label }}</button>
+          <button type="button" class="gy-order-chip" data-drag-handle :data-resource-type="item.type" :class="{ selected: selectedResourceType === item.type }" :disabled="!!busy" :aria-label="`${item.label}，优先级 ${index + 1}`" :aria-pressed="selectedResourceType === item.type" @click="selectedResourceType = item.type" @keydown="resourceKey($event, index)">
+            <svg class="gy-order-grip" width="12" height="14" viewBox="0 0 12 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M4 3v10M8 3v10" /></svg>
+            <span class="gy-order-label">{{ item.label }}</span>
+          </button>
         </template>
       </SortableList>
       <p id="gy-order-help" class="mt-3 text-xs leading-5 text-slate-500 dark:text-slate-400">拖动排序，点击后可用按钮微调；手机长按拖动。<span class="sr-only">选中资源后也可按 Alt 和左右方向键调整。</span></p>
@@ -154,16 +157,29 @@ onBeforeUnmount(() => { lifecycle.abort(); password.value = '' })
 </template>
 
 <style scoped>
-.gy-order-list { gap: 8px; }
-.gy-order-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; max-width: 100%; padding: 6px 13px 6px 10px; border: 1px solid transparent; border-radius: 999px; background: rgb(var(--color-slate-100)); color: rgb(var(--color-slate-700)); font-size: 13px; font-weight: 500; white-space: nowrap; transition: background-color .15s, color .15s, border-color .15s; }
+.gy-order-list { gap: 8px; padding: 2px 0; }
+.gy-order-chip { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 34px; max-width: 100%; padding: 6px 12px; border: 1px solid rgb(var(--color-slate-200) / .8); border-radius: 8px; background: #fff; color: rgb(var(--color-slate-600)); font-size: 12px; font-weight: 500; text-align: left; box-shadow: 0 1px 3px rgb(15 23 42 / .04), 0 1px 2px rgb(15 23 42 / .02); transition: background-color .18s ease-out, color .18s ease-out, border-color .18s ease-out, box-shadow .18s ease-out, transform .18s ease-out; }
+.gy-order-grip { flex: 0 0 12px; width: 12px; height: 14px; color: rgb(var(--color-slate-300)); pointer-events: none; transition: color .18s ease-out; }
+.gy-order-label { overflow-wrap: anywhere; }
 .gy-order-chip.selected { color: #1d4ed8; background: rgb(59 130 246 / .09); border-color: rgb(59 130 246 / .3); }
-.gy-order-number { width: 2ch; flex-shrink: 0; text-align: center; font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; color: rgb(var(--color-slate-500)); }
+.gy-order-chip.selected .gy-order-grip { color: #60a5fa; }
+.gy-order-chip:not(:disabled):active { cursor: grabbing; transform: scale(.98); background: rgb(var(--color-slate-50)); }
 .gy-order-moves { display: flex; gap: 4px; }
 .gy-order-moves button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 34px; padding: 5px 8px; border-radius: 8px; font-size: 12px; color: rgb(var(--color-slate-600)); }
 .gy-order button:disabled { cursor: default; }.gy-order-moves button:disabled { opacity: .35; }
 .gy-order button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
-.dark .gy-order-chip { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-200)); }.dark .gy-order-chip.selected { color: #93c5fd; background: rgb(59 130 246 / .13); border-color: rgb(96 165 250 / .4); }.dark .gy-order-number { color: rgb(var(--color-slate-400)); }.dark .gy-order-moves button { color: rgb(var(--color-slate-400)); }
-@media(hover: hover) and (pointer: fine) { .gy-order-chip:not(:disabled):not(.selected):hover { background: rgb(var(--color-slate-200) / .7); color: rgb(var(--color-slate-800)); }.gy-order-moves button:not(:disabled):hover { background: rgb(var(--color-slate-100)); }.dark .gy-order-chip:not(:disabled):not(.selected):hover { background: rgb(var(--color-slate-700)); color: rgb(var(--color-slate-100)); }.dark .gy-order-moves button:not(:disabled):hover { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-200)); } }
+.dark .gy-order-chip { background: rgb(var(--color-slate-800) / .6); color: rgb(var(--color-slate-300)); border-color: rgb(var(--color-slate-700) / .8); box-shadow: 0 1px 3px rgb(0 0 0 / .16), inset 0 1px rgb(255 255 255 / .025); }.dark .gy-order-grip { color: rgb(var(--color-slate-500)); }.dark .gy-order-chip.selected { color: #93c5fd; background: rgb(59 130 246 / .13); border-color: rgb(96 165 250 / .4); }.dark .gy-order-chip.selected .gy-order-grip { color: #60a5fa; }.dark .gy-order-chip:not(:disabled):active { background: rgb(var(--color-slate-800)); }.dark .gy-order-moves button { color: rgb(var(--color-slate-400)); }
+@media(hover: hover) and (pointer: fine) {
+  .gy-order-chip:not(:disabled):hover { box-shadow: 0 4px 12px -2px rgb(15 23 42 / .08), 0 2px 4px -1px rgb(15 23 42 / .04); }
+  .gy-order-chip:not(:disabled):hover:not(:active) { transform: translateY(-1px); }
+  .gy-order-chip:not(:disabled):not(.selected):hover { border-color: rgb(var(--color-slate-300)); color: rgb(var(--color-slate-900)); }
+  .gy-order-chip:not(:disabled):not(.selected):hover .gy-order-grip { color: rgb(var(--color-slate-500)); }
+  .gy-order-moves button:not(:disabled):hover { background: rgb(var(--color-slate-100)); }
+  .dark .gy-order-chip:not(:disabled):hover { box-shadow: 0 4px 12px -2px rgb(0 0 0 / .3), 0 2px 4px -1px rgb(0 0 0 / .15); }
+  .dark .gy-order-chip:not(:disabled):not(.selected):hover { border-color: rgb(var(--color-slate-600)); color: rgb(var(--color-slate-100)); }
+  .dark .gy-order-chip:not(:disabled):not(.selected):hover .gy-order-grip { color: rgb(var(--color-slate-300)); }
+  .dark .gy-order-moves button:not(:disabled):hover { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-200)); }
+}
 @media(max-width: 639px) { .gy-order-chip, .gy-order-moves button, .gy-order-save, .gy-order-reset { min-height: 42px; } }
-@media(prefers-reduced-motion: reduce) { .gy-order-chip { transition: none; } }
+@media(prefers-reduced-motion: reduce) { .gy-order-chip, .gy-order-grip { transition: none; }.gy-order-chip:not(:disabled):hover:not(:active), .gy-order-chip:not(:disabled):active { transform: none; } }
 </style>

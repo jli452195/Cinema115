@@ -43,6 +43,7 @@ export const resourceSources = [
   { id: 're0', title: 'RE0 配置', description: '管理 NanShare 连接，检查 RE0 搜索与分享 STRM 配置。', settings: '/nanshare', menuIcon: 'link' },
   { id: 'telegram', title: 'Telegram 搜索', description: '配置资源 Bot 与频道，管理详情页的聚合搜索来源。', settings: '/resources/telegram', menuIcon: 'telegram' },
   { id: 'subtitles', title: '字幕', description: '管理字幕库、射手网及在线字幕 API 配置。', settings: '/resources/subtitles', menuIcon: 'subtitles' },
+  { id: 'search', title: '搜索设置', description: '拖动调整详情页搜索按钮顺序，预览不同影片的展示效果。', settings: '/resources/search', menuIcon: 'search' },
   { id: 'network', title: '网络代理', description: '配置 NAS 访问外部资源服务的代理与服务范围。', settings: '/resources/network', menuIcon: 'proxy' },
   { id: 'cd2', title: 'CloudDrive2', description: '配置共用的 CD2 连接，浏览网盘目录并用于自动整理。', settings: '/resources/clouddrive2', menuIcon: 'cloud' },
 ] as const

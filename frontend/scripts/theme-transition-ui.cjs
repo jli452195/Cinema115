@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const passed = [], errors = []
   try {
-    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, serviceWorkers: 'block', colorScheme: 'light' })
+    const page = await browser.newPage({ viewport: { width: 1000, height: 700 }, serviceWorkers: 'block', colorScheme: 'light', hasTouch: true })
     page.setDefaultTimeout(8000)
     page.on('pageerror', error => errors.push(error.message))
     await page.route('**/api/**', route => route.abort())
@@ -72,7 +72,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(expand.oldMask, 'none')
     assert(expand.newMask.includes('60%') && expand.newMask.includes('100%'))
     const [x, y] = expand.origin.split(' ').map(parseFloat)
-    assert(Math.abs(x - box.x - box.width / 2) < 1 && Math.abs(y - box.y - box.height / 2) < 1)
+    assert(Math.abs(x - box.x - 8) < 1 && Math.abs(y - box.y - 9) < 1, '鼠标点击偏离按钮中心时，圆心应跟随实际点击位置')
     assert(expand.radius * 0.6 >= Math.hypot(Math.max(x, 1000 - x), Math.max(y, 700 - y)))
     await settled()
     assert.equal(await page.evaluate(() => localStorage.getItem('cinema115-theme')), 'dark')
@@ -82,7 +82,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     assert.equal(darkPalette.background, darkPalette.expected, '按钮样式不能覆盖页面根背景')
     assert.equal(await system.getAttribute('aria-pressed'), 'false')
-    passed.push('浅转深从按钮中心展开比例软边，末帧实色覆盖四角')
+    passed.push('浅转深从鼠标实际点击位置展开比例软边，末帧实色覆盖四角')
 
     await toggle.focus()
     const center = await toggle.boundingBox()
@@ -100,6 +100,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.evaluate(() => document.documentElement.classList.contains('dark')), false)
     assert(await toggle.evaluate(element => element === document.activeElement))
     passed.push('深转浅收缩旧深色快照，键盘使用按钮中心并保留焦点')
+
+    for (const offset of [{ x: 5, y: 6 }, { x: 34, y: 33 }]) {
+      const bounds = await toggle.boundingBox()
+      const count = await page.evaluate(() => records.length)
+      const point = { x: bounds.x + offset.x, y: bounds.y + offset.y }
+      await page.touchscreen.tap(point.x, point.y)
+      await page.waitForFunction(count => records.length > count && records.at(-1)?.ready, count)
+      const [x, y] = (await latest()).origin.split(' ').map(parseFloat)
+      assert(Math.abs(x - point.x) < 1 && Math.abs(y - point.y) < 1, '触摸按钮不同位置时圆心应跟随手指')
+      await settled()
+    }
+    passed.push('真实触摸按钮不同位置，双向动画均从触摸坐标开始')
+
+    await page.evaluate(() => theme.setTheme('dark'))
+    const systemBounds = await system.boundingBox()
+    const systemCount = await page.evaluate(() => records.length)
+    await system.click({ position: { x: 4, y: 5 } })
+    await page.waitForFunction(count => records.length > count && records.at(-1)?.ready, systemCount)
+    const [sx, sy] = (await latest()).origin.split(' ').map(parseFloat)
+    assert(Math.abs(sx - systemBounds.x - 4) < 1 && Math.abs(sy - systemBounds.y - 5) < 1, '跟随系统按钮也应使用实际点击坐标')
+    await settled()
+    passed.push('跟随系统入口同样使用真实点击位置')
 
     await system.click()
     assert.equal(await system.getAttribute('aria-pressed'), 'true')

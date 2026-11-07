@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useTheme, type ThemeTransitionOrigin } from '../composables/useTheme'
+import { useTheme } from '../composables/useTheme'
 
 interface Props {
   showLabel?: boolean
   beforeChange?: () => void | Promise<void>
-  revealOrigin?: () => ThemeTransitionOrigin | undefined
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -21,12 +20,12 @@ const displayLabel = computed(() => (resolvedTheme.value === 'dark' ? '主题：
 
 // 点击主切换按钮，触发二元切换
 function toggleTheme(event: MouseEvent) {
-  void setTheme(targetTheme.value, props.revealOrigin?.() ?? event, props.beforeChange)
+  void setTheme(targetTheme.value, event, props.beforeChange)
 }
 
 // 点击跟随系统按钮，设置模式为系统跟随
 function setSystemTheme(event: MouseEvent) {
-  void setTheme('system', props.revealOrigin?.() ?? event, props.beforeChange)
+  void setTheme('system', event, props.beforeChange)
 }
 </script>
 

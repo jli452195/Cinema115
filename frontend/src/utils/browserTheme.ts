@@ -24,24 +24,3 @@ export function syncBrowserTheme(color = browserThemeColor()) {
   }
 }
 
-/** 先让快照清理后的页面获得绘制机会，再请求原生系统栏换色。 */
-export function waitForThemePaint(): Promise<void> {
-  if (document.visibilityState === 'hidden') return Promise.resolve()
-  return new Promise(resolve => {
-    let frame: number | undefined
-    const finish = () => {
-      if (frame !== undefined) cancelAnimationFrame(frame)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-      resolve()
-    }
-    const onVisibilityChange = () => {
-      // 后台页面会暂停动画帧，不能因此一直等不到主题同步。
-      if (document.visibilityState === 'hidden') finish()
-    }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(finish)
-    })
-  })
-}
-

@@ -59,6 +59,22 @@
   --auth-pattern-dot: rgb(148 163 184 / 18%);
 }
 
+@media (display-mode: standalone) {
+  .auth-page {
+    /* 顶部入口与系统栏融为同一底色，光晕在下方平滑恢复。 */
+    --auth-top-surface-height: calc(var(--app-safe-top) + 64px);
+    background:
+      linear-gradient(to bottom, var(--auth-bg) var(--auth-top-surface-height), transparent calc(var(--auth-top-surface-height) + 40px)),
+      radial-gradient(ellipse at 50% 0, rgb(59 130 246 / 7%), transparent 65%),
+      var(--auth-bg);
+  }
+  .auth-page [data-theme-pattern] {
+    /* 顶部保持纯色，内容区继续使用原有点阵动画。 */
+    -webkit-mask-image: linear-gradient(to bottom, transparent var(--auth-top-surface-height), #000 calc(var(--auth-top-surface-height) + 40px));
+    mask-image: linear-gradient(to bottom, transparent var(--auth-top-surface-height), #000 calc(var(--auth-top-surface-height) + 40px));
+  }
+}
+
 /* 表单主容器：内容宽度约 384px，居中并支持自然滚动 */
 .auth-content {
   position: relative;

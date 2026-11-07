@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
-import { IconArrowsShuffle, IconCloud, IconSubtitles } from '@tabler/icons-vue'
+import { IconArrowsShuffle, IconChevronRight, IconCloud, IconListSearch, IconSubtitles } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import NavigationCard from '../components/NavigationCard.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
@@ -21,7 +21,7 @@ defineEmits<{ logout: [] }>()
 type Source = typeof sources[number]['id']
 type Summary = { label: string; tone: 'neutral' | 'success' | 'warning'; loading: boolean }
 const initial = (): Summary => ({ label: '读取中', tone: 'neutral', loading: true })
-const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), subtitles: initial(), network: initial(), cd2: initial() })
+const summaries = reactive<Record<Source, Summary>>({ gying: initial(), woniu: initial(), re0: initial(), telegram: initial(), subtitles: initial(), search: { label: '调整搜索按钮顺序', tone: 'neutral', loading: false }, network: initial(), cd2: initial() })
 const groups = [
   { title: '资源来源', sources: sources.filter(source => source.id !== 'network' && source.id !== 'cd2') },
   { title: '服务连接', sources: sources.filter(source => source.id === 'network' || source.id === 'cd2') },
@@ -33,8 +33,9 @@ const toneClasses = {
   warning: 'text-amber-600 dark:text-amber-400',
 }
 
-// Only read saved configuration; opening this page never logs in or starts a resource search.
+// 只读取已保存的配置，进入总览不会登录来源或启动搜索。
 async function load(source: Source) {
+  if (source === 'search') return
   summaries[source] = initial()
   const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
   try {
@@ -91,11 +92,14 @@ onBeforeUnmount(() => lifecycle.abort())
           <img v-else-if="source.id === 'gying'" :src="gyingLogo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <img v-else-if="source.id === 're0'" :src="re0Logo" alt="" class="h-8 w-8 object-contain" draggable="false" />
           <IconSubtitles v-else-if="source.id === 'subtitles'" :size="28" aria-hidden="true" />
+          <IconListSearch v-else-if="source.id === 'search'" :size="28" aria-hidden="true" />
           <IconArrowsShuffle v-else-if="source.id === 'network'" :size="28" aria-hidden="true" />
           <IconCloud v-else-if="source.id === 'cd2'" :size="28" aria-hidden="true" />
         </template>
         <template #trailing>
-          <span role="status" :aria-busy="summaries[source.id].loading" :title="summaries[source.id].label" class="inline-flex h-6 w-4 shrink-0 items-center justify-end" :class="toneClasses[summaries[source.id].tone]">
+          <span v-if="source.id === 'search'" :id="`source-status-${source.id}`" class="sr-only">{{ summaries[source.id].label }}</span>
+          <IconChevronRight v-if="source.id === 'search'" :size="18" class="text-slate-400" aria-hidden="true" />
+          <span v-else role="status" :aria-busy="summaries[source.id].loading" :title="summaries[source.id].label" class="inline-flex h-6 w-4 shrink-0 items-center justify-end" :class="toneClasses[summaries[source.id].tone]">
             <svg aria-hidden="true" class="h-2 w-2" :class="{ 'resource-status-success': summaries[source.id].tone === 'success' }" viewBox="0 0 8 8" fill="currentColor"><circle cx="4" cy="4" r="4" /></svg>
             <span :id="`source-status-${source.id}`" class="sr-only">{{ summaries[source.id].label }}</span>
           </span>

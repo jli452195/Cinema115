@@ -146,23 +146,39 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await useTheme().setTheme('light')
       const start = document.startViewTransition.bind(document)
       window.themeSnapshotMenus = []
+      window.themeSnapshotOrigins = []
       document.startViewTransition = callback => {
         window.themeSnapshotMenus.push(!!document.querySelector('#header-management'))
+        window.themeSnapshotOrigins.push(document.documentElement.style.getPropertyValue('--theme-reveal-origin'))
         return start(callback)
       }
     })
-    const themeButton = menu().locator('.theme-toggle')
-    const themeBounds = await trigger().boundingBox()
-    await themeButton.click()
-    await menu().waitFor({ state: 'detached' })
-    await page.waitForFunction(() => window.themeSnapshotMenus.length === 1)
-    assert.deepEqual(await page.evaluate(() => window.themeSnapshotMenus), [false])
-    assert(await trigger().evaluate(el => document.activeElement === el))
-    const revealOrigin = await page.evaluate(() => document.documentElement.style.getPropertyValue('--theme-reveal-origin'))
-    const [themeX, themeY] = revealOrigin.split(' ').map(parseFloat)
-    assert(Math.abs(themeX - themeBounds.x - themeBounds.width / 2) < 1)
-    assert(Math.abs(themeY - themeBounds.y - themeBounds.height / 2) < 1)
-    await page.waitForFunction(() => !document.documentElement.classList.contains('theme-reveal'))
+    const touchSession = await context.newCDPSession(page)
+    for (const [index, activation] of ['mouse', 'touch', 'keyboard'].entries()) {
+      await open()
+      const themeButton = menu().locator('.theme-toggle')
+      const bounds = await themeButton.boundingBox()
+      const offset = activation === 'mouse' ? { x: 20, y: 12 } : activation === 'touch' ? { x: bounds.width - 18, y: bounds.height - 10 } : { x: bounds.width / 2, y: bounds.height / 2 }
+      const expected = { x: bounds.x + offset.x, y: bounds.y + offset.y }
+      if (activation === 'mouse') await themeButton.click({ position: offset })
+      else if (activation === 'touch') {
+        // 仅在手机尺寸的触摸用例中开启真实触摸，不改变前面桌面布局检查的输入环境。
+        await touchSession.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: expected.x, y: expected.y }] })
+        await touchSession.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+      }
+      else { await themeButton.focus(); await themeButton.press('Enter') }
+      await menu().waitFor({ state: 'detached' })
+      await page.waitForFunction(count => themeSnapshotMenus.length === count, index + 1)
+      assert.deepEqual(await page.evaluate(() => themeSnapshotMenus), Array(index + 1).fill(false))
+      assert(await trigger().evaluate(el => document.activeElement === el))
+      const [x, y] = (await page.evaluate(() => themeSnapshotOrigins.at(-1))).split(' ').map(parseFloat)
+      assert(Math.abs(x - expected.x) < 1 && Math.abs(y - expected.y) < 1, `${activation} 应保留菜单关闭前的触发坐标或按钮中心`)
+      await page.waitForFunction(() => !document.documentElement.classList.contains('theme-reveal'))
+    }
+    await touchSession.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    await touchSession.detach()
+    passed.push('theme-menu-mouse-touch-origins-and-keyboard-center-survive-menu-unmount')
     await open()
     await menu().getByRole('link', { name: /站内通知/ }).click()
     await page.waitForURL('**/notifications'); await menu().waitFor({ state: 'detached' })

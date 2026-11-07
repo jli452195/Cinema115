@@ -26,11 +26,20 @@ function toggleNavigation(event: MouseEvent) {
 const route = useRoute()
 const notificationController = new AbortController()
 useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
+const standaloneMedia = window.matchMedia('(display-mode: standalone)')
+const isStandalone = ref(standaloneMedia.matches)
 let notificationTimer: ReturnType<typeof setInterval> | undefined
 let scrollFrame: number | undefined
 let compactViewport: MediaQueryList | undefined
 function smoothstep(value: number) { return value * value * (3 - 2 * value) }
 function updateHeaderScroll() {
+  // 已安装的 PWA 使用与系统栏相同的实色，不随海报和滚动改变透明度。
+  if (isStandalone.value) {
+    header.value?.style.setProperty('--header-surface-progress', '1')
+    header.value?.style.setProperty('--header-edge-progress', '1')
+    header.value?.style.setProperty('--header-active-opacity', '1')
+    return
+  }
   if (!props.tonalSurface) {
     scrollY.value = window.scrollY
     return
@@ -45,6 +54,7 @@ function updateHeaderScroll() {
   header.value?.style.setProperty('--header-active-opacity', (0.45 + progress * 0.55).toFixed(4))
 }
 function onScroll() {
+  if (isStandalone.value) return
   if (!props.tonalSurface) {
     scrollY.value = window.scrollY
     return
@@ -55,9 +65,14 @@ function onScroll() {
     updateHeaderScroll()
   })
 }
+function onStandaloneChange() {
+  isStandalone.value = standaloneMedia.matches
+  updateHeaderScroll()
+}
 onMounted(() => {
   compactViewport = window.matchMedia('(max-width: 639px)')
   compactViewport.addEventListener('change', onScroll)
+  standaloneMedia.addEventListener('change', onStandaloneChange)
   window.addEventListener('scroll', onScroll, { passive: true })
   updateHeaderScroll()
   void refreshWebsiteUnread(notificationController.signal)
@@ -66,6 +81,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
   compactViewport?.removeEventListener('change', onScroll)
+  standaloneMedia.removeEventListener('change', onStandaloneChange)
   if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
   notificationController.abort()
   clearInterval(notificationTimer)
@@ -78,9 +94,14 @@ let accountLeave: Promise<void> | undefined
 let finishAccountLeave: (() => void) | undefined
 const scrollY = ref(0)
 watch(() => [props.tonalSurface, props.overBackdrop], onScroll, { flush: 'post' })
-const highlightOverBackdrop = computed(() => props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
+const highlightOverBackdrop = computed(() => !isStandalone.value && props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
 const headerStyle = computed(() => {
   if (props.tonalSurface) return {}
+  if (isStandalone.value) return {
+    backgroundColor: 'rgb(var(--header-bg))',
+    backdropFilter: 'none',
+    borderColor: 'rgb(var(--header-border))',
+  }
   const opacity = Math.min(Math.max(scrollY.value / 100, 0), 1)
   return {
     backgroundColor: `rgb(var(--header-bg) / ${opacity * 0.85})`,
@@ -101,12 +122,6 @@ const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
 )
 
 function closePanels() { accountOpen.value = false }
-
-function accountThemeOrigin() {
-  // 菜单项复用工具栏按钮圆心，关闭菜单后仍保持同一个视觉锚点。
-  const bounds = accountButton.value?.getBoundingClientRect()
-  return bounds ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 } : undefined
-}
 
 async function prepareThemeChange() {
   const restoreFocus = !!header.value?.querySelector('#header-management')?.contains(document.activeElement)
@@ -165,7 +180,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
@@ -194,7 +209,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         </button>
       </div>
       <Transition name="account-menu-motion" :css="!closingForTheme" @before-enter="activateAccountMenu" @before-leave="deactivateAccountMenu" @after-leave="completeAccountLeave" @leave-cancelled="completeAccountLeave">
-        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" :theme-reveal-origin="accountThemeOrigin" @close="closePanels" @logout="emit('logout')" />
+        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" @close="closePanels" @logout="emit('logout')" />
       </Transition>
     </div>
   </header>
@@ -318,6 +333,18 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .dark .workbench-header.tonal-surface { --header-tonal-alpha: 0.95; }
   .header-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .workbench-header.tonal-surface :is(.top-link, .icon-button) { transition: none; }
+}
+@media (display-mode: standalone) {
+  /* 网页顶栏、安全区和原生栏共用实色，避免半透明合成后出现色差。 */
+  .workbench-header.tonal-surface,
+  .dark .workbench-header.tonal-surface { --header-tonal-alpha: 1; }
+  .header-surface,
+  .header-background {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    transition: none;
+  }
+  .header-surface { opacity: 1; }
 }
 @media (min-width: 640px) {
   .top-link { padding-inline: 1.25rem; }

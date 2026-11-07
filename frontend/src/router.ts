@@ -101,6 +101,7 @@ export const router = createRouter({
     { path: '/telegram/channels', redirect: '/resources/telegram' },
     { path: '/resources/telegram', name: 'telegram-search', component: () => import('./views/TelegramSearchView.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources', name: 'resource-config', component: ResourceConfigView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
+    { path: '/resources/search', name: 'resource-search-settings', component: () => import('./views/SearchSettingsView.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources/subtitles', name: 'subtitle-settings', component: SubtitleSettingsView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources/network', name: 'network-proxy', component: () => import('./views/NetworkProxyView.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/resources/clouddrive2', name: 'clouddrive2', component: () => import('./views/CloudDrive2View.vue'), meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },

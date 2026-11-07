@@ -4,7 +4,7 @@ import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch }
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import FollowButton from '../components/FollowButton.vue'
-import SearchPill from '../components/SearchPill.vue'
+import DetailSearchButtons from '../components/DetailSearchButtons.vue'
 import MediaRecommendations from '../components/MediaRecommendations.vue'
 import EmbyMediaInfo from '../components/EmbyMediaInfo.vue'
 import SeasonEpisodeList from '../components/SeasonEpisodeList.vue'
@@ -21,16 +21,9 @@ import { copyText } from '../utils/clipboard'
 import { formatScrapeName } from '../utils/mediaNaming'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import tmdbLogo from '../assets/tmdb.svg'
-import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
-import gardenLogo from '../assets/anime-providers/garden.svg'
-import re0Logo from '../assets/re0/logo-re0-square.webp'
-import gyingLogo from '../assets/gying/logo-gying.png'
-import woniuLogo from '../assets/woniu.svg'
-import telegramIcon from '../assets/telegram/telegram.svg'
-import { nanShareRequest, type NanShareConfigView } from '../types/nanshare'
-import { telegramUserRequest, type TelegramUserStatus, type TelegramChannelConfig } from '../types/telegramUser'
-import { gyingRequest, type GyingConfigView } from '../types/gying'
-import { woniuRequest, type WoniuConfigView } from '../types/woniu'
+import { detailSearchSettingsRequest } from '../lib/detail-search-api'
+import { useDetailSearchAvailability } from '../composables/useDetailSearchAvailability'
+import { defaultDetailSearchOrder, visibleDetailSearchSources, type DetailSearchSourceID } from '../utils/detailSearchSources'
 
 const BotSearchDialog = defineAsyncComponent(() => import('../components/BotSearchDialog.vue'))
 const TelegramChannelSearchDialog = defineAsyncComponent(() => import('../components/TelegramChannelSearchDialog.vue'))
@@ -51,9 +44,10 @@ const gardenSearchOpen = ref(false)
 const re0SearchOpen = ref(false)
 const numberingOpen = ref(false)
 const numberingNotice = ref('')
-const searchConfigured = ref({ re0: false, bot: false, channels: false, gying: false, woniu: false })
+const searchConfigured = useDetailSearchAvailability(() => props.token, () => isPortalAdmin.value)
+const searchOrder = ref<DetailSearchSourceID[]>([...defaultDetailSearchOrder])
 watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
-  searchConfigured.value = { re0: false, bot: false, channels: false, gying: false, woniu: false }
+  searchOrder.value = [...defaultDetailSearchOrder]
   channelSearchOpen.value = false
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
   woniuSearchOpen.value = false
@@ -61,20 +55,15 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   if (!admin || !token) return
   const controller = new AbortController()
   onCleanup(() => controller.abort())
-  const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])
-  async function check(key: keyof typeof searchConfigured.value, request: Promise<{ configured: boolean }>) {
+  async function loadOrder() {
     try {
-      const config = await request
-      if (!signal.aborted) searchConfigured.value[key] = config.configured === true
+      const config = await detailSearchSettingsRequest(token, controller.signal)
+      if (!controller.signal.aborted) searchOrder.value = config.order
     } catch {
-      // 无法确认配置时隐藏对应入口，不影响其他搜索服务。
+      // 排序读取失败时保留默认顺序，来源可见性仍独立校验。
     }
   }
-  void check('re0', nanShareRequest<NanShareConfigView>(token, 'config', signal))
-  void check('bot', telegramUserRequest<TelegramUserStatus>(token, 'config', signal).then(status => ({ configured: status.botConfigured })))
-  void check('channels', telegramUserRequest<TelegramChannelConfig>(token, 'channels', signal).then(config => ({ configured: config.account.hasSession && config.channels.length > 0 })))
-  void check('gying', gyingRequest<GyingConfigView>(token, 'config', signal))
-  void check('woniu', woniuRequest<WoniuConfigView>(token, 'config', signal))
+  void loadOrder()
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
 watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; channelSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
@@ -95,6 +84,12 @@ const { mediaColorStyle, readPosterColors } = useMediaColors(() => tmdbImageURL(
 // 动画类型包含日漫、国漫及动画电影，不按国家限制入口。
 const isAnimation = computed(() => !!detail.value?.genres?.some(genre => genre.id === 16))
 const canSearchAnimeResources = computed(() => isPortalAdmin.value && isAnimation.value)
+const visibleSearchSources = computed(() => isPortalAdmin.value ? visibleDetailSearchSources(searchOrder.value, searchConfigured.value, isAnimation.value) : [])
+function openResourceSearch(id: DetailSearchSourceID) {
+  if (!visibleSearchSources.value.some(source => source.id === id)) return
+  const dialogs = { re0: re0SearchOpen, bot: botSearchOpen, channels: channelSearchOpen, gying: gyingSearchOpen, mikan: mikanSearchOpen, garden: gardenSearchOpen, woniu: woniuSearchOpen }
+  dialogs[id].value = true
+}
 watch(canSearchAnimeResources, allowed => { if (!allowed) { mikanSearchOpen.value = false; gardenSearchOpen.value = false } })
 const loading = ref(true)
 const error = ref('')
@@ -307,48 +302,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
               <div class="mt-6">
                 <FollowButton :token="token" :kind="kind" :tmdb-id="tmdbId" :library-state="kind === 'movie' ? embyReadSucceeded ? embyMedia?.state || 'unknown' : 'unknown' : undefined" @refresh-library="refreshEmbyMedia" />
               </div>
-              <div class="mt-3 flex flex-wrap items-center gap-3">
-                <SearchPill v-if="isPortalAdmin && searchConfigured.re0" @click="re0SearchOpen = true">
-                  <img :src="re0Logo" alt="" class="h-4 w-4 shrink-0 rounded-[4px] object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5">
-                    <span class="font-semibold tracking-wide">RE0</span>
-                    <span class="detail-muted">搜索</span>
-                  </span>
-                </SearchPill>
-                <SearchPill v-if="isPortalAdmin && searchConfigured.bot" @click="botSearchOpen = true">
-                  <img :src="telegramIcon" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5">
-                    <span class="font-semibold">Bot</span>
-                    <span class="detail-muted">搜索</span>
-                  </span>
-                </SearchPill>
-                <SearchPill v-if="isPortalAdmin && searchConfigured.channels" aria-label="TG 频道搜索" @click="channelSearchOpen = true">
-                  <img :src="telegramIcon" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5"><span class="font-semibold">TG 频道</span><span class="detail-muted">搜索</span></span>
-                </SearchPill>
-                <SearchPill v-if="isPortalAdmin && searchConfigured.gying" @click="gyingSearchOpen = true">
-                  <img :src="gyingLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5">
-                    <span class="font-semibold">观影</span>
-                    <span class="detail-muted">搜索</span>
-                  </span>
-                </SearchPill>
-                <SearchPill v-if="canSearchAnimeResources" @click="mikanSearchOpen = true">
-                  <img :src="mikanMascot" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5">
-                    <span class="font-semibold">Mikan</span>
-                    <span class="detail-muted">搜索</span>
-                  </span>
-                </SearchPill>
-                <SearchPill v-if="canSearchAnimeResources" @click="gardenSearchOpen = true">
-                  <img :src="gardenLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span>Garden 搜索</span>
-                </SearchPill>
-                <SearchPill v-if="isPortalAdmin && searchConfigured.woniu" @click="woniuSearchOpen = true">
-                  <img :src="woniuLogo" alt="" class="h-4 w-4 shrink-0 object-contain" draggable="false" />
-                  <span class="flex items-center gap-0.5"><span class="font-semibold">蜗牛</span><span class="detail-muted">搜索</span></span>
-                </SearchPill>
-              </div>
+              <DetailSearchButtons v-if="visibleSearchSources.length" class="mt-3" :sources="visibleSearchSources" @search="openResourceSearch" />
               <div class="detail-overview mt-7"><h2 class="text-sm font-semibold detail-muted">剧情大纲</h2><p v-if="detail.tagline" class="mt-3 text-sm italic detail-muted">{{ detail.tagline }}</p><p class="detail-on-surface mt-3 whitespace-pre-line break-words text-sm leading-7">{{ detail.overview || '暂无剧情简介。' }}</p></div>
             </div>
           </section>

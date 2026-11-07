@@ -1,6 +1,6 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { prepareThemeTransitionGeometry } from '../utils/themeTransitionGeometry'
-import { syncBrowserTheme, waitForThemePaint } from '../utils/browserTheme'
+import { syncBrowserTheme } from '../utils/browserTheme'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export interface ThemeTransitionOrigin { x: number; y: number }
@@ -11,15 +11,18 @@ const resolvedTheme = computed(() => currentTheme.value === 'system' ? systemDar
 let isInitialized = false
 let activeTransition: ViewTransition | undefined
 let themeRequest = 0
-let deferBrowserTheme = false
 
 function transitionOrigin(event?: MouseEvent | ThemeTransitionOrigin): ThemeTransitionOrigin {
   if (event && !('clientX' in event)) return event
-  // 菜单关闭后按钮可能卸载，必须在任何异步等待之前保存坐标。
+  // 鼠标和触摸优先采用真实点击位置；键盘激活才回退到按钮中心。
+  if (event && (event.detail > 0 || ('pointerType' in event && Boolean(event.pointerType)))) {
+    return { x: event.clientX, y: event.clientY }
+  }
+  // 菜单关闭后按钮可能卸载，必须在任何异步等待之前保存几何坐标。
   const button = event?.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : undefined
   return {
-    x: button ? button.left + button.width / 2 : event && event.detail > 0 ? event.clientX : window.innerWidth / 2,
-    y: button ? button.top + button.height / 2 : event && event.detail > 0 ? event.clientY : window.innerHeight / 2,
+    x: button ? button.left + button.width / 2 : window.innerWidth / 2,
+    y: button ? button.top + button.height / 2 : window.innerHeight / 2,
   }
 }
 
@@ -48,7 +51,7 @@ async function setTheme(theme: ThemeMode, event?: MouseEvent | ThemeTransitionOr
   }
   if (!prepared || dark === root.classList.contains('dark') || !document.startViewTransition || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
     await apply()
-    // 上一次转场可能因新请求跳过同步；即使目标主题相同也需补齐系统栏。
+    // 同主题请求不会触发监听器，仍需确保系统栏与当前页面一致。
     if (request === themeRequest) syncBrowserTheme()
     return
   }
@@ -70,7 +73,6 @@ async function setTheme(theme: ThemeMode, event?: MouseEvent | ThemeTransitionOr
   try {
     // 登录页与站内共用整页快照，单独排查点阵、表单分层引起的交接闪动。
     geometry = prepareThemeTransitionGeometry({ x, y }, softMask)
-    deferBrowserTheme = true
     transition = document.startViewTransition(apply)
     activeTransition = transition
     // 跳过快照会使 ready 拒绝，但仍需完成主题更新。
@@ -87,13 +89,8 @@ async function setTheme(theme: ThemeMode, event?: MouseEvent | ThemeTransitionOr
       delete root.dataset.themeRevealMask
       root.style.removeProperty('--theme-reveal-origin')
       root.style.removeProperty('--theme-reveal-radius')
-      // 先让清理后的页面获得绘制机会，避免原生栏换色挤在快照交接的同一帧。
-      deferBrowserTheme = false
-      if (request === themeRequest) {
-        await waitForThemePaint()
-        // 等待绘制时可能收到新选择，只同步仍然有效的主题。
-        if (request === themeRequest) syncBrowserTheme()
-      }
+      // 异常或转场被跳过时补齐颜色；同色不会重复请求系统栏更新。
+      if (request === themeRequest) syncBrowserTheme()
     }
   }
 }
@@ -106,9 +103,9 @@ export function useTheme() {
       const isDark = resolvedTheme.value === 'dark'
       const root = document.documentElement
       root.classList.toggle('dark', isDark)
-      // 主样式就绪后移除首屏兜底，浏览器颜色在圆形转场期间单独协调。
+      // 页面主题生效时立即提交系统栏颜色，不等待圆形动画结束。
       document.getElementById('theme-bootstrap-style')?.remove()
-      if (!deferBrowserTheme) syncBrowserTheme()
+      syncBrowserTheme()
     }
 
     mediaQuery.addEventListener('change', () => {

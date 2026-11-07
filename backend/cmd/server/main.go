@@ -148,6 +148,7 @@ func main() {
 	admin.GET("/me", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"username": c.GetString("admin_username")}) })
 	httpapi.RegisterPortalInvites(admin, auth)
 	httpapi.RegisterNamingTemplates(admin, database)
+	httpapi.RegisterDetailSearchSettings(admin, database)
 	httpapi.RegisterMediaClassification(admin, classification)
 	catalog := r.Group("/api/catalog")
 	catalog.Use(httpapi.PortalAuthenticated(auth))
