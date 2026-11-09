@@ -140,9 +140,24 @@ func positiveInteger(node *yaml.Node, field string) (int, error) {
 }
 
 func compileSection(node *yaml.Node, field string) (section, error) {
-	fields, err := object(node, field, []string{"fallback", "rules"}, "fallback", "rules")
+	fields, err := object(node, field, []string{"parent", "fallback", "rules"}, "fallback", "rules")
 	if err != nil {
 		return section{}, err
+	}
+	parent := "电影"
+	if field == "tv" {
+		parent = "剧集"
+	}
+	if node := fields["parent"]; node != nil {
+		if err := expect(node, field+".parent", yaml.ScalarNode, "!!str"); err != nil {
+			return section{}, err
+		}
+		parent = node.Value
+		if parent != "" {
+			if _, err := directory(node, field+".parent"); err != nil {
+				return section{}, err
+			}
+		}
 	}
 	fallback, err := directory(fields["fallback"], field+".fallback")
 	if err != nil {
@@ -178,7 +193,7 @@ func compileSection(node *yaml.Node, field string) (section, error) {
 		}
 		rules = append(rules, rule{name: name, match: match})
 	}
-	return section{fallback: fallback, rules: rules}, nil
+	return section{parent: parent, fallback: fallback, rules: rules}, nil
 }
 
 func compileConditions(node *yaml.Node, field string) (conditions, error) {

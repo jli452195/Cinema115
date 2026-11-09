@@ -45,6 +45,7 @@ type rule struct {
 }
 
 type section struct {
+	parent   string
 	fallback string
 	rules    []rule
 }
@@ -61,19 +62,20 @@ func (c *Classifier) Classify(facts Facts) (Result, error) {
 		return Result{}, fmt.Errorf("%w：请先加载规则", ErrConfig)
 	}
 	var selected *section
-	var prefix string
 	switch facts.Kind {
 	case "movie":
 		selected = &c.movie
-		prefix = "电影/"
 	case "tv":
 		selected = &c.tv
-		prefix = "剧集/"
 	default:
 		return Result{}, fmt.Errorf("%w：不支持的作品类型 %q", ErrFacts, facts.Kind)
 	}
 	if selected.fallback == "" {
 		return Result{}, fmt.Errorf("%w：请先加载规则", ErrConfig)
+	}
+	prefix := selected.parent
+	if prefix != "" {
+		prefix += "/"
 	}
 	for _, rule := range selected.rules {
 		if rule.match.matches(facts) {

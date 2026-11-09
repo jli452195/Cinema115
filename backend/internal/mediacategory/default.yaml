@@ -1,7 +1,8 @@
 # 分类规则按顺序匹配，第一条命中后停止；未命中使用 fallback。
 # match 不同字段同时满足，同一字段的多个值满足任意一个。
-# 分类名称直接作为目录名；电影、剧集自动加上对应类型目录。
+# parent 为分类父目录，可用 / 分层，设为 '' 则直接使用分类名称。
 movie:
+  parent: 电影
   fallback: 其他电影
   rules:
     - name: 动画电影
@@ -12,6 +13,7 @@ movie:
         languages: [zh, cn]
 
 tv:
+  parent: 剧集
   fallback: 其他剧集
   rules:
     - name: 动漫

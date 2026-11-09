@@ -70,9 +70,9 @@ export function parseClassification(source: string): ClassificationEditorDocumen
   const root = mapping(document.contents, '$', ['movie', 'tv'], ['movie', 'tv'])
   const config = {} as ClassificationConfig, nodes = new Map<string, YAMLMap>()
   for (const kind of ['movie', 'tv'] as const) {
-    const section = mapping(root.get(kind, true), kind, ['fallback', 'rules'], ['fallback', 'rules'])
+    const section = mapping(root.get(kind, true), kind, ['parent', 'fallback', 'rules'], ['fallback', 'rules'])
     const sequence = list(section.get('rules', true), `${kind}.rules`)
-    config[kind] = { fallback: text(section.get('fallback', true), `${kind}.fallback`), rules: sequence.items.map((item, index) => {
+    config[kind] = { parent: section.has('parent') ? text(section.get('parent', true), `${kind}.parent`) : kind === 'movie' ? '电影' : '剧集', fallback: text(section.get('fallback', true), `${kind}.fallback`), rules: sequence.items.map((item, index) => {
       const field = `${kind}.rules[${index}]`
       const rule = mapping(item, field, ['name', 'match'], ['name', 'match'])
       const match = mapping(rule.get('match', true), `${field}.match`, classificationConditions.map(item => item.key), [])
@@ -106,12 +106,12 @@ export function parseClassification(source: string): ClassificationEditorDocumen
   return { source, document, config, nodes, lineCounter }
 }
 
-export const classificationDirectory = (kind: ClassificationKind, name: string) => `${kind === 'movie' ? '电影' : '剧集'}/${name.trim()}`
+export const classificationDirectory = (parent: string, name: string) => `${parent ? `${parent}/` : ''}${name.trim()}`
 
 export function classificationSignature(config: ClassificationConfig) {
   return JSON.stringify(['movie', 'tv'].map(kind => {
     const section = config[kind as ClassificationKind]
-    return [section.fallback, section.rules.map(rule => [rule.name, classificationConditions.map(({ key }) => rule.match[key])])]
+    return [section.parent, section.fallback, section.rules.map(rule => [rule.name, classificationConditions.map(({ key }) => rule.match[key])])]
   }))
 }
 
@@ -127,6 +127,7 @@ function directoryError(value: string): boolean {
 
 export function classificationIssue(config: ClassificationConfig): { kind: ClassificationKind; key?: string; field: string; message: string } | undefined {
   for (const kind of ['movie', 'tv'] as const) {
+    if (config[kind].parent !== '' && directoryError(config[kind].parent)) return { kind, field: `${kind}.parent`, message: '分类父目录须为有效相对目录，留空则直接使用分类名称' }
     if (directoryError(config[kind].fallback)) return { kind, field: `${kind}.fallback`, message: `请填写有效的兜底分类名称，例如 ${kind === 'movie' ? '其他电影' : '其他剧集'}` }
     const names = new Set<string>()
     for (const [index, rule] of config[kind].rules.entries()) {
@@ -171,6 +172,7 @@ export function writeClassification(editor: ClassificationEditorDocument, config
   }
   for (const kind of ['movie', 'tv'] as const) {
     const section = document.get(kind, true) as YAMLMap
+    setText(section, 'parent', config[kind].parent)
     setText(section, 'fallback', config[kind].fallback)
     const sequence = section.get('rules', true)
     if (!isSeq(sequence)) throw new Error('分类规则列表无效')
@@ -214,7 +216,7 @@ export function importMoviePilotClassification(source: string): string {
   }
   for (const kind of ['movie', 'tv'] as const) {
     const categories = mapping(root.get(kind, true), kind, undefined)
-    const section = document.createNode({ fallback: '', rules: [] }) as YAMLMap
+    const section = document.createNode({ parent: kind === 'movie' ? '电影' : '剧集', fallback: '', rules: [] }) as YAMLMap
     const rules = list(section.get('rules', true), `${kind}.rules`)
     const names = new Set<string>()
     let fallback = false
@@ -232,7 +234,7 @@ export function importMoviePilotClassification(source: string): string {
         fallback = true
         const node = document.createNode(name)
         section.set('fallback', node)
-        const key = section.items[0]!.key
+        const key = section.items.find(pair => isScalar(pair.key) && pair.key.value === 'fallback')!.key
         comments(category.key, node, key); comments(value, node, key)
         continue
       }

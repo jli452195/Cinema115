@@ -14,7 +14,7 @@ import type { ClassificationConfig, ClassificationDiagnostic, ClassificationKind
 const props = defineProps<{ token: string }>()
 const YamlSourceEditor = defineAsyncComponent(() => import('../components/YamlSourceEditor.vue'))
 const kind = ref<ClassificationKind>('movie'), settings = shallowRef<ClassificationSettings>(), editor = shallowRef<ClassificationEditorDocument>()
-const drafts = ref<ClassificationConfig>({ movie: { fallback: '', rules: [] }, tv: { fallback: '', rules: [] } })
+const drafts = ref<ClassificationConfig>({ movie: { parent: '', fallback: '', rules: [] }, tv: { parent: '', fallback: '', rules: [] } })
 const current = computed({ get: () => drafts.value[kind.value], set: value => { drafts.value[kind.value] = value } })
 const ruleEditor = ref<InstanceType<typeof ClassificationRuleEditor>>()
 const sourceInput = ref<InstanceType<typeof YamlSourceEditor>>(), mode = ref<'visual' | 'source'>('visual')
@@ -89,7 +89,7 @@ async function revealProblem(field?: string) {
   if (!target) return
   kind.value = target
   invalidKey.value = match ? drafts.value[target].rules[Number(match[2])]?.key || '' : issue.value?.key || ''
-  await nextTick(); await ruleEditor.value?.reveal(invalidKey.value)
+  await nextTick(); await ruleEditor.value?.reveal(invalidKey.value, field || issue.value?.field)
 }
 async function save() {
   if (locked.value || !settings.value || !dirty.value) return
@@ -167,7 +167,7 @@ onBeforeRouteLeave(() => {
 watch(() => classificationSignature(drafts.value), () => { invalidKey.value = ''; diagnostic.value = undefined; error.value = ''; notice.value = '' }, { flush: 'sync' })
 watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
   lifecycle.abort(); lifecycle = new AbortController(); settings.value = undefined; editor.value = undefined; pending.value = undefined
-  drafts.value = { movie: { fallback: '', rules: [] }, tv: { fallback: '', rules: [] } }
+  drafts.value = { movie: { parent: '', fallback: '', rules: [] }, tv: { parent: '', fallback: '', rules: [] } }
   workingSource.value = ''; parseError.value = ''; diagnostic.value = undefined; mode.value = 'visual'; saving.value = false; dialog.value = ''; importing.value = false; importedYAML.value = ''; leaveDecision?.(false); leaveDecision = undefined
   if (portalUser.value?.role === 'admin') void read()
 })

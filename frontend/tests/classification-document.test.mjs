@@ -35,7 +35,24 @@ test('new, removed and empty rule lists serialize with stable semantic dirty che
   assert.ok(!written.includes('path:'))
   assert.match(written, /languages: \[de, es\]/)
   assert.equal(parsed.config.movie.fallback, '其他电影')
-  assert.equal(classificationDirectory('movie', parsed.config.movie.rules[0].name), '电影/其他语言')
+  assert.equal(classificationDirectory(parsed.config.movie.parent, parsed.config.movie.rules[0].name), '电影/其他语言')
+})
+
+test('分类父目录支持修改、留空、多级目录并随规则保存', () => {
+  const editor = parseClassification(defaults), config = clone(editor.config)
+  config.movie.parent = ''
+  config.tv.parent = '媒体/电视剧'
+  assert.notEqual(classificationSignature(config), classificationSignature(editor.config))
+  const written = writeClassification(editor, config), parsed = parseClassification(written)
+  validateClassification(parsed)
+  assert.equal(parsed.config.movie.parent, '')
+  assert.equal(parsed.config.tv.parent, '媒体/电视剧')
+  assert.equal(classificationDirectory(parsed.config.movie.parent, '外语电影'), '外语电影')
+  assert.equal(classificationDirectory(parsed.config.tv.parent, '未分类'), '媒体/电视剧/未分类')
+  assert.equal(parseClassification(defaults.replace('  parent: 剧集\n', '')).config.tv.parent, '剧集')
+  for (const parent of ["'../电视剧'", "'/电视剧'", "' '", 'null', '123']) {
+    assert.throws(() => validateClassification(parseClassification(defaults.replace('parent: 剧集', `parent: ${parent}`))), error => error.diagnostic?.field === 'tv.parent')
+  }
 })
 
 test('an empty added condition cannot silently broaden an existing rule', () => {
@@ -145,7 +162,7 @@ test('directory validation matches cross-platform names and UTF-8 component limi
   }
   const trimmed = parseClassification(defaults.replace('name: 动画电影', "name: ' 动画电影 '"))
   assert.equal(trimmed.config.movie.rules[0].name, '动画电影')
-  assert.equal(classificationDirectory('tv', ' 动画/日语 '), '剧集/动画/日语')
+  assert.equal(classificationDirectory('剧集', ' 动画/日语 '), '剧集/动画/日语')
   assert.throws(() => validateClassification(parseClassification(defaults.replace('name: 华语电影', "name: ' 动画电影 '"))), error => error.diagnostic?.field === 'movie.rules[1].name')
   assert.throws(() => validateClassification(parseClassification(defaults.replace('fallback: 其他电影', "fallback: ' 其他电影 '"))), error => error.diagnostic?.field === 'movie.fallback')
 })
@@ -177,7 +194,7 @@ test('MP import preserves category order, matching conditions and comments in th
   assert.deepEqual(config.movie.rules[1].match.languages, ['zh', 'cn', 'bo', 'za'])
   assert.deepEqual(config.tv.rules[5].match.genres, [10764, 10767])
   assert.ok(config.tv.rules[3].match.countries.includes('UK'))
-  assert.equal(classificationDirectory('movie', config.movie.rules[0].name), '电影/动画电影')
+  assert.equal(classificationDirectory(config.movie.parent, config.movie.rules[0].name), '电影/动画电影')
   assert.ok(!yaml.includes('path:')); assert.ok(!yaml.includes('genre_ids:'))
   assert.match(yaml, /genres: \[16\]/)
   assert.match(yaml, /languages: \[zh, cn, bo, za\]/)

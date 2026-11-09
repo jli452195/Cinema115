@@ -5,7 +5,7 @@ export interface ClassificationRule {
   name: string
   match: Partial<Record<ClassificationCondition, (string | number)[]>>
 }
-export interface ClassificationSection { fallback: string; rules: ClassificationRule[] }
+export interface ClassificationSection { parent: string; fallback: string; rules: ClassificationRule[] }
 export type ClassificationConfig = Record<ClassificationKind, ClassificationSection>
 export interface ClassificationDiagnostic { field: string; line: number; column: number; message: string }
 export interface ClassificationRecord { yaml: string; revision: string; activeRevision: string; loadError?: string; diagnostic?: ClassificationDiagnostic }

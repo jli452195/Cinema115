@@ -3,6 +3,7 @@ package mediacategory_test
 import (
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -114,6 +115,29 @@ func TestRuleOrderAndNormalization(t *testing.T) {
 	result, err := compile(t, source).Classify(facts)
 	if err != nil || result.RuleName != "完整条件" || result.Path != "剧集/完整条件" {
 		t.Fatalf("configuration codes or names were not normalized: %+v, %v", result, err)
+	}
+}
+
+func TestClassificationParent(t *testing.T) {
+	for _, parent := range []string{"电视剧", "媒体/电视剧", ""} {
+		source := strings.Replace(simpleYAML, "tv:\n", "tv:\n  parent: "+strconv.Quote(parent)+"\n", 1)
+		classifier := compile(t, source)
+		prefix := parent
+		if prefix != "" {
+			prefix += "/"
+		}
+		for _, tt := range []struct {
+			facts mediacategory.Facts
+			name  string
+		}{
+			{mediacategory.Facts{Kind: "tv", Genres: []int{16}}, "动漫"},
+			{mediacategory.Facts{Kind: "tv"}, "其他剧集"},
+		} {
+			result, err := classifier.Classify(tt.facts)
+			if err != nil || result.Path != prefix+tt.name {
+				t.Fatalf("parent %q: %+v, %v", parent, result, err)
+			}
+		}
 	}
 }
 
