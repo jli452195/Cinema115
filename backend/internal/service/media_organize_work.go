@@ -493,6 +493,8 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 }
 
 func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	// 本轮附件尝试结束后再提交通知；附件失败不撤销已持久化的视频成功结果。
+	defer s.flushMediaRefresh(run)
 	if run.Rule.Storage == "cd2" && !run.streaming {
 		ctx = clouddrive2.WithDirectoryCache(ctx)
 	}
@@ -545,6 +547,13 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 	}
 	mediaFinishRun(run)
 	return nil
+}
+
+func (s *MediaOrganizer) flushMediaRefresh(run *MediaOrganizeRun) {
+	if s.Refresh != nil && len(run.refreshPaths) > 0 {
+		s.Refresh.QueueMediaRefresh(run.refreshPaths)
+	}
+	run.refreshPaths = nil
 }
 
 func mediaFinishRun(run *MediaOrganizeRun) {

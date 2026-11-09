@@ -11,7 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     const page = await context.newPage(), errors = [], writes = []
     page.on('pageerror', error => errors.push(error.message))
-    let config = { url: 'http://emby:8096', configured: true, libraryIds: ['movies', 'tv'], serverId: 'server', serverName: '家庭媒体库', webhookPath: '/api/webhook/emby?token=mock-secret', webhookBaseUrl: 'http://cinema:3002' }
+    let config = { url: 'http://emby:8096', configured: true, libraryIds: ['movies', 'tv'], serverId: 'server', serverName: '家庭媒体库', webhookPath: '/api/webhook/emby?token=mock-secret', webhookBaseUrl: 'http://cinema:3002', refreshAfterOrganize: false, refreshPathMappings: '' }
     let status = { status: 'idle', configured: true, count: 134674, scanned: 0, syncedAt: '2026-10-12T13:56:25Z', lastError: '', webhookAt: '2026-10-07T08:43:11Z', webhookEvent: 'library.new', webhookError: '', pending: 0, failed: 8, connected: true, connectionError: '', eventError: '缺少季号或集号', metadataPending: 0, metadataFailed: 8, updatesReady: true, updatesError: '', updatesStatus: 'ready' }
     let libraries = [{ ItemId: 'movies', Name: '电影', CollectionType: 'movies' }, { ItemId: 'tv', Name: '电视剧', CollectionType: 'tvshows' }, { ItemId: 'music', Name: '音乐', CollectionType: 'music' }]
     let failConfig = false, failLibraries = false, failStatus = false, failSave = false, failWebhook = false, failSync = false, statusReads = 0
@@ -27,6 +27,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           if (failSave) { code = 400; data = { error: '模拟保存失败' } }
           else { const input = req.postDataJSON(); config = { ...config, url: input.url, configured: true, libraryIds: input.libraryIds }; data = config }
         } else if (failConfig) { code = 500; data = { error: '模拟配置读取失败' } } else data = config
+      } else if (p.endsWith('/emby/refresh-config')) {
+        config = { ...config, ...req.postDataJSON() }; data = config
       } else if (p.endsWith('/emby/test')) {
         await new Promise(resolve => setTimeout(resolve, testDelay))
         if (failLibraries) { code = 400; data = { error: '模拟媒体库读取失败' } }
@@ -182,6 +184,40 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     failConfig = true; await page.reload(); await page.getByText('模拟配置读取失败', { exact: true }).waitFor()
     assert.equal(await save.isDisabled(), true)
     failConfig = false; await page.getByRole('button', { name: '重试读取', exact: true }).click(); await options.last().waitFor()
+    assert.equal(await page.getByRole('checkbox', { name: '整理后通知 Emby', exact: true }).count(), 0)
+    // 刷新配置通过首页独立入口保存，不读取媒体库或轮询同步状态。
+    await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/emby')
+    await page.locator('a[href="/emby/refresh"]').first().click()
+    const refreshSave = page.getByRole('button', { name: '保存设置', exact: true })
+    const notify = page.getByRole('switch', { name: '整理后通知 Emby', exact: true })
+    const mappingInput = page.getByLabel('路径替换', { exact: true })
+    await notify.waitFor()
+    assert.equal(await mappingInput.isDisabled(), true)
+    const closedHeight = (await page.locator('.refresh-card').boundingBox()).height
+    await page.locator('.refresh-card .setting-switch').click()
+    assert.equal(await mappingInput.isDisabled(), false)
+    assert.ok(Math.abs((await page.locator('.refresh-card').boundingBox()).height - closedHeight) < 2, 'switching must not move the form')
+    await page.getByText('有未保存的修改，保存后生效', { exact: true }).waitFor()
+    await page.getByLabel('路径替换', { exact: true }).fill('/已整理 => /媒体库')
+    await page.getByRole('button', { name: '撤销修改', exact: true }).click()
+    assert.equal(await notify.isChecked(), false)
+    await page.locator('.refresh-card .setting-switch').click()
+    await page.getByLabel('路径替换', { exact: true }).fill('/已整理 => /媒体库')
+    const libraryTestsBefore = writes.filter(w => w.p.endsWith('/emby/test')).length
+    await refreshSave.click(); await page.getByText('刷新设置已保存。', { exact: true }).waitFor()
+    await page.reload(); await notify.waitFor()
+    assert.equal(await notify.isChecked(), true)
+    assert.equal(await page.getByLabel('路径替换', { exact: true }).inputValue(), '/已整理 => /媒体库')
+    assert.equal(writes.filter(w => w.p.endsWith('/emby/test')).length, libraryTestsBefore)
+    assert.equal(await refreshSave.isDisabled(), true)
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme)
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 })
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+        await page.screenshot({ path: path.join(__dirname, `../test-results/emby-refresh-${theme}-${width}.png`), fullPage: true })
+      }
+    }
     assert.ok(statusReads > 5); assert.deepEqual(errors, [])
     console.log('Library mocked UI passed: automatic library loading, scoped selection, independent saves/copy, invalidation, retained missing IDs, validation, retries, no duplicate submits, real sync counts, six viewports and both themes.')
   } finally { await browser.close() }

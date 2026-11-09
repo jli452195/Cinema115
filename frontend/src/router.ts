@@ -20,6 +20,7 @@ const TelegramView = () => import('./views/TelegramView.vue')
 const TelegramUserView = () => import('./views/TelegramUserView.vue')
 const LogsView = () => import('./views/LogsView.vue')
 const EmbyView = () => import('./views/EmbyView.vue')
+const EmbyRefreshView = () => import('./views/EmbyRefreshView.vue')
 const EmbyMissingView = () => import('./views/EmbyMissingView.vue')
 const EmbyProxyView = () => import('./views/EmbyProxyView.vue')
 const EmbyCacheView = () => import('./views/EmbyCacheView.vue')
@@ -111,6 +112,7 @@ export const router = createRouter({
     { path: '/nanshare', name: 'nanshare', component: NanShareView, meta: { managementSection: '/resources', defaultSidebarCollapsed: false } },
     { path: '/emby', name: 'emby-category', component: HomeView, props: { category: 'emby' }, meta: { categoryPage: true, defaultSidebarCollapsed: false } },
     { path: '/emby/library', name: 'emby', component: EmbyView, meta: { defaultSidebarCollapsed: false } },
+    { path: '/emby/refresh', name: 'emby-refresh', component: EmbyRefreshView, meta: { defaultSidebarCollapsed: false } },
     { path: '/emby/missing', name: 'emby-missing', component: EmbyMissingView, meta: { defaultSidebarCollapsed: false } },
     { path: '/emby/proxy', name: 'emby-proxy', component: EmbyProxyView, meta: { defaultSidebarCollapsed: false } },
     { path: '/emby/cache', name: 'emby-cache', component: EmbyCacheView, meta: { defaultSidebarCollapsed: false } },

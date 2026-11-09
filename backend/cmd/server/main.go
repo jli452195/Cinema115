@@ -325,6 +325,7 @@ func main() {
 	}
 	mediaOrganizer.SetCD2(cd2Connections)
 	mediaOrganizer.Logs = generationLogs
+	mediaOrganizer.Refresh = embyService
 	httpapi.RegisterMediaOrganize(admin, mediaOrganizer)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
 	downloadResources.Gying = gyingService
@@ -656,6 +657,8 @@ func main() {
 			workerErrors <- err
 		}
 	}()
+	workers.Add(1)
+	go func() { defer workers.Done(); embyService.RunMediaRefresh(ctx) }()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()

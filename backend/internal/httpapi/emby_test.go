@@ -82,9 +82,12 @@ func TestEmbyHTTPWebhookCharsetAndAdminBoundary(t *testing.T) {
 		{"POST", "/api/admin/emby/missing/exclusions", `{}`, 400},
 		{"POST", "/api/admin/emby/missing/exclusions", `{invalid`, 400},
 		{"POST", "/api/admin/emby/missing/restore", `{}`, 400},
+		{"POST", "/api/admin/emby/refresh-config", `{"refreshAfterOrganize":true,"refreshPathMappings":"/source => /media"}`, 200},
+		{"POST", "/api/admin/emby/refresh-config", `{"refreshAfterOrganize":true,"refreshPathMappings":"/source => relative"}`, 400},
+		{"POST", "/api/admin/emby/refresh-config", `{invalid`, 400},
 	} {
 		if w := call(tc.method, tc.path, tc.body, false); w.Code != 401 {
-			t.Fatal("缺集排除接口未鉴权", tc.path, w.Code)
+			t.Fatal("Emby 接口未鉴权", tc.path, w.Code)
 		}
 		if w := call(tc.method, tc.path, tc.body, true); w.Code != tc.code || w.Header().Get("Cache-Control") != "no-store" || strings.Contains(w.Body.String(), "private-key") {
 			t.Fatal(tc.path, w.Code, w.Body.String())

@@ -98,6 +98,7 @@ type MediaOrganizeRun struct {
 	processing         map[string]bool
 	seenTasks          map[string]bool
 	recognitionEvents  []mediaRecognitionLogEvent
+	refreshPaths       []string
 	scanScopes         []mediaScanScope
 }
 
@@ -134,6 +135,7 @@ type mediaOrganizeDocument struct {
 // Only immutable naming facts and the provider's directory reservation are shared.
 type MediaOrganizer struct {
 	Logs           *GenerationLogs
+	Refresh        interface{ QueueMediaRefresh([]string) }
 	mu             sync.Mutex
 	db             mediaOrganizeStorage
 	doc            mediaOrganizeDocument
@@ -179,6 +181,7 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	target.scanScopes = slices.Clone(source.scanScopes)
 	target.seenTasks = nil
 	target.recognitionEvents = nil
+	target.refreshPaths = nil
 	target.Groups = slices.Clone(source.Groups)
 	for i := range target.Groups {
 		target.Groups[i].MatchedSeason = mediaOptionalNumber(source.Groups[i].MatchedSeason)
@@ -533,6 +536,11 @@ func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 			if err := s.persistLocked(changed...); err != nil {
 				return err
 			}
+			if s.Refresh != nil {
+				for _, entry := range resolved.Entries {
+					r.refreshPaths = append(r.refreshPaths, entry.Target)
+				}
+			}
 			if r.seenTasks == nil {
 				r.seenTasks = make(map[string]bool)
 			}
@@ -674,6 +682,7 @@ func mediaActionBefore(a MediaOrganizeRun, actionA string, b MediaOrganizeRun, a
 
 // 所有退出路径都释放当前批次，包括错误结果检查点或调度持久化失败。
 func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganizeRun, action string) error {
+	defer s.flushMediaRefresh(&run)
 	defer func() {
 		s.mu.Lock()
 		if s.active == run.ID {

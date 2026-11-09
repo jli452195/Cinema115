@@ -24,6 +24,21 @@ func RegisterEmby(r *gin.Engine, admin *gin.RouterGroup, s *service.EmbyService)
 		c.Next()
 	})
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, s.Config()) })
+	group.POST("/refresh-config", func(c *gin.Context) {
+		var input struct {
+			RefreshAfterOrganize bool   `json:"refreshAfterOrganize"`
+			RefreshPathMappings  string `json:"refreshPathMappings"`
+		}
+		if c.ShouldBindJSON(&input) != nil {
+			c.JSON(400, gin.H{"error": "刷新配置格式无效"})
+			return
+		}
+		if err := s.SaveMediaRefreshConfig(c.Request.Context(), input.RefreshAfterOrganize, input.RefreshPathMappings); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Config())
+	})
 	registerEmbyPosters(group, s)
 	registerEmbyMissingExclusions(group, s)
 	group.POST("/webhook-config", func(c *gin.Context) {

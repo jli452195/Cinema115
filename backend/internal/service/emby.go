@@ -23,22 +23,26 @@ import (
 )
 
 type EmbyConfig struct {
-	URL            string   `json:"url"`
-	APIKey         string   `json:"apiKey,omitempty"`
-	LibraryIDs     []string `json:"libraryIds"`
-	ServerID       string   `json:"serverId"`
-	ServerName     string   `json:"serverName"`
-	WebhookSecret  string   `json:"webhookSecret,omitempty"`
-	WebhookBaseURL string   `json:"webhookBaseUrl"`
+	URL                  string   `json:"url"`
+	APIKey               string   `json:"apiKey,omitempty"`
+	LibraryIDs           []string `json:"libraryIds"`
+	ServerID             string   `json:"serverId"`
+	ServerName           string   `json:"serverName"`
+	WebhookSecret        string   `json:"webhookSecret,omitempty"`
+	WebhookBaseURL       string   `json:"webhookBaseUrl"`
+	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
+	RefreshPathMappings  string   `json:"refreshPathMappings"`
 }
 type EmbyConfigView struct {
-	URL            string   `json:"url"`
-	Configured     bool     `json:"configured"`
-	LibraryIDs     []string `json:"libraryIds"`
-	ServerID       string   `json:"serverId"`
-	ServerName     string   `json:"serverName"`
-	WebhookPath    string   `json:"webhookPath"`
-	WebhookBaseURL string   `json:"webhookBaseUrl"`
+	URL                  string   `json:"url"`
+	Configured           bool     `json:"configured"`
+	LibraryIDs           []string `json:"libraryIds"`
+	ServerID             string   `json:"serverId"`
+	ServerName           string   `json:"serverName"`
+	WebhookPath          string   `json:"webhookPath"`
+	WebhookBaseURL       string   `json:"webhookBaseUrl"`
+	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
+	RefreshPathMappings  string   `json:"refreshPathMappings"`
 }
 type EmbyStatus struct {
 	model.EmbyState
@@ -69,13 +73,18 @@ type EmbyService struct {
 	syncLogScope    string
 	syncLogTask     string
 	webhookRejectAt time.Time
+	refreshMu       sync.Mutex
+	refreshPending  map[embyRefreshTarget]map[string]struct{}
+	refreshCount    int
+	refreshDropped  int
+	refreshWake     chan struct{}
 	// Service locks precede missingMu; cache construction shares the published-index read lock.
 	missingMu sync.Mutex
 	missing   embyMissingCache
 }
 
 func NewEmbyService(secrets *SessionStore, db *storage.Store) (*EmbyService, error) {
-	s := &EmbyService{secrets: secrets, db: db, config: EmbyConfig{URL: "http://192.168.0.3:8096", LibraryIDs: []string{}}}
+	s := &EmbyService{secrets: secrets, db: db, config: EmbyConfig{URL: "http://192.168.0.3:8096", LibraryIDs: []string{}}, refreshWake: make(chan struct{}, 1)}
 	if raw := secrets.Value(); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &s.config); err != nil {
 			return nil, fmt.Errorf("读取 Emby 加密配置: %w", err)
@@ -126,7 +135,7 @@ func (s *EmbyService) Config() EmbyConfigView {
 	if c.WebhookSecret != "" {
 		path = "/api/webhook/emby?token=" + url.QueryEscape(c.WebhookSecret)
 	}
-	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL}
+	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL, RefreshAfterOrganize: c.RefreshAfterOrganize, RefreshPathMappings: c.RefreshPathMappings}
 }
 
 func normalizeWebhookBaseURL(raw string) (string, error) {
@@ -260,6 +269,8 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 刷新设置独立保存，连接页面不能覆盖另一页面已保存的开关与路径。
+	c.RefreshAfterOrganize, c.RefreshPathMappings = s.config.RefreshAfterOrganize, s.config.RefreshPathMappings
 	// 兼容旧页面；未提交地址时保留当前已保存的地址。
 	if input.WebhookBaseURL == "" {
 		c.WebhookBaseURL = s.config.WebhookBaseURL

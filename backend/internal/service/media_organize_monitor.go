@@ -463,6 +463,11 @@ func (s *MediaOrganizer) reconcileLocalWatches(ctx context.Context, o mediaLocal
 				local.dirtyFirst = now
 				s.notify()
 			}
+			// 首次定时扫描可能早于监听初始化；不可用的监听也须补建稳定性观察。
+			if first && message != "" && rule.ScheduleEnabled {
+				local.settleDue = now
+				s.notify()
+			}
 		}
 		s.mu.Unlock()
 	}

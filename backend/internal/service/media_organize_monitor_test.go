@@ -684,6 +684,22 @@ func TestMediaLocalMonitorNetworkFallbackAndTemporaryFiles(t *testing.T) {
 	}
 	mediaTestFile(t, rule.Source, "Work.S01E02.strm", "http://original/completed")
 	rule = mediaMonitorEnable(t, s, rule)
+	// 固定启动顺序：首次定时扫描先于监听初始化，不能因此漏掉文件稳定后的补查。
+	s.monitorRunning = true
+	if err := s.schedule(); err != nil {
+		t.Fatal(err)
+	}
+	run, action, found := s.takeQueuedRunLocked()
+	if !found {
+		t.Fatal("缺少首次定时扫描")
+	}
+	if err := s.processQueuedRun(context.Background(), run, action); err != nil {
+		t.Fatal(err)
+	}
+	s.monitorRunning = false
+	if mediaMonitorVideoFound(t, rule.Target, "作品.S01E02.strm") || s.doc.Rules[0].NextScanAt.IsZero() {
+		t.Fatal("首次扫描应等待监听初始化，并推进定时兜底周期")
+	}
 	mediaMonitorRun(t, s)
 	mediaMonitorWait(t, func() bool { return s.State().Monitoring[rule.ID].Mode == "unavailable" })
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E02.strm") })
