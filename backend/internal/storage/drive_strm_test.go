@@ -119,7 +119,8 @@ func TestDriveSTRMStorageUpgradesMissingDirectoryColumn(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, schemaErr := db.Exec(`DROP INDEX drive_strm_directories; DROP INDEX drive_strm_paths; ALTER TABLE drive_strm_files DROP COLUMN directory; PRAGMA user_version=63;`)
+			// 还原旧结构前移除所有依赖目录标记列的索引，包括后续版本新增的文件身份索引。
+			_, schemaErr := db.Exec(`DROP INDEX drive_strm_directories; DROP INDEX drive_strm_paths; DROP INDEX drive_strm_file_identity; ALTER TABLE drive_strm_files DROP COLUMN directory; PRAGMA user_version=63;`)
 			closeErr := db.Close()
 			if schemaErr != nil || closeErr != nil {
 				t.Fatalf("prepare development schema: %v, close: %v", schemaErr, closeErr)
@@ -132,7 +133,7 @@ func TestDriveSTRMStorageUpgradesMissingDirectoryColumn(t *testing.T) {
 					t.Fatal(err)
 				}
 				var indexes int
-				if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name='drive_strm_paths'`).Scan(&indexes); err != nil || indexes != 1 {
+				if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type='index' AND name IN ('drive_strm_paths','drive_strm_file_identity')`).Scan(&indexes); err != nil || indexes != 2 {
 					t.Fatalf("lookup indexes=%d err=%v", indexes, err)
 				}
 				all, err := s.ListDriveSTRMFiles(ctx, "mapping")
