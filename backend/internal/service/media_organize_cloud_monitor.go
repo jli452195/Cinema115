@@ -28,6 +28,7 @@ func (s *MediaOrganizer) cloudRuntimeLocked(rule MediaOrganizeRule) *mediaCloudR
 	}
 	runtime := s.cloudMonitors[rule.ID]
 	if runtime == nil || !mediaSameRuleSettings(runtime.rule, rule) {
+		s.removeCloudRuntimeLocked(rule.ID)
 		runtime = &mediaCloudRuntime{rule: rule, pending: make(map[string]mediaScanScope), directories: make(map[string]string)}
 		root := rule.SourceID
 		if rule.Storage == "cd2" {
@@ -38,6 +39,14 @@ func (s *MediaOrganizer) cloudRuntimeLocked(rule MediaOrganizeRule) *mediaCloudR
 	}
 	runtime.rule = rule
 	return runtime
+}
+
+// 移除恢复标记会解除历史操作保护，即使没有任务落库也需通知。
+func (s *MediaOrganizer) removeCloudRuntimeLocked(id string) {
+	if runtime := s.cloudMonitors[id]; runtime != nil && len(runtime.eventRecoveryIDs) > 0 {
+		s.historyChangedLocked()
+	}
+	delete(s.cloudMonitors, id)
 }
 
 // 事件只合并目录，不保存逐条事件；重启由首次完整扫描补齐。
@@ -120,7 +129,7 @@ func (s *MediaOrganizer) refreshCloudMonitorsLocked(now time.Time) {
 		if !slices.ContainsFunc(s.doc.Rules, func(rule MediaOrganizeRule) bool {
 			return rule.ID == id && rule.Storage != "local" && (rule.RealtimeEnabled || rule.ScheduleEnabled)
 		}) {
-			delete(s.cloudMonitors, id)
+			s.removeCloudRuntimeLocked(id)
 		}
 	}
 }

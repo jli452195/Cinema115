@@ -314,6 +314,9 @@ func (s *MediaOrganizer) persistSQLiteRecoveryLockedContext(ctx context.Context,
 		}
 		return fmt.Errorf("保存整理记录: %w", err)
 	}
+	if len(changed) > 0 {
+		s.historyChangedLocked()
+	}
 	return nil
 }
 

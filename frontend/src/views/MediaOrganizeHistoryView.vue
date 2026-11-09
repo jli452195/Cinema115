@@ -6,6 +6,7 @@ import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import PaginationControl from '../components/PaginationControl.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
+import { useMediaOrganizeHistoryUpdates } from '../composables/useMediaOrganizeHistoryUpdates'
 import { mediaOrganizeRequest, MediaOrganizeRequestError, type MediaHistory, type MediaHistoryItem, type MediaHistoryStatus, type MediaTask, type MediaGroup, type MediaEntry } from '../lib/media-organize-api'
 
 const props = defineProps<{ token: string }>()
@@ -40,7 +41,7 @@ const taskLabels: Record<string, string> = { done: '成功', running: '整理中
 const batchLabels: Record<string, string> = { queued: '排队中', scanning: '识别中', running: '整理中', completed: '扫描完成', partial: '扫描结束', failed: '扫描失败', interrupted: '已中断' }
 const labels: Record<string, string> = { ready: '可整理', needs_match: '待匹配', invalid: '待修正', conflict: '冲突', error: '失败', done: '已完成', unmatched: '未关联', retained: '已保留', pending: '等待整理', waiting: '等待中', unconfirmed: '失败' }
 const lifecycle = new AbortController()
-let reader = new AbortController(), detailReader = new AbortController(), readVersion = 0, detailVersion = 0, mutationVersion = 0, generation = 0, timer: number | undefined, canonicalPage: number | undefined
+let reader = new AbortController(), detailReader = new AbortController(), readVersion = 0, detailVersion = 0, mutationVersion = 0, generation = 0, canonicalPage: number | undefined
 let normalizedPath: string | undefined
 let leaveDecision: ((value: boolean) => void) | undefined
 const message = (reason: unknown) => reason instanceof Error ? reason.message : '操作失败，请重试'
@@ -54,30 +55,31 @@ function acceptTask(task: MediaTask) {
   current.value = task; taskSnapshot.value = taskSignature(task)
 }
 function cancelDetail() { detailReader.abort(); detailVersion++; detailLoading.value = '' }
-async function loadDetail(item: MediaHistoryItem, preserveDraft = false) {
-  if (preserveDraft && detailLoading.value === key(item)) return
+async function loadDetail(item: MediaHistoryItem, preserveDraft = false): Promise<boolean> {
+  if (preserveDraft && detailLoading.value === key(item)) return true
   cancelDetail(); detailReader = new AbortController()
   const signal = detailReader.signal, version = detailVersion, mutation = mutationVersion, taskGeneration = generation
   detailLoading.value = key(item)
   try {
     const task = await request<MediaTask>(`/runs/${item.runId}/task?fileId=${encodeURIComponent(item.fileId)}`, { signal })
-    if (signal.aborted || version !== detailVersion || mutation !== mutationVersion || taskGeneration !== generation || preserveDraft && (!current.value || key(current.value) !== key(item))) return
+    if (signal.aborted || version !== detailVersion || mutation !== mutationVersion || taskGeneration !== generation || preserveDraft && (!current.value || key(current.value) !== key(item))) return false
     const draft = preserveDraft && dirty.value && current.value ? { group: current.value.group, season: primary.value?.file.season, episode: primary.value?.file.episode } : undefined
     acceptTask(task)
     if (draft && current.value && primary.value?.status !== 'done') { current.value.group = draft.group; if (primary.value) { primary.value.file.season = draft.season!; primary.value.file.episode = draft.episode! } } else matchChanged.value = false
+    return true
   } catch (reason) {
-    if (signal.aborted || lifecycle.signal.aborted || version !== detailVersion || mutation !== mutationVersion || taskGeneration !== generation) return
+    if (signal.aborted || lifecycle.signal.aborted || version !== detailVersion || mutation !== mutationVersion || taskGeneration !== generation) return false
     if (reason instanceof MediaOrganizeRequestError && reason.status === 404) {
       if (current.value && key(current.value) === key(item)) closeRun(); else cancelDetail()
       dialogError.value = ''; notice.value = '当前任务已结束或记录已移除'
-      await refresh()
+      return refresh()
     } else (preserveDraft ? dialogError : error).value = message(reason)
+    return false
   }
-  finally { if (version === detailVersion) { detailLoading.value = ''; poll() } }
+  finally { if (version === detailVersion) detailLoading.value = '' }
 }
-async function refresh() {
-  window.clearTimeout(timer)
-  if (document.hidden || lifecycle.signal.aborted) return
+async function refresh(): Promise<boolean> {
+  if (document.hidden || lifecycle.signal.aborted) return false
   reader.abort(); reader = new AbortController()
   const signal = reader.signal, version = ++readVersion, mutation = mutationVersion
   refreshing.value = true
@@ -85,22 +87,23 @@ async function refresh() {
     const params = new URLSearchParams({ status: filter.value, page: String(page.value) })
     if (keyword.value) params.set('q', keyword.value)
     const value = await request<MediaHistory>(`/history?${params}`, { signal })
-    if (signal.aborted || version !== readVersion || mutation !== mutationVersion) return
+    if (signal.aborted || version !== readVersion || mutation !== mutationVersion) return false
     history.value = value
     selected.value = new Set(value.items.filter(item => item.canDelete && selected.value.has(key(item))).map(key))
     if (value.page !== page.value) { canonicalPage = value.page; normalizePage() }
     const listed = value.items.find(item => current.value && key(item) === key(current.value))
-    if (!busy.value && current.value && (taskProcessing.value || listed && (listed.status !== current.value.status || listed.at !== current.value.at || listed.canDelete !== current.value.canDelete || listed.canRetry !== current.value.canRetry))) void loadDetail(current.value, true)
     error.value = ''
-  } catch (reason) { if (!signal.aborted && !lifecycle.signal.aborted && version === readVersion && mutation === mutationVersion) error.value = message(reason) }
-  finally { if (version === readVersion) { if (!signal.aborted) loading.value = false; refreshing.value = false; poll() } }
+    if (!busy.value && current.value && (taskProcessing.value || listed && (listed.status !== current.value.status || listed.at !== current.value.at || listed.canDelete !== current.value.canDelete || listed.canRetry !== current.value.canRetry))) return await loadDetail(current.value, true)
+    return true
+  } catch (reason) { if (!signal.aborted && !lifecycle.signal.aborted && version === readVersion && mutation === mutationVersion) error.value = message(reason); return false }
+  finally { if (version === readVersion) { if (!signal.aborted) loading.value = false; refreshing.value = false } }
 }
 async function act(name: string, fn: () => Promise<void>, dialog = false) {
   if (busy.value) return
   cancelDetail()
-  busy.value = name; (dialog ? dialogError : error).value = ''; notice.value = ''; window.clearTimeout(timer)
+  busy.value = name; (dialog ? dialogError : error).value = ''; notice.value = ''
   try { await fn() } catch (reason) { if (!lifecycle.signal.aborted) (dialog ? dialogError : error).value = message(reason) }
-  finally { busy.value = ''; normalizePage(); poll() }
+  finally { busy.value = ''; normalizePage() }
 }
 function normalizePage() {
   if (canonicalPage === undefined || busy.value || dirty.value) return
@@ -182,15 +185,12 @@ function entryLabel(entry: MediaEntry) { if (entryProcessing(entry)) return '整
 function fileName(path?: string) { return path?.split(/[\\/]/).pop() || '' }
 function sourcePath(entry: MediaEntry) { return entry.failure?.state === 'stored' ? `${current.value?.rule.failure}/${entry.file.sourcePath}` : `${current.value?.rule.source}/${entry.file.sourcePath}` }
 function failureNotice(entry: MediaEntry) { if (entryProcessing(entry)) return ''; if (entry.file.id !== current.value?.fileId) return entry.failure?.state === 'moving' || entry.p115Move ? '本次附件处理已结束，保留现有文件。' : ''; if (entry.failure?.state === 'stored') return '已移入失败目录；可在此修正匹配并重试当前任务。'; if (entry.failure?.state === 'moving') return `移入结果尚未确认，重试时将先核对文件位置${entry.failure.message ? `：${entry.failure.message}` : '。'}`; if (entry.p115Move) return '文件移动结果尚未确认，重试时将先核对文件位置。'; return entry.failure?.message ? `未能移入失败目录，文件保留原处：${entry.failure.message}` : '' }
-function poll() {
-  window.clearTimeout(timer)
-  if (lifecycle.signal.aborted || document.hidden || busy.value || refreshing.value) return
-  // 仅实时首页自动刷新列表，浏览历史页时保持位置；附件运行中的详情仍继续核对。
-  const liveList = history.value.active && page.value === 1 && ['all', 'running'].includes(filter.value) && !bulk.value
-  if (!liveList && !taskProcessing.value) return
-  timer = window.setTimeout(() => { if (!bulk.value && !deletion.value) void refresh(); else poll() }, 5000)
-}
-async function visible() { if (document.hidden) { window.clearTimeout(timer); reader.abort(); cancelDetail() } else await refresh() }
+useMediaOrganizeHistoryUpdates(() => props.token, async () => {
+  if (loading.value || page.value === 1) return refresh()
+  if (current.value && taskProcessing.value) return loadDetail(current.value, true)
+  return true
+}, () => !busy.value && !refreshing.value && !detailLoading.value && !bulk.value && !deletion.value && (loading.value || page.value === 1 || taskProcessing.value))
+function visible() { if (document.hidden) { reader.abort(); cancelDetail() } }
 function decideLeave(value: boolean) { leaveDialog.value = false; leaveDecision?.(value); leaveDecision = undefined }
 function guard() {
   leaveDecision?.(false); leaveDecision = undefined
@@ -202,11 +202,11 @@ function beforeUnload(event: BeforeUnloadEvent) { if (busy.value || dirty.value)
 onBeforeRouteLeave(guard)
 onBeforeRouteUpdate(guard)
 watch(() => route.fullPath, value => {
-  if (value === normalizedPath) { normalizedPath = undefined; poll(); return }
+  if (value === normalizedPath) { normalizedPath = undefined; return }
   canonicalPage = undefined; searchText.value = keyword.value; closeRun(); clearSelection(); notice.value = ''; void refresh()
 })
-onMounted(() => { window.addEventListener('beforeunload', beforeUnload); document.addEventListener('visibilitychange', visible); void refresh() })
-onBeforeUnmount(() => { lifecycle.abort(); reader.abort(); cancelDetail(); window.clearTimeout(timer); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('visibilitychange', visible); decideLeave(false) })
+onMounted(() => { window.addEventListener('beforeunload', beforeUnload); document.addEventListener('visibilitychange', visible) })
+onBeforeUnmount(() => { lifecycle.abort(); reader.abort(); cancelDetail(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('visibilitychange', visible); decideLeave(false) })
 </script>
 
 <template>

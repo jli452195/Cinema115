@@ -155,6 +155,7 @@ type MediaOrganizer struct {
 	monitorOptions mediaLocalMonitorOptions
 	stopping       map[string]bool
 	cloudMonitors  map[string]*mediaCloudRuntime
+	historyChanges map[chan struct{}]struct{}
 }
 
 func (s *MediaOrganizer) persistLocked(changed ...string) error {
@@ -615,10 +616,15 @@ func (s *MediaOrganizer) enqueueActionLocked(id, action string) {
 		s.actions = make(map[string]string)
 	}
 	s.actions[id] = action
+	s.historyChangedLocked()
 }
 
 func (s *MediaOrganizer) removeActionLocked(id string) {
+	if s.actions[id] == "" {
+		return
+	}
 	delete(s.actions, id)
+	s.historyChangedLocked()
 }
 
 func mediaActionPriority(action string, run MediaOrganizeRun) int {
@@ -681,6 +687,7 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 				break
 			}
 		}
+		s.historyChangedLocked()
 		s.mu.Unlock()
 	}()
 	work, cancel := context.WithTimeout(ctx, 2*time.Hour)

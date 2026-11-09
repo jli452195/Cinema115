@@ -50,6 +50,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		}
 		c.JSON(200, out)
 	})
+	g.GET("/history/events", func(c *gin.Context) { mediaOrganizeHistoryEvents(c, s) })
 	g.DELETE("/history", func(c *gin.Context) {
 		var in service.MediaOrganizeDelete
 		if !bindNamingJSON(c, &in) {

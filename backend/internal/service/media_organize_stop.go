@@ -58,7 +58,7 @@ func (s *MediaOrganizer) Stop(ctx context.Context, ruleID string) (MediaOrganize
 			s.stopping[run.ID] = true
 		}
 	}
-	delete(s.cloudMonitors, ruleID)
+	s.removeCloudRuntimeLocked(ruleID)
 	s.notify()
 	return rule, nil
 }

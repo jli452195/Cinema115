@@ -4,12 +4,123 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
 const clone = value => JSON.parse(JSON.stringify(value))
 const gate = () => { let enter, release; const ready = new Promise(resolve => { enter = resolve }), pending = new Promise(resolve => { release = resolve }); return { ready, release, wait: () => { enter(); return pending } } }
+// 仅模拟通知传输，列表和详情仍经过真实前端请求与页面更新流程。
+async function mockHistoryEvents(context, fastFallback = false) {
+  await context.addInitScript(({ fastFallback }) => {
+    const originalFetch = window.fetch, encoder = new TextEncoder()
+    let controller, close
+    const state = window.__historyEvents = { active: 0, opened: 0, closed: 0, unavailable: false,
+      send(count = 1, event = 'changed') {
+        if (!controller) return
+        const text = (event === 'heartbeat' ? ': heartbeat\n\n' : `event: ${event}\ndata: {}\n\n`).repeat(count)
+        controller.enqueue(encoder.encode(text.slice(0, 7))); controller.enqueue(encoder.encode(text.slice(7)))
+      }, drop() { close?.() },
+    }
+    window.fetch = (input, init) => {
+      if (!String(input).endsWith('/media-organize/history/events')) return originalFetch(input, init)
+      if (state.unavailable) return Promise.resolve(new Response('{}', { status: 503 }))
+      state.opened++; state.active++
+      let closeStream
+      const stream = new ReadableStream({
+        start(value) {
+          controller = value
+          let ended = false
+          closeStream = () => { if (ended) return; ended = true; state.active--; state.closed++; if (controller === value) controller = undefined; value.close() }
+          close = closeStream
+          init.signal.addEventListener('abort', closeStream, { once: true })
+          state.send(1, 'ready')
+        }, cancel() { closeStream?.() },
+      })
+      return Promise.resolve(new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }))
+    }
+    if (fastFallback) {
+      const interval = window.setInterval.bind(window)
+      window.setInterval = (fn, ms, ...args) => interval(fn, ms === 15000 ? 1000 : ms, ...args)
+    }
+  }, { fastFallback })
+}
+
+async function historyEventModels(browser) {
+  const context = await browser.newContext({ serviceWorkers: 'block' }), errors = []
+  await mockHistoryEvents(context, true)
+  await context.addInitScript(() => localStorage.setItem('admin_token', 'mock-token'))
+  let reads = 0, held, failRead = false, readAt = 0
+  const fixture = { items: [{ runId: 'run', fileId: 'video', name: 'Work.mkv', title: '作品', kind: 'movie', mediaType: 'video', source: '/in/Work.mkv', status: 'done', at: '2026-11-09T00:00:00Z', canDelete: true, canRetry: false, attachmentCount: 0 }], page: 1, pages: 2, total: 21, counts: { all: 21, running: 1, done: 20, failed: 0 }, active: true, activity: [], cleanup: [] }
+  await context.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    let data = {}
+    if (url.pathname === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (url.pathname.includes('/notifications')) data = { items: [], unread: 0 }
+    else if (url.pathname === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
+    else if (url.pathname.endsWith('/media-organize/history')) {
+      reads++; readAt = Date.now()
+      if (failRead) { failRead = false; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '模拟短暂查询失败' }) }) }
+      data = { ...fixture, page: Number(url.searchParams.get('page') || 1) }; if (held) { const wait = held; held = undefined; await wait.wait() }
+    }
+    else throw new Error(`Unexpected SSE model API ${url.pathname}`)
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
+  })
+  const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
+  const send = (count = 1, event = 'changed') => page.evaluate(({ count, event }) => window.__historyEvents.send(count, event), { count, event })
+  try {
+    await page.goto(origin + '/media/organize/history'); await page.locator('.mo-result').first().waitFor()
+    assert.equal(reads, 1, '初始读取与ready合并')
+    let baseline = reads
+    const started = Date.now()
+    await send(1000); await page.waitForTimeout(1250)
+    assert.equal(reads, baseline + 1, '千次通知只读取一次列表')
+    const burstMilliseconds = readAt - started
+    const slow = gate(); held = slow
+    await send(); await slow.ready; baseline = reads
+    await send(1000); await page.waitForTimeout(1250)
+    assert.equal(reads, baseline, '在途读取不被事件中断或并发替换')
+    slow.release(); await page.waitForTimeout(1250)
+    assert.equal(reads, baseline + 1, '在途期间的新变化只补读一次')
+    baseline = reads
+    await page.evaluate(async () => { for (let i = 0; i < 60; i++) { window.__historyEvents.send(); await new Promise(resolve => setTimeout(resolve, 50)) } })
+    await page.waitForTimeout(1200)
+    const continuousQueries = reads - baseline
+    assert.ok(continuousQueries <= 4 && continuousQueries >= 2, '持续三秒变化也应限制每页查询频率')
+    baseline = reads
+    await send(1000, 'heartbeat'); await page.waitForTimeout(5300)
+    assert.equal(reads, baseline, '连接正常时心跳与旧5秒周期均不查询历史')
+    await page.getByRole('button', { name: '批量管理', exact: true }).click()
+    await send(1000); await page.waitForTimeout(1250); assert.equal(reads, baseline)
+    await page.getByRole('button', { name: '退出管理', exact: true }).click()
+    await page.waitForTimeout(1250); assert.equal(reads, baseline + 1, '退出批量管理后补读待处理变化')
+    await page.getByRole('group', { name: '记录状态', exact: true }).getByRole('button', { name: /^成功/ }).click()
+    await page.waitForTimeout(1250); baseline = reads
+    await send(); await page.waitForTimeout(1250); assert.equal(reads, baseline + 1, '成功筛选也接收更新')
+    await page.goto(origin + '/media/organize/history?page=2'); await page.locator('.mo-result').first().waitFor()
+    baseline = reads; await send(1000); await page.waitForTimeout(1250); assert.equal(reads, baseline, '历史分页保持位置')
+    await page.goto(origin + '/media/organize/history'); await page.locator('.mo-result').first().waitFor()
+    await page.evaluate(() => { window.__hidden = true; Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__hidden }); document.dispatchEvent(new Event('visibilitychange')) })
+    assert.equal(await page.evaluate(() => window.__historyEvents.active), 0)
+    baseline = reads; await page.waitForTimeout(1100); assert.equal(reads, baseline, '隐藏页面释放连接并停止查询')
+    await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')) })
+    await page.waitForTimeout(1250); assert.ok(reads > baseline)
+    assert.equal(await page.evaluate(() => window.__historyEvents.active), 1, '恢复页面只保留一个连接')
+    baseline = reads; failRead = true
+    await send(); await page.getByRole('alert').filter({ hasText: '模拟短暂查询失败' }).waitFor()
+    await page.getByRole('alert').filter({ hasText: '模拟短暂查询失败' }).waitFor({ state: 'detached' })
+    assert.ok(reads >= baseline + 2, '通知连接正常时查询失败也会延时补读')
+    await page.evaluate(() => { window.__historyEvents.unavailable = true; window.__historyEvents.drop() })
+    baseline = reads; await page.waitForTimeout(2600); assert.ok(reads > baseline, '断线后低频轮询兜底')
+    await page.getByRole('navigation', { name: '整理功能', exact: true }).getByRole('link', { name: '整理规则', exact: true }).click()
+    await page.waitForURL(url => url.pathname === '/media/organize')
+    baseline = reads; await page.waitForTimeout(1700); assert.equal(reads, baseline)
+    assert.equal(await page.evaluate(() => window.__historyEvents.active), 0)
+    assert.deepEqual(errors, [])
+    return { burstNotifications: 1000, burstQueries: 1, burstMilliseconds, continuousSeconds: 3, continuousQueries, idleQueries: 0, overlappingQueries: 0, errors }
+  } finally { held?.release(); await context.close() }
+}
 // 慢请求使用独立浏览器上下文与全模拟接口，不改变真实页面或后端耗时。
 async function loadingModels(browser) {
   const results = []
   const fixture = { items: Array.from({ length: 20 }, (_, index) => ({ runId: `slow-${index}`, fileId: `slow-file-${index}`, name: `Work.${index}.mkv`, title: `作品 ${index}`, kind: 'tv', mediaType: 'video', season: 1, episode: index + 1, source: `/inbox/${index}`, target: `/library/${index}`, status: 'failed', at: '2026-11-03T12:00:00Z', canDelete: true, canRetry: true, attachmentCount: 0 })), page: 1, pages: 75, total: 1500, counts: { all: 1500, running: 0, done: 1000, failed: 500 }, active: false, activity: [], cleanup: [] }
-  for (const kind of ['slow', 'timeout', 'unmount', 'hidden', 'poll']) {
+  for (const kind of ['slow', 'timeout', 'unmount', 'hidden', 'events']) {
     const context = await browser.newContext({ serviceWorkers: 'block' }), held = gate()
+    await mockHistoryEvents(context)
     let requests = 0
     await context.addInitScript(({ kind }) => {
       localStorage.setItem('admin_token', 'mock-token')
@@ -17,11 +128,10 @@ async function loadingModels(browser) {
       const originalFetch = window.fetch
       window.fetch = (input, init) => {
         let settled = false
-        if (String(input).includes('/media-organize/history')) init?.signal?.addEventListener('abort', () => { if (!settled) window.__historyAborts++ })
+        if (String(input).split('?')[0].endsWith('/media-organize/history')) init?.signal?.addEventListener('abort', () => { if (!settled) window.__historyAborts++ })
         return originalFetch(input, init).finally(() => { settled = true })
       }
       if (kind === 'timeout') { const timeout = AbortSignal.timeout.bind(AbortSignal); AbortSignal.timeout = ms => timeout(ms === 75000 ? 200 : ms) }
-      if (kind === 'poll') { const timeout = window.setTimeout.bind(window); window.setTimeout = (fn, ms, ...args) => timeout(fn, ms === 5000 ? 150 : ms, ...args) }
     }, { kind })
     await context.route('**/api/**', async route => {
       const endpoint = new URL(route.request().url()).pathname
@@ -29,7 +139,7 @@ async function loadingModels(browser) {
       if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
       else if (endpoint === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
-      else if (endpoint === '/api/admin/media-organize/history') { requests++; data = { ...fixture, active: kind === 'poll' }; if (kind !== 'poll' || requests > 1) await held.wait() }
+      else if (endpoint === '/api/admin/media-organize/history') { requests++; data = { ...fixture, active: kind === 'events' }; if (kind !== 'events' || requests > 1) await held.wait() }
       else throw new Error(`Unexpected loading model API ${endpoint}`)
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
@@ -73,7 +183,9 @@ async function loadingModels(browser) {
 }
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+  if (process.argv.includes('--events-only')) { try { console.log(JSON.stringify(await historyEventModels(browser), null, 2)) } finally { await browser.close() }; return }
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
+  await mockHistoryEvents(context)
   await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
   const rule = { id: 'rule1', name: '目录监控', storage: 'local', source: '/media/inbox', target: '/media/library', realtimeEnabled: true, scheduleEnabled: true, classify: true, intervalSeconds: 300, attachmentCleanupEnabled: true, attachmentGraceSeconds: 60 }
   const row = (index, status = 'done', extra = {}) => ({ runId: `run-${index}`, fileId: `video-${index}`, name: `Work.S01E${String(index).padStart(2, '0')}.mkv`, title: `作品 ${index}`, kind: 'tv', mediaType: 'video', season: 1, episode: index,
@@ -470,6 +582,7 @@ async function loadingModels(browser) {
     assert.equal(retries().length, retriesBeforeAttachment + 1)
     passed.push('重试提交成功即解除提交锁；列表刷新延迟时仍可关闭详情和切换筛选，排队状态不会重复提交')
     Object.assign(records[0], { canDelete: true, attachmentFinished: true })
+    await page.evaluate(() => window.__historyEvents.send())
     await detail.locator('.mo-attachment-list').getByText('已完成', { exact: true }).waitFor()
     assert.equal(await detail.getByRole('button', { name: '重试附件', exact: true }).count(), 0)
     assert.equal(await detail.getByRole('button', { name: '删除此记录', exact: true }).isEnabled(), true)

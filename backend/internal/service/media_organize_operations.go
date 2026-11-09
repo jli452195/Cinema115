@@ -60,6 +60,7 @@ func (s *MediaOrganizer) beginMediaEntries(run *MediaOrganizeRun, indices []int)
 	for owner := range owners {
 		s.inFlight[run.ID][owner]++
 	}
+	s.historyChangedLocked()
 	var once sync.Once
 	return selected, func() {
 		once.Do(func() {
@@ -74,6 +75,7 @@ func (s *MediaOrganizer) beginMediaEntries(run *MediaOrganizeRun, indices []int)
 			if len(s.inFlight[run.ID]) == 0 {
 				delete(s.inFlight, run.ID)
 			}
+			s.historyChangedLocked()
 		})
 	}
 }

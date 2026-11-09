@@ -39,3 +39,36 @@ export async function mediaOrganizeRequest<T>(token: string, path = '', init: Re
   if (!response.ok || !data) throw new MediaOrganizeRequestError(data?.error || `请求失败（HTTP ${response.status}）`, response.status)
   return data as T
 }
+
+export async function mediaOrganizeHistoryEvents(token: string, signal: AbortSignal, changed: (event: 'ready' | 'changed') => void): Promise<void> {
+  const connection = new AbortController()
+  let timeout: ReturnType<typeof setTimeout>
+  const alive = () => { clearTimeout(timeout); timeout = setTimeout(() => connection.abort(), 45000) }
+  alive()
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  try {
+    const response = await fetch('/api/admin/media-organize/history/events', { signal: AbortSignal.any([signal, connection.signal]), cache: 'no-store', headers: { Authorization: `Bearer ${token}`, Accept: 'text/event-stream' } })
+    if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new MediaOrganizeRequestError('整理记录通知连接不可用', response.status)
+    reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (!signal.aborted) {
+      const { done, value } = await reader.read()
+      if (done) break
+      alive()
+      buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary).split('\n').find(line => line.startsWith('event:'))?.slice(6).trim()
+        if (event === 'ready' || event === 'changed') changed(event)
+        buffer = buffer.slice(boundary + 2)
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  } finally {
+    clearTimeout(timeout!)
+    connection.abort()
+    await reader?.cancel().catch(() => {})
+    reader?.releaseLock()
+  }
+}
