@@ -85,6 +85,10 @@ func TestEmbyHTTPWebhookCharsetAndAdminBoundary(t *testing.T) {
 		{"POST", "/api/admin/emby/refresh-config", `{"refreshAfterOrganize":true,"refreshPathMappings":"/source => /media"}`, 200},
 		{"POST", "/api/admin/emby/refresh-config", `{"refreshAfterOrganize":true,"refreshPathMappings":"/source => relative"}`, 400},
 		{"POST", "/api/admin/emby/refresh-config", `{invalid`, 400},
+		{"POST", "/api/admin/emby/deep-delete-config", `{"enabled":true}`, 200},
+		{"POST", "/api/admin/emby/deep-delete-config", `{}`, 400},
+		{"POST", "/api/admin/emby/deep-delete-config", `{"enabled":"true"}`, 400},
+		{"POST", "/api/admin/emby/deep-delete-config", `{invalid`, 400},
 	} {
 		if w := call(tc.method, tc.path, tc.body, false); w.Code != 401 {
 			t.Fatal("Emby 接口未鉴权", tc.path, w.Code)

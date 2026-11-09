@@ -29,6 +29,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         } else if (failConfig) { code = 500; data = { error: '模拟配置读取失败' } } else data = config
       } else if (p.endsWith('/emby/refresh-config')) {
         config = { ...config, ...req.postDataJSON() }; data = config
+      } else if (p.endsWith('/emby/deep-delete-config')) {
+        config = { ...config, deepDeleteEnabled: req.postDataJSON().enabled }; data = config
       } else if (p.endsWith('/emby/test')) {
         await new Promise(resolve => setTimeout(resolve, testDelay))
         if (failLibraries) { code = 400; data = { error: '模拟媒体库读取失败' } }
@@ -216,6 +218,34 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         await page.setViewportSize({ width, height: 900 })
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
         await page.screenshot({ path: path.join(__dirname, `../test-results/emby-refresh-${theme}-${width}.png`), fullPage: true })
+      }
+    }
+    // 删除联动只读取配置并保存开关，不额外读取状态或访问媒体库。
+    config = { ...config, webhookBaseUrl: 'http://cinema:3002' }
+    await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/emby')
+    await page.locator('a[href="/emby/deep-delete"]').first().click()
+    const deleteSwitch = page.getByRole('switch', { name: '启用删除联动', exact: true })
+    await deleteSwitch.waitFor()
+    assert.equal(await deleteSwitch.isChecked(), false)
+    const deleteReads = statusReads
+    await page.getByRole('button', { name: '复制地址', exact: true }).click()
+    assert.equal((await page.evaluate(() => window.__copies)).at(-1), config.webhookBaseUrl + config.webhookPath)
+    assert.equal((await page.getByLabel('Webhook 地址', { exact: true }).inputValue()).includes('mock-secret'), false)
+    await page.locator('.delete-page .setting-switch').click()
+    await page.getByRole('button', { name: '撤销修改', exact: true }).click()
+    assert.equal(await deleteSwitch.isChecked(), false)
+    await page.locator('.delete-page .setting-switch').click()
+    await page.getByRole('button', { name: '保存设置', exact: true }).click()
+    await page.getByText('删除联动设置已保存。', { exact: true }).waitFor()
+    await page.reload(); await deleteSwitch.waitFor()
+    assert.equal(await deleteSwitch.isChecked(), true)
+    assert.equal(statusReads, deleteReads)
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme)
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({ width, height: 900 })
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
+        await page.screenshot({ path: path.join(__dirname, `../test-results/emby-deep-delete-${theme}-${width}.png`), fullPage: true })
       }
     }
     assert.ok(statusReads > 5); assert.deepEqual(errors, [])

@@ -24,6 +24,20 @@ func RegisterEmby(r *gin.Engine, admin *gin.RouterGroup, s *service.EmbyService)
 		c.Next()
 	})
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, s.Config()) })
+	group.POST("/deep-delete-config", func(c *gin.Context) {
+		var input struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.Enabled == nil {
+			c.JSON(400, gin.H{"error": "删除联动配置格式无效"})
+			return
+		}
+		if err := s.SaveDeepDeleteConfig(c.Request.Context(), *input.Enabled); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Config())
+	})
 	group.POST("/refresh-config", func(c *gin.Context) {
 		var input struct {
 			RefreshAfterOrganize bool   `json:"refreshAfterOrganize"`

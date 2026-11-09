@@ -32,6 +32,7 @@ type EmbyConfig struct {
 	WebhookBaseURL       string   `json:"webhookBaseUrl"`
 	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
 	RefreshPathMappings  string   `json:"refreshPathMappings"`
+	DeepDeleteEnabled    bool     `json:"deepDeleteEnabled"`
 }
 type EmbyConfigView struct {
 	URL                  string   `json:"url"`
@@ -43,6 +44,7 @@ type EmbyConfigView struct {
 	WebhookBaseURL       string   `json:"webhookBaseUrl"`
 	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
 	RefreshPathMappings  string   `json:"refreshPathMappings"`
+	DeepDeleteEnabled    bool     `json:"deepDeleteEnabled"`
 }
 type EmbyStatus struct {
 	model.EmbyState
@@ -78,13 +80,17 @@ type EmbyService struct {
 	refreshCount    int
 	refreshDropped  int
 	refreshWake     chan struct{}
+	// 启动时装配，只处理能与本地目录 STRM 记录核对的删除通知。
+	DeepDeleteAccounts *P115Accounts
+	DeepDeleteDrive    embyDeepDeleteDrive
+	deleteWake         chan struct{}
 	// Service locks precede missingMu; cache construction shares the published-index read lock.
 	missingMu sync.Mutex
 	missing   embyMissingCache
 }
 
 func NewEmbyService(secrets *SessionStore, db *storage.Store) (*EmbyService, error) {
-	s := &EmbyService{secrets: secrets, db: db, config: EmbyConfig{URL: "http://192.168.0.3:8096", LibraryIDs: []string{}}, refreshWake: make(chan struct{}, 1)}
+	s := &EmbyService{secrets: secrets, db: db, config: EmbyConfig{URL: "http://192.168.0.3:8096", LibraryIDs: []string{}}, refreshWake: make(chan struct{}, 1), deleteWake: make(chan struct{}, 1)}
 	if raw := secrets.Value(); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &s.config); err != nil {
 			return nil, fmt.Errorf("读取 Emby 加密配置: %w", err)
@@ -135,7 +141,7 @@ func (s *EmbyService) Config() EmbyConfigView {
 	if c.WebhookSecret != "" {
 		path = "/api/webhook/emby?token=" + url.QueryEscape(c.WebhookSecret)
 	}
-	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL, RefreshAfterOrganize: c.RefreshAfterOrganize, RefreshPathMappings: c.RefreshPathMappings}
+	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL, RefreshAfterOrganize: c.RefreshAfterOrganize, RefreshPathMappings: c.RefreshPathMappings, DeepDeleteEnabled: c.DeepDeleteEnabled}
 }
 
 func normalizeWebhookBaseURL(raw string) (string, error) {
@@ -271,6 +277,7 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr err
 	defer s.mu.Unlock()
 	// 刷新设置独立保存，连接页面不能覆盖另一页面已保存的开关与路径。
 	c.RefreshAfterOrganize, c.RefreshPathMappings = s.config.RefreshAfterOrganize, s.config.RefreshPathMappings
+	c.DeepDeleteEnabled = s.config.DeepDeleteEnabled
 	// 兼容旧页面；未提交地址时保留当前已保存的地址。
 	if input.WebhookBaseURL == "" {
 		c.WebhookBaseURL = s.config.WebhookBaseURL
@@ -980,8 +987,9 @@ func (id *embyWebhookID) UnmarshalJSON(data []byte) error {
 }
 
 type embyWebhook struct {
-	Event  string
-	Server struct {
+	Event       string
+	Description string
+	Server      struct {
 		ID string `json:"Id"`
 	}
 	Item struct {
@@ -1020,6 +1028,9 @@ func (s *EmbyService) Webhook(ctx context.Context, token string, data []byte) (s
 		return 403, fmt.Errorf("Webhook 服务器 ID 不匹配")
 	}
 	event := strings.ToLower(strings.TrimSpace(payload.Event))
+	if event == "deep.delete" {
+		return s.queueDeepDeleteLocked(ctx, c, payload.Description)
+	}
 	if len(event) > 100 {
 		return 400, fmt.Errorf("Webhook 事件名称过长")
 	}

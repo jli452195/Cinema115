@@ -31,6 +31,7 @@ export const managementCategories = {
     features: [
       { title: '媒体库同步', description: '配置 Emby 连接与同步范围，通过 Webhook 更新影视入库状态。', to: '/emby/library', icon: 'emby', menuIcon: 'library' },
       { title: 'Emby 刷新', description: '配置整理后的自动刷新通知与路径替换。', to: '/emby/refresh', icon: 'emby', menuIcon: 'library' },
+      { title: '删除联动', description: '接收神医助手的删除通知，将对应主网盘视频移入回收站。', to: '/emby/deep-delete', icon: 'emby', menuIcon: 'library' },
       { title: '缺集检测', description: '按季检查第 1 集至已入库最后一集，查看缺失集号。', to: '/emby/missing', icon: 'emby', menuIcon: 'missing' },
       { title: 'Emby 302 反代', description: '设置独立播放端口，将分享 STRM 直放跳转到 115。', to: '/emby/proxy', icon: 'emby', menuIcon: 'proxy' },
       { title: '缓存管理', description: '查看分享直取与秒传播放直链缓存，搜索、移除或清空临时地址。', to: '/emby/cache', icon: 'emby', menuIcon: 'cache' },

@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 67
+const schemaVersion = 68
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -559,6 +559,11 @@ PRAGMA user_version=30;`); err != nil {
 	if version < 67 {
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS detail_search_settings(id INTEGER PRIMARY KEY CHECK(id=1),order_json TEXT NOT NULL)`); err != nil {
 			return fmt.Errorf("创建详情页搜索设置存储: %w", err)
+		}
+	}
+	if version < 68 {
+		if _, err := tx.ExecContext(ctx, embyDeepDeleteSchema); err != nil {
+			return fmt.Errorf("创建 Emby 删除联动存储: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

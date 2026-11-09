@@ -402,6 +402,7 @@ func main() {
 	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	driveSTRM := service.NewDriveSTRMService(database, accounts, shareAPI.Client, shareAPI.OutputRoot)
+	embyService.DeepDeleteAccounts, embyService.DeepDeleteDrive = accounts, shareAPI.Client
 	driveSTRM.Logs = generationLogs
 	driveEvents := service.NewDriveSTRMEvents(driveSTRM, shareAPI.Client)
 	driveEvents.Organizer = mediaOrganizer
@@ -659,6 +660,13 @@ func main() {
 	}()
 	workers.Add(1)
 	go func() { defer workers.Done(); embyService.RunMediaRefresh(ctx) }()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := embyService.RunDeepDelete(ctx); err != nil {
+			workerErrors <- err
+		}
+	}()
 	workers.Add(1)
 	go func() {
 		defer workers.Done()
