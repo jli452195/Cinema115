@@ -3,7 +3,7 @@
 # 第一阶段：构建 Vue 前端静态页面。
 FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
 WORKDIR /src/frontend
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/.npmrc frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 ARG APP_VERSION=dev
