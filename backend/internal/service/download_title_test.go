@@ -37,6 +37,7 @@ func TestDownloadTitleClassificationSkipsOnlyClearSingles(t *testing.T) {
 				{"[Group] Show 第06话 [720p]", 6, 1},
 				{"[Group] Show S02E06 [1080p]", 6, 2},
 				{"[Group] Show [01v3][1080p]", 1, 1},
+				{"[雪飘工作室][海阔天空！光之美少女/Hirogaru_Sky！Precure/ひろがるスカイ！プリキュア][WEBDL][1080p][31][简繁外挂+NCOPED_2](检索:Q娃)", 31, 1},
 			} {
 				files, err := s.Files(context.Background(), titleResource(source, tc.title))
 				if err != nil || len(files.Files) != 1 || !files.Files[0].TitleOnly || files.Files[0].Episode != tc.episode || files.Files[0].Season != tc.season || files.ManifestID == "" || files.Hash != gardenTestHash || reads != 0 {
@@ -150,15 +151,21 @@ func TestDownloadTitleBindingRejectsAmbiguityWithoutChangingPlan(t *testing.T) {
 		{"extras/Show.mkv"}, {"Show [00].mkv"},
 		{"Show S01E13 - 1080p.mkv"}, {"Show S01E12foo.mkv"},
 		{"Show S01E12-1080pixels.mkv"}, {"Show S01E12 E13 - 1080p.mkv"},
+		{"Show [12].mkv", "Show [13].mkv", "Show [NCOP].mp4"},
+		{"Show [13].mkv", "Show [NCED].mp4"}, {"video.mp4", "Sample.mp4"},
+		{"Show [12].mkv", "Sample/disc.iso"}, {"Show [12].mkv", "sampleShow [12].mkv"},
 	} {
 		t.Run(strings.Join(names, ","), func(t *testing.T) {
-			job := OrganizeJob{Config: OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"}, Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show S01E12"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S01E12", Directory: "Show/Season 01"}}}
+			job := OrganizeJob{Download: &ResourceDownload{CleanupDirs: []string{"100"}}, Config: OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"}, Items: []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show S01E12"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S01E12", Directory: "Show/Season 01"}}}
 			files := make([]OrganizeFile, len(names))
 			for i, name := range names {
 				files[i] = OrganizeFile{ShareFile: p115.ShareFile{ID: fmt.Sprint(i + 1), Name: name[strings.LastIndex(name, "/")+1:]}, SourcePath: name, MediaType: organizeMedia(name)}
 			}
 			if err := bindDownloadFiles(&job, files, ""); !errors.Is(err, errDownloadTitleReview) || len(job.Items) != 1 || !job.Items[0].File.TitleOnly || job.Items[0].Name != "Show - S01E12" {
 				t.Fatal("ambiguous content was bound or damaged the saved intent", job.Items, err)
+			}
+			if job.Download.KeepExtras || len(job.Download.CleanupDirs) != 1 || job.Download.CleanupDirs[0] != "100" {
+				t.Fatal("failed binding changed directory cleanup", job.Download)
 			}
 		})
 	}
@@ -173,6 +180,39 @@ func TestDownloadTitleBindingRejectsAmbiguityWithoutChangingPlan(t *testing.T) {
 	job.Items = []OrganizeItem{{File: OrganizeFile{ShareFile: p115.ShareFile{Name: "Show [12]"}, TitleOnly: true, Season: 1, Episode: 12}, Name: "Show - S02E12"}}
 	if err := bindDownloadFiles(&job, []OrganizeFile{{ShareFile: p115.ShareFile{ID: "901", Name: "Show S02E12.mp4"}, SourcePath: "Show S02E12.mp4", MediaType: "video"}}, ""); err != nil || job.Items[0].Name != "Show - S02E12.mp4" {
 		t.Fatal("a default preview season was mistaken for explicit publisher evidence", job, err)
+	}
+}
+
+func TestDownloadTitleBindsMainEpisodeAndPreservesExtraVideos(t *testing.T) {
+	const stem = "[FLsnow][Hirogaru_Sky！Precure]][WEBDL][1080p][31]"
+	const directory = "Show [31][简繁外挂+NCOPED_2]/"
+	for _, extra := range []string{
+		"[FLsnow][Hirogaru_Sky！Precure]][DVDrip][NCOP_NCED_02].mp4",
+		"Show [NCOP01].mp4", "Show [OP].mp4", "Show [ED02].mp4", "sample.mp4", "NCED/video.mp4",
+	} {
+		t.Run(extra, func(t *testing.T) {
+			job := OrganizeJob{
+				Config:   OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"},
+				Download: &ResourceDownload{DirectoryID: "100", CleanupDirs: []string{"100"}},
+				Items:    []OrganizeItem{{File: OrganizeFile{TitleOnly: true, Season: 1, Episode: 31}, Name: "Show.S01E31", Stem: "Show.S01E31", Directory: "Show/Season 01"}},
+			}
+			files := []OrganizeFile{
+				{ShareFile: p115.ShareFile{ID: "901", Name: stem + ".MKV", Size: 1200}, ParentID: "100", SourcePath: directory + stem + ".MKV", MediaType: "video"},
+				{ShareFile: p115.ShareFile{ID: "902", Name: extra[strings.LastIndex(extra, "/")+1:], Size: 900000}, ParentID: "100", SourcePath: directory + extra, MediaType: "video"},
+				{ShareFile: p115.ShareFile{ID: "903", Name: stem + ".chs.ass"}, ParentID: "100", SourcePath: directory + stem + ".chs.ass", MediaType: "subtitle"},
+				{ShareFile: p115.ShareFile{ID: "904", Name: stem + ".cht.ass"}, ParentID: "100", SourcePath: directory + stem + ".cht.ass", MediaType: "subtitle"},
+				{ShareFile: p115.ShareFile{ID: "905", Name: "unrelated.ass"}, ParentID: "100", SourcePath: "unrelated.ass", MediaType: "subtitle"},
+			}
+			if err := bindDownloadFiles(&job, files, ""); err != nil {
+				t.Fatal(err)
+			}
+			if len(job.Items) != 3 || job.Items[0].File.ID != "901" || job.Items[0].Name != "Show.S01E31.mkv" || job.Items[1].File.ID != "903" || job.Items[2].File.ID != "904" {
+				t.Fatal("正片和简繁字幕未正确绑定", job.Items)
+			}
+			if !job.Download.KeepExtras || len(job.Download.CleanupDirs) != 0 || job.Download.DirectoryID != "100" {
+				t.Fatal("附加视频目录仍会被清理或丢失原目录身份", job.Download)
+			}
+		})
 	}
 }
 

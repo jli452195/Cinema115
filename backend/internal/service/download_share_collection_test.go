@@ -129,6 +129,36 @@ func TestDownloadShareCollectionCombinesReadyFilesAndSubtitles(t *testing.T) {
 	}
 }
 
+func TestDownloadShareCollectionPreservesExtrasAcrossRestart(t *testing.T) {
+	f := newDownloadCollectionFixture(t, 2)
+	f.ready(t, 0)
+	f.ready(t, 1)
+	job := cloneOrganizeJob(f.s.Organize.doc.Jobs[1])
+	root := job.Download.DirectoryID
+	job.Download.KeepExtras, job.Download.CleanupDirs = true, nil
+	f.drive.dirs[root] = append(f.drive.dirs[root], p115.ShareFile{ID: "90000", Name: "NCOP_NCED_02.mp4", Size: 200})
+	if err := f.s.Organize.checkpoint(&job); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := NewOrganizeEngine(f.s.Organize.store, f.s.Organize.accounts, f.s.Organize.drive, f.s.Organize.metadata, f.s.Organize.templates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s = NewDownloadOrganize(engine, f.s.Resources, f.s.Downloads, f.s.Settings, f.tracker)
+	f.s.Shares = f.tasks
+	if err := f.s.sealShareCollections(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	p := f.leader(t)
+	if !p.job.Download.KeepExtras || len(p.job.Download.CleanupDirs) != 1 || slices.Contains(p.job.Download.CleanupDirs, root) {
+		t.Fatal("合集丢失附加视频保留范围", p.job.Download)
+	}
+	f.finish(t, p)
+	if !slicesContainFile(f.drive.dirs[root], "90000") || slices.Contains(f.client.deleted, root) || !strings.Contains(p.job.Message, "附加视频保留") {
+		t.Fatal("重启或合集清理删除了附加视频", p.job.Message, f.client.deleted)
+	}
+}
+
 func TestDownloadShareCollectionDeadMagnetDoesNotHoldReadyOrLateFiles(t *testing.T) {
 	f := newDownloadCollectionFixture(t, 4)
 	f.ready(t, 0)

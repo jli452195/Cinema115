@@ -107,6 +107,9 @@ func (s *DownloadOrganize) finishDownload(ctx context.Context, p *downloadPendin
 		return false, err
 	}
 	job.Message = "所选文件已整理，下载目录已清理"
+	if job.Download.KeepExtras {
+		job.Message = "所选文件已整理"
+	}
 	if share := job.Download.Share; share != nil {
 		if !share.HandedOff {
 			if _, err := o.account(job.Config.AccountID); err != nil {
@@ -124,6 +127,9 @@ func (s *DownloadOrganize) finishDownload(ctx context.Context, p *downloadPendin
 	}
 	if issue != "" {
 		job.Message = "所选文件已整理；" + issue
+	}
+	if job.Download.KeepExtras {
+		job.Message += "；附加视频保留在原下载目录"
 	}
 	return true, o.checkpoint(job)
 }

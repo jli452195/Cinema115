@@ -19,6 +19,7 @@ import (
 
 var errDownloadTitleReview = errors.New("单集内容需要确认")
 var downloadTitleQuality = regexp.MustCompile(`(?i)[0-9]{3,4}[pi]|[48]k`)
+var downloadExtraVideo = regexp.MustCompile(`(?i)(?:^|[\[【 ._(（\-])(?:NCOP|NCED|OP|ED|SAMPLE)(?:[0-9]|$|[\]】 ._)）\-])`)
 
 // Clear single episodes need a naming intent, not a remote file manifest.
 // The title remains display/numbering metadata, never evidence of a file path.
@@ -69,23 +70,27 @@ func downloadTargetKey(item OrganizeItem) string {
 	return name
 }
 
-// Bind only the one actual video in this task's already-read directory. No
-// torrent read, global search, guessed extension or SHA1 request is required.
+// 只绑定目录内唯一正片；明确的片头、片尾和样片保留在下载目录，不追加远程查询。
 func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 	intent := job.Items[0]
 	var video OrganizeFile
 	count := 0
+	extras := false
 	for _, f := range files {
 		if strings.EqualFold(path.Ext(f.Name), ".iso") {
 			return fmt.Errorf("%w：资源包含 ISO，请核对下载目录", errDownloadTitleReview)
 		}
 		if f.MediaType == "video" {
+			if downloadExtraVideo.MatchString(f.Name) || downloadExtraVideo.MatchString(path.Base(path.Dir(f.SourcePath))) {
+				extras = true
+				continue
+			}
 			video, count = f, count+1
 		}
 	}
 	if count != 1 {
 		if count > 1 {
-			return fmt.Errorf("%w：下载目录有 %d 个视频，请核对后手动整理", errDownloadTitleReview, count)
+			return fmt.Errorf("%w：下载目录有 %d 个正片候选，请核对后手动整理", errDownloadTitleReview, count)
 		}
 		return fmt.Errorf("按标题识别为单集，但下载目录有 %d 个视频，请核对后手动整理", count)
 	}
@@ -99,7 +104,7 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 		unmapped = err != nil || standard || parsed.Kind != "unknown" || parsed.RawEpisode != ""
 	}
 	wrongEpisode := video.Episode > 0 && video.Episode != intent.File.Episode
-	if organizeSpecialFile.MatchString(video.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(video.SourcePath))) || video.EndEpisode != 0 || unmapped || wrongEpisode {
+	if organizeSpecialFile.MatchString(video.Name) || organizeSpecialFile.MatchString(path.Base(path.Dir(video.SourcePath))) || video.EndEpisode != 0 || unmapped || wrongEpisode || extras && video.Episode == 0 {
 		return fmt.Errorf("%w：实际视频编号与标题不一致，请核对后手动整理：%s", errDownloadTitleReview, video.Name)
 	}
 	if organizeFileSeason.MatchString(intent.File.Name) && organizeFileSeason.MatchString(video.Name) && video.Season != intent.File.Season {
@@ -130,5 +135,9 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 		seen[key] = true
 	}
 	job.Items = items
+	if extras && job.Download != nil {
+		job.Download.KeepExtras = true
+		job.Download.CleanupDirs = nil
+	}
 	return nil
 }

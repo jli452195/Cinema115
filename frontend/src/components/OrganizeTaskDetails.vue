@@ -106,7 +106,7 @@ async function copy(value: string) {
         </ul>
       </section>
     </div>
-    <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? (cleanupOnly ? '正在重试清理…' : '正在恢复原任务…') : feedback || (resumable ? (cleanupOnly ? '仅回收本任务临时目录' : task.organize?.download ? '不会重新提交离线' : '保留原任务与已完成进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? (cleanupOnly ? '清理中…' : '检查中…') : cleanupOnly ? '重试清理' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
+    <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? (cleanupOnly ? '正在重试清理…' : '正在恢复原任务…') : feedback || (resumable ? (cleanupOnly ? '仅回收本任务临时目录' : '沿用原目录与进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? (cleanupOnly ? '清理中…' : '检查中…') : cleanupOnly ? '重试清理' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
   </AnimeFloatingDialog>
 </template>
 

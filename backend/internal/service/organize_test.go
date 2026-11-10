@@ -20,6 +20,7 @@ type organizeFakeDrive struct {
 	beforeRename            func()
 	pageSize                int
 	listCalls               map[string]int
+	directoryCalls          map[string]int
 	renameBatches           [][]p115.RenameTarget
 	moveBatches             [][]string
 	renameApplyIDs          map[string]bool
@@ -63,6 +64,30 @@ func (f *organizeFakeDrive) CreateDirectory(_ context.Context, parent, name, coo
 	f.dirs[parent] = append(f.dirs[parent], p115.ShareFile{ID: id, Name: name, Directory: true})
 	f.dirs[id] = []p115.ShareFile{}
 	return id, nil
+}
+
+func (f *organizeFakeDrive) ReadDirectory(ctx context.Context, cid, cookie string) (p115.DriveDirectory, error) {
+	if err := ctx.Err(); err != nil {
+		return p115.DriveDirectory{}, err
+	}
+	f.cookies = append(f.cookies, cookie)
+	if f.directoryCalls == nil {
+		f.directoryCalls = make(map[string]int)
+	}
+	f.directoryCalls[cid]++
+	if f.beforeRead != nil {
+		if err := f.beforeRead(cid, 0); err != nil {
+			return p115.DriveDirectory{}, err
+		}
+	}
+	for parent, children := range f.dirs {
+		for _, child := range children {
+			if child.Directory && child.ID == cid {
+				return p115.DriveDirectory{CID: cid, ParentCID: parent, Name: child.Name}, nil
+			}
+		}
+	}
+	return p115.DriveDirectory{}, fmt.Errorf("目录不存在")
 }
 func (f *organizeFakeDrive) RenameEntries(_ context.Context, entries []p115.RenameTarget, cookie string) error {
 	f.cookies = append(f.cookies, cookie)

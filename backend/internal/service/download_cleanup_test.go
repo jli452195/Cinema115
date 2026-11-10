@@ -71,7 +71,7 @@ func TestDownloadCleanupRecyclesOnlyTaskRootIncludingUnselectedFiles(t *testing.
 		t.Fatal("cleanup affected organized media or another source directory")
 	}
 	// The binding walk is the only read of the staging root and extras.
-	if f.drive.listCalls[root] != 1 || f.drive.listCalls["802"] != 1 || f.drive.listCalls["10"] != 1 {
+	if f.drive.listCalls[root] != 1 || f.drive.listCalls["802"] != 1 || f.drive.listCalls["10"] != 0 || f.drive.directoryCalls[root] != 1 {
 		t.Fatal("cleanup added empty-directory scans", f.drive.listCalls)
 	}
 	if len(f.s.History()) != 1 || f.s.History()[0].Resumable {
@@ -159,7 +159,7 @@ func TestDownloadCleanupAcceptsLostDeleteReceiptAfterParentCheck(t *testing.T) {
 	if len(f.p.job.Download.CleanupDirs) != 0 || f.s.History()[0].Resumable || len(f.drive.deleted) != 1 {
 		t.Fatal("confirmed recycling kept retrying deletion", f.p.job.Download.CleanupDirs, f.drive.deleted)
 	}
-	if f.drive.listCalls[f.p.job.Download.ParentCID] != 2 {
+	if f.drive.listCalls[f.p.job.Download.ParentCID] != 1 {
 		t.Fatal("lost receipt did not use one scoped parent check", f.drive.listCalls)
 	}
 }

@@ -17,14 +17,16 @@ import (
 // ResourceDownload is a one-off naming preset, independent of RSS subscriptions.
 // Credentials only live in downloadPending and never enter plans/history.
 type ResourceDownload struct {
-	CleanupDirs []string           `json:"cleanupDirs,omitempty"`
-	Subtitles   []DownloadSubtitle `json:"subtitles,omitempty"`
-	BatchID     string             `json:"batchId,omitempty"`
-	Hash        string             `json:"hash"`
-	ParentCID   string             `json:"parentCID"`
-	ParentPath  string             `json:"parentPath"`
-	DirectoryID string             `json:"directoryId,omitempty"`
-	Share       *DownloadShare     `json:"share,omitempty"`
+	CleanupDirs   []string           `json:"cleanupDirs,omitempty"`
+	Subtitles     []DownloadSubtitle `json:"subtitles,omitempty"`
+	BatchID       string             `json:"batchId,omitempty"`
+	Hash          string             `json:"hash"`
+	ParentCID     string             `json:"parentCID"`
+	ParentPath    string             `json:"parentPath"`
+	DirectoryID   string             `json:"directoryId,omitempty"`
+	SubmitPending bool               `json:"submitPending,omitempty"`
+	KeepExtras    bool               `json:"keepExtras,omitempty"`
+	Share         *DownloadShare     `json:"share,omitempty"`
 }
 
 type DownloadOrganizeInput struct {
@@ -185,7 +187,7 @@ func canResumeDownload(job OrganizeJob) bool {
 		return true
 	}
 	d := job.Download
-	if job.Status != "interrupted" || d == nil || !organizeID(d.DirectoryID) || d.DirectoryID == "0" || job.Config.SourceCID != d.DirectoryID || job.Config.SourcePath != path.Join(d.ParentPath, "garden-"+job.ID) || d.DirectoryID == job.Config.TargetCID || len(job.Items) == 0 || job.Stats.RenameRequests != 0 || job.Stats.MoveRequests != 0 {
+	if (job.Status != "interrupted" && job.Status != "blocked") || d == nil || !organizeID(d.DirectoryID) || d.DirectoryID == "0" || job.Config.SourceCID != d.DirectoryID || job.Config.SourcePath != path.Join(d.ParentPath, "garden-"+job.ID) || d.DirectoryID == job.Config.TargetCID || len(job.Items) == 0 || job.Stats.RenameRequests != 0 || job.Stats.MoveRequests != 0 {
 		return false
 	}
 	for _, item := range job.Items {
@@ -236,7 +238,9 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 		}
 		continuing := canContinueOrganize(saved) || pendingDownloadShare(saved) || pendingDownloadSubtitles(saved) || pendingDownloadCleanup(saved)
 		queued := canQueueDownload(saved)
-		if !continuing && !canResumeDownload(saved) {
+		resumable := canResumeDownload(saved)
+		beforeSubmit := saved.Download.SubmitPending && resumable
+		if !continuing && !resumable {
 			return OrganizeJob{}, fmt.Errorf("%w：此任务暂不能继续，请核对下载目录与任务详情", ErrOrganizeConflict)
 		}
 		a, err := s.snapshotJob(saved)
@@ -257,6 +261,9 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 			job.Status, job.Message = "queued", "原任务尚未开始，已重新加入下载整理队列"
 			job.Stats.StartedAt = time.Time{}
 		}
+		if beforeSubmit {
+			job.Status, job.Message = "queued", "正在确认原下载目录，确认后提交离线；不会重新创建目录"
+		}
 		doc := o.doc
 		doc.Jobs = append([]OrganizeJob{}, doc.Jobs...)
 		doc.Jobs[i] = job
@@ -264,7 +271,7 @@ func (s *DownloadOrganize) Resume(id string) (OrganizeJob, error) {
 			return OrganizeJob{}, err
 		}
 		pending := newDownloadPending(job, a)
-		pending.resuming, pending.continuing, pending.ready, pending.waitUntil = !continuing && !queued, continuing, continuing, time.Now().Add(24*time.Hour)
+		pending.resuming, pending.continuing, pending.ready, pending.waitUntil = !continuing && !queued && !beforeSubmit, continuing, continuing, time.Now().Add(24*time.Hour)
 		s.live[id] = pending
 		select {
 		case s.wake <- struct{}{}:
@@ -450,33 +457,48 @@ func (s *DownloadOrganize) submit(ctx context.Context, p *downloadPending) (bool
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	o, job, cookie := s.Organize, &p.job, p.account.Cookie
+	if job.Download.DirectoryID != "" && !job.Download.SubmitPending {
+		return s.stop(p, "uncertain", "原下载目录的离线提交结果未确认，未重新创建目录或提交")
+	}
 	job.Status, job.Message = "submitting", "正在创建独立下载目录并提交 115"
 	if err := o.checkpoint(job); err != nil {
 		return false, err
 	}
+	dir := job.Download.DirectoryID
+	if dir == "" {
+		started := time.Now()
+		var err error
+		dir, err = o.drive.CreateDirectory(ctx, job.Download.ParentCID, "garden-"+job.ID, cookie)
+		job.Stats.DirectoryCreates++
+		job.Stats.MutationMS += time.Since(started).Milliseconds()
+		if err != nil {
+			return s.stop(p, "uncertain", "下载目录创建结果未确认，请核对云盘；未重复创建或提交")
+		}
+		if !organizeID(dir) || dir == "0" || dir == job.Download.ParentCID || dir == job.Config.TargetCID {
+			return s.stop(p, "blocked", "115 返回的下载目录无效，未提交离线")
+		}
+		job.Download.DirectoryID, job.Download.SubmitPending = dir, true
+		job.Download.CleanupDirs = []string{dir}
+		job.Config.SourceCID, job.Config.SourcePath = dir, path.Join(job.Download.ParentPath, "garden-"+job.ID)
+		if err := o.checkpoint(job); err != nil {
+			return false, err
+		}
+	}
+	// 只核对刚创建的目录，不读取不断被其他任务修改的父目录分页。
 	started := time.Now()
-	dir, err := o.drive.CreateDirectory(ctx, job.Download.ParentCID, "garden-"+job.ID, cookie)
-	job.Stats.DirectoryCreates++
-	job.Stats.MutationMS += time.Since(started).Milliseconds()
+	directory, err := o.drive.ReadDirectory(ctx, dir, cookie)
+	job.Stats.DirectoryRequests++
+	job.Stats.DirectoryMS += time.Since(started).Milliseconds()
 	if err != nil {
-		return s.stop(p, "uncertain", "下载目录创建结果未确认，请核对云盘；未重复创建或提交")
+		return s.stop(p, "interrupted", "无法确认本次下载目录，未提交离线，可继续原任务："+organizePublicError(err, cookie))
 	}
-	if !organizeID(dir) || dir == "0" || dir == job.Download.ParentCID || dir == job.Config.TargetCID {
-		return s.stop(p, "blocked", "115 返回的下载目录无效，未提交离线")
-	}
-	job.Download.DirectoryID = dir
-	job.Download.CleanupDirs = []string{dir}
-	job.Config.SourceCID, job.Config.SourcePath = dir, path.Join(job.Download.ParentPath, "garden-"+job.ID)
-	if err = o.checkpoint(job); err != nil {
-		return false, err
-	}
-	children, err := o.list(ctx, job.Download.ParentCID, cookie)
-	if err != nil {
-		return s.stop(p, "blocked", "无法确认本次下载目录，未提交离线；请核对已创建的目录")
-	}
-	confirmed, err := organizeFindDirectory(children, "garden-"+job.ID)
-	if err != nil || confirmed != dir {
+	if directory.CID != dir || directory.ParentCID != job.Download.ParentCID || directory.Name != "garden-"+job.ID {
 		return s.stop(p, "blocked", "本次下载目录身份不一致，未提交离线")
+	}
+	// 先持久化提交意图，进程中断或回执丢失时只查询原任务，绝不重发。
+	job.Download.SubmitPending = false
+	if err := o.checkpoint(job); err != nil {
+		return false, err
 	}
 	_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: p.account.ID, TargetCID: dir, TargetPath: job.Config.SourcePath}, p.account, "magnet:?xt=urn:btih:"+job.Download.Hash)
 	if err != nil {

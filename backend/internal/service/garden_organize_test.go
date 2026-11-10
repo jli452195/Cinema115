@@ -112,6 +112,9 @@ func TestGardenInstantCompletionWithoutTargetCID(t *testing.T) {
 			for _, count := range drive.listCalls {
 				reads += count
 			}
+			for _, count := range drive.directoryCalls {
+				reads += count
+			}
 			// Preview used one read; execution statistics include staging and
 			// binding, and survive entry into the shared batch executor.
 			if p.job.Stats.DirectoryCreates != drive.creates || p.job.Stats.DirectoryRequests != reads-1 {

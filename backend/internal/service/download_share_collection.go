@@ -98,6 +98,7 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 		leader.Items = make([]OrganizeItem, 0, itemCount)
 		leader.Download.Subtitles = nil
 		leader.Download.CleanupDirs = nil
+		leader.Download.KeepExtras = false
 		leader.Download.Share.Directory = "Cinema115-" + leader.ID
 		leader.Download.Share.LeaderID = leader.ID
 		// Every bound path remains below this original download parent, while
@@ -129,6 +130,7 @@ func (s *DownloadOrganize) sealShareCollections(now time.Time) error {
 			}
 			leader.Items = append(leader.Items, member.Items...)
 			leader.Download.CleanupDirs = append(leader.Download.CleanupDirs, member.Download.CleanupDirs...)
+			leader.Download.KeepExtras = leader.Download.KeepExtras || member.Download.KeepExtras
 			member.Download.Share.Directory = leader.Download.Share.Directory
 			member.Download.Share.LeaderID = leader.ID
 			member.Status, member.Message = leader.Status, leader.Message

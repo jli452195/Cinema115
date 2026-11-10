@@ -25,6 +25,7 @@ var errOrganizePagination = errors.New("115 目录分页尚未稳定")
 
 type OrganizeDrive interface {
 	DriveFiles(context.Context, string, int, string) (*p115.SharePage, error)
+	ReadDirectory(context.Context, string, string) (p115.DriveDirectory, error)
 	CreateDirectory(context.Context, string, string, string) (string, error)
 	RenameEntries(context.Context, []p115.RenameTarget, string) error
 	MoveEntriesBatch(context.Context, []string, string, string) error

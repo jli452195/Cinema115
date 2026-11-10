@@ -35,6 +35,12 @@ func (d *gardenWorkerDrive) DriveFiles(ctx context.Context, cid string, offset i
 	return d.organizeFakeDrive.DriveFiles(ctx, cid, offset, cookie)
 }
 
+func (d *gardenWorkerDrive) ReadDirectory(ctx context.Context, cid, cookie string) (p115.DriveDirectory, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.organizeFakeDrive.ReadDirectory(ctx, cid, cookie)
+}
+
 func (d *gardenWorkerDrive) CreateDirectory(ctx context.Context, parent, name, cookie string) (string, error) {
 	if d.beforeCreate != nil {
 		if err := d.beforeCreate(ctx, name); err != nil {
