@@ -21,6 +21,7 @@ func TestMedia115PendingIntentPreventsCorrectionUntilReconciled(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(s.actions, run.ID)
+	s.releaseHistoryLocked()
 	before, err := s.Snapshot(run.ID)
 	if err != nil {
 		t.Fatal(err)

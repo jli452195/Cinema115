@@ -18,6 +18,10 @@ type mediaOrganizeStorage interface {
 	LoadMediaOrganize(context.Context) (storage.MediaOrganizeRows, error)
 	SaveMediaOrganize(context.Context, string, []storage.MediaOrganizeRunRow, []string) error
 	QueryMediaOrganizeLive(context.Context, string, string, int, []storage.MediaOrganizeLiveTaskRow) (storage.MediaOrganizeQuery, error)
+	LoadMediaOrganizeRuns(context.Context, []string, string, string) ([]string, error)
+	LoadMediaOrganizeTask(context.Context, string, string) (string, error)
+	LoadMediaOrganizeReferences(context.Context, string, []string, []string, bool) ([]string, error)
+	LoadMediaOrganizeFailures(context.Context, string, []string) ([]string, error)
 }
 
 type mediaOrganizeSettings struct {
@@ -75,14 +79,15 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 			r.Status = "interrupted"
 			r.Message = "服务重启，任务已中断；核对任务记录后可重试"
 		}
-		// 摘要由当前规则派生，启动时重建以免保留旧的状态分组或操作权限。
-		if !deferInterruptedSave {
+		// 已结束历史不在启动时加载或重建，只保存本次中断恢复的变更。
+		if !deferInterruptedSave && (!loaded.Initialized || r.Status == "interrupted") {
 			changed = append(changed, r.ID)
 		}
 	}
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
 		return nil, err
 	}
+	s.releaseHistoryLocked()
 	// Deletion happens strictly after the SQLite transaction committed.
 	if err := os.Remove(filepath.Join(dir, "media-organize.enc")); err != nil && !os.IsNotExist(err) && !loaded.Initialized {
 		log.Printf("整理记录已保存到 SQLite，旧快照未能清理：%v", err)
@@ -133,22 +138,11 @@ func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
 		doc.Rules, doc.Orphans = settings.Rules, settings.Orphans
 	}
 	for _, raw := range rows.Runs {
-		type runFields MediaOrganizeRun
-		var stored struct {
-			runFields
-			Rule json.RawMessage `json:"rule"`
-		}
-		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
-			return fmt.Errorf("解码批次规则: %w", err)
-		}
-		rule, err := mediaStoredRule(stored.Rule)
+		run, err := mediaDecodeStoredRun(raw)
 		if err != nil {
 			return err
 		}
-		run := MediaOrganizeRun(stored.runFields)
-		run.Rule = rule
-		run.scanScopes, run.StoredScanScopes = slices.Clone(run.StoredScanScopes), nil
-		doc.Runs = append(doc.Runs, mediaPersistentRun(run))
+		doc.Runs = append(doc.Runs, run)
 	}
 	s.doc = doc
 	return nil

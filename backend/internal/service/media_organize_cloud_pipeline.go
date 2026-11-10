@@ -26,7 +26,11 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 	files.cloudEmpty = nil
 	files.cd2Snapshots = nil
 	if run.Rule.Storage == "115" {
-		files.pending115, files.pending115Dirs = s.pending115Tasks(run)
+		var err error
+		files.pending115, files.pending115Dirs, err = s.pending115Tasks(ctx, run)
+		if err != nil {
+			return err
+		}
 	}
 	defer func() {
 		run.streaming = false

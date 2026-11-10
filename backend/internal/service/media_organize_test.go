@@ -378,8 +378,8 @@ func TestMediaOrganizerEmptyScansDoNotEvictFileHistory(t *testing.T) {
 		}
 		mediaTestProcess(t, s, &run, action)
 		state := mediaTestState(s, 1)
-		if run.Status != "completed" || state.History.Total != 20 || state.History.Counts["failed"] != 20 || state.History.Counts["done"] != 0 || len(s.doc.Runs) != 21 {
-			t.Fatal("空扫描应保持隐藏，不能驱逐持久化的失败历史", run, state)
+		if run.Status != "completed" || state.History.Total != 20 || state.History.Counts["failed"] != 20 || state.History.Counts["done"] != 0 || len(s.doc.Runs) > 1 {
+			t.Fatal("空扫描应保持隐藏，失败历史持久保存而不常驻工作集", run, state)
 		}
 	}
 	restarted, err := NewMediaOrganizer(store, s.metadata, s.templates, s.classification, nil, nil, nil)

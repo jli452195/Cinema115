@@ -24,6 +24,9 @@ func TestMediaCloud115ReceivesEventsWithoutSTRMMapping(t *testing.T) {
 	s, _, _, run, _ := newMedia115PipelineTest(t)
 	s.doc.Runs = nil
 	clear(s.actions)
+	if err := s.persistLocked(run.ID); err != nil {
+		t.Fatal(err)
+	}
 	s.accounts = driveSTRM.Accounts
 	rule := run.Rule
 	rule.AccountID, rule.RealtimeEnabled = "main", true
@@ -168,8 +171,8 @@ func TestMediaCloudStopFinishesIssuedBatchAndReleasesWorker(t *testing.T) {
 	if s.active != "" || len(s.stopping) != 0 || s.doc.Rules[0].RealtimeEnabled || s.doc.Rules[0].ScheduleEnabled {
 		t.Fatal("停止后应释放运行状态并暂停自动触发", s.active, s.stopping, s.doc.Rules)
 	}
-	stored := s.doc.Runs[0]
-	if len(stored.Entries) != 20 || slices.ContainsFunc(stored.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "done" }) {
+	stored, err := s.Snapshot(run.ID)
+	if err != nil || len(stored.Entries) != 20 || slices.ContainsFunc(stored.Entries, func(e MediaOrganizeEntry) bool { return e.Status != "done" }) {
 		t.Fatal("未执行文件不能写成失败", stored.Entries)
 	}
 	if _, err := s.Start(rule.ID); err != nil {

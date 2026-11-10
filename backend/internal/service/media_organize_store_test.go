@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"slices"
 	"sort"
 	"strings"
 
@@ -33,10 +35,17 @@ func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource
 		}
 		changed = append(changed, r.ID)
 	}
-	return s, s.persistLocked(changed...)
+	if err := s.persistLocked(changed...); err != nil {
+		return nil, err
+	}
+	s.releaseHistoryLocked()
+	return s, nil
 }
-func (s *testMediaOrganizeStore) LoadMediaOrganize(context.Context) (storage.MediaOrganizeRows, error) {
+func (s *testMediaOrganizeStore) LoadMediaOrganize(ctx context.Context) (storage.MediaOrganizeRows, error) {
 	out := storage.MediaOrganizeRows{Rules: "[]", Runs: []string{}, Initialized: s.source.Value() != ""}
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
 	var doc mediaOrganizeDocument
 	if out.Initialized {
 		if err := json.Unmarshal([]byte(s.source.Value()), &doc); err != nil {
@@ -49,6 +58,9 @@ func (s *testMediaOrganizeStore) LoadMediaOrganize(context.Context) (storage.Med
 	}
 	out.Rules = string(raw)
 	for _, run := range doc.Runs {
+		if !mediaRunActive(run.Status) {
+			continue
+		}
 		raw, err := mediaMarshalPersistentRun(run)
 		if err != nil {
 			return out, err
@@ -56,6 +68,145 @@ func (s *testMediaOrganizeStore) LoadMediaOrganize(context.Context) (storage.Med
 		out.Runs = append(out.Runs, string(raw))
 	}
 	return out, nil
+}
+
+func (s *testMediaOrganizeStore) storedRuns(ctx context.Context) ([]MediaOrganizeRun, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var doc mediaOrganizeDocument
+	if value := s.source.Value(); value != "" {
+		if err := json.Unmarshal([]byte(value), &doc); err != nil {
+			return nil, err
+		}
+	}
+	return doc.Runs, nil
+}
+
+func (s *testMediaOrganizeStore) LoadMediaOrganizeRuns(ctx context.Context, ids []string, ruleID, status string) ([]string, error) {
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, run := range runs {
+		if len(ids) > 0 && !slices.Contains(ids, run.ID) || ruleID != "" && run.Rule.ID != ruleID {
+			continue
+		}
+		if status != "" {
+			row, err := mediaRunRow(run)
+			if err != nil {
+				return nil, err
+			}
+			matched := false
+			switch status {
+			case "done", "failed":
+				matched = slices.ContainsFunc(row.Tasks, func(task storage.MediaOrganizeTaskRow) bool { return task.Group == status })
+			case "empty":
+				matched = len(row.Tasks) == 0
+			case "pending":
+				matched = slices.ContainsFunc(row.Tasks, func(task storage.MediaOrganizeTaskRow) bool { return task.Group == "failed" }) && slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool {
+					return entry.File.MediaType == "video" && entry.Status != "done" && entry.P115Move != nil
+				})
+			}
+			if !matched {
+				continue
+			}
+		}
+		raw, err := mediaMarshalPersistentRun(run)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, string(raw))
+	}
+	return out, ctx.Err()
+}
+
+// 夹具与 SQLite 一致，只返回目标视频的条目及关联作品，不在调用方解码整个批次。
+func testMediaProjectRun(run MediaOrganizeRun, include func(MediaOrganizeEntry) bool) (string, error) {
+	entries := make([]MediaOrganizeEntry, 0)
+	groups := make(map[string]bool)
+	for _, entry := range run.Entries {
+		if include(entry) {
+			entries = append(entries, entry)
+			groups[entry.Group] = true
+		}
+	}
+	run.Entries = entries
+	run.Groups = slices.DeleteFunc(slices.Clone(run.Groups), func(group MediaOrganizeGroup) bool { return !groups[group.ID] })
+	raw, err := mediaMarshalPersistentRun(run)
+	return string(raw), err
+}
+
+func (s *testMediaOrganizeStore) LoadMediaOrganizeTask(ctx context.Context, id, fileID string) (string, error) {
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, run := range runs {
+		if run.ID == id && slices.ContainsFunc(run.Entries, func(entry MediaOrganizeEntry) bool { return entry.File.MediaType == "video" && entry.File.ID == fileID }) {
+			return testMediaProjectRun(run, func(entry MediaOrganizeEntry) bool { return mediaInTask(entry, fileID) })
+		}
+	}
+	return "", sql.ErrNoRows
+}
+
+func (s *testMediaOrganizeStore) LoadMediaOrganizeReferences(ctx context.Context, ruleID string, parents, scopes []string, recursive bool) ([]string, error) {
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, run := range runs {
+		if run.Rule.ID != ruleID {
+			continue
+		}
+		selected := 0
+		raw, err := testMediaProjectRun(run, func(entry MediaOrganizeEntry) bool {
+			if entry.File.MediaType != "video" || entry.Status != "done" || entry.Relative == "" {
+				return false
+			}
+			if recursive || slices.Contains(parents, entry.File.ParentID) || slices.ContainsFunc(scopes, func(scope string) bool { return scope == "." || mediaInScope(entry.File.SourcePath, scope) }) {
+				selected++
+				return true
+			}
+			return false
+		})
+		if err != nil {
+			return nil, err
+		}
+		if selected > 0 {
+			out = append(out, raw)
+		}
+	}
+	return out, ctx.Err()
+}
+
+func (s *testMediaOrganizeStore) LoadMediaOrganizeFailures(ctx context.Context, ruleID string, fileIDs []string) ([]string, error) {
+	if len(fileIDs) == 0 {
+		return []string{}, ctx.Err()
+	}
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0)
+	for _, run := range runs {
+		if run.Rule.ID != ruleID {
+			continue
+		}
+		if !slices.ContainsFunc(mediaTasks(run), func(task MediaOrganizeTask) bool {
+			return task.Status == "failed" && slices.Contains(fileIDs, task.FileID)
+		}) {
+			continue
+		}
+		raw, err := mediaMarshalPersistentRun(run)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, string(raw))
+	}
+	return out, ctx.Err()
 }
 func (s *testMediaOrganizeStore) SaveMediaOrganize(ctx context.Context, rules string, updates []storage.MediaOrganizeRunRow, removed []string) error {
 	if err := ctx.Err(); err != nil {

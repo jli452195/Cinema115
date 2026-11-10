@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+
 	"strm115/backend/internal/client/p115"
 )
 
@@ -15,11 +17,17 @@ func (s *MediaOrganizer) process115Auto(ctx context.Context, files *mediaOrganiz
 }
 
 // 未完成主文件的写入需要先核对位置；附件不再保护整个视频任务。
-func (s *MediaOrganizer) pending115Tasks(run *MediaOrganizeRun) (map[string]bool, map[string]bool) {
+func (s *MediaOrganizer) pending115Tasks(ctx context.Context, run *MediaOrganizeRun) (map[string]bool, map[string]bool, error) {
 	pending, directories := make(map[string]bool), make(map[string]bool)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, previous := range s.doc.Runs {
+	records, err := s.db.LoadMediaOrganizeRuns(ctx, nil, "", "pending")
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取待核实的文件移动: %w", err)
+	}
+	history, err := s.mediaHistoryWithLive(ctx, records, "", run.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, previous := range history {
 		if previous.ID == run.ID || previous.Rule.Storage != "115" || previous.Rule.AccountID == "" || previous.Rule.AccountID != run.Rule.AccountID {
 			continue
 		}
@@ -39,5 +47,5 @@ func (s *MediaOrganizer) pending115Tasks(run *MediaOrganizeRun) (map[string]bool
 			}
 		}
 	}
-	return pending, directories
+	return pending, directories, nil
 }

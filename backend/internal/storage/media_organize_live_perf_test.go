@@ -135,3 +135,20 @@ func BenchmarkMediaOrganizeLiveQuery(b *testing.B) {
 		})
 	}
 }
+
+// 已归档记录的查询分配应由当前页决定，而不是随历史总条数线性增长。
+func BenchmarkMediaOrganizeStoredQuery(b *testing.B) {
+	for _, count := range []int{5000, 50000} {
+		b.Run(fmt.Sprintf("records_%d", count), func(b *testing.B) {
+			s, _ := mediaLivePerfFixture(b, count, 0, 0)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				result, err := s.QueryMediaOrganize(context.Background(), "", "all", 1)
+				if err != nil || result.Total != count || len(result.Records) != 20 {
+					b.Fatal(result.Counts, err)
+				}
+			}
+		})
+	}
+}

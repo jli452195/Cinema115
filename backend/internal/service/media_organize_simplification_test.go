@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -34,7 +33,7 @@ func TestMediaHistorySnapshotExcludesRuntimePermissions(t *testing.T) {
 	}
 }
 
-func TestMediaOrganizerOpenRebuildsDerivedTaskStates(t *testing.T) {
+func TestMediaOrganizerOpenLeavesCompletedHistoryCold(t *testing.T) {
 	s, db, dir := newMediaSQLiteTest(t)
 	run := mediaRecordFixture("rebuild", "partial", 1)
 	run.Entries = append(run.Entries, MediaOrganizeEntry{
@@ -45,19 +44,6 @@ func TestMediaOrganizerOpenRebuildsDerivedTaskStates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 模拟仍按附件聚合的旧摘要，批次原始结果不变。
-	item := mediaTasks(run)[0].MediaOrganizeHistoryItem
-	item.Status = "partial"
-	raw, err := json.Marshal(item)
-	if err != nil {
-		t.Fatal(err)
-	}
-	row.Tasks = []storage.MediaOrganizeTaskRow{{FileID: item.FileID, Group: "attention", At: mediaSortTime(item.At), Record: string(raw)}}
-	legacy, err := json.Marshal(run)
-	if err != nil {
-		t.Fatal(err)
-	}
-	row.Record = string(legacy)
 	if err := db.SaveMediaOrganize(context.Background(), `{"rules":[]}`, []storage.MediaOrganizeRunRow{row}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -66,8 +52,12 @@ func TestMediaOrganizerOpenRebuildsDerivedTaskStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	history := mediaHistoryTest(t, restored, "", "all", 1)
-	if history.Total != 1 || history.Counts["done"] != 1 || history.Counts["failed"] != 0 {
-		t.Fatal("启动应按主文件恢复成功历史，附件失败不能改变视频结果", history)
+	if history.Total != 1 || history.Counts["done"] != 1 || history.Counts["failed"] != 0 || len(restored.doc.Runs) != 0 {
+		t.Fatal("启动只查询持久历史摘要，不加载完成批次", history, restored.doc.Runs)
+	}
+	saved, err := db.LoadMediaOrganizeRuns(context.Background(), []string{run.ID}, "", "")
+	if err != nil || len(saved) != 1 || saved[0] != row.Record {
+		t.Fatal("启动不应重新生成已完成批次", len(saved), err)
 	}
 	index, err := restored.Snapshot(run.ID)
 	if err != nil || len(index.Entries) != 1 || !index.Entries[0].Reference {

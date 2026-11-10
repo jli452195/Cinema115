@@ -213,13 +213,23 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 
 func (s *MediaOrganizer) Snapshot(id string) (MediaOrganizeRun, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, r := range s.doc.Runs {
 		if r.ID == id {
 			var copy MediaOrganizeRun
 			cloneMediaRun(r, &copy)
+			s.mu.Unlock()
 			return copy, nil
 		}
+	}
+	s.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	rows, err := s.db.LoadMediaOrganizeRuns(ctx, []string{id}, "", "")
+	if err != nil {
+		return MediaOrganizeRun{}, fmt.Errorf("读取整理批次: %w", err)
+	}
+	if len(rows) > 0 {
+		return mediaDecodeStoredRun(rows[0])
 	}
 	return MediaOrganizeRun{}, ErrMediaOrganizeInput
 }
@@ -377,6 +387,12 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 	}
 	for i, r := range s.doc.Rules {
 		if r.ID == id {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			defer s.releaseHistoryLocked()
+			if err := s.loadHistoryLocked(ctx, nil, id, ""); err != nil {
+				return err
+			}
 			s.doc.Rules = append(s.doc.Rules[:i], s.doc.Rules[i+1:]...)
 			delete(s.doc.Orphans, id)
 			removed := []string{}
@@ -460,23 +476,19 @@ func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigge
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err
 	}
-	// 下一轮只保留失败和成功视频的只读映射，清除上一轮的临时展示数据。
+	// 无媒体条目的旧扫描摘要按规则退役，历史视频继续留在数据库。
 	removed := []string{}
-	for i := range s.doc.Runs {
-		old := &s.doc.Runs[i]
-		if old.Rule.ID == rule.ID && !mediaRunActive(old.Status) && !s.busyRunLocked(old.ID) &&
-			slices.ContainsFunc(old.Entries, func(entry MediaOrganizeEntry) bool {
-				return entry.File.MediaType == "video" && entry.Status == "done" && !entry.Reference
-			}) {
-			*old = mediaPersistentRun(*old)
-			removed = append(removed, old.ID)
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	defer s.releaseHistoryLocked()
+	if err := s.loadHistoryLocked(ctx, nil, rule.ID, "empty"); err != nil {
+		return MediaOrganizeRun{}, err
 	}
 	s.doc.Runs = slices.DeleteFunc(s.doc.Runs, func(old MediaOrganizeRun) bool {
 		if old.Rule.ID != rule.ID {
 			return false
 		}
-		if mediaRunActive(old.Status) || old.ID == s.active {
+		if mediaRunActive(old.Status) || old.ID == s.active || s.eventRecoveryPendingLocked(old.ID) {
 			return false
 		}
 		for _, entry := range old.Entries {
@@ -511,6 +523,14 @@ func (s *MediaOrganizer) notify() {
 func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !slices.ContainsFunc(s.doc.Runs, func(run MediaOrganizeRun) bool { return run.ID == r.ID }) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		defer s.releaseHistoryLocked()
+		if err := s.loadHistoryLocked(ctx, []string{r.ID}, "", ""); err != nil {
+			return err
+		}
+	}
 	r.recognitionEvents = nil
 	defer func() { r.recognitionEvents = nil }()
 	r.UpdatedAt = time.Now()
@@ -529,6 +549,22 @@ func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 			for _, entry := range published.Entries {
 				if entry.File.MediaType == "video" && entry.Status == "done" && !entry.Reference && !previousDone[entry.File.ID] {
 					resolved.Entries = append(resolved.Entries, entry)
+				}
+			}
+			if len(resolved.Entries) > 0 {
+				ids := make([]string, 0, len(resolved.Entries))
+				for _, entry := range resolved.Entries {
+					ids = append(ids, entry.File.ID)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				rows, err := s.db.LoadMediaOrganizeFailures(ctx, r.Rule.ID, ids)
+				if err != nil {
+					return fmt.Errorf("查询待清除的整理失败: %w", err)
+				}
+				defer s.releaseHistoryLocked()
+				if err := s.includeHistoryLocked(rows); err != nil {
+					return err
 				}
 			}
 			cloneMediaRun(published, &s.doc.Runs[i])
@@ -632,6 +668,7 @@ func (s *MediaOrganizer) removeActionLocked(id string) {
 		return
 	}
 	delete(s.actions, id)
+	s.releaseHistoryLocked()
 	s.historyChangedLocked()
 }
 
@@ -690,12 +727,7 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 		}
 		delete(s.inFlight, run.ID)
 		delete(s.stopping, run.ID)
-		for i := range s.doc.Runs {
-			if s.doc.Runs[i].ID == run.ID {
-				s.doc.Runs[i] = mediaPersistentRun(s.doc.Runs[i])
-				break
-			}
-		}
+		s.releaseHistoryLocked()
 		s.historyChangedLocked()
 		s.mu.Unlock()
 	}()

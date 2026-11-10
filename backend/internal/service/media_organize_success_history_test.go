@@ -45,8 +45,8 @@ func TestMediaSuccessHistoryPersistsPrimaryResultAcrossRestart(t *testing.T) {
 			t.Fatal("成功只保留精简结果及只读位置映射", task)
 		}
 	}
-	rows, err := db.LoadMediaOrganize(context.Background())
-	if err != nil || len(rows.Runs) != 1 || strings.Contains(rows.Runs[0], "failed-subtitle") || strings.Contains(rows.Runs[0], "临时取链字段") {
+	rows, err := db.LoadMediaOrganizeRuns(context.Background(), []string{run.ID}, "", "")
+	if err != nil || len(rows) != 1 || strings.Contains(rows[0], "failed-subtitle") || strings.Contains(rows[0], "临时取链字段") {
 		t.Fatal("成功历史不应保存附件失败或取链临时信息", rows, err)
 	}
 	var compact struct {
@@ -55,7 +55,7 @@ func TestMediaSuccessHistoryPersistsPrimaryResultAcrossRestart(t *testing.T) {
 			Result    map[string]json.RawMessage `json:"result"`
 		} `json:"entries"`
 	}
-	if err := json.Unmarshal([]byte(rows.Runs[0]), &compact); err != nil || len(compact.Entries) != 1 || len(compact.Entries[0].UpdatedAt) != 0 || compact.Entries[0].Result["target"] != nil || compact.Entries[0].Result["status"] == nil || compact.Entries[0].Result["at"] == nil {
+	if err := json.Unmarshal([]byte(rows[0]), &compact); err != nil || len(compact.Entries) != 1 || len(compact.Entries[0].UpdatedAt) != 0 || compact.Entries[0].Result["target"] != nil || compact.Entries[0].Result["status"] == nil || compact.Entries[0].Result["at"] == nil {
 		t.Fatal("成功只保存一次完成时间和目标，同时保留明确成功证据", compact, err)
 	}
 }

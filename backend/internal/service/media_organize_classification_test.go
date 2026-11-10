@@ -268,7 +268,7 @@ func TestMediaOrganizerClassificationUnavailableDoesNotStopOtherMonitoring(t *te
 	if _, err := unavailable.Save(context.Background(), initial.YAML, document.Revision); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.schedule(); err != nil || len(s.doc.Runs) != 2 || s.doc.Runs[0].Rule.ID != rule.ID {
+	if err := s.schedule(); err != nil || len(s.doc.Runs) != 1 || s.doc.Runs[0].Rule.ID != rule.ID {
 		t.Fatal("monitoring did not recover after configuration repair", err, s.doc)
 	}
 }

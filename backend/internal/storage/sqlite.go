@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 68
+const schemaVersion = 69
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {

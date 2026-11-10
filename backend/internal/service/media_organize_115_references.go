@@ -35,8 +35,11 @@ func (s *MediaOrganizer) add115References(ctx context.Context, files *mediaOrgan
 		group MediaOrganizeGroup
 	}
 	refs := make([]reference, 0)
-	s.mu.Lock()
-	for _, old := range s.doc.Runs {
+	history, err := s.mediaReferenceHistory(ctx, run, wanted, scopes, recursiveSubtitles)
+	if err != nil {
+		return fmt.Errorf("读取晚到附件的视频映射: %w", err)
+	}
+	for _, old := range history {
 		if old.ID == run.ID || old.Rule.ID != run.Rule.ID || old.Rule.Storage != "115" || old.Rule.AccountID != run.Rule.AccountID ||
 			old.Rule.SourceID != run.Rule.SourceID || old.Rule.TargetID != run.Rule.TargetID || old.Rule.Source != run.Rule.Source || old.Rule.Target != run.Rule.Target {
 			continue
@@ -55,7 +58,6 @@ func (s *MediaOrganizer) add115References(ctx context.Context, files *mediaOrgan
 			}
 		}
 	}
-	s.mu.Unlock()
 	candidates := mediaEntryFiles(entries)
 	candidates = append(candidates, mediaEntryFiles(run.Entries)...)
 	for _, ref := range refs {

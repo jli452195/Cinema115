@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -211,31 +213,63 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 func (s *MediaOrganizer) busyRunLocked(id string) bool { return s.active == id || s.actions[id] != "" }
 
 func (s *MediaOrganizer) Task(id, fileID string) (MediaOrganizeTask, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.TaskContext(ctx, id, fileID)
+}
+
+func (s *MediaOrganizer) TaskContext(ctx context.Context, id, fileID string) (MediaOrganizeTask, error) {
 	if id == "" || fileID == "" {
 		return MediaOrganizeTask{}, ErrMediaOrganizeInput
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, run := range s.doc.Runs {
 		if run.ID != id {
 			continue
 		}
-		permissions := s.taskPermissionsLocked(run)
-		selected := run
-		selected.Entries = nil
-		for _, entry := range run.Entries {
-			if mediaInTask(entry, fileID) {
-				selected.Entries = append(selected.Entries, entry)
-			}
+		task, err := s.mediaTaskLocked(run, fileID)
+		s.mu.Unlock()
+		return task, err
+	}
+	s.mu.Unlock()
+	// 历史详情只解码选中视频及附件，数据库慢读不占业务锁。
+	raw, err := s.db.LoadMediaOrganizeTask(ctx, id, fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return MediaOrganizeTask{}, ErrMediaOrganizeTaskNotFound
+	}
+	if err != nil {
+		return MediaOrganizeTask{}, fmt.Errorf("读取整理详情: %w", err)
+	}
+	run, err := mediaDecodeStoredRun(raw)
+	if err != nil {
+		return MediaOrganizeTask{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, live := range s.doc.Runs {
+		if live.ID == id {
+			return s.mediaTaskLocked(live, fileID)
 		}
-		var snapshot MediaOrganizeRun
-		cloneMediaRun(selected, &snapshot)
-		for _, task := range mediaTasks(snapshot) {
-			if task.FileID == fileID {
-				permission := permissions[fileID]
-				task.CanDelete, task.CanRetry = permission.CanDelete, permission.CanRetry
-				return task, nil
-			}
+	}
+	return s.mediaTaskLocked(run, fileID)
+}
+
+func (s *MediaOrganizer) mediaTaskLocked(run MediaOrganizeRun, fileID string) (MediaOrganizeTask, error) {
+	selected := run
+	selected.Entries = make([]MediaOrganizeEntry, 0, 1)
+	for _, entry := range run.Entries {
+		if mediaInTask(entry, fileID) {
+			selected.Entries = append(selected.Entries, entry)
+		}
+	}
+	permissions := s.taskPermissionsLocked(selected)
+	var snapshot MediaOrganizeRun
+	cloneMediaRun(selected, &snapshot)
+	for _, task := range mediaTasks(snapshot) {
+		if task.FileID == fileID {
+			permission := permissions[fileID]
+			task.CanDelete, task.CanRetry = permission.CanDelete, permission.CanRetry
+			return task, nil
 		}
 	}
 	return MediaOrganizeTask{}, ErrMediaOrganizeTaskNotFound
@@ -329,6 +363,19 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		}
 		out.Cleanup = append(out.Cleanup, item)
 	}
+	// 已结束的成功历史不需要执行权限上下文；失败仅按本页主文件读取必要条目。
+	permissions := make(map[string]mediaTaskPermission, len(out.Items))
+	for _, item := range out.Items {
+		permission := mediaTaskPermission{CanDelete: true}
+		if item.Status == "failed" {
+			task, err := s.TaskContext(ctx, item.RunID, item.FileID)
+			if err != nil && !errors.Is(err, ErrMediaOrganizeTaskNotFound) {
+				return out, err
+			}
+			permission = mediaTaskPermission{CanDelete: task.CanDelete, CanRetry: task.CanRetry}
+		}
+		permissions[item.RunID+"\x00"+item.FileID] = permission
+	}
 	// 数据库查询不占业务锁；操作权限在返回前按最新的在途文件重新计算。
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -336,19 +383,13 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		return out, err
 	}
 	out.Active = s.active != "" || len(s.actions) > 0
-	permissions := make(map[string]map[string]mediaTaskPermission)
-	wanted := make(map[string]bool, len(out.Items))
-	for _, item := range out.Items {
-		wanted[item.RunID] = true
-	}
-	for _, run := range s.doc.Runs {
-		if wanted[run.ID] {
-			permissions[run.ID] = s.taskPermissionsLocked(run)
-		}
-	}
 	for i := range out.Items {
 		item := &out.Items[i]
-		permission := permissions[item.RunID][item.FileID]
+		permission := permissions[item.RunID+"\x00"+item.FileID]
+		permission.CanDelete = permission.CanDelete && s.inFlight[item.RunID][item.FileID] == 0 && !s.eventRecoveryPendingLocked(item.RunID)
+		if s.busyRunLocked(item.RunID) || s.eventRecoveryPendingLocked(item.RunID) {
+			permission.CanRetry = false
+		}
 		item.CanDelete, item.CanRetry = permission.CanDelete, permission.CanRetry
 	}
 	return out, nil
@@ -401,6 +442,14 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	defer s.releaseHistoryLocked()
+	ids := make([]string, 0, len(selected))
+	for id := range selected {
+		ids = append(ids, id)
+	}
+	if err := s.loadHistoryLocked(ctx, ids, "", input.Status); err != nil {
 		return 0, err
 	}
 	// 先校验整个请求，避免部分删除后才发现选中了受保护任务。

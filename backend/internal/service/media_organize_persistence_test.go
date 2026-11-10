@@ -107,7 +107,7 @@ func TestMediaPersistenceSuccessRetainsHistoryAndMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	durable, err := db.QueryMediaOrganize(context.Background(), "", "all", 1)
-	if err != nil || durable.Total != 1 || durable.Counts["done"] != 1 || len(mediaTasks(reopened.doc.Runs[0])) != 1 {
+	if err != nil || durable.Total != 1 || durable.Counts["done"] != 1 || len(reopened.doc.Runs) != 0 {
 		t.Fatal("重启后成功历史及其完成时间应保留", durable, reopened.doc.Runs, err)
 	}
 	index, err := reopened.Snapshot(run.ID)

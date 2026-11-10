@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"time"
@@ -18,12 +19,22 @@ type MediaOrganizeCorrection struct {
 
 // Retry changes only one media task; the selection survives checkpoints/restarts.
 func (s *MediaOrganizer) Retry(id string, input MediaOrganizeCorrection) (MediaOrganizeTask, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return s.RetryContext(ctx, id, input)
+}
+
+func (s *MediaOrganizer) RetryContext(ctx context.Context, id string, input MediaOrganizeCorrection) (MediaOrganizeTask, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if input.FileID == "" || input.TMDBID < 0 || input.TMDBID > 0 && input.Kind != "movie" && input.Kind != "tv" ||
 		input.Season != nil && (*input.Season < 0 || *input.Season > 1000) ||
 		input.Episode != nil && (*input.Episode < 0 || *input.Episode > 10000) {
 		return MediaOrganizeTask{}, ErrMediaOrganizeInput
+	}
+	defer s.releaseHistoryLocked()
+	if err := s.loadHistoryLocked(ctx, []string{id}, "", ""); err != nil {
+		return MediaOrganizeTask{}, err
 	}
 	for i := range s.doc.Runs {
 		run := &s.doc.Runs[i]

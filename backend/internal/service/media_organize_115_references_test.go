@@ -52,11 +52,20 @@ func TestMediaAttachment115LateCopyRestoresOnlyConfirmedVideo(t *testing.T) {
 
 func TestMediaAttachment115LateCopyCanUseConfirmedSHA1Duplicate(t *testing.T) {
 	s, drive, files, run, entries := mediaAttachment115ReferenceFixture(t)
+	if err := s.loadHistoryLocked(context.Background(), nil, run.Rule.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	updated := make([]string, 0)
 	for i := range s.doc.Runs {
 		if s.doc.Runs[i].ID != run.ID {
-			s.doc.Runs[i].Entries[0].Result = &MediaOrganizeResult{Action: "duplicate"}
+			s.doc.Runs[i].Entries[0].Result.Action = "duplicate"
+			updated = append(updated, s.doc.Runs[i].ID)
 		}
 	}
+	if err := s.persistLocked(updated...); err != nil {
+		t.Fatal(err)
+	}
+	s.releaseHistoryLocked()
 	drive.dirs["20"][0].ID = "保留目标文件"
 	drive.dirs["20"][0].Size++
 	if err := s.add115References(context.Background(), files, run, entries); err != nil || len(run.Entries) != 1 || !run.Entries[0].Reference {
@@ -107,11 +116,13 @@ func TestMediaAttachment115ReferenceOnlyProtectsRelatedSidecarsOnReadFailure(t *
 
 func TestMediaAttachment115ReferenceAcceptsCompressedSuccessIndex(t *testing.T) {
 	s, _, files, run, entries := mediaAttachment115ReferenceFixture(t)
-	for i := range s.doc.Runs {
-		if s.doc.Runs[i].ID != run.ID {
-			entry := &s.doc.Runs[i].Entries[0]
-			entry.Reference, entry.Result = true, nil
-		}
+	history, err := s.db.LoadMediaOrganizeReferences(context.Background(), run.Rule.ID, []string{"10"}, nil, false)
+	if err != nil || len(history) != 1 {
+		t.Fatal("应保留一个冷存储成功映射", len(history), err)
+	}
+	previous, err := mediaDecodeStoredRun(history[0])
+	if err != nil || len(previous.Entries) != 1 || !previous.Entries[0].Reference || previous.Entries[0].Result == nil {
+		t.Fatal("成功映射应精简并保留完成证据", previous, err)
 	}
 	if err := s.add115References(context.Background(), files, run, entries); err != nil || len(run.Entries) != 1 || !run.Entries[0].Reference {
 		t.Fatal("压缩的成功索引应继续提供晚到附件所需的只读来源映射", run.Entries, err)

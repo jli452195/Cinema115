@@ -46,8 +46,11 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 		group MediaOrganizeGroup
 	}
 	refs := make([]reference, 0)
-	s.mu.Lock()
-	for _, old := range s.doc.Runs {
+	history, err := s.mediaReferenceHistory(ctx, run, wanted, scopes, recursiveSubtitles)
+	if err != nil {
+		return fmt.Errorf("读取晚到附件的视频映射: %w", err)
+	}
+	for _, old := range history {
 		if old.ID == run.ID || old.Rule.ID != run.Rule.ID || old.Rule.Storage != "cd2" || old.Rule.ConnectionID != run.Rule.ConnectionID || old.Rule.ConnectionRevision != run.Rule.ConnectionRevision || old.Rule.Source != run.Rule.Source || old.Rule.Target != run.Rule.Target {
 			continue
 		}
@@ -66,7 +69,6 @@ func (s *MediaOrganizer) cd2AddReferences(ctx context.Context, files *mediaOrgan
 			refs = append(refs, reference{entry, group})
 		}
 	}
-	s.mu.Unlock()
 	// 先用本地文件名确定相关视频，再核验目标；单条字幕不查询同目录的全部历史影片。
 	candidates := mediaEntryFiles(entries)
 	candidates = append(candidates, mediaEntryFiles(run.Entries)...)

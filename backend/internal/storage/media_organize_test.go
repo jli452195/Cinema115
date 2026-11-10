@@ -72,7 +72,8 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 		t.Fatal("injected SQL failure must propagate")
 	}
 	rows, err = s.LoadMediaOrganize(ctx)
-	if err != nil || !rows.Initialized || rows.Rules != "new-rules" || !reflect.DeepEqual(rows.Runs, []string{"new-run"}) {
+	stored, loadErr := s.LoadMediaOrganizeRuns(ctx, []string{"run"}, "", "")
+	if err != nil || loadErr != nil || !rows.Initialized || rows.Rules != "new-rules" || !reflect.DeepEqual(stored, []string{"new-run"}) {
 		t.Fatal("run/rules committed despite task insertion failure", rows, err)
 	}
 	query, err := s.QueryMediaOrganize(ctx, "", "all", 1)

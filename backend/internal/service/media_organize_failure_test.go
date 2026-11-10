@@ -288,6 +288,14 @@ func TestMediaOrganizerFailureRecoveryPlanRetention(t *testing.T) {
 	for i := range 25 {
 		s.doc.Runs = append([]MediaOrganizeRun{{ID: fmt.Sprint(i), Rule: rule, Status: "completed", Entries: []MediaOrganizeEntry{{Status: "done"}}}}, s.doc.Runs...)
 	}
+	ids := make([]string, 0, len(s.doc.Runs))
+	for _, run := range s.doc.Runs {
+		ids = append(ids, run.ID)
+	}
+	if err := s.persistLocked(ids...); err != nil {
+		t.Fatal(err)
+	}
+	s.releaseHistoryLocked()
 	if _, err := s.Start(rule.ID); err != nil {
 		t.Fatal(err)
 	}

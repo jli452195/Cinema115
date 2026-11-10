@@ -65,7 +65,8 @@ func TestMediaQueueRetryAcceptsOtherBatchesAndRollsBack(t *testing.T) {
 			}
 			_, err = s.Retry(history.ID, MediaOrganizeCorrection{FileID: history.Entries[0].File.ID})
 			if fail {
-				if err == nil || s.actions[history.ID] != "" || s.actions[queuedScan.ID] != "auto" || s.doc.Runs[len(s.doc.Runs)-1].Status != "partial" {
+				saved, readErr := s.Snapshot(history.ID)
+				if err == nil || readErr != nil || s.actions[history.ID] != "" || s.actions[queuedScan.ID] != "auto" || saved.Status != "partial" {
 					t.Fatal("回滚后不能遗留重试动作或改坏其他排队批次", err, s.actions, s.doc.Runs)
 				}
 				return

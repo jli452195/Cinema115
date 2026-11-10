@@ -244,7 +244,7 @@ func TestMediaOrganizerSQLiteDeleteTaskAndActiveProtection(t *testing.T) {
 		t.Fatal(deleted, err)
 	}
 	remaining, _ := s.Snapshot(regular.ID)
-	if len(remaining.Entries) != 1 || len(remaining.Groups) != 1 || remaining.Groups[0].ID != "other" || len(snapshot.Entries) != 2 {
+	if len(remaining.Entries) != 1 || len(remaining.Groups) != 1 || remaining.Groups[0].ID != "other" || len(snapshot.Entries) != 1 || snapshot.Entries[0].File.ID != regular.Entries[0].File.ID || snapshot.Group.ID != "group" {
 		t.Fatal("task deletion leaked companions/groups or mutated snapshot", remaining, snapshot)
 	}
 	for filename, expected := range map[string]string{filepath.Join(regular.Rule.Source, regular.Entries[0].File.ID): "untouched-source", regular.Entries[0].Target: "untouched-target"} {

@@ -137,7 +137,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		c.JSON(http.StatusOK, gin.H{"rule": rule})
 	})
 	g.GET("/runs/:id/task", func(c *gin.Context) {
-		out, err := s.Task(c.Param("id"), c.Query("fileId"))
+		out, err := s.TaskContext(c.Request.Context(), c.Param("id"), c.Query("fileId"))
 		if err != nil {
 			if errors.Is(err, service.ErrMediaOrganizeTaskNotFound) {
 				c.JSON(http.StatusNotFound, gin.H{"error": "整理任务记录已移除"})
@@ -153,7 +153,7 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		if !bindNamingJSON(c, &in) {
 			return
 		}
-		out, err := s.Retry(c.Param("id"), in)
+		out, err := s.RetryContext(c.Request.Context(), c.Param("id"), in)
 		if err != nil {
 			fail(c, err)
 			return

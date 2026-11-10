@@ -466,15 +466,10 @@ func TestMediaOrganizerCD2LateSubtitleAcceptsCompressedSuccessIndex(t *testing.T
 	fs.add(path.Join(rule.Source, "Work.S01E01.mkv"), false, 123)
 	first, _ := s.Start(rule.ID)
 	mediaTestProcess(t, s, &first, "auto")
-	for i := range s.doc.Runs {
-		if s.doc.Runs[i].ID == first.ID {
-			for j := range s.doc.Runs[i].Entries {
-				entry := &s.doc.Runs[i].Entries[j]
-				if entry.File.MediaType == "video" {
-					entry.Reference, entry.Result = true, nil
-				}
-			}
-		}
+	s.releaseHistoryLocked()
+	stored, err := s.Snapshot(first.ID)
+	if err != nil || len(stored.Entries) != 1 || !stored.Entries[0].Reference || stored.Entries[0].Result == nil {
+		t.Fatal("成功视频应在冷存储保留精简映射和完成证据", stored, err)
 	}
 	late := fs.add(path.Join(rule.Source, "Work.S01E01.ass"), false, 8)
 	second, _ := s.Start(rule.ID)
