@@ -95,12 +95,22 @@ func (s *TMDBService) AnimeGroup(ctx context.Context, id int, group string) (*tm
 
 var animeSeasonMarker = regexp.MustCompile(`(?i)(?:第\s*([一二三四五六七八九十百0-9]+)\s*[季期]|\b([0-9]+)(?:st|nd|rd|th)\s+season\b|\bseason\s+([0-9]+)\b|\bs([0-9]{1,2})\b)`)
 
+// 分部/分割放送后缀只用于清理检索词，不参与目标季推断。
+var animePartMarker = regexp.MustCompile(`(?i)(?:第\s*[一二三四五六七八九十百0-9]+\s*(?:部分|部|クール)|\b(?:part|cour)\s*[0-9]+\b|\b[0-9]+(?:st|nd|rd|th)?\s*(?:part|cour)\b)\s*[)\]）】]?\s*$`)
+
 func animeSearchName(s string) string {
 	s = strings.TrimSpace(s)
 	if loc := animeSeasonMarker.FindStringIndex(s); loc != nil && loc[0] > 0 {
-		// A chapter suffix after the season (e.g. 第三季 反击篇) is not part
-		// of TMDB's series title. Keep the original series prefix for search.
+		// 明确季标记之后的篇章后缀不属于 TMDB 作品主标题。
 		return strings.TrimSpace(s[:loc[0]])
+	}
+	return s
+}
+
+func animePartSearchName(s string) string {
+	s = animeSearchName(s)
+	if loc := animePartMarker.FindStringIndex(s); loc != nil && loc[0] > 0 {
+		return strings.TrimRight(s[:loc[0]], " \t-·([（【")
 	}
 	return s
 }
@@ -183,32 +193,45 @@ func (s *AnimeNamingService) Search(ctx context.Context, names ...string) (Anime
 	seen := map[int]bool{}
 	queries := map[string]bool{}
 	exact := map[int]bool{}
-	for _, name := range names {
-		query := animeSearchName(name)
-		if query == "" || queries[query] {
-			continue
-		}
-		queries[query] = true
-		if len(queries) > 2 {
+	fallback := false
+	// 先查中文名和原名，均无候选时再补搜主标题；两轮共用超时与结果上限。
+	for round := 0; round < 2; round++ {
+		if round == 1 && len(out.Items) > 0 {
 			break
 		}
-		page, err := s.Metadata.Browse(ctx, tmdb.Options{Kind: "tv", Query: query, Page: 1})
-		if err != nil {
-			return out, err
-		}
-		if page == nil {
-			return out, tmdb.ErrInput
-		}
-		for _, item := range page.Items {
-			if item.ID < 1 || item.Kind != "tv" {
+		for index, name := range names {
+			if index >= 2 {
+				break
+			}
+			query := animeSearchName(name)
+			if round == 1 {
+				query = animePartSearchName(name)
+			}
+			if query == "" || queries[query] {
 				continue
 			}
-			if animeNameKey(query) == animeNameKey(item.Title) || animeNameKey(query) == animeNameKey(item.OriginalTitle) {
-				exact[item.ID] = true
+			queries[query] = true
+			if round == 1 {
+				fallback = true
 			}
-			if !seen[item.ID] && len(out.Items) < 12 {
-				out.Items = append(out.Items, item)
-				seen[item.ID] = true
+			page, err := s.Metadata.Browse(ctx, tmdb.Options{Kind: "tv", Query: query, Page: 1})
+			if err != nil {
+				return out, err
+			}
+			if page == nil {
+				return out, tmdb.ErrInput
+			}
+			for _, item := range page.Items {
+				if item.ID < 1 || item.Kind != "tv" {
+					continue
+				}
+				if animeNameKey(query) == animeNameKey(item.Title) || animeNameKey(query) == animeNameKey(item.OriginalTitle) {
+					exact[item.ID] = true
+				}
+				if !seen[item.ID] && len(out.Items) < 12 {
+					out.Items = append(out.Items, item)
+					seen[item.ID] = true
+				}
 			}
 		}
 	}
@@ -216,7 +239,7 @@ func (s *AnimeNamingService) Search(ctx context.Context, names ...string) (Anime
 	if len(exact) == 1 && len(out.Items) > 0 && exact[out.Items[0].ID] {
 		out.RecommendedID = strconv.Itoa(out.Items[0].ID)
 	}
-	if len(out.Items) == 1 {
+	if len(out.Items) == 1 && !fallback {
 		out.RecommendedID = strconv.Itoa(out.Items[0].ID)
 	}
 	return out, nil

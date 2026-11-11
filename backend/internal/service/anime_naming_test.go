@@ -183,3 +183,106 @@ func TestAnimeNamingSplitCourSearchAndSeasonFallback(t *testing.T) {
 		t.Fatal("split cour fell back to first season", target, err)
 	}
 }
+
+type animePartSearchFake struct {
+	animeNamingFake
+	results map[string][]tmdb.Item
+	queries []string
+	err     error
+}
+
+func (f *animePartSearchFake) Browse(_ context.Context, options tmdb.Options) (*tmdb.Page, error) {
+	f.queries = append(f.queries, options.Query)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &tmdb.Page{Items: f.results[options.Query]}, nil
+}
+
+func TestAnimeNamingPartSearchFallback(t *testing.T) {
+	const title = "弹珠汽水瓶里的千岁同学"
+	const original = "千歳くんはラムネ瓶のなか"
+	item := tmdb.Item{ID: 261343, Kind: "tv", Title: title, OriginalTitle: original}
+	for _, tc := range []struct {
+		name        string
+		names       []string
+		results     map[string][]tmdb.Item
+		wantQueries []string
+		wantID      string
+		wantItems   int
+	}{
+		{
+			name:        "中文日文均未命中后补搜主标题",
+			names:       []string{title + " 第2部分", original + " 第2クール"},
+			results:     map[string][]tmdb.Item{title: {item}, original: {item}},
+			wantQueries: []string{title + " 第2部分", original + " 第2クール", title, original},
+			wantID:      "261343", wantItems: 1,
+		},
+		{
+			name:        "保留完整分部作品命中",
+			names:       []string{title + " 第2部分"},
+			results:     map[string][]tmdb.Item{title + " 第2部分": {{ID: 99, Kind: "tv", Title: title + " 第2部分"}}, title: {item}},
+			wantQueries: []string{title + " 第2部分"}, wantID: "99", wantItems: 1,
+		},
+		{
+			name:        "原名命中时不补搜",
+			names:       []string{title + " 第2部分", original},
+			results:     map[string][]tmdb.Item{original: {item}},
+			wantQueries: []string{title + " 第2部分", original}, wantID: "261343", wantItems: 1,
+		},
+		{
+			name:        "补搜只有不相等的单个候选时不自动关联",
+			names:       []string{title + " Part 2"},
+			results:     map[string][]tmdb.Item{title: {{ID: 99, Kind: "tv", Title: "另一部作品"}}},
+			wantQueries: []string{title + " Part 2", title}, wantItems: 1,
+		},
+		{
+			name:        "同名候选有歧义时不自动关联",
+			names:       []string{title + " Cour 2"},
+			results:     map[string][]tmdb.Item{title: {item, {ID: 99, Kind: "tv", Title: title}}},
+			wantQueries: []string{title + " Cour 2", title}, wantItems: 2,
+		},
+		{
+			name:        "没有分部不重复检索",
+			names:       []string{title, title},
+			results:     map[string][]tmdb.Item{},
+			wantQueries: []string{title},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &animePartSearchFake{results: tc.results}
+			result, err := (&AnimeNamingService{Metadata: f}).Search(context.Background(), tc.names...)
+			if err != nil || result.RecommendedID != tc.wantID || len(result.Items) != tc.wantItems {
+				t.Fatal(result, err)
+			}
+			if strings.Join(f.queries, "|") != strings.Join(tc.wantQueries, "|") {
+				t.Fatal("检索顺序不符合预期", f.queries)
+			}
+		})
+	}
+}
+
+func TestAnimeNamingPartDoesNotImplySeason(t *testing.T) {
+	for _, name := range []string{
+		"作品 第2部分", "作品 第二部", "作品 第2クール", "Example Part 2",
+		"Example Cour 2", "Example 2nd Cour", "Example (Part 2)",
+	} {
+		if animePartSearchName(name) == animeSearchName(name) || animeSeasonHint([]string{name}) != 0 {
+			t.Fatal("分部标记必须用于补搜而不是季号推断", name)
+		}
+	}
+	if animePartSearchName("Example Part 2 Adventures") != "Example Part 2 Adventures" {
+		t.Fatal("不应删除标题中间的分部字样")
+	}
+	f := &animeNamingFake{}
+	target, err := (&AnimeNamingService{Metadata: f}).Target(context.Background(), AnimeNamingTargetInput{TMDBID: "117061"}, "", "作品 第2部分")
+	if err != nil || target.Season != 1 {
+		t.Fatal("分部误选了第二季", target.Season, err)
+	}
+	failure := errors.New("metadata unavailable")
+	search := &animePartSearchFake{err: failure}
+	_, err = (&AnimeNamingService{Metadata: search}).Search(context.Background(), "作品 第2部分")
+	if !errors.Is(err, failure) || len(search.queries) != 1 {
+		t.Fatal("来源错误不能当作无候选继续补搜", search.queries, err)
+	}
+}

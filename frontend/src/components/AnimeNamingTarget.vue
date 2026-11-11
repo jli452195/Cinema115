@@ -32,6 +32,7 @@ watch(() => props.naming.target.value?.tmdbId, () => { advancedOpen.value = fals
       <slot name="parameters" />
       <button v-if="naming.target.value" :id="`${targetID}-options-button`" type="button" class="ae-button ae-target-options" :disabled="disabled || naming.busy.value" :aria-expanded="advancedOpen" :aria-controls="`${targetID}-options`" @click="toggleAdvanced"><span class="ae-target-group-name">{{ naming.target.value.groupId ? naming.target.value.groupName : '默认编排' }}</span><span>更多</span><IconChevronDown :size="15" :class="{ 'is-open': advancedOpen }" aria-hidden="true" /></button>
     </div>
+    <p v-if="naming.target.value && naming.splitPartHint.value" class="ae-note">当前条目为分部放送，分部编号不等于 TMDB 季号。请核对目标季与集数偏移，偏移不会自动填写。</p>
     <div v-if="naming.target.value" v-show="advancedOpen" :id="`${targetID}-options`" class="ae-target-advanced" role="region" :aria-labelledby="`${targetID}-options-button`">
       <div class="ae-target-arrangement"><div class="ae-field"><span class="ae-label">剧集编排</span><SelectMenu class="ae-target-group-menu" :model-value="naming.target.value.groupId" :options="groupOptions" label="剧集编排" variant="anime" density="compact" :disabled="disabled || naming.busy.value" @change="naming.load(naming.target.value!.tmdbId, undefined, $event)" /></div><button type="button" class="ae-link" :disabled="disabled || naming.busy.value" @click="naming.load(naming.target.value!.tmdbId, naming.target.value!.season, naming.target.value!.groupId)"><IconRefresh :size="14" aria-hidden="true" />重新读取目标资料</button></div>
       <p class="ae-note">请核对目标季与下方实际编号；此编排仅用于本订阅的命名整理。</p>
@@ -39,7 +40,8 @@ watch(() => props.naming.target.value?.tmdbId, () => { advancedOpen.value = fals
     <div v-if="naming.picker.value" class="ae-target-picker">
       <form class="ae-search" @submit.prevent="naming.search()"><input v-model="naming.keyword.value" aria-label="搜索 TMDB 作品" maxlength="128" placeholder="输入作品名称" :disabled="disabled" /><button type="submit" class="ae-button" :disabled="disabled || naming.searching.value"><IconSearch :size="16" aria-hidden="true" />搜索</button></form>
       <div class="ae-target-candidates"><button v-for="item in naming.candidates.value" :key="item.id" type="button" :disabled="disabled || naming.busy.value" @click="naming.load(String(item.id))"><strong>{{ item.title }}</strong><small>{{ item.date?.slice(0, 4) || '年份待定' }} · TMDB {{ item.id }}</small></button></div>
-      <p v-if="!naming.searching.value && !naming.candidates.value.length" class="ae-note">可搜索作品名称，或直接填写已知 TMDB ID。</p>
+      <p v-if="!naming.searching.value && !naming.target.value && naming.candidates.value.length && !naming.error.value" class="ae-note" role="status">尚未确定唯一匹配，请选择对应的 TMDB 作品。</p>
+      <p v-if="!naming.searching.value && !naming.candidates.value.length && !naming.error.value" class="ae-note" role="status">{{ naming.searchPerformed.value ? '未找到匹配的 TMDB 作品，请尝试主标题、其他名称，或直接填写已知 TMDB ID。' : '可搜索作品名称，或直接填写已知 TMDB ID。' }}</p>
       <form class="ae-search" @submit.prevent="loadID"><input v-model="manualID" inputmode="numeric" aria-label="TMDB 作品 ID" placeholder="TMDB 作品 ID" :disabled="disabled" /><button type="submit" class="ae-button" :disabled="disabled || naming.busy.value || !/^[1-9]\d*$/.test(manualID.trim())">使用此 ID</button></form>
     </div>
     <p v-if="naming.error.value" class="ae-error" role="status">{{ naming.error.value }}<span v-if="naming.target.value">，当前目标已保留。</span></p>

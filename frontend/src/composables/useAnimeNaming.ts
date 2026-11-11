@@ -12,10 +12,10 @@ export function sourceNaming(source: SourceForm, target: AnimeNamingTarget): Ani
 
 export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; title: string; bangumiUnavailable?: boolean } | undefined>, sources: Ref<SourceForm[]>, signal: () => AbortSignal, locked: Ref<boolean>) {
   const target = ref<AnimeNamingTarget>(), candidates = ref<AnimeNamingCandidate[]>([]), groups = ref<{ id: string; name: string }[]>([])
-  const busy = ref(false), error = ref(''), keyword = ref(''), searching = ref(false), mode = ref<'tmdb' | 'original'>('tmdb'), picker = ref(false)
+  const busy = ref(false), error = ref(''), keyword = ref(''), searching = ref(false), searchPerformed = ref(false), mode = ref<'tmdb' | 'original'>('tmdb'), picker = ref(false)
   let sequence = 0, searchSequence = 0, controller = new AbortController(), manualTarget = false
   function reset(plan?: AnimeNamingPlan | null, existing = false) {
-    sequence++; searchSequence++; controller.abort(); controller = new AbortController(); target.value = plan?.target; candidates.value = []; groups.value = []; busy.value = false; error.value = ''; keyword.value = subject.value?.title || ''; searching.value = false; picker.value = false; manualTarget = existing
+    sequence++; searchSequence++; controller.abort(); controller = new AbortController(); target.value = plan?.target; candidates.value = []; groups.value = []; busy.value = false; error.value = ''; keyword.value = subject.value?.title || ''; searching.value = false; searchPerformed.value = false; picker.value = false; manualTarget = existing
     mode.value = existing && !plan ? 'original' : 'tmdb'
     for (const source of sources.value) {
       const first = plan?.sources.find(m => m.sourceRef === source.ref)?.segments[0]
@@ -43,8 +43,9 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
       const data = await animeConfigRequest<{ items: AnimeNamingCandidate[]; recommendedId: string }>(token.value, 'naming/search', { method: 'POST', signal: lifetime, body: automatic && subject.value?.id && !subject.value.bangumiUnavailable ? { bangumiId: subject.value.id } : { keyword: keyword.value.trim() || subject.value?.title || '' } })
       if (current !== sequence || lifetime.aborted || automatic && manualTarget) return
       candidates.value = Array.isArray(data.items) ? data.items : []
+      searchPerformed.value = true
       if (automatic && data.recommendedId) await load(data.recommendedId, undefined, '', true)
-      else if (candidates.value.length) picker.value = true
+      else picker.value = true
     } catch (reason) { if (current === sequence && !lifetime.aborted) error.value = animeConfigMessage(reason) }
     finally { if (searchID === searchSequence) searching.value = false }
   }
@@ -60,5 +61,6 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
     return { tmdbId: t.tmdbId, groupId: t.groupId, season: t.season, fingerprint: t.fingerprint, sources: sources.value.filter(s => s.groupId).map(s => sourceNaming(s, t)) }
   }
   const signature = computed(() => JSON.stringify({ mode: mode.value, target: target.value }))
-  return { target, candidates, groups, busy, searching, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, wasManuallyChanged: () => manualTarget }
+  const splitPartHint = computed(() => /(?:第\s*[一二三四五六七八九十百0-9]+\s*(?:部分|部|クール)|\b(?:part|cour)\s*[0-9]+\b|\b[0-9]+(?:st|nd|rd|th)?\s*(?:part|cour)\b)\s*[)\]）】]?\s*$/i.test(subject.value?.title || ''))
+  return { target, candidates, groups, busy, searching, searchPerformed, splitPartHint, error, keyword, mode, picker, signature, reset, original, load, search, readGroups, input, wasManuallyChanged: () => manualTarget }
 }
