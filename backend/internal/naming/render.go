@@ -3,6 +3,7 @@ package naming
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -97,8 +98,20 @@ func (r *Renderer) Render(data Data) (Result, error) {
 	if stem == "" {
 		return Result{}, fmt.Errorf("%w：文件名为空，请补充模板字段或文件信息", ErrInput)
 	}
+	filename := r.template.Filename
+	if len(stem)+len(extension) > maxComponentBytes && cleanText(data.Values[Title]) != "" {
+		// 仅在完整文件名超长时，将原语种名称回退为作品名称，保留模板格式。
+		for i, block := range filename {
+			if block.Field == OriginalTitle {
+				filename = slices.Clone(filename)
+				filename[i].Field = Title
+				stem = renderLayer(filename, data)
+				break
+			}
+		}
+	}
 	if len(stem)+len(extension) > maxComponentBytes {
-		return Result{}, filenameLengthError(r.template.Filename, data, len(stem)+len(extension))
+		return Result{}, filenameLengthError(filename, data, len(stem)+len(extension))
 	}
 	out := Result{Directory: strings.Join(directories, "/"), Stem: stem, Extension: extension, Name: stem + extension}
 	out.RelativePath = path.Join(out.Directory, out.Name)

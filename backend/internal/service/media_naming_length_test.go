@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"strm115/backend/internal/client/tmdb"
@@ -19,7 +18,7 @@ func (longOriginalTitleMetadata) Details(ctx context.Context, kind string, id in
 	}}, ctx.Err()
 }
 
-func TestMediaNamingLongOriginalTitleExplainsTargetByteLimit(t *testing.T) {
+func TestMediaNamingLongOriginalTitleFallsBack(t *testing.T) {
 	template, err := naming.Default(naming.TV)
 	if err != nil {
 		t.Fatal(err)
@@ -35,22 +34,21 @@ func TestMediaNamingLongOriginalTitleExplainsTargetByteLimit(t *testing.T) {
 		t.Fatalf("原文件名字节数 = %d，预期 130", size)
 	}
 	preview, err := s.Preview(context.Background(), input)
-	if err != nil || len(preview.Items) != 1 {
-		t.Fatalf("命名预览失败：%+v, %v", preview, err)
-	}
-	item := preview.Items[0]
-	if item.Result != nil || !strings.Contains(item.Error, "目标文件名为 330 个 UTF-8 字节，超过 240 字节") || !strings.Contains(item.Error, "「原语种名称」占 292 字节") {
-		t.Fatalf("超限应说明目标名及原语种字段的字节数：%+v", item)
-	}
-
-	// 在隔离模板中使用作品名称，确认同一源文件和规格可以正常命名。
-	templates.record.Template.Filename[0].Field = naming.Title
-	preview, err = s.Preview(context.Background(), input)
 	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil {
-		t.Fatalf("改用作品名称后预览失败：%+v, %v", preview, err)
+		t.Fatalf("命名预览失败：%+v, %v", preview, err)
 	}
 	result := preview.Items[0].Result
 	if preview.Items[0].Error != "" || len(result.Name) != 107 || result.Name != "被放逐的作弊赋予魔术师享受随心所欲的第二人生。.S01E06.1080p.WEB-DL.H264.AAC.2.0.strm" {
-		t.Fatalf("作品名称生成结果不正确：%+v", preview.Items[0])
+		t.Fatalf("超长原语种名称应自动回退为作品名称：%+v", preview.Items[0])
+	}
+	if templates.record.Template.Filename[0].Field != naming.OriginalTitle {
+		t.Fatal("回退不得修改已保存模板")
+	}
+
+	// 正常长度仍使用原语种名称。
+	s.Metadata = &mediaNamingMetadata{}
+	preview, err = s.Preview(context.Background(), input)
+	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil || preview.Items[0].Result.Name != "Original.S01E06.1080p.WEB-DL.H264.AAC.2.0.strm" {
+		t.Fatalf("正常长度不应触发降级：%+v, %v", preview, err)
 	}
 }
