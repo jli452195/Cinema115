@@ -11,7 +11,7 @@ export function animeCatalogSubscriptionTarget(state: AnimeCatalogStatus | undef
   if (!state?.subscriptions.length) return animeEditorEntry(chapterId, provider, itemId, returnTo)
   return {
     path: state.subscriptions.length === 1 ? `/anime/subscriptions/${encodeURIComponent(state.subscriptions[0]!.id)}` : '/anime/subscriptions',
-    query: { ...(chapterId ? { bangumiId: chapterId } : {}), returnTo },
+    query: { ...(state.subscriptions.length > 1 ? { status: 'all' } : {}), ...(chapterId ? { bangumiId: chapterId } : {}), returnTo },
     state: { animeCatalogDirect: state.subscriptions.length === 1 },
   }
 }

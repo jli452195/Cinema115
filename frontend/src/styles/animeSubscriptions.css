@@ -3,6 +3,9 @@
 .as-search input { min-width: 0; width: 100%; min-height: 44px; padding: 0 13px; border-radius: 12px; background: rgb(148 163 184 / .08); color: inherit; font-size: 13px; }
 .as-search button, .as-link { display: inline-flex; min-height: 44px; flex: none; align-items: center; justify-content: center; gap: 7px; padding: 0 14px; border-radius: 12px; font-size: 13px; color: #2563eb; background: rgb(59 130 246 / .07); }
 .dark .as-link, .dark .as-search button { color: #93c5fd; }
+@media (min-width: 640px) { .anime-grid.as-subscription-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 900px) { .anime-grid.as-subscription-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .anime-grid.as-subscription-grid { grid-template-columns: repeat(7, minmax(0, 1fr)); } }
 .as-badge { position: absolute; z-index: 3; top: 9px; left: 9px; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 7px; background: #f1f5f9; color: #475569; font-size: 10px; line-height: 18px; box-shadow: 0 1px 4px rgb(15 23 42 / .08); }
 .as-badge::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .dark .as-badge { background: #334155; color: #e2e8f0; }

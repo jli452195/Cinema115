@@ -6,7 +6,7 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import { portalUser } from '../composables/usePortalAuth'
-import { animeSubscriptionsVersion, animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionQuery, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
+import { animeSubscriptionsVersion, animeReturnPath, cachedSubscription, readSubscription, rememberSubscriptionState, subscriptionState } from '../composables/useAnimeSubscriptionBrowser'
 import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
 import { animeConfigMessage } from '../lib/anime-config-api'
 import { animeLocalTime, subscriptionCard, subscriptionStatus, sourceProgressDescription } from '../utils/animeSubscriptionPresentation'
@@ -17,27 +17,29 @@ import '../styles/animeSubscriptions.css'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute(), router = useRouter()
-const status = computed(() => ['paused', 'enabled', 'archived'].includes(String(route.query.status)) ? String(route.query.status) : '')
+const status = computed(() => ['enabled', 'paused', 'archived', 'all'].includes(String(route.query.status)) ? String(route.query.status) : 'enabled')
 const keyword = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')
 const bangumiId = computed(() => /^[1-9]\d{0,11}$/.test(String(route.query.bangumiId)) ? String(route.query.bangumiId) : '')
 const returnTo = computed(() => animeReturnPath(route.query.returnTo))
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(1000000, Math.max(1, Number(route.query.page))) : 1)
 const input = ref(keyword.value), inputError = ref('')
-const statusOptions = [{ value: '', label: '全部' }, { value: 'enabled', label: '已启用' }, { value: 'paused', label: '已暂停' }, { value: 'archived', label: '已归档' }]
-const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}${bangumiId.value ? `&bangumiId=${bangumiId.value}` : ''}`)
+const statusOptions = [{ value: 'enabled', label: '已启用' }, { value: 'paused', label: '已暂停' }, { value: 'archived', label: '已归档' }, { value: 'all', label: '全部' }]
+const dataKey = computed(() => `subscriptions?page=${page.value}&pageSize=20${status.value !== 'all' ? `&status=${status.value}` : ''}${keyword.value ? `&keyword=${encodeURIComponent(keyword.value)}` : ''}${bangumiId.value ? `&bangumiId=${bangumiId.value}` : ''}`)
 const result = ref<AnimeSubscriptionPage>(), loading = ref(false), error = ref(''), fetchedAt = ref(0)
 const totalPages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
+const emptyTitle = computed(() => error.value ? '暂时无法读取订阅' : keyword.value || bangumiId.value ? '没有符合条件的订阅' : status.value !== 'all' ? `暂无${subscriptionStatus(status.value)}的订阅` : '从一部想追的番剧开始')
+const emptyDescription = computed(() => keyword.value || bangumiId.value ? '可以调整名称或订阅状态。' : status.value !== 'all' ? '可以查看全部订阅，或前往选番添加订阅。' : '从 Bangumi 选择篇章，保存主 RSS 与备用来源。')
 let controller: AbortController | undefined, disposed = false, refreshing = false, frame: number | undefined, interaction = 0
 function interacted() { interaction++ }
 function query(overrides: Record<string, string | undefined> = {}) {
-  return { ...(status.value ? { status: status.value } : {}), ...(keyword.value ? { q: keyword.value } : {}), ...(bangumiId.value ? { bangumiId: bangumiId.value } : {}), ...(returnTo.value ? { returnTo: returnTo.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
+  return { status: status.value, ...(keyword.value ? { q: keyword.value } : {}), ...(bangumiId.value ? { bangumiId: bangumiId.value } : {}), ...(returnTo.value ? { returnTo: returnTo.value } : {}), ...(page.value > 1 ? { page: String(page.value) } : {}), ...overrides }
 }
 function savePosition() { rememberSubscriptionState(`list:${dataKey.value}`, { top: window.scrollY, expanded: [] }) }
 async function restorePosition(key: string) {
   await nextTick(); if (frame !== undefined) cancelAnimationFrame(frame)
   frame = requestAnimationFrame(() => { frame = undefined; if (!disposed && key === dataKey.value) window.scrollTo({ top: subscriptionState(`list:${key}`).top, behavior: 'instant' }) })
 }
-function filter(value: string) { void router.push({ path: '/anime/subscriptions', query: query({ status: value || undefined, page: undefined }) }) }
+function filter(value: string) { void router.push({ path: '/anime/subscriptions', query: query({ status: value, page: undefined }) }) }
 function changePage(value: number) { void router.push({ path: '/anime/subscriptions', query: query({ page: value > 1 ? String(value) : undefined }) }) }
 function validKeyword(value: string) { return Array.from(value).length <= 128 && !/[\u0000-\u001f\u007f]/.test(value) }
 function submitSearch() {
@@ -71,9 +73,6 @@ watch(keyword, value => { input.value = value; inputError.value = '' })
 watch(animeSubscriptionsVersion, () => { if (props.token && portalUser.value?.role === 'admin') void load(true, true) })
 useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !document.querySelector('dialog[open]'))
 watch([dataKey, () => portalUser.value?.id, () => portalUser.value?.role], () => { void load() }, { immediate: true })
-watch(() => route.fullPath, () => {
-  if (route.name === 'anime-subscriptions') rememberSubscriptionQuery(Object.fromEntries(Object.entries(query()).filter((entry): entry is [string, string] => typeof entry[1] === 'string')))
-}, { immediate: true })
 onBeforeRouteUpdate(() => savePosition())
 onBeforeRouteLeave(() => savePosition())
 onMounted(() => { for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interacted, { passive: true }) })
@@ -92,8 +91,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
       <p v-if="inputError" id="subscription-search-error" role="alert" class="text-xs text-red-600 dark:text-red-400">{{ inputError }}</p>
       <div class="anime-results-heading"><h2>已保存订阅<span v-if="result" class="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">共 {{ result.total }} 部</span></h2><span v-if="fetchedAt" class="text-[11px] text-slate-500 dark:text-slate-400">读取于 {{ animeLocalTime(fetchedAt) }}</span></div>
       <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在核对配置，当前内容仍可查看。</span></div>
-      <div v-if="loading && !result" class="anime-grid" aria-label="正在读取订阅" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span></div></div>
-      <div v-else-if="result?.items.length" class="anime-grid" aria-label="订阅列表" :aria-busy="loading">
+      <div v-if="loading && !result" class="anime-grid as-subscription-grid" aria-label="正在读取订阅" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span></div></div>
+      <div v-else-if="result?.items.length" class="anime-grid as-subscription-grid" aria-label="订阅列表" :aria-busy="loading">
         <AnimeCard v-for="item in result.items" :key="item.id" class="as-subscription-card" :item="subscriptionCard(item)" :data-subscription-id="item.id" :action-label="`查看订阅配置，${item.sources.map(sourceProgressDescription).join('；')}`" hide-meta :highlight="false" @select="openDetail(item.id)">
           <template #badge>
             <span class="as-badge" :data-status="item.status">{{ subscriptionStatus(item.status) }}</span>
@@ -103,7 +102,13 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
           </template>
         </AnimeCard>
       </div>
-      <div v-else-if="!loading" class="anime-empty"><IconCalendar :size="32" aria-hidden="true" /><h3>{{ error ? '暂时无法读取订阅' : keyword || status ? '没有符合条件的订阅' : '从一部想追的番剧开始' }}</h3><p>{{ keyword || status ? '可以调整名称或订阅状态。' : '从 Bangumi 选择篇章，保存主 RSS 与备用来源。' }}</p><RouterLink v-if="!error" to="/anime" class="as-link">前往选番</RouterLink></div>
+      <div v-else-if="!loading" class="anime-empty">
+        <IconCalendar :size="32" aria-hidden="true" /><h3>{{ emptyTitle }}</h3><p v-if="!error">{{ emptyDescription }}</p>
+        <template v-if="!error">
+          <RouterLink v-if="status !== 'all'" :to="{ path: '/anime/subscriptions', query: query({ status: 'all', page: undefined }) }" class="as-link">查看全部</RouterLink>
+          <RouterLink to="/anime" class="as-link">前往选番</RouterLink>
+        </template>
+      </div>
       <nav v-if="result && result.total > 0" class="anime-pagination" aria-label="订阅分页"><button type="button" :disabled="page <= 1 || loading" aria-label="订阅上一页" @click="changePage(page - 1)"><IconChevronLeft :size="18" aria-hidden="true" />上一页</button><span aria-live="polite">{{ page }} / {{ totalPages }}</span><button type="button" :disabled="page >= totalPages || loading" aria-label="订阅下一页" @click="changePage(page + 1)">下一页<IconChevronRight :size="18" aria-hidden="true" /></button></nav>
     </div>
   </ManagementLayout>

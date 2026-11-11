@@ -8,14 +8,12 @@ interface BrowserState { top: number; expanded: string[]; page?: number }
 const states = new Map<string, BrowserState>()
 let version = 0
 export const animeSubscriptionsVersion = ref(0)
-let lastQuery: Record<string, string> | undefined
-let lastID = ''
 function boundedSet<T>(map: Map<string, T>, key: string, value: T) {
   map.delete(key); map.set(key, value)
   while (map.size > 40) map.delete(map.keys().next().value!)
 }
 watch([() => portalUser.value?.id, () => portalUser.value?.role], () => {
-  version++; cache.clear(); states.clear(); lastQuery = undefined; lastID = ''
+  version++; cache.clear(); states.clear()
   animeSubscriptionsVersion.value++
 }, { flush: 'sync' })
 
@@ -23,11 +21,6 @@ export function invalidateAnimeSubscriptions(id?: string) {
   version++
   animeSubscriptionsVersion.value++
   if (id) cache.delete(`subscriptions/${encodeURIComponent(id)}`)
-}
-export function animeSubscriptionLocation() { return lastQuery ? { path: lastID ? `/anime/subscriptions/${encodeURIComponent(lastID)}` : '/anime/subscriptions', query: { ...lastQuery } } : undefined }
-export function rememberSubscriptionQuery(query: Record<string, string>, id = '') {
-  if (!portalToken.value || portalUser.value?.role !== 'admin') return
-  lastQuery = { ...query }; lastID = id
 }
 export function subscriptionState(key: string) { return { ...(states.get(key) || { top: 0, expanded: [], page: 1 }), saved: states.has(key) } }
 export function rememberSubscriptionState(key: string, state: BrowserState) {

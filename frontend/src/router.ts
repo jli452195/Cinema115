@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { animeSubscriptionLocation } from './composables/useAnimeSubscriptionBrowser'
 import { animeRememberedQuery } from './composables/useAnimeDiscovery'
 import { rememberedDashboardHome } from './utils/dashboardPreferences'
 import { dashboardScrollPosition, isDashboardPath, prepareDashboardNavigation } from './utils/dashboardBrowseState'
@@ -61,10 +60,7 @@ export const router = createRouter({
     { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
     { path: '/anime/settings', name: 'anime-settings', component: AnimeSettingsView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
     { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
-    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false }, beforeEnter: to => {
-      const location = animeSubscriptionLocation()
-      if (!to.params.id && !Object.keys(to.query).length && location && (location.path !== to.path || Object.keys(location.query).length)) return { ...location, replace: true }
-    } },
+    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
     { path: '/follows', name: 'my-follows', component: MyFollowsView, meta: { defaultSidebarCollapsed: false } },
     { path: '/users', name: 'users-category', component: HomeView, props: { category: 'users' }, meta: { categoryPage: true, defaultSidebarCollapsed: false } },
     { path: '/users/list', name: 'user-management', component: EmbyUsersView, meta: { defaultSidebarCollapsed: false } },
