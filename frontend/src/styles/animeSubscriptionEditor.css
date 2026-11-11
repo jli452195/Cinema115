@@ -145,9 +145,11 @@
 .ae-summary-title > .ae-source-actions { display: flex; flex: none; align-items: center; gap: 12px; }
 .ae-source-brand { flex: none; width: 88px; }
 .ae-source-tools { display: flex; flex: none; align-items: center; gap: 4px; }
-.ae-source-switch > label { align-items: center; justify-content: center; min-width: var(--ae-control-height, 44px); min-height: var(--ae-control-height, 44px); gap: 0; }
+.ae-source-toolbar .ae-source-tools { width: 100%; gap: 8px; }
+.ae-source-switch { margin-right: auto; }
+.ae-source-switch > label { align-items: center; min-height: var(--ae-control-height, 44px); gap: 8px; }
 .ae-source-switch input + span { margin-top: 0; }
-.ae-source-switch label > span:last-child { display: none; }
+.ae-source-switch .setting-switch-label { font-size: 12px; }
 .ae-summary-title h3, .ae-choose-source h3 { font-size: 14px; font-weight: 600; }
 .ae-confirmation { font-size: 10px; color: var(--ae-muted); margin-left: 10px; white-space: nowrap; }
 .ae-confirmation.ready { color: #178475; }.dark .ae-confirmation.ready { color: #6ee7b7; }

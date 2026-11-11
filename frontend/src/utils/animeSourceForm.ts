@@ -69,8 +69,6 @@ export function animeSpecLabel(spec?: AnimeSpec) {
   const languages = [['zh-Hans', '简'], ['zh-Hant', '繁'], ['ja', '日'], ['en', '英']].filter(([key]) => spec.languages?.includes(key!)).map(([, label]) => label).join('')
   return [spec.resolution, languages, ({ hard: '内嵌', soft: '内封', external: '外挂' } as Record<string, string>)[spec.subtitleMode || ''], ({ h264: 'AVC', h265: 'HEVC', av1: 'AV1', vp9: 'VP9' } as Record<string, string>)[spec.codec || ''], spec.bitDepth ? `${spec.bitDepth}bit` : '', spec.container?.toUpperCase()].filter(Boolean).join(' ')
 }
-export function animeSourceSpecs(form: SourceForm) { const count = form.match.split(/\r?\n/).filter(pattern => pattern.trim()).length; return count ? `${count} 条匹配正则` : '全部规格' }
-
 export function animeProviderName(provider: AnimeSourceProvider) { return provider === 'anibt' ? 'AniBT' : provider === 'garden' ? 'Anime Garden' : '蜜柑' }
 export function animeSourceURL(form: SourceForm) { return form.provider === 'garden' ? `https://animes.garden/subject/${encodeURIComponent(form.itemId)}` : form.provider === 'anibt' ? `https://anibt.net/anime/${encodeURIComponent(form.itemId)}` : `https://mikanani.me/Home/Bangumi/${encodeURIComponent(form.itemId)}` }
 
