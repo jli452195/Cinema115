@@ -225,8 +225,8 @@ async function loadingModels(browser) {
       assert.ok(item, 'retry must address the selected fixture')
       if (body.tmdbId) Object.assign(task.group, { kind: body.kind, tmdbId: body.tmdbId, title: 'Corrected Work', year: '2024' })
       if (body.season !== undefined) task.entries[0].file.season = body.season
-      if (body.episode !== undefined) task.entries[0].file.episode = body.episode
-      Object.assign(item, { title: task.group.title, kind: task.group.kind, season: task.entries[0].file.season, episode: task.entries[0].file.episode, ...(item.status === 'done' ? { canRetry: false, canDelete: false } : { status: retrySucceeds ? 'done' : 'failed', canRetry: !retrySucceeds, canDelete: true, at: new Date().toISOString() }) })
+      if (body.episode !== undefined) Object.assign(task.entries[0].file, { episode: body.episode, episodeExplicit: true })
+      Object.assign(item, { title: task.group.title, kind: task.group.kind, season: task.entries[0].file.season, episode: task.entries[0].file.episode, episodeExplicit: task.entries[0].file.episodeExplicit, ...(item.status === 'done' ? { canRetry: false, canDelete: false } : { status: retrySucceeds ? 'done' : 'failed', canRetry: !retrySucceeds, canDelete: true, at: new Date().toISOString() }) })
       if (queueRetry) Object.assign(item, { status: 'running', canRetry: false, canDelete: false })
       if (retrySucceeds) task.entries.forEach(entry => { entry.status = 'done'; entry.message = '' })
       data = { ...task, ...clone(item) }
@@ -240,7 +240,7 @@ async function loadingModels(browser) {
       }
       const item = records.find(item => item.fileId === url.searchParams.get('fileId'))
       assert.ok(item, 'detail must address an existing record')
-      data = { ...clone(item), rule, group: { id: '1', kind: 'tv', tmdbId: 42, title: item.title, identity: { name: 'Work' } }, entries: [{ file: { id: item.fileId, name: item.name, sourcePath: item.name, mediaType: 'video', season: 1, episode: item.episode }, status: item.status === 'done' ? 'done' : 'error', target: item.target }] }
+      data = { ...clone(item), rule, group: { id: '1', kind: 'tv', tmdbId: 42, title: item.title, identity: { name: 'Work' } }, entries: [{ file: { id: item.fileId, name: item.name, sourcePath: item.name, mediaType: 'video', season: item.season, episode: item.episode, episodeExplicit: item.episodeExplicit }, status: item.status === 'done' ? 'done' : 'error', target: item.target }] }
       if (item.prewrite && item.status === 'running') Object.assign(data.entries[0], { status: 'ready', p115Move: { phase: 'prepared' }, message: '模拟旧失败消息：文件移动结果尚未确认，请重试' })
       if (item.attachmentFailed) data.entries.push({ file: { id: `subtitle-${item.fileId}`, name: 'Work.ass', sourcePath: 'Work.ass', mediaType: 'subtitle' }, videoId: item.fileId, status: item.attachmentFinished ? 'done' : 'error', message: item.attachmentFinished ? '' : '字幕整理失败' })
       if (compactDetails) {
@@ -419,6 +419,30 @@ async function loadingModels(browser) {
     assert.equal(readCount(), readsBeforeLastDeletion + 1, 'normalizing a deleted last page must reuse the refreshed result')
     passed.push('删除末页最后记录后回落首页，保留删除结果提示且只刷新一次列表')
 
+    records = [row(60, 'failed', { name: 'One Room.S02E00.strm', season: 2, episode: 0, episodeExplicit: true }), row(59, 'failed', { name: 'Unnumbered.strm', episode: 0 })]
+    await page.goto(origin + '/media/organize/history?status=failed')
+    const zeroEpisodeCard = section.getByRole('button', { name: '查看One Room.S02E00.strm的整理记录', exact: true })
+    await zeroEpisodeCard.locator('.mo-episode').getByText('S02E00', { exact: true }).waitFor()
+    assert.equal(await section.getByRole('button', { name: '查看Unnumbered.strm的整理记录', exact: true }).locator('.mo-episode').count(), 0)
+    await zeroEpisodeCard.click()
+    assert.match(await detail.innerText(), /S02E00/)
+    assert.equal(await detail.getByRole('spinbutton', { name: '集', exact: true }).getAttribute('min'), '0')
+    await detail.getByRole('button', { name: '关闭', exact: true }).click()
+    await section.getByRole('button', { name: '查看Unnumbered.strm的整理记录', exact: true }).click()
+    const zeroRetryCount = calls.filter(call => call.endpoint.endsWith('/retry')).length
+    await detail.getByRole('spinbutton', { name: '季', exact: true }).fill('2')
+    await detail.getByRole('button', { name: '保存并重试此任务', exact: true }).click()
+    await detail.getByRole('alert').filter({ hasText: '请填写有效的目标季集' }).waitFor()
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/retry')).length, zeroRetryCount)
+    await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('0')
+    await detail.getByRole('button', { name: '保存并重试此任务', exact: true }).click()
+    await detail.getByRole('button', { name: '重试此任务', exact: true }).waitFor()
+    assert.deepEqual(calls.filter(call => call.endpoint.endsWith('/retry')).at(-1).body, { fileId: 'video-59', season: 2, episode: 0 })
+    assert.match(await detail.innerText(), /S02E00/)
+    await detail.getByRole('button', { name: '关闭', exact: true }).click()
+    passed.push('明确 S02E00 在列表和详情正常显示，未识别的默认零值不显示为 E00，集号输入允许零')
+    passed.push('未知零值仅更改季号仍阻止提交；用户明确填写零集后允许保存，重试回执保留 E00')
+
     compactDetails = true
     records = [row(61, 'failed', { name: 'Northern Story (2026) - S00E01 - 2160p.WEB-DL.H265.DDP 2.0.strm', title: 'Northern Story', season: 0, episode: 1 })]
     await page.setViewportSize({ width: 1440, height: 1000 })
@@ -514,15 +538,17 @@ async function loadingModels(browser) {
     await detail.locator('.mo-candidates').getByRole('button').click()
     assert.match(await detail.innerText(), /2024.*TMDB 4242/)
     await detail.getByRole('spinbutton', { name: '季', exact: true }).fill('0')
-    await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('0')
+    await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('-1')
     const retries = () => calls.filter(call => call.endpoint.endsWith('/retry'))
+    const retriesBeforeInvalid = retries().length
     await detail.getByRole('button', { name: '保存并重试此任务', exact: true }).click()
     await detail.getByRole('alert').filter({ hasText: '请填写有效的目标季集' }).waitFor()
-    assert.equal(retries().length, 0)
-    await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('7')
+    assert.equal(retries().length, retriesBeforeInvalid)
+    await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('0')
     await detail.getByRole('button', { name: '保存并重试此任务', exact: true }).click()
     await detail.getByRole('button', { name: '重试此任务', exact: true }).waitFor()
-    assert.deepEqual(retries().at(-1).body, { fileId: 'video-62', season: 0, episode: 7, kind: 'tv', tmdbId: 4242 })
+    assert.deepEqual(retries().at(-1).body, { fileId: 'video-62', season: 0, episode: 0, kind: 'tv', tmdbId: 4242 })
+    assert.match(await detail.innerText(), /S00E00/)
     assert.equal(new URLSearchParams(calls.find(call => call.endpoint === '/api/admin/tmdb/browse').query).get('query'), 'Corrected Work')
     await detail.getByRole('button', { name: '重试此任务', exact: true }).click()
     await page.waitForFunction(() => !document.querySelector('.mo-footer .mo-primary')?.disabled)

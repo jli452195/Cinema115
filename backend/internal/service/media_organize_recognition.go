@@ -106,7 +106,7 @@ func mediaScanIdentities(run *MediaOrganizeRun, entries []MediaOrganizeEntry) (m
 			identity.Conflict = "DIRECTORY_CONTEXT_INVALID"
 		}
 		identities[entry.File.ID] = identity
-		if entry.File.Episode > 0 && identity.Kind != "movie" && !mediaIdentityEndsWithEpisode(identity.Name, entry.File.Episode) {
+		if mediaOrganizeHasNumbering(entry.File) && identity.Kind != "movie" && !mediaIdentityEndsWithEpisode(identity.Name, entry.File.Episode) {
 			contexts[entry.File.ParentID+":"+mediafacts.NameKey(identity.Name)] = true
 		} else if entry.File.Episode > 0 && identity.Kind == "" {
 			key := entry.File.ParentID + ":" + mediafacts.NameKey(mediaIdentityEpisodeBase(identity.Name))
@@ -131,7 +131,7 @@ func mediaScanIdentities(run *MediaOrganizeRun, entries []MediaOrganizeEntry) (m
 	}
 	for _, entry := range run.Entries {
 		group := groups[entry.Group]
-		if entry.File.MediaType == "video" && entry.File.Episode > 0 && group.Identity.Kind == "tv" && group.Kind != "movie" {
+		if entry.File.MediaType == "video" && mediaOrganizeHasNumbering(entry.File) && group.Identity.Kind == "tv" && group.Kind != "movie" {
 			contexts[entry.File.ParentID+":"+mediafacts.NameKey(group.Identity.Name)] = true
 		}
 	}
@@ -175,7 +175,7 @@ func mediaQueueResultLog(run *MediaOrganizeRun, entry MediaOrganizeEntry, group 
 	if group.TMDBID > 0 {
 		details.WorkKey = group.Kind + ":" + strconv.Itoa(group.TMDBID)
 	}
-	if entry.File.Episode > 0 {
+	if mediaOrganizeHasNumbering(entry.File) {
 		details.Season, details.Episode = mediaOptionalNumber(&entry.File.Season), mediaOptionalNumber(&entry.File.Episode)
 	}
 	if entry.File.EndEpisode > 0 {

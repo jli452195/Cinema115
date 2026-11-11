@@ -17,10 +17,11 @@ func TestMediaOrganizeNumberingFailureResults(t *testing.T) {
 		season, episode     int
 	}{
 		{"Work.S01E02 S01E03.mkv", "NUMBERING_CONFLICT", "相互冲突", 1, 0},
-		{"Work.S01E00.mkv", "NUMBERING_INVALID", "格式无效", 1, 0},
+		{"Work.S01E00.5.mkv", "NUMBERING_INVALID", "格式无效", 1, 0},
 		{"Work.strm", "NUMBERING_MISSING", "缺少有效集号", 1, 0},
 		{"Work.S01E01.mkv", "NUMBERING_INVALID", "超出有效范围", 1, 10001},
 		{"Work.S01E02 S01E03.mkv", "", "", 0, 7},
+		{"一间房 - S02E00 - 第 0 集.strm", "", "", 2, 0},
 		{"天降之物 - S02E10 - S02E10.mkv", "", "", 2, 10},
 		{"绯弹的亚里亚 - S00E01 - OVA#13「武侦来到温泉研修」.mkv", "", "", 0, 1},
 	} {
@@ -95,6 +96,7 @@ func TestMediaOrganizeNumberingRetryRepairsLegacyFailure(t *testing.T) {
 		season, episode int
 	}{
 		{"天降之物 - S02E10 - S02E10.mkv", 2, 10},
+		{"一间房 - S02E00 - 第 0 集.strm", 2, 0},
 		{"绯弹的亚里亚 - S00E01 - OVA#13「武侦来到温泉研修」.mkv", 0, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -109,6 +111,7 @@ func TestMediaOrganizeNumberingRetryRepairsLegacyFailure(t *testing.T) {
 			mediaTestProcess(t, s, &run, "scan")
 			video := &run.Entries[0]
 			video.File.Episode = 0
+			video.File.EpisodeExplicit = false
 			video.Status, video.Message = "invalid", "旧版季集识别失败"
 			run.Status = "partial"
 			if err := s.checkpoint(&run); err != nil {
@@ -146,7 +149,7 @@ func TestMediaOrganizeUnmatchedSpecialKeepsNumberingFailure(t *testing.T) {
 		name, code string
 	}{
 		{"Work.S01E02 S01E03.OVA.mkv", "NUMBERING_CONFLICT"},
-		{"Work.S01E00.OVA.mkv", "NUMBERING_INVALID"},
+		{"Work.S01E00.5.OVA.mkv", "NUMBERING_INVALID"},
 		{"Work.OVA.mkv", "NUMBERING_MISSING"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

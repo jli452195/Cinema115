@@ -73,3 +73,27 @@ func TestMediaOrganizeTaskResponsePreservesPresentationWithoutExecutionContext(t
 		t.Fatalf("任务详情必须保留展示、季集修正和附件依赖信息，并排除执行内部字段：\n%s", got)
 	}
 }
+
+func TestMediaOrganizeTaskResponseDistinguishesExplicitZeroEpisode(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		task := service.MediaOrganizeTask{
+			MediaOrganizeHistoryItem: service.MediaOrganizeHistoryItem{Season: 2, Episode: 0, EpisodeExplicit: explicit},
+			Entries:                  []service.MediaOrganizeEntry{{File: service.OrganizeFile{Season: 2, Episode: 0, EpisodeExplicit: explicit}}},
+		}
+		body, err := json.Marshal(mediaOrganizeTaskOutput(task))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response map[string]any
+		if err := json.Unmarshal(body, &response); err != nil {
+			t.Fatal(err)
+		}
+		file := response["entries"].([]any)[0].(map[string]any)["file"].(map[string]any)
+		for _, item := range []map[string]any{response, file} {
+			value, exists := item["episodeExplicit"]
+			if exists != explicit || explicit && value != true || item["episode"] != float64(0) {
+				t.Fatal("明确零集需要展示标记，缺失集号不能冒充 E00", string(body))
+			}
+		}
+	}
+}

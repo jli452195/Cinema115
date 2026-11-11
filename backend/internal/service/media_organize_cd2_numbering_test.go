@@ -95,6 +95,7 @@ func TestMediaOrganizerCD2RetryRepairsMissingPublisherNumbering(t *testing.T) {
 	}
 	// 模拟旧解析器保存的缺集数记录，并经过实际失败目录转移流程。
 	run.Entries[index].File.Episode = 0
+	run.Entries[index].File.EpisodeExplicit = false
 	mediaTestProcess(t, s, &run, "retry")
 	failed, err := s.Task(run.ID, fileID)
 	if err != nil || failed.Status == "done" || failed.Entries[0].Failure == nil || failed.Entries[0].Failure.State != "stored" {

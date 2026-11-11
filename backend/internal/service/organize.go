@@ -45,15 +45,16 @@ type OrganizeConfig struct {
 
 type OrganizeFile struct {
 	p115.ShareFile
-	TitleOnly     bool                    `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
-	ParentID      string                  `json:"parentId"`
-	SourcePath    string                  `json:"sourcePath"`
-	MediaType     string                  `json:"mediaType"`
-	Season        int                     `json:"season"`
-	Episode       int                     `json:"episode"`
-	EndEpisode    int                     `json:"endEpisode,omitempty"`
-	NamingValues  map[naming.Field]string `json:"namingValues,omitempty"`
-	filenameFacts *mediafacts.FilenameFacts
+	TitleOnly       bool                    `json:"titleOnly,omitempty"` // Naming intent; never a cloud file identity.
+	ParentID        string                  `json:"parentId"`
+	SourcePath      string                  `json:"sourcePath"`
+	MediaType       string                  `json:"mediaType"`
+	Season          int                     `json:"season"`
+	Episode         int                     `json:"episode"`
+	EpisodeExplicit bool                    `json:"episodeExplicit,omitempty"` // 明确坐标或人工填写的零集号不等同于缺失编号。
+	EndEpisode      int                     `json:"endEpisode,omitempty"`
+	NamingValues    map[naming.Field]string `json:"namingValues,omitempty"`
+	filenameFacts   *mediafacts.FilenameFacts
 }
 
 type OrganizeScan struct {

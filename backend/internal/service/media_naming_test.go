@@ -52,6 +52,20 @@ func (s *mediaNamingMetadata) Details(ctx context.Context, kind string, id int) 
 	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品.名称", OriginalTitle: "Original", Date: "2026-01-01"}}, ctx.Err()
 }
 
+func TestMediaNamingExplicitZeroEpisode(t *testing.T) {
+	template, err := naming.Default(naming.TV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := (MediaNaming{Templates: &mediaNamingTemplates{record: naming.Snapshot{Template: template}}, Metadata: &mediaNamingMetadata{}}).Preview(context.Background(), MediaNamingInput{
+		Kind: "tv", TMDBID: 42,
+		Files: []MediaNamingFile{{OrganizeSelection: OrganizeSelection{ID: "v", Season: 2, Episode: 0}, Name: "原文件.strm"}},
+	})
+	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil || !strings.Contains(preview.Items[0].Result.Name, ".S02E00.strm") {
+		t.Fatal("显式目标零集无需对应 TMDB 分集也可命名", preview, err)
+	}
+}
+
 func TestMediaNamingFileFacts(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -225,13 +239,14 @@ func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	input := MediaNamingInput{Kind: "tv", TMDBID: 42, Files: []MediaNamingFile{
 		{OrganizeSelection: OrganizeSelection{ID: "one", Season: 1, Episode: 13}, Name: "Show.S01E13-E14.720p.MKV"},
 		{OrganizeSelection: OrganizeSelection{ID: "two", Season: 0, Episode: 2}, Name: "Show.1080p.mp4"},
-		{OrganizeSelection: OrganizeSelection{ID: "bad", Season: 1}, Name: "Unknown.mkv"},
+		{OrganizeSelection: OrganizeSelection{ID: "bad", Season: 1, Episode: -1}, Name: "Unknown.mkv"},
+		{OrganizeSelection: OrganizeSelection{ID: "zero", Season: 2, Episode: 0}, Name: "Show.strm"},
 	}, Subtitles: []OrganizeSubtitle{{File: OrganizeFile{ShareFile: shareFile("sub", "Show.zh-TW.default.ASS")}, VideoID: "one", Tail: ".zh-TW.default"}}}
 	preview, err := s.Preview(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if templates.calls != 1 || metadata.calls != 1 || len(preview.Items) != 4 || preview.Items[0].Result.Name != "Original.S01E13.720p.mkv" || preview.Items[1].Result.Name != "Original.S00E02.1080p.mp4" || preview.Items[2].Error == "" || preview.Items[3].Result.Name != "Original.S01E13.720p.zh-TW.default.ass" {
+	if templates.calls != 1 || metadata.calls != 1 || len(preview.Items) != 5 || preview.Items[0].Result.Name != "Original.S01E13.720p.mkv" || preview.Items[1].Result.Name != "Original.S00E02.1080p.mp4" || preview.Items[2].Error == "" || preview.Items[3].Result.Name != "Original.S02E00.strm" || preview.Items[4].Result.Name != "Original.S01E13.720p.zh-TW.default.ass" {
 		t.Fatalf("preview: %+v; reads %d/%d", preview.Items, templates.calls, metadata.calls)
 	}
 	// No TMDB episode-count ceiling and no cloud dependency in this service.

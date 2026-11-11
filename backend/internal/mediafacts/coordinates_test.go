@@ -18,6 +18,9 @@ func TestParseStandardCoordinatesPreservesDeclarations(t *testing.T) {
 		{"精灵使的剑舞 - S00E06 - 特典小型OVA Vol.6-精灵使的休息", Numbering{0, 6, 0}},
 		{"Show.S01E01 - OVA 第02集", Numbering{1, 1, 0}},
 		{"Show.S01E1218", Numbering{1, 1218, 0}},
+		{"一间房 - S02E00 - 第 0 集", Numbering{2, 0, 0}},
+		{"Show.S00E00 - OVA#1", Numbering{0, 0, 0}},
+		{"Show.S01E00-E01", Numbering{1, 0, 1}},
 		{"Show.S01E02-E03 - 两话合一", Numbering{1, 2, 3}},
 		{"Show.S01E02-E03集", Numbering{1, 2, 3}},
 		{"Show.S01E02-03", Numbering{1, 2, 3}},
@@ -48,7 +51,7 @@ func TestParseStandardCoordinatesPreservesDeclarations(t *testing.T) {
 
 func TestParseStandardCoordinatesRejectsInvalidOrCompetingCoordinates(t *testing.T) {
 	for _, stem := range []string{
-		"Show.S01E02 S02E03", "Show.S01E02 E03", "Show E03 S01E02", "Show.S01E02.5", "Show.S01E00",
+		"Show.S01E02 S02E03", "Show.S01E02 E03", "Show E03 S01E02", "Show.S01E02.5", "Show.S01E00.5",
 		"Show.S01E02-01", "Show.S01E02-02", "Show.S01E02-E03+05", "Show.S01E02+04", "Show.S01E02/E03",
 		"Show.S01E02A", "Show.S01E02foo", "Show.S01E02-03foo", "Show.S01E", "Show.S01E10001", "Show.S1001E02",
 		"Show.S00001E02", "Show.S01E000002", "Show.S01E02 [03]", "Show.S01E02 - OVA [03.5]", "Show.S01E02 - OVA [03-04]",

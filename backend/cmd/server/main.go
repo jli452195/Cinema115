@@ -331,6 +331,15 @@ func main() {
 	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
 	subtitleLibrary := subshare.New(filepath.Join(dataDir, "subtitle-library"))
+	githubSubtitleStore, err := service.NewSessionStore(filepath.Join(dataDir, "subtitle-github.enc"), secret)
+	if err != nil {
+		log.Fatal(err)
+	}
+	githubSubtitleSettings, err := service.NewSubtitleGitHubSettings(githubSubtitleStore, subtitleLibrary)
+	if err != nil {
+		log.Fatal(err)
+	}
+	httpapi.RegisterSubtitleGitHubSettings(admin, githubSubtitleSettings)
 	downloadOrganize.Subtitles = subtitleLibrary
 	downloadOrganize.SubtitleAttachments = filepath.Join(dataDir, "subtitle-attachments")
 	httpapi.RegisterSubtitleLibrary(admin, subtitleLibrary)

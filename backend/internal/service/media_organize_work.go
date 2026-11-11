@@ -158,7 +158,7 @@ func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry)
 			continue
 		}
 		identity := identities[e.File.ID]
-		if e.File.Episode > 0 {
+		if mediaOrganizeHasNumbering(e.File) {
 			// 片名仍保留尾部数字时，该数字只是弱编号，不能把电影强制改为剧集。
 			if identity.Kind == "" && mediaIdentityEndsWithEpisode(identity.Name, e.File.Episode) {
 				base := mediaIdentityEpisodeBase(identity.Name)
@@ -183,7 +183,7 @@ func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry)
 			}
 		}
 		key := mediaGroupIdentityKey(identity)
-		if e.File.Episode == 0 && identity.Kind == "tv" && organizeSpecialFile.MatchString(e.File.Name) {
+		if !mediaOrganizeHasNumbering(e.File) && identity.Kind == "tv" && organizeSpecialFile.MatchString(e.File.Name) {
 			key.Name += ":special"
 		}
 		if identity.Name == "" && identity.TMDBID == 0 {
@@ -233,7 +233,7 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 		numbered, special := false, false
 		for _, index := range indices {
 			e := &run.Entries[index]
-			numbered = numbered || e.File.Episode > 0
+			numbered = numbered || mediaOrganizeHasNumbering(e.File)
 			special = special || organizeSpecialFile.MatchString(e.File.Name)
 		}
 		if special && !numbered && g.Identity.Kind == "tv" {
@@ -376,6 +376,12 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			if group.ID == e.Group && group.MatchedSeason != nil && group.Kind == "tv" {
 				e.File.Season = *group.MatchedSeason
 				break
+			}
+		}
+		if p.snapshot.Template.Kind == naming.TV {
+			if code, message := mediaOrganizeNumberingError(e.File); code != "" {
+				e.Status, e.ResultCode, e.Message = "invalid", code, message
+				continue
 			}
 		}
 		result, err := p.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: e.File.ID, Season: e.File.Season, Episode: e.File.Episode}, Name: e.File.Name, NamingValues: e.File.NamingValues})

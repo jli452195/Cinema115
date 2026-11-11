@@ -1,12 +1,29 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
-import { subtitleRequest, type SubtitleConfig } from '../utils/subtitleApi'
+import { subtitleRequest, type SubtitleConfig, type SubtitleGithubConfig } from '../utils/subtitleApi'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const lifecycle = new AbortController()
 const config = ref<SubtitleConfig>(), apiToken = ref(''), busy = ref('load'), error = ref(''), notice = ref(''), confirmClear = ref(false)
+const githubConfig = ref<SubtitleGithubConfig>(), githubToken = ref(''), githubBusy = ref('load'), githubError = ref(''), githubNotice = ref(''), confirmGithubClear = ref(false)
+async function loadGithub() {
+  githubBusy.value = 'load'; githubError.value = ''
+  try { githubConfig.value = await subtitleRequest<SubtitleGithubConfig>(props.token, 'github/config', lifecycle.signal) }
+  catch (reason) { if (!lifecycle.signal.aborted) githubError.value = reason instanceof Error ? reason.message : '读取 GitHub 配置失败' }
+  finally { githubBusy.value = '' }
+}
+async function saveGithub(clear = false) {
+  if (githubBusy.value || !githubConfig.value) return
+  githubBusy.value = clear ? 'clear' : 'save'; githubError.value = ''; githubNotice.value = ''
+  try {
+    githubConfig.value = await subtitleRequest<SubtitleGithubConfig>(props.token, 'github/config', lifecycle.signal, { method: clear ? 'DELETE' : 'POST', ...(!clear ? { body: JSON.stringify({ token: githubToken.value.trim() }) } : {}) })
+    githubToken.value = ''; confirmGithubClear.value = false
+    githubNotice.value = clear ? 'GitHub Token 已清除，将使用匿名请求。' : 'GitHub Token 验证成功，字幕库将使用此 Token 请求。'
+  } catch (reason) { if (!lifecycle.signal.aborted) githubError.value = reason instanceof Error ? reason.message : '保存 GitHub 配置失败' }
+  finally { githubBusy.value = '' }
+}
 async function load() {
   busy.value = 'load'; error.value = ''
   try { config.value = await subtitleRequest<SubtitleConfig>(props.token, 'config', lifecycle.signal) }
@@ -23,8 +40,8 @@ async function save(clear = false) {
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存字幕配置失败' }
   finally { busy.value = '' }
 }
-onMounted(load)
-onBeforeUnmount(() => { lifecycle.abort(); apiToken.value = '' })
+onMounted(() => { void load(); void loadGithub() })
+onBeforeUnmount(() => { lifecycle.abort(); apiToken.value = ''; githubToken.value = '' })
 </script>
 
 <template>
@@ -32,11 +49,18 @@ onBeforeUnmount(() => { lifecycle.abort(); apiToken.value = '' })
     <p v-if="error" role="alert" class="mb-4 rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}<button v-if="!config" class="ml-3 underline" @click="load">重新加载</button></p>
     <p v-if="notice" role="status" class="mb-4 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{{ notice }}</p>
     <div class="grid gap-4">
-      <section class="rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6">
-        <div class="flex items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">字幕库</h2><span class="text-xs text-slate-500 dark:text-slate-400">无需配置</span></div>
+      <form class="min-w-0 rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6" @submit.prevent="saveGithub()">
+        <div class="flex items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">字幕库</h2><span class="text-xs text-slate-500 dark:text-slate-400">{{ githubConfig ? githubConfig.configured ? '已配置 Token' : '匿名访问' : '读取中…' }}</span></div>
         <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">使用 sub_share 动漫字幕库，按作品搜索并选择字幕版本。</p>
-        <a href="https://github.com/foxofice/sub_share" target="_blank" rel="noopener noreferrer" class="mt-3 inline-block text-sm text-blue-600 dark:text-blue-400">查看字幕库</a>
-      </section>
+        <p v-if="githubError" role="alert" class="mt-3 rounded-xl bg-red-50 p-4 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ githubError }}<button v-if="!githubConfig" type="button" class="ml-3 underline" @click="loadGithub">重新加载</button></p>
+        <p v-if="githubNotice" role="status" class="mt-3 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{{ githubNotice }}</p>
+        <fieldset :disabled="!!githubBusy || !githubConfig" class="mt-5 min-w-0">
+          <label for="github-token" class="text-sm font-medium text-slate-700 dark:text-slate-300">GitHub Token（可选）</label>
+          <div class="mt-2 flex flex-wrap gap-3"><input id="github-token" v-model="githubToken" type="password" required maxlength="255" autocomplete="off" spellcheck="false" :placeholder="githubConfig?.configured ? '已保存，输入新 Token 可替换' : '输入 GitHub Personal Access Token'" class="min-h-11 min-w-0 flex-1 basis-64 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100" /><button type="submit" :disabled="!githubToken.trim() || !!githubBusy" class="min-h-11 rounded-xl bg-blue-600 px-4 text-sm text-white disabled:opacity-40">{{ githubBusy === 'save' ? '验证中…' : '保存并验证' }}</button></div>
+        </fieldset>
+        <p class="mt-3 text-xs leading-6 text-slate-500 dark:text-slate-400">未配置时仍可匿名使用。配置 Token 可提高 GitHub API 请求额度；只需读取公开仓库，无需私有仓库或写入权限。Token 加密保存，不会回显。</p>
+        <div class="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm"><div class="flex flex-wrap gap-x-4 gap-y-2"><a href="https://github.com/foxofice/sub_share" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400">查看字幕库</a><a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400">创建 GitHub Token</a></div><button v-if="!confirmGithubClear" type="button" :disabled="!!githubBusy || !githubConfig?.configured" class="min-h-11 text-slate-500 disabled:opacity-40 dark:text-slate-400" @click="confirmGithubClear = true">清除配置</button><div v-else class="flex gap-4"><button type="button" :disabled="!!githubBusy" class="min-h-11 text-red-600 dark:text-red-400" @click="saveGithub(true)">确认清除</button><button type="button" :disabled="!!githubBusy" class="min-h-11 text-slate-500 dark:text-slate-400" @click="confirmGithubClear = false">取消</button></div></div>
+      </form>
       <form class="min-w-0 rounded-2xl bg-white p-5 shadow-sm dark:bg-slate-900 sm:p-6" @submit.prevent="save()">
         <div class="flex items-center justify-between gap-3"><h2 class="font-semibold text-slate-900 dark:text-slate-100">射手网 Assrt</h2><span class="text-xs text-slate-500 dark:text-slate-400">{{ config ? config.assrt.configured ? '已配置' : '未配置' : '读取中…' }}</span></div>
         <p class="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">配置后，与字幕库一起显示搜索结果。字幕服务由 <a href="https://secure.assrt.net/" target="_blank" rel="noopener noreferrer" class="text-blue-600 dark:text-blue-400">assrt.net</a> 提供。</p>

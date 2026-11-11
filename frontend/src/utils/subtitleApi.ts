@@ -1,4 +1,5 @@
 export interface SubtitleConfig { assrt: { configured: boolean } }
+export interface SubtitleGithubConfig { configured: boolean }
 export interface AssrtSubtitle { id: number; title: string; videoName?: string; language?: string; group?: string; format?: string; uploadedAt?: string }
 export interface AssrtSearchResult { configured: boolean; items: AssrtSubtitle[]; hasMore: boolean }
 

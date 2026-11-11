@@ -254,6 +254,7 @@ func TestMediaOrganizerTaskRetryNumberingPreservesCorrections(t *testing.T) {
 			}
 			mediaTestProcess(t, s, &run, "scan")
 			run.Entries[0].File.Season, run.Entries[0].File.Episode, run.Entries[0].File.EndEpisode = tc.season, tc.episode, 0
+			run.Entries[0].File.EpisodeExplicit = false
 			if tc.name == "missing-420p" {
 				// 模拟旧解析器保存的空分辨率，并保留目录继承的字幕信息。
 				run.Entries[0].File.NamingValues["resolution"] = ""

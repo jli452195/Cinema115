@@ -35,7 +35,7 @@ func TestMediaOrganizeDeclaredSpecialNumbering(t *testing.T) {
 		{"Specials/Show.S00E01.5 - OVA#13.mkv", 1, 0, 0},
 		{"Specials/Show.S00E01A - OVA#13.mkv", 1, 0, 0},
 		{"Specials/Show.S00E01foo - OVA#13.mkv", 1, 0, 0},
-		{"Specials/Show.S00E00 - OVA#13.mkv", 1, 0, 0},
+		{"Specials/Show.S00E00 - OVA#13.mkv", 0, 0, 0},
 		{"Specials/Show.S00E10001 - OVA#13.mkv", 1, 0, 0},
 		{"Specials/Show.S00E02-01 - OVA#13.mkv", 1, 0, 0},
 		{"Specials/Show.S00E01-E02+04 - OVA#13.mkv", 1, 0, 0},
@@ -75,6 +75,8 @@ func TestMediaOrganizerDeclaredSpecialsAndCompanions(t *testing.T) {
 			season, episode int
 		}{
 			{"天降之物 - S02E10 - S02E10", "天降之物", 2, 10},
+			{"一间房 - S02E00 - 第 0 集", "一间房", 2, 0},
+			{"Show - S00E00 - OVA#13", "Show", 0, 0},
 			{"绯弹的亚里亚 - S00E01 - OVA#13「武侦来到温泉研修」", "绯弹的亚里亚", 0, 1},
 			{"出包王女 - S00E01 - OVA#1「梨斗，变成女生」", "出包王女", 0, 1},
 			{"七人魔法使 - S00E01 - OVA 七大罪与七位魔法使", "七人魔法使", 0, 1},
@@ -217,6 +219,7 @@ func TestMediaOrganizerDeclaredSpecialRetry(t *testing.T) {
 				if entry.File.MediaType == "video" {
 					// 复原旧记录的零集数；未匹配作品的旧记录还保留默认第一季。
 					entry.File.Episode = 0
+					entry.File.EpisodeExplicit = false
 					entry.Status = "invalid"
 					if tc.unmatched {
 						entry.File.Season = 1

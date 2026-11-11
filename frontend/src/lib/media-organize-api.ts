@@ -6,14 +6,14 @@ export interface MediaIdentity {
   name: string
 }
 export interface MediaEntry {
-  file: { id: string; name: string; sourcePath: string; mediaType: string; season: number; episode: number; endEpisode?: number; namingValues?: Record<string, string> }
+  file: { id: string; name: string; sourcePath: string; mediaType: string; season: number; episode: number; episodeExplicit?: boolean; endEpisode?: number; namingValues?: Record<string, string> }
   videoId?: string; target?: string; status: string; message?: string; resultCode?: string
   failure?: { state: string; message?: string }
   p115Move?: { phase: string }
 }
 export interface MediaGroup { id: string; identity: MediaIdentity; kind?: string; tmdbId?: number; title?: string; year?: string; category?: string; message?: string }
 export interface MediaHistoryItem {
-  runId: string; fileId: string; name: string; title: string; kind: string; mediaType: string; season: number; episode: number; attachmentCount: number
+  runId: string; fileId: string; name: string; title: string; kind: string; mediaType: string; season: number; episode: number; episodeExplicit?: boolean; attachmentCount: number
   source: string; target?: string; status: string; message?: string; at: string; canDelete: boolean; canRetry: boolean
 }
 export type MediaHistoryStatus = 'all' | 'running' | 'done' | 'failed'

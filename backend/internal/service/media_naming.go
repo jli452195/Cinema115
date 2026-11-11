@@ -122,7 +122,7 @@ func optionalNamingEnglish(ctx context.Context, metadata any, template naming.Te
 }
 
 func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error) {
-	if p.snapshot.Template.Kind == naming.TV && (file.Season < 0 || file.Season > 1000 || file.Episode < 1 || file.Episode > 10000) {
+	if p.snapshot.Template.Kind == naming.TV && (file.Season < 0 || file.Season > 1000 || file.Episode < 0 || file.Episode > 10000) {
 		return naming.Result{}, fmt.Errorf("%w：请填写有效目标季集", ErrOrganizeInput)
 	}
 	values := make(map[naming.Field]string, len(file.NamingValues)+5)

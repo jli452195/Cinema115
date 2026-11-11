@@ -16,6 +16,7 @@ type mediaOrganizeTaskResponse struct {
 	MediaType       string                   `json:"mediaType"`
 	Season          int                      `json:"season"`
 	Episode         int                      `json:"episode"`
+	EpisodeExplicit bool                     `json:"episodeExplicit,omitempty"`
 	Source          string                   `json:"source"`
 	AttachmentCount int                      `json:"attachmentCount"`
 	CanDelete       bool                     `json:"canDelete"`
@@ -60,14 +61,15 @@ type mediaOrganizeTaskEntry struct {
 }
 
 type mediaOrganizeTaskFile struct {
-	ID           string                  `json:"id"`
-	Name         string                  `json:"name"`
-	SourcePath   string                  `json:"sourcePath"`
-	MediaType    string                  `json:"mediaType"`
-	Season       int                     `json:"season"`
-	Episode      int                     `json:"episode"`
-	EndEpisode   int                     `json:"endEpisode,omitempty"`
-	NamingValues map[naming.Field]string `json:"namingValues,omitempty"`
+	ID              string                  `json:"id"`
+	Name            string                  `json:"name"`
+	SourcePath      string                  `json:"sourcePath"`
+	MediaType       string                  `json:"mediaType"`
+	Season          int                     `json:"season"`
+	Episode         int                     `json:"episode"`
+	EpisodeExplicit bool                    `json:"episodeExplicit,omitempty"`
+	EndEpisode      int                     `json:"endEpisode,omitempty"`
+	NamingValues    map[naming.Field]string `json:"namingValues,omitempty"`
 }
 
 type mediaOrganizeTaskFailure struct {
@@ -84,7 +86,8 @@ func mediaOrganizeTaskOutput(task service.MediaOrganizeTask) mediaOrganizeTaskRe
 	out := mediaOrganizeTaskResponse{
 		RunID: task.RunID, FileID: task.FileID, Name: task.Name, Title: task.Title,
 		Kind: task.Kind, MediaType: task.MediaType, Season: task.Season, Episode: task.Episode,
-		Source: task.Source, AttachmentCount: task.AttachmentCount, CanDelete: task.CanDelete,
+		EpisodeExplicit: task.EpisodeExplicit,
+		Source:          task.Source, AttachmentCount: task.AttachmentCount, CanDelete: task.CanDelete,
 		CanRetry: task.CanRetry, Status: task.Status, Message: task.Message, At: task.At, Target: task.Target,
 		Rule: mediaOrganizeTaskRule{Name: task.Rule.Name, Source: task.Rule.Source, Failure: task.Rule.Failure},
 		Group: mediaOrganizeTaskGroup{
@@ -99,7 +102,8 @@ func mediaOrganizeTaskOutput(task service.MediaOrganizeTask) mediaOrganizeTaskRe
 			File: mediaOrganizeTaskFile{
 				ID: entry.File.ID, Name: entry.File.Name, SourcePath: entry.File.SourcePath,
 				MediaType: entry.File.MediaType, Season: entry.File.Season, Episode: entry.File.Episode,
-				EndEpisode: entry.File.EndEpisode, NamingValues: entry.File.NamingValues,
+				EpisodeExplicit: entry.File.EpisodeExplicit,
+				EndEpisode:      entry.File.EndEpisode, NamingValues: entry.File.NamingValues,
 			},
 			VideoID: entry.VideoID, Target: entry.Target, Status: entry.Status,
 			Message: entry.Message, ResultCode: entry.ResultCode,

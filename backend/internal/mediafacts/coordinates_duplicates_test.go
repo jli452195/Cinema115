@@ -11,6 +11,7 @@ func TestParseStandardCoordinatesMergesEquivalentDeclarations(t *testing.T) {
 		want        Numbering
 	}{
 		{"Show - S02E10 - S02E10", "S02E10", Numbering{2, 10, 0}},
+		{"Show S02E00 - S02E00", "S02E00", Numbering{2, 0, 0}},
 		{"Show.S02E10.s02e10.S02E10", "S02E10", Numbering{2, 10, 0}},
 		{"Show - s002e00010 - S02E10", "s002e00010", Numbering{2, 10, 0}},
 		{"Show - S02E10v2 - s002e00010v3", "S02E10v2", Numbering{2, 10, 0}},
@@ -47,7 +48,6 @@ func TestParseStandardCoordinatesRejectsCompetingRepeatedDeclarations(t *testing
 		"Show S02E00 - S02E10",
 		"Show S02E10 - S02E00",
 		"Show S02E10 - S02E00 - S02E10",
-		"Show S02E00 - S02E00",
 		"Show S00002E10 - S02E10",
 		"Show S02E10 - S00002E10",
 		"Show S1001E10 - S02E10",

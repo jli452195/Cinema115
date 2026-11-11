@@ -98,11 +98,24 @@ func (r *Renderer) Render(data Data) (Result, error) {
 		return Result{}, fmt.Errorf("%w：文件名为空，请补充模板字段或文件信息", ErrInput)
 	}
 	if len(stem)+len(extension) > maxComponentBytes {
-		return Result{}, fmt.Errorf("%w：文件名超过 %d 字节，请缩短模板或字段", ErrInput, maxComponentBytes)
+		return Result{}, filenameLengthError(r.template.Filename, data, len(stem)+len(extension))
 	}
 	out := Result{Directory: strings.Join(directories, "/"), Stem: stem, Extension: extension, Name: stem + extension}
 	out.RelativePath = path.Join(out.Directory, out.Name)
 	return out, nil
+}
+
+// 超限针对生成后的完整文件名，标明实际字节数及最大字段，避免误以为原文件名过长。
+func filenameLengthError(layer []Block, data Data, byteLength int) error {
+	var largest Field
+	largestBytes := 0
+	for _, block := range layer {
+		if size := len(cleanText(fieldValue(block, data))); size > largestBytes {
+			largest, largestBytes = block.Field, size
+		}
+	}
+	field, _ := definition(largest)
+	return fmt.Errorf("%w：目标文件名为 %d 个 UTF-8 字节，超过 %d 字节；其中「%s」占 %d 字节，请缩短模板或字段", ErrInput, byteLength, maxComponentBytes, field.Label, largestBytes)
 }
 
 func validateData(kind Kind, data Data) error {

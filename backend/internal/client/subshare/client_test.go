@@ -22,8 +22,16 @@ func TestCatalogueCacheFilesAndPinnedContents(t *testing.T) {
 	h := sha1.Sum(append([]byte(fmt.Sprintf("blob %d\x00", len(data))), data...))
 	sha := hex.EncodeToString(h[:])
 	revision := strings.Repeat("a", 40)
+	token := "github_pat_" + strings.Repeat("t", 50)
 	var wrong bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		wantAuth := ""
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			wantAuth = "Bearer " + token
+		}
+		if r.Header.Get("Authorization") != wantAuth {
+			t.Error("GitHub API 与原始文件请求未使用各自的认证方式")
+		}
 		switch {
 		case strings.HasSuffix(r.URL.Path, "db.xml"):
 			indexCalls.Add(1)
@@ -54,6 +62,7 @@ func TestCatalogueCacheFilesAndPinnedContents(t *testing.T) {
 	c := New(t.TempDir())
 	c.API = server.URL + "/api"
 	c.Raw = server.URL + "/raw/master"
+	c.SetToken(token)
 	ctx := context.Background()
 	versions, err := c.Search(ctx, []string{"CLANNAD"})
 	if err != nil || len(versions) != 1 {

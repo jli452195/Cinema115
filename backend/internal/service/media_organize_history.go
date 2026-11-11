@@ -31,6 +31,7 @@ type MediaOrganizeHistoryItem struct {
 	MediaType       string `json:"mediaType"`
 	Season          int    `json:"season"`
 	Episode         int    `json:"episode"`
+	EpisodeExplicit bool   `json:"episodeExplicit,omitempty"`
 	Source          string `json:"source"`
 	AttachmentCount int    `json:"attachmentCount"`
 	CanDelete       bool   `json:"canDelete"`
@@ -161,6 +162,9 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 			continue
 		}
 		g := groups[e.Group]
+		if e.File.Episode == 0 && !e.File.EpisodeExplicit {
+			e.File.EpisodeExplicit = mediaOrganizeHasNumbering(e.File)
+		}
 		entries := append([]MediaOrganizeEntry{e}, companions[e.File.ID]...)
 		at := e.UpdatedAt
 		if at.IsZero() {
@@ -204,7 +208,7 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 			source = filepath.ToSlash(source)
 			result.Target = filepath.ToSlash(result.Target)
 		}
-		item := MediaOrganizeHistoryItem{RunID: run.ID, FileID: e.File.ID, Name: e.File.Name, Title: g.Title, Kind: g.Kind, MediaType: e.File.MediaType, Season: e.File.Season, Episode: e.File.Episode, Source: path.Join(source, e.File.SourcePath), AttachmentCount: len(entries) - 1, MediaOrganizeResult: result}
+		item := MediaOrganizeHistoryItem{RunID: run.ID, FileID: e.File.ID, Name: e.File.Name, Title: g.Title, Kind: g.Kind, MediaType: e.File.MediaType, Season: e.File.Season, Episode: e.File.Episode, EpisodeExplicit: e.File.EpisodeExplicit, Source: path.Join(source, e.File.SourcePath), AttachmentCount: len(entries) - 1, MediaOrganizeResult: result}
 		tasks = append(tasks, MediaOrganizeTask{MediaOrganizeHistoryItem: item, Rule: run.Rule, Group: g, Entries: entries})
 	}
 	return tasks

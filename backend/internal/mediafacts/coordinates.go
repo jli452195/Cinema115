@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 )
 
-// CoordinateClaim 只记录文件声明，是否允许自动整理由入口采用；季零是有效坐标。
+// CoordinateClaim 只记录文件声明，是否允许自动整理由入口采用；季零和集零均为有效坐标。
 type CoordinateClaim struct {
 	Numbering Numbering
 	Start     int
@@ -95,7 +95,7 @@ func coordinateNumberingAt(stem string, start int) (Numbering, int, string) {
 	end := start + match[1]
 	season, _ := strconv.Atoi(stem[start+match[2] : start+match[3]])
 	episode, _ := strconv.Atoi(stem[start+match[4] : start+match[5]])
-	if season > 1000 || episode < 1 || episode > 10000 || !coordinateEnd(stem, end) {
+	if season > 1000 || episode > 10000 || !coordinateEnd(stem, end) {
 		return Numbering{}, end, "NUMBERING_INVALID"
 	}
 	numbering := Numbering{Season: season, Episode: episode}

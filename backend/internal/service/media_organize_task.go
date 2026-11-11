@@ -97,11 +97,12 @@ func (s *MediaOrganizer) RetryContext(ctx context.Context, id string, input Medi
 				}
 			}
 			// 重试仅补解析缺失集数；未核实写入仍使用原计划，已有季数和人工修正保持不变。
-			if video.P115Move == nil && video.File.Episode == 0 && input.Episode == nil {
+			if video.P115Move == nil && video.File.Episode == 0 && !video.File.EpisodeExplicit && input.Episode == nil {
 				inferred := video.File
 				mediaOrganizeFileNumbering(&inferred)
-				if inferred.Episode > 0 {
+				if mediaOrganizeHasNumbering(inferred) {
 					video.File.Episode, video.File.EndEpisode = inferred.Episode, inferred.EndEpisode
+					video.File.EpisodeExplicit = inferred.EpisodeExplicit
 				}
 			}
 			group := run.Groups[old]
@@ -132,6 +133,7 @@ func (s *MediaOrganizer) RetryContext(ctx context.Context, id string, input Medi
 		}
 		if input.Episode != nil {
 			video.File.Episode = *input.Episode
+			video.File.EpisodeExplicit = true
 		}
 		if input.Episode != nil {
 			video.File.EndEpisode = 0

@@ -62,6 +62,7 @@ type Client struct {
 	flight             singleflight.Group
 	revision           string
 	revisionAt         time.Time
+	token              string
 }
 
 func New(cacheDir string) *Client {
@@ -78,14 +79,35 @@ func (c *Client) get(ctx context.Context, target string, limit int64, raw bool) 
 	if raw {
 		req.Header.Set("Accept", "application/vnd.github.raw+json")
 	}
+	api, parseErr := url.Parse(c.API)
+	if parseErr == nil && req.URL.Scheme == api.Scheme && req.URL.Host == api.Host && strings.HasPrefix(req.URL.Path, strings.TrimRight(api.Path, "/")+"/") {
+		c.mu.Lock()
+		token := c.token
+		c.mu.Unlock()
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
 	h := *c.HTTP
 	h.Jar = nil
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := h.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("读取字幕库: %w", err)
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return nil, ErrUnavailable
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		return nil, ErrToken
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "") {
+		return nil, ErrRateLimited
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return nil, ErrForbidden
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("字幕库请求失败（HTTP %d），请稍后重试", resp.StatusCode)
 	}
