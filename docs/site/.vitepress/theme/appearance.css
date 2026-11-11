@@ -1,0 +1,107 @@
+/* 视图过渡：在相同几何结构下捕获主题快照，禁用 DOM 原生过渡以防动画冲突 */
+@property --theme-reveal-mask-radius {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+html.theme-reveal *,
+html.theme-reveal *::before,
+html.theme-reveal *::after {
+  transition: none !important;
+}
+html.theme-reveal::view-transition-group(*) {
+  animation: none;
+}
+html.theme-reveal::view-transition-old(*),
+html.theme-reveal::view-transition-new(*) {
+  mix-blend-mode: normal;
+}
+/* 锚点仅用于读取快照坐标，不显示图像，也不参与主题遮罩动画。 */
+html.theme-reveal::view-transition-group(theme-reveal-anchor) {
+  visibility: hidden;
+}
+html.theme-reveal::view-transition-old(theme-reveal-anchor),
+html.theme-reveal::view-transition-new(theme-reveal-anchor) {
+  animation: none !important;
+  mask-image: none !important;
+  clip-path: none !important;
+}
+
+/* 扩散动画（expand）：新视图位于顶层 (z-index: 2)，旧视图位于底层 (z-index: 1) 无动画 */
+html.theme-reveal[data-theme-reveal='expand']::view-transition-old(*) {
+  animation: none;
+  z-index: 1;
+}
+html.theme-reveal[data-theme-reveal='expand']::view-transition-new(*) {
+  animation: theme-reveal-expand 400ms cubic-bezier(0.455, 0.03, 0.515, 0.955) both;
+  z-index: 2;
+}
+
+/* 收缩动画（contract）：旧视图位于顶层 (z-index: 2)；新视图位于底层 (z-index: 1) 无动画 */
+html.theme-reveal[data-theme-reveal='contract']::view-transition-old(*) {
+  animation: theme-reveal-contract 400ms cubic-bezier(0.455, 0.03, 0.515, 0.955) both;
+  z-index: 2;
+}
+html.theme-reveal[data-theme-reveal='contract']::view-transition-new(*) {
+  animation: none;
+  z-index: 1;
+}
+
+/* 兜底圆形剪裁动画关键帧 */
+@keyframes theme-reveal-expand {
+  from {
+    clip-path: circle(0px at var(--theme-reveal-origin));
+  }
+  to {
+    clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin));
+  }
+}
+
+@keyframes theme-reveal-contract {
+  from {
+    clip-path: circle(var(--theme-reveal-radius) at var(--theme-reveal-origin));
+  }
+  to {
+    clip-path: circle(0px at var(--theme-reveal-origin));
+  }
+}
+
+/* 柔和羽化遮罩（soft）：仅遮罩顶层活动快照，通过注册属性插值半径，底层快照无遮罩 */
+/* 收缩末帧的浮点误差可能产生微小负数，限制实际半径，避免渐变失效后露出整张旧快照。 */
+html.theme-reveal[data-theme-reveal-mask='soft'][data-theme-reveal='expand']::view-transition-new(*) {
+  clip-path: none;
+  -webkit-mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation-name: theme-reveal-expand-soft;
+}
+
+html.theme-reveal[data-theme-reveal-mask='soft'][data-theme-reveal='contract']::view-transition-old(*) {
+  clip-path: none;
+  -webkit-mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  mask-image: radial-gradient(circle max(0px, var(--theme-reveal-mask-radius)) at var(--theme-reveal-origin), #000 60%, transparent 100%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation-name: theme-reveal-contract-soft;
+}
+
+@keyframes theme-reveal-expand-soft {
+  from {
+    --theme-reveal-mask-radius: 0px;
+  }
+  to {
+    --theme-reveal-mask-radius: var(--theme-reveal-radius);
+  }
+}
+
+@keyframes theme-reveal-contract-soft {
+  from {
+    --theme-reveal-mask-radius: var(--theme-reveal-radius);
+  }
+  to {
+    --theme-reveal-mask-radius: 0px;
+  }
+}
+

@@ -57,9 +57,9 @@
   }
 
   .docs-home .VPHero .image-container {
-    position: absolute;
-    top: -32px;
-    right: 0;
+    position: relative;
+    display: block;
+    margin-top: -32px;
     max-width: 528px;
   }
 }

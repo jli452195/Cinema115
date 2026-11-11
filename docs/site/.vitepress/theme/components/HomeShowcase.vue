@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watchEffect } from 'vue'
-import { withBase } from 'vitepress'
+import { useData, withBase } from 'vitepress'
+
+const { isDark } = useData()
+const screenshot = (src: string, theme: 'light' | 'dark') => withBase(`${src}-${theme}.webp`)
 
 const slides = [
-  { title: '日本动漫', src: '/screenshots/anime-library.webp', alt: '日本动漫浏览页，按地区与年份筛选，展示海报和入库状态' },
-  { title: '动漫订阅', src: '/screenshots/anime-calendar.webp', alt: '动漫订阅页，选择资源站点，按季度和星期浏览番剧' },
-  { title: '115 网盘', src: '/screenshots/drive-overview.webp', alt: '115 网盘功能页，包含分享 STRM、云下载、下载整理和手动整理' },
+  { title: '日本动漫', src: '/screenshots/anime-library', alt: '日本动漫浏览页，按地区与年份筛选，展示海报和入库状态' },
+  { title: '动漫订阅', src: '/screenshots/anime-calendar', alt: '动漫订阅页，选择资源站点，按季度和星期浏览番剧' },
+  { title: '115 网盘', src: '/screenshots/drive-overview', alt: '115 网盘功能页，提供分享 STRM、网盘 STRM、云下载与目录监控等入口' },
 ]
 
 const track = ref<HTMLDivElement>()
@@ -17,14 +20,16 @@ const paused = ref(false)
 const visible = ref(false)
 const desktop = ref(false)
 const reducedMotion = ref(true)
+const themeTransitioning = ref(false)
 const current = computed(() => slides[active.value])
 const playing = computed(() => desktop.value && visible.value && !reducedMotion.value
-  && !paused.value && !hovered.value && !focused.value)
+  && !paused.value && !hovered.value && !focused.value && !themeTransitioning.value)
 let trackWidth = 0
+let transitionId = 0
 
 function select(index: number) {
   const element = track.value
-  if (!element) return
+  if (!element || themeTransitioning.value) return
   const next = (index + slides.length) % slides.length
   element.scrollTo({
     left: next * element.clientWidth,
@@ -33,6 +38,7 @@ function select(index: number) {
 }
 
 function browse(index: number) {
+  if (themeTransitioning.value) return
   paused.value = true
   select(index)
 }
@@ -79,12 +85,26 @@ onMounted(() => {
   motion.addEventListener('change', syncEnvironment)
   pointer.addEventListener('change', syncEnvironment)
   document.addEventListener('visibilitychange', syncEnvironment)
+  const syncThemeTransition = (event: Event) => {
+    const detail = (event as CustomEvent<{ phase: 'start' | 'end'; id: number }>).detail
+    if (detail.phase === 'start') {
+      transitionId = detail.id
+      themeTransitioning.value = true
+      // 中断进行中的平滑滚动并对齐最近一张，确保深浅根快照保持相同画面。
+      syncActive()
+      element.scrollTo({ left: active.value * element.clientWidth, behavior: 'instant' })
+    } else if (detail.id === transitionId) {
+      themeTransitioning.value = false
+    }
+  }
+  document.addEventListener('wiki-theme-transition', syncThemeTransition)
   syncEnvironment()
   dispose = () => {
     resize.disconnect()
     motion.removeEventListener('change', syncEnvironment)
     pointer.removeEventListener('change', syncEnvironment)
     document.removeEventListener('visibilitychange', syncEnvironment)
+    document.removeEventListener('wiki-theme-transition', syncThemeTransition)
   }
 })
 onBeforeUnmount(() => dispose())
@@ -93,6 +113,7 @@ onBeforeUnmount(() => dispose())
 <template>
   <section
     class="home-showcase"
+    :class="{ 'is-theme-transitioning': themeTransitioning }"
     aria-label="Cinema115 界面预览"
     aria-roledescription="轮播"
     @mouseenter="hovered = true"
@@ -120,11 +141,16 @@ onBeforeUnmount(() => dispose())
           @click="preview?.showModal()"
         >
           <img
-            :src="withBase(slide.src)"
-            :alt="slide.alt"
+            v-for="theme in (['light', 'dark'] as const)"
+            :key="theme"
+            :class="`screenshot-${theme}`"
+            data-theme-paired
+            :aria-hidden="theme !== (isDark ? 'dark' : 'light')"
+            :src="screenshot(slide.src, theme)"
+            :alt="theme === (isDark ? 'dark' : 'light') ? slide.alt : ''"
             width="1440"
             height="900"
-            :loading="index === 0 ? 'eager' : 'lazy'"
+            loading="eager"
             :fetchpriority="index === 0 ? 'high' : 'auto'"
             decoding="async"
             draggable="false"
@@ -144,8 +170,8 @@ onBeforeUnmount(() => dispose())
       ><span /></button>
     </div>
     <dialog ref="preview" class="showcase-preview" aria-label="界面截图大图" @click="closeBackdrop">
-      <div class="preview-header"><span>{{ current.title }}</span><button type="button" @click="preview?.close()">关闭</button></div>
-      <img :src="withBase(current.src)" :alt="current.alt" width="1440" height="900">
+      <div class="preview-header"><span>{{ current.title }} · {{ isDark ? '深色' : '浅色' }}</span><button type="button" @click="preview?.close()">关闭</button></div>
+      <img v-for="theme in (['light', 'dark'] as const)" :key="theme" :class="`screenshot-${theme}`" data-theme-paired :aria-hidden="theme !== (isDark ? 'dark' : 'light')" :src="screenshot(current.src, theme)" :alt="theme === (isDark ? 'dark' : 'light') ? current.alt : ''" width="1440" height="900" loading="eager">
     </dialog>
   </section>
 </template>
@@ -162,13 +188,19 @@ onBeforeUnmount(() => dispose())
   scrollbar-width: none;
   overscroll-behavior-x: contain;
   border-radius: 6px;
+  border: 1px solid var(--vp-c-divider);
+  background: var(--vp-c-bg-soft);
 }
 .showcase-track::-webkit-scrollbar { display: none; }
 .showcase-slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; }
 .showcase-image { display: block; width: 100%; height: 100%; cursor: zoom-in; }
 .showcase-image img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.showcase-indicators { display: flex; justify-content: center; margin-top: 8px; }
-.showcase-indicators button { display: grid; place-items: center; width: 44px; height: 28px; border-radius: 4px; }
+.home-showcase .screenshot-dark { display: none; }
+:global(html.dark .home-showcase .screenshot-light) { display: none; }
+:global(html.dark .home-showcase .screenshot-dark) { display: block; }
+.is-theme-transitioning .showcase-track { overflow-x: hidden; }
+.showcase-indicators { position: relative; z-index: 2; display: flex; justify-content: center; gap: 2px; min-height: 28px; margin-top: 8px; }
+.showcase-indicators button { display: grid; place-items: center; width: 44px; height: 28px; border-radius: 4px; background: transparent; }
 .showcase-indicators span { width: 28px; height: 3px; border-radius: 2px; background: var(--vp-c-text-3); opacity: .4; transition: opacity .2s, background-color .2s; }
 .showcase-indicators button:hover span { opacity: .8; }
 .showcase-indicators [aria-current] span { background: var(--vp-c-brand-1); opacity: 1; }
