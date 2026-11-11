@@ -22,6 +22,7 @@ type mediaDecisionMetadata struct {
 	detailCalls int
 	aliasCalls  int
 	pages       map[int]*tmdb.Page
+	itemsByKind map[string][]tmdb.Item
 }
 
 func newMediaDecisionMetadata(items ...tmdb.Item) *mediaDecisionMetadata {
@@ -39,6 +40,9 @@ func (f *mediaDecisionMetadata) Browse(ctx context.Context, options tmdb.Options
 	f.queries = append(f.queries, options)
 	if f.browseError != nil {
 		return nil, f.browseError
+	}
+	if f.itemsByKind != nil {
+		return &tmdb.Page{Items: f.itemsByKind[options.Kind], Page: options.Page, TotalPages: 1}, nil
 	}
 	if f.pages != nil {
 		if page := f.pages[options.Page]; page != nil {
@@ -73,6 +77,37 @@ func (f *mediaDecisionMetadata) AlternativeNames(ctx context.Context, kind strin
 
 func (f *mediaDecisionMetadata) Season(context.Context, int, int) (*tmdb.SeasonDetail, error) {
 	return &tmdb.SeasonDetail{}, nil
+}
+
+func TestMediaRecognitionTVEmptySearchFallsBackToMulti(t *testing.T) {
+	show := tmdb.Item{ID: 340321, Kind: "tv", Title: "时尚战争", Date: "2026-11-11"}
+	movie := tmdb.Item{ID: 1, Kind: "movie", Title: "时尚战争", Date: "2026-11-11"}
+	unrelated := tmdb.Item{ID: 2, Kind: "tv", Title: "其他剧集", Date: "2026-11-11"}
+	for _, tc := range []struct {
+		name, file string
+		tv, multi  []tmdb.Item
+		wantMatch  bool
+		wantCalls  int
+	}{
+		{"fallback-and-filter", "时尚战争 (2026) - S01E02 - 1080p.Disney+.WEB-DL.H264.AAC 2.0.strm", nil, []tmdb.Item{movie, show}, true, 2},
+		{"direct-match", "时尚战争 (2026) - S01E01.strm", []tmdb.Item{show}, nil, true, 1},
+		{"no-fallback-after-results", "时尚战争 (2026) - S01E01.strm", []tmdb.Item{unrelated}, []tmdb.Item{show}, false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newMediaDecisionMetadata(show, movie, unrelated)
+			f.itemsByKind = map[string][]tmdb.Item{"tv": tc.tv, "multi": tc.multi}
+			match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.ParseIdentity(tc.file))
+			if err != nil || (match != nil) != tc.wantMatch {
+				t.Fatalf("剧集搜索回退结果错误: match=%+v decision=%+v err=%v", match, decision, err)
+			}
+			if match != nil && (match.Detail.Kind != "tv" || match.Detail.ID != show.ID || match.Season != 1) {
+				t.Fatalf("回退搜索不能改变作品类型或季号: %+v", match)
+			}
+			if len(f.queries) != tc.wantCalls || f.queries[0].Kind != "tv" || tc.wantCalls == 2 && f.queries[1].Kind != "multi" {
+				t.Fatalf("搜索调用不符合回退条件: %+v", f.queries)
+			}
+		})
+	}
 }
 
 func TestMediaRecognitionShortUndatedTitleAndFirstEligible(t *testing.T) {

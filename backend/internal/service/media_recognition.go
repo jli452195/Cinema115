@@ -150,9 +150,16 @@ func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSour
 		}
 		queried[queryKey] = true
 		seen := make(map[string]bool, mediaRecognitionPageSize)
+		searchKind := kind
 		for pageNumber := 1; pageNumber <= mediaRecognitionPageLimit && searchCalls < mediaRecognitionSearchLimit; pageNumber++ {
 			searchCalls++
-			page, browseErr := source.Browse(ctx, tmdb.Options{Kind: kind, Query: query.name, Page: pageNumber})
+			page, browseErr := source.Browse(ctx, tmdb.Options{Kind: searchKind, Query: query.name, Page: pageNumber})
+			// 剧集搜索的片名索引可能缺失，首屏为空时用聚合搜索补充，仍沿用原身份校验。
+			if browseErr == nil && page != nil && pageNumber == 1 && searchKind == "tv" && len(page.Items) == 0 && searchCalls < mediaRecognitionSearchLimit {
+				searchKind = "multi"
+				searchCalls++
+				page, browseErr = source.Browse(ctx, tmdb.Options{Kind: searchKind, Query: query.name, Page: pageNumber})
+			}
 			if browseErr != nil {
 				return nil, decision, fmt.Errorf("搜索作品候选: %w", browseErr)
 			}
