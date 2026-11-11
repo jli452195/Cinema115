@@ -8,6 +8,36 @@ const sections = [
   { text: '编写文档', link: '/contributing/', activeMatch: '/contributing/' },
 ]
 
+// 动漫教程提供常用操作直达入口，避免用户只能从长文逐段寻找。
+const animeSidebar = [
+  {
+    text: 'AniBT 订阅入门',
+    link: '/anime/',
+    items: [
+      { text: '下载与整理目录', link: '/anime/#storage-settings' },
+      { text: '字幕组与资源规格', link: '/anime/#source-selection' },
+      { text: 'Bangumi 集数在哪里看', link: '/anime/#bangumi-episodes' },
+    ],
+  },
+  {
+    text: '匹配规则与命名',
+    link: '/anime/rules-and-naming',
+    items: [
+      { text: '添加备用 RSS', link: '/anime/rules-and-naming#backup-rss' },
+      { text: 'TMDB、总集数与偏移', link: '/anime/rules-and-naming#episode-naming' },
+      { text: '预览与重新下载', link: '/anime/rules-and-naming#release-preview' },
+    ],
+  },
+  {
+    text: '订阅管理与故障排查',
+    link: '/anime/management',
+    items: [
+      { text: '下载记录与整理进度', link: '/anime/management#download-records' },
+      { text: 'RSS 与 Telegram 通知', link: '/anime/management#rss-and-notifications' },
+    ],
+  },
+]
+
 const teekConfig = defineTeekConfig({
   teekHome: false,
   windowTransition: false,
@@ -30,12 +60,12 @@ const teekConfig = defineTeekConfig({
       scannerRootMd: false,
       collapsed: false,
       restart: true,
-      // 顶级分类沿用导航顺序与中文名，分类内文章仍由插件自动扫描和排序。
+      // 顶级分类沿用导航顺序；动漫教程使用操作导航，其余分类自动扫描和排序。
       sidebarResolved: sidebar => Array.isArray(sidebar)
         ? sections.map(section => ({
             text: section.text,
             collapsed: false,
-            items: sidebar.find(group =>
+            items: section.link === '/anime/' ? animeSidebar : sidebar.find(group =>
               group.items?.some(item => item.link?.startsWith(section.link)),
             )?.items ?? [],
           }))
