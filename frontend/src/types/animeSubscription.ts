@@ -83,6 +83,7 @@ export interface AnimeSubscriptionView {
 export interface AnimeSourceProgress {
   state: 'unknown' | 'ongoing' | 'missing' | 'complete'
   firstEpisode: number; publishedThrough: number; organizedCount: number; missingCount: number
+  targetCount?: number
   missing?: { first: number; last: number }[]
 }
 export type AnimeSourceCard = Pick<AnimeSubscriptionView['sources'][number], 'id' | 'groupName' | 'position' | 'configuredState' | 'runWhenEnabled' | 'progress'>

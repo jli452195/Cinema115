@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS anime_source_progress (
 );
 CREATE INDEX IF NOT EXISTS anime_progress_dirty ON anime_source_progress(source_id) WHERE generation<>computed_generation;
 INSERT OR IGNORE INTO anime_source_progress(source_id) SELECT id FROM anime_subscription_sources WHERE status<>'removed';
+UPDATE anime_source_progress SET generation=generation+1
+WHERE generation=computed_generation AND json_type(summary_json,'$.targetCount') IS NULL;
 CREATE TRIGGER IF NOT EXISTS anime_progress_source_insert AFTER INSERT ON anime_subscription_sources BEGIN
  INSERT INTO anime_source_progress(source_id) VALUES(NEW.id);
 END;

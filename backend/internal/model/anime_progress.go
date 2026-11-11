@@ -12,6 +12,7 @@ type AnimeSourceProgress struct {
 	FirstEpisode     int                 `json:"firstEpisode"`
 	PublishedThrough int                 `json:"publishedThrough"`
 	OrganizedCount   int                 `json:"organizedCount"`
+	TargetCount      int                 `json:"targetCount"`
 	MissingCount     int                 `json:"missingCount"`
 	Missing          []AnimeEpisodeRange `json:"missing,omitempty"`
 }

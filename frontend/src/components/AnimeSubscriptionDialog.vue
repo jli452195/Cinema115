@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import AnimeSourceForm from './AnimeSourceForm.vue'
+import AnimeSourceProgress from './AnimeSourceProgress.vue'
 import AnimeProviderBrand from './AnimeProviderBrand.vue'
 import AnimeNamingTarget from './AnimeNamingTarget.vue'
 import AnimeChapterEpisodesPopover from './AnimeChapterEpisodesPopover.vue'
@@ -16,7 +17,7 @@ import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscription
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeSourceSpecs, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import { sourceProgressDescription, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
-import type { AnimeSourceProgress } from '../types/animeSubscription'
+import type { AnimeSourceProgress as SourceProgress } from '../types/animeSubscription'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -39,6 +40,7 @@ const previewSource = computed(() => sources.value.find(s => s.ref === previewRe
 const previewSourceOptions = computed(() => sources.value.map(source => ({ value: source.ref, label: `${source.role === 'main' ? '主 RSS' : '备用 RSS'} · ${source.groupName || animeProviderName(source.provider)}` })))
 const main = computed(() => sources.value.find(s => s.role === 'main'))
 const backups = computed(() => sources.value.filter(s => s.role === 'standby'))
+const sourceProgress = computed(() => Object.fromEntries((local.value?.sources || []).map(source => [source.id, source.progress])))
 const actions = useAnimeSubscriptionActions(toRef(props, 'token'), props.id, async result => {
   confirmRemove.value = false
   if (result.status === 'removed') { leaving = true; emit('saved', result.id); return }
@@ -102,7 +104,7 @@ async function openPreview() {
 function closePreview() { if (previewActionBusy.value) return; previewOpen.value = false; void nextTick(() => previewButton.value?.focus({ preventScroll: true })) }
 watch(previewRef, async () => { if (previewOpen.value && previewSource.value && !editor.validPreview(previewSource.value)) await editor.runPreview(previewSource.value) })
 async function reload() { if (dirty.value) { reloadConfirm.value = true; discard.value = true; shell.value?.scrollTo(0); return } await editor.initialize() }
-function updateProgress(progress: Record<string, AnimeSourceProgress>) {
+function updateProgress(progress: Record<string, SourceProgress>) {
   for (const source of local.value?.sources || []) {
     if (progress[source.id]) source.progress = progress[source.id]
   }
@@ -156,14 +158,16 @@ function updateProgress(progress: Record<string, AnimeSourceProgress>) {
             </template>
           </AnimeNamingTarget>
 
-          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event" />
+          <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event">
+            <template #progress><AnimeSourceProgress v-if="local" :progress="sourceProgress[main.id]" :pending="dirty" /></template>
+          </AnimeSourceForm>
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
         <div v-show="tab === 'backup'" id="anime-panel-backup" role="tabpanel" aria-labelledby="anime-tab-backup">
           <div class="ac-backup-heading"><p class="ae-note">每个来源使用自己的编号映射，独立检查和下载。</p><button type="button" class="ae-button" :disabled="locked || !!previewBusy || sources.length >= 5" @click="addBackup"><IconPlus :size="16" />添加备用</button></div>
           <p v-if="!backups.length" class="ac-empty">暂无备用 RSS，可添加其他字幕组的版本。</p>
           <section v-for="source in backups" :key="source.ref" class="ac-backup">
-            <button type="button" class="ac-backup-row" :aria-expanded="activeRef === source.ref" :disabled="childOpen" @click="chooseBackup(source.ref)"><span><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></span><AnimeProviderBrand v-if="source.groupId" :provider="source.provider" compact class="ae-source-brand" /><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" /></button>
+            <div class="ac-backup-row" @click="!childOpen && chooseBackup(source.ref)"><button type="button" class="ac-backup-toggle" :aria-expanded="activeRef === source.ref" :disabled="childOpen"><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }} · {{ animeSourceSpecs(source) }} · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></button><AnimeSourceProgress v-if="local" :progress="sourceProgress[source.id]" :pending="dirty" /><AnimeProviderBrand v-if="source.groupId" :provider="source.provider" compact class="ae-source-brand" /><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" aria-hidden="true" /></div>
             <AnimeSourceForm v-if="activeRef === source.ref" :source="source" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
           </section>
         </div>
@@ -247,7 +251,7 @@ function updateProgress(progress: Record<string, AnimeSourceProgress>) {
 .ac-backup-heading { margin: 5px 0 16px; }
 .ac-backup { margin-bottom: 12px; border-radius: 14px; background: rgb(148 163 184 / .05); }
 .ac-backup-row { width: 100%; text-align: left; padding: 15px; }
-.ac-backup-row > span:first-child { flex: 1; min-width: 0; }
+.ac-backup-toggle { flex: 1; min-width: 0; text-align: left; }
 .ac-backup-row strong { display: block; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .ac-backup-row > svg, .ac-map { flex: none; }
 .ac-backup-row small { display: block; font-size: 11px; color: var(--floating-surface-muted); margin-top: 4px; }
@@ -276,6 +280,8 @@ function updateProgress(progress: Record<string, AnimeSourceProgress>) {
   .ac-editor :deep(.ae-summary-title) { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px 10px; }
   .ac-footer { align-items: stretch; flex-direction: column; gap: 8px; } .ac-footer > p { max-width: none; } .ac-footer > div { justify-content: flex-end; }
   .ac-map { display: none; } .ac-backup-heading { align-items: flex-start; } .ac-backup-heading .ae-button { flex: none; } .ac-preview-close { align-items: flex-start; }
+  .ac-backup-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 16px; }
+  .ac-backup-row :deep(.as-source-progress) { grid-column: 1 / -1; grid-row: 2; }
 }
 @media(max-width: 639px), (pointer: coarse) { .ac-total-input { width: 116px; } }
 </style>

@@ -79,7 +79,7 @@ func TestAnimeSourceProgressMissingEpisodeIsPerRSS(t *testing.T) {
 	}
 	main, other := f.sub.Sources[0].ID, f.sub.Sources[1].ID
 	progress := refreshProgress(t, f)
-	if got := progress[main]; got.State != "missing" || got.MissingCount != 1 || got.OrganizedCount != 9 || !reflect.DeepEqual(got.Missing, []model.AnimeEpisodeRange{{First: 7, Last: 7}}) {
+	if got := progress[main]; got.State != "missing" || got.TargetCount != 12 || got.MissingCount != 1 || got.OrganizedCount != 9 || !reflect.DeepEqual(got.Missing, []model.AnimeEpisodeRange{{First: 7, Last: 7}}) {
 		t.Fatal("published 1-10, missing organized episode 7", got)
 	}
 	if got := progress[other]; got.State != "ongoing" || got.MissingCount != 0 || got.PublishedThrough != 10 {
@@ -191,7 +191,7 @@ func TestAnimeSourceProgressInvalidationAndMinimum(t *testing.T) {
 	if err != nil || stale[id].State != "unknown" {
 		t.Fatal("old rule result leaked", stale, err)
 	}
-	if got := refreshProgress(t, f)[id]; got.State != "ongoing" || got.FirstEpisode != 10 || got.MissingCount != 0 {
+	if got := refreshProgress(t, f)[id]; got.State != "ongoing" || got.TargetCount != 3 || got.FirstEpisode != 10 || got.MissingCount != 0 {
 		t.Fatal("intentionally skipped episodes counted missing", got)
 	}
 	if _, err := f.store.db.Exec(`UPDATE anime_subscriptions SET form_json=json_set(form_json,'$.totalEpisodes',10) WHERE id=?`, f.sub.ID); err != nil {
@@ -234,13 +234,14 @@ func TestAnimeSourceProgressContinuousNumbersAndRestart(t *testing.T) {
 	progressEpisode(t, f, 0, 25, false)
 	progressEpisode(t, f, 0, 28, true)
 	want := refreshProgress(t, f)[id]
-	if want.FirstEpisode != 27 || want.PublishedThrough != 28 || want.MissingCount != 1 || !reflect.DeepEqual(want.Missing, []model.AnimeEpisodeRange{{First: 27, Last: 27}}) {
+	if want.FirstEpisode != 27 || want.TargetCount != 10 || want.PublishedThrough != 28 || want.MissingCount != 1 || !reflect.DeepEqual(want.Missing, []model.AnimeEpisodeRange{{First: 27, Last: 27}}) {
 		t.Fatal("continuous numbering counted skipped/future episodes", want)
 	}
 	// An unknown final total still allows gaps within the observed range.
 	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_remove(metadata_json,'$.totalEpisodes')`); err != nil {
 		t.Fatal(err)
 	}
+	want.TargetCount = 0
 	if got := refreshProgress(t, f)[id]; !reflect.DeepEqual(got, want) {
 		t.Fatal("unknown final total lost local gaps", got)
 	}

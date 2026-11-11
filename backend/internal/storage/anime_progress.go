@@ -134,6 +134,7 @@ func animeSourceProgress(ctx context.Context, source model.AnimeSource, sub mode
 	first, last, targetKnown := animeCompletionRange(source, first, total)
 	out.FirstEpisode = first
 	if targetKnown {
+		out.TargetCount = last - first + 1
 		out.PublishedThrough = min(out.PublishedThrough, last)
 	}
 	for n := range found {
