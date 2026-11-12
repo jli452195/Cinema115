@@ -25,18 +25,51 @@ type subtitleCandidate struct {
 	parsed   bool
 }
 
-// SubtitleMatcher is a per-listing, local-only fallback after exact stem matching.
-// Video facts are parsed lazily once; the matcher is not shared across goroutines.
+// SubtitleMatcher 复用清单内的文件名索引；视频事实按需解析，实例不跨协程共享。
 type SubtitleMatcher struct {
 	videos map[string][]*subtitleCandidate
+	stems  map[string][]*subtitleCandidate
 }
 
 func NewSubtitleMatcher(videos []SubtitleVideo) *SubtitleMatcher {
-	m := &SubtitleMatcher{videos: make(map[string][]*subtitleCandidate, len(videos))}
+	m := &SubtitleMatcher{videos: make(map[string][]*subtitleCandidate, len(videos)), stems: make(map[string][]*subtitleCandidate, len(videos))}
 	for _, video := range videos {
-		m.videos[video.ParentID] = append(m.videos[video.ParentID], &subtitleCandidate{SubtitleVideo: video})
+		candidate := &subtitleCandidate{SubtitleVideo: video}
+		m.videos[video.ParentID] = append(m.videos[video.ParentID], candidate)
+		stem := subtitleFold(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
+		m.stems[stem] = append(m.stems[stem], candidate)
 	}
 	return m
+}
+
+// 与 EqualFold 一致地归一化 Unicode 大小写，包含希腊尾字母等特殊折叠。
+func subtitleFold(value string) string {
+	return strings.Map(func(r rune) rune {
+		folded := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < folded {
+				folded = next
+			}
+		}
+		return folded
+	}, value)
+}
+
+// StemCandidates 按点号边界从长到短查完整视频文件名，保留同名文件的歧义。
+func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bool) ([]string, string) {
+	stem := strings.TrimSuffix(name, path.Ext(name))
+	for end := len(stem); end >= 0; end = strings.LastIndexByte(stem[:end], '.') {
+		var owners []string
+		for _, video := range m.stems[subtitleFold(stem[:end])] {
+			if !sameDirectory || video.ParentID == parentID {
+				owners = append(owners, video.ID)
+			}
+		}
+		if len(owners) > 0 {
+			return owners, stem[end:]
+		}
+	}
+	return nil, ""
 }
 
 // Only complete, known metadata fields may be removed. Title/episode/group and

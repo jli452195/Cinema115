@@ -278,7 +278,7 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 					if e.File.MediaType != "subtitle" {
 						return false
 					}
-					owner, _ := organizeSubtitleOwner(e.File, videos, matcher)
+					owner, _ := organizeSubtitleOwner(e.File, matcher)
 					return owner != "" // A video may have arrived since the scan.
 				})
 			}

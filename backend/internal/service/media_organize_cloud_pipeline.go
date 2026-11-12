@@ -96,7 +96,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 		matcher := organizeSubtitleMatcher(files.localCandidates)
 		for _, entry := range entries {
 			if entry.File.MediaType == "subtitle" {
-				owners, _ := organizeSubtitleCandidates(entry.File, files.localCandidates, matcher)
+				owners, _ := organizeSubtitleCandidates(entry.File, matcher)
 				if len(owners) == 0 {
 					// 跨目录字幕留到本轮扫描结束，完整候选集避免依赖目录遍历顺序。
 					subtitles = append(subtitles, entry)

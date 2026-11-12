@@ -88,6 +88,18 @@ func TestMediaOrganizeTransactionRollbackAndChangedTaskWrites(t *testing.T) {
 	if err != nil || query.Total != 1 || query.Records[0] != "second" {
 		t.Fatal("removed child survived checkpoint", query, err)
 	}
+	empty := changed
+	empty.Tasks = nil
+	if err := s.SaveMediaOrganize(ctx, "new-rules", []MediaOrganizeRunRow{empty}, nil); err != nil {
+		t.Fatal(err)
+	}
+	query, err = s.QueryMediaOrganize(ctx, "", "all", 1)
+	if err != nil || query.Total != 0 {
+		t.Fatal("空任务快照未清除旧索引", query, err)
+	}
+	if err := s.SaveMediaOrganize(ctx, "new-rules", []MediaOrganizeRunRow{changed}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.SaveMediaOrganize(ctx, "new-rules", nil, []string{run.ID}); err != nil {
 		t.Fatal(err)
 	}

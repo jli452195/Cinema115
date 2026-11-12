@@ -22,10 +22,10 @@ func mediaIncludeVideoCandidates(files, candidates []OrganizeFile) []OrganizeFil
 }
 
 // 自动整理保留同目录匹配优先级，跨目录仅接受完整同名字幕。
-func mediaOrganizeSubtitleCandidates(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
-	owners, tail := organizeSubtitleCandidates(sub, files, matcher)
+func mediaOrganizeSubtitleCandidates(sub OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
+	owners, tail := organizeSubtitleCandidates(sub, matcher)
 	if len(owners) > 0 {
 		return owners, tail
 	}
-	return organizeSubtitleStemCandidates(sub, files, false)
+	return matcher.StemCandidates(sub.ParentID, sub.Name, false)
 }

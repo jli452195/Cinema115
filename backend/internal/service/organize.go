@@ -301,14 +301,14 @@ func organizeSubtitles(files []OrganizeFile) []OrganizeSubtitle {
 	return organizeSubtitlesWithCandidates(files, organizeSubtitleCandidates)
 }
 
-func organizeSubtitlesWithCandidates(files []OrganizeFile, candidates func(OrganizeFile, []OrganizeFile, *mediafacts.SubtitleMatcher) ([]string, string)) []OrganizeSubtitle {
+func organizeSubtitlesWithCandidates(files []OrganizeFile, candidates func(OrganizeFile, *mediafacts.SubtitleMatcher) ([]string, string)) []OrganizeSubtitle {
 	subtitles := make([]OrganizeSubtitle, 0, len(files))
 	matcher := organizeSubtitleMatcher(files)
 	for _, file := range files {
 		if file.MediaType != "subtitle" {
 			continue
 		}
-		owners, tail := candidates(file, files, matcher)
+		owners, tail := candidates(file, matcher)
 		owner := ""
 		if len(owners) == 1 {
 			owner = owners[0]
@@ -331,43 +331,20 @@ func organizeSubtitleMatcher(files []OrganizeFile) *mediafacts.SubtitleMatcher {
 	return mediafacts.NewSubtitleMatcher(videos)
 }
 
-func organizeSubtitleOwner(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) (string, string) {
-	owners, tail := organizeSubtitleCandidates(sub, files, matcher)
+func organizeSubtitleOwner(sub OrganizeFile, matcher *mediafacts.SubtitleMatcher) (string, string) {
+	owners, tail := organizeSubtitleCandidates(sub, matcher)
 	if len(owners) == 1 {
 		return owners[0], tail
 	}
 	return "", tail
 }
 
-func organizeSubtitleCandidates(sub OrganizeFile, files []OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
-	owners, tail := organizeSubtitleStemCandidates(sub, files, true)
+func organizeSubtitleCandidates(sub OrganizeFile, matcher *mediafacts.SubtitleMatcher) ([]string, string) {
+	owners, tail := matcher.StemCandidates(sub.ParentID, sub.Name, true)
 	if len(owners) == 0 {
 		owners, tail = matcher.Candidates(sub.ParentID, sub.Name)
 		if len(owners) != 1 {
 			tail = ""
-		}
-	}
-	return owners, tail
-}
-
-// 完整视频主文件名优先匹配最长前缀，目录限制由整理入口决定。
-func organizeSubtitleStemCandidates(sub OrganizeFile, files []OrganizeFile, sameDirectory bool) ([]string, string) {
-	var owners []string
-	tail, longest := "", -1
-	stem := []rune(strings.TrimSuffix(sub.Name, path.Ext(sub.Name)))
-	for _, video := range files {
-		if video.MediaType != "video" || sameDirectory && video.ParentID != sub.ParentID {
-			continue
-		}
-		vstem := []rune(strings.TrimSuffix(video.Name, path.Ext(video.Name)))
-		n := len(vstem)
-		if n > len(stem) || !strings.EqualFold(string(stem[:n]), string(vstem)) || (n < len(stem) && stem[n] != '.') {
-			continue
-		}
-		if n > longest {
-			owners, tail, longest = []string{video.ID}, string(stem[n:]), n
-		} else if n == longest {
-			owners = append(owners, video.ID)
 		}
 	}
 	return owners, tail

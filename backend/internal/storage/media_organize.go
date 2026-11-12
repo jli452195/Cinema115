@@ -190,8 +190,7 @@ func (s *Store) LoadMediaOrganizeReferences(ctx context.Context, ruleID string, 
 	return s.mediaOrganizeRecords(ctx, query, ruleID, recursive, string(parentJSON), string(scopeJSON))
 }
 
-// Only the changed runs are encoded by the caller. Rules and their run updates
-// commit together, so a failed checkpoint never exposes a newer search index.
+// 调用方仅编码变化的批次；规则、完整记录和任务索引在同一事务内提交。
 func (s *Store) SaveMediaOrganize(ctx context.Context, rules string, updates []MediaOrganizeRunRow, removed []string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -210,39 +209,18 @@ func (s *Store) SaveMediaOrganize(ctx context.Context, rules string, updates []M
 		if _, err := tx.ExecContext(ctx, `INSERT INTO media_organize_runs(id,rule_id,at,record,activity,cleanup) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET rule_id=excluded.rule_id,at=excluded.at,record=excluded.record,activity=excluded.activity,cleanup=CASE WHEN excluded.cleanup='' THEN media_organize_runs.cleanup ELSE excluded.cleanup END WHERE media_organize_runs.rule_id!=excluded.rule_id OR media_organize_runs.at!=excluded.at OR media_organize_runs.record!=excluded.record OR media_organize_runs.activity!=excluded.activity OR (excluded.cleanup!='' AND media_organize_runs.cleanup!=excluded.cleanup)`, run.ID, run.RuleID, run.At, run.Record, run.Activity, run.Cleanup); err != nil {
 			return err
 		}
-		kept := make(map[string]bool, len(run.Tasks))
-		for _, task := range run.Tasks {
-			kept[task.FileID] = true
+		var tasks strings.Builder
+		if err := json.NewEncoder(&tasks).Encode(run.Tasks); err != nil {
+			return fmt.Errorf("编码整理任务索引: %w", err)
 		}
-		rows, err := tx.QueryContext(ctx, `SELECT file_id FROM media_organize_tasks WHERE run_id=?`, run.ID)
-		if err != nil {
+		taskJSON := tasks.String()
+		if _, err := tx.ExecContext(ctx, `DELETE FROM media_organize_tasks WHERE run_id=? AND file_id NOT IN (SELECT json_extract(value,'$.fileId') FROM json_each(?) WHERE type='object')`, run.ID, taskJSON); err != nil {
 			return err
 		}
-		removed := []string{}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			if !kept[id] {
-				removed = append(removed, id)
-			}
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO media_organize_tasks(run_id,file_id,status_group,at,search,record)
+			SELECT ?,json_extract(value,'$.fileId'),json_extract(value,'$.group'),json_extract(value,'$.at'),json_extract(value,'$.search'),json_extract(value,'$.record') FROM json_each(?) WHERE type='object'
+			ON CONFLICT(run_id,file_id) DO UPDATE SET status_group=excluded.status_group,at=excluded.at,search=excluded.search,record=excluded.record WHERE media_organize_tasks.record!=excluded.record OR media_organize_tasks.status_group!=excluded.status_group OR media_organize_tasks.at!=excluded.at OR media_organize_tasks.search!=excluded.search`, run.ID, taskJSON); err != nil {
 			return err
-		}
-		for _, id := range removed {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM media_organize_tasks WHERE run_id=? AND file_id=?`, run.ID, id); err != nil {
-				return err
-			}
-		}
-		for _, task := range run.Tasks {
-			if _, err := tx.ExecContext(ctx, `INSERT INTO media_organize_tasks(run_id,file_id,status_group,at,search,record) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id,file_id) DO UPDATE SET status_group=excluded.status_group,at=excluded.at,search=excluded.search,record=excluded.record WHERE media_organize_tasks.record!=excluded.record OR media_organize_tasks.status_group!=excluded.status_group OR media_organize_tasks.at!=excluded.at OR media_organize_tasks.search!=excluded.search`, run.ID, task.FileID, task.Group, task.At, task.Search, task.Record); err != nil {
-				return err
-			}
 		}
 	}
 	if err := tx.Commit(); err != nil {

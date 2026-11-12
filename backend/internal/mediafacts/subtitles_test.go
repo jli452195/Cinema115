@@ -1,8 +1,38 @@
 package mediafacts
 
 import (
+	"slices"
 	"testing"
 )
+
+func TestSubtitleStemCandidates(t *testing.T) {
+	matcher := NewSubtitleMatcher([]SubtitleVideo{
+		{"short", "local", "Show.mkv"},
+		{"long", "other", "Show.CHS.mkv"},
+		{"duplicate", "other", "show.chs.mp4"},
+		{"unicode", "local", "Σ.S.K.中文.mkv"},
+	})
+	for _, tc := range []struct {
+		name, parent, tail string
+		sameDirectory      bool
+		owners             []string
+	}{
+		{"Show.CHS.forced.ass", "local", ".CHS.forced", true, []string{"short"}},
+		{"SHOW.chs.FORCED.ass", "other", ".FORCED", true, []string{"long", "duplicate"}},
+		{"Show.CHS.ass", "missing", "", false, []string{"long", "duplicate"}},
+		{"Show.CHS.ass", "missing", "", true, nil},
+		{"Show2.ass", "local", "", true, nil},
+		{"ς.ſ.k.中文.CHT.ass", "local", ".CHT", true, []string{"unicode"}},
+		{"σ.s.K.中文.ass", "other", "", false, []string{"unicode"}},
+	} {
+		t.Run(tc.name+"/"+tc.parent, func(t *testing.T) {
+			owners, tail := matcher.StemCandidates(tc.parent, tc.name, tc.sameDirectory)
+			if !slices.Equal(owners, tc.owners) || tail != tc.tail {
+				t.Fatalf("字幕归属或原始后缀错误：%v %q，期望 %v %q", owners, tail, tc.owners, tc.tail)
+			}
+		})
+	}
+}
 
 func TestSubtitleFallbackMatchesOnlyUniqueWorkEpisodeAndSpecifications(t *testing.T) {
 	for _, tc := range []struct {

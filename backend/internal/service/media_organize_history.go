@@ -388,21 +388,41 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		}
 		out.Cleanup = append(out.Cleanup, item)
 	}
-	// 已结束的成功历史不需要执行权限上下文；失败仅按本页主文件读取必要条目。
-	permissions := make(map[string]mediaTaskPermission, len(out.Items))
+	// 同页失败按批次读取一次，冷历史仅在本次请求中使用；运行中的状态仍以工作集为准。
+	failedRuns := make(map[string]bool)
 	for _, item := range out.Items {
-		permission := mediaTaskPermission{CanDelete: true}
 		if item.Status == "failed" {
-			task, err := s.TaskContext(ctx, item.RunID, item.FileID)
-			if err != nil && !errors.Is(err, ErrMediaOrganizeTaskNotFound) {
+			failedRuns[item.RunID] = true
+		}
+	}
+	runs := make(map[string]MediaOrganizeRun, len(failedRuns))
+	for {
+		s.mu.Lock()
+		ids := make([]string, 0, len(failedRuns))
+		for id := range failedRuns {
+			if !slices.ContainsFunc(s.doc.Runs, func(run MediaOrganizeRun) bool { return run.ID == id }) {
+				ids = append(ids, id)
+				delete(failedRuns, id)
+			}
+		}
+		// 保留锁进入权限计算；慢读期间退出工作集的批次下一轮补读，每批最多一次。
+		if len(ids) == 0 {
+			break
+		}
+		s.mu.Unlock()
+		raws, err := s.db.LoadMediaOrganizeRuns(ctx, ids, "", "")
+		if err != nil {
+			return out, fmt.Errorf("读取整理历史: %w", err)
+		}
+		for _, raw := range raws {
+			run, err := mediaDecodeStoredRun(raw)
+			if err != nil {
 				return out, err
 			}
-			permission = mediaTaskPermission{CanDelete: task.CanDelete, CanRetry: task.CanRetry}
+			runs[run.ID] = run
 		}
-		permissions[item.RunID+"\x00"+item.FileID] = permission
 	}
 	// 数据库查询不占业务锁；操作权限在返回前按最新的在途文件重新计算。
-	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return out, err
@@ -414,9 +434,22 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		out.Activity = slices.DeleteFunc(out.Activity, func(previous MediaOrganizeActivity) bool { return previous.RunID == item.RunID })
 	}
 	out.Activity = append(liveActivity, out.Activity...)
+	for _, run := range s.doc.Runs {
+		runs[run.ID] = run
+	}
 	for i := range out.Items {
 		item := &out.Items[i]
-		permission := permissions[item.RunID+"\x00"+item.FileID]
+		permission := mediaTaskPermission{CanDelete: true}
+		if item.Status == "failed" {
+			permission = mediaTaskPermission{}
+			if run, ok := runs[item.RunID]; ok {
+				task, err := s.mediaTaskLocked(run, item.FileID)
+				if err != nil && !errors.Is(err, ErrMediaOrganizeTaskNotFound) {
+					return out, err
+				}
+				permission = mediaTaskPermission{CanDelete: task.CanDelete, CanRetry: task.CanRetry}
+			}
+		}
 		permission.CanDelete = permission.CanDelete && s.inFlight[item.RunID][item.FileID] == 0 && !s.eventRecoveryPendingLocked(item.RunID)
 		if s.busyRunLocked(item.RunID) || s.eventRecoveryPendingLocked(item.RunID) {
 			permission.CanRetry = false

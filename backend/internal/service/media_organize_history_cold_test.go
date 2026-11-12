@@ -11,6 +11,7 @@ import (
 type mediaColdReadCounter struct {
 	mediaOrganizeStorage
 	tasks, runs int
+	beforeRuns  func()
 }
 
 func (s *mediaColdReadCounter) LoadMediaOrganizeTask(ctx context.Context, id, fileID string) (string, error) {
@@ -20,7 +21,51 @@ func (s *mediaColdReadCounter) LoadMediaOrganizeTask(ctx context.Context, id, fi
 
 func (s *mediaColdReadCounter) LoadMediaOrganizeRuns(ctx context.Context, ids []string, ruleID, status string) ([]string, error) {
 	s.runs++
+	if s.beforeRuns != nil {
+		s.beforeRuns()
+	}
 	return s.mediaOrganizeStorage.LoadMediaOrganizeRuns(ctx, ids, ruleID, status)
+}
+
+func TestMediaHistoryFinishingBatchKeepsCurrentPermissions(t *testing.T) {
+	for _, state := range []string{"failed", "done", "deleted"} {
+		t.Run(state, func(t *testing.T) {
+			s, _, _ := newMediaSQLiteTest(t)
+			finishing := mediaRecordFixture("finishing", "partial", 1)
+			cold := mediaRecordFixture("cold", "partial", 1)
+			finishing.Entries[0].Status, finishing.Entries[0].Result = "error", nil
+			cold.Entries[0].Status, cold.Entries[0].Result = "error", nil
+			saveMediaFixtures(t, s, finishing, cold)
+			s.doc.Runs, s.active = []MediaOrganizeRun{finishing}, finishing.ID
+			counter := &mediaColdReadCounter{mediaOrganizeStorage: s.db}
+			s.db = counter
+			counter.beforeRuns = func() {
+				counter.beforeRuns = nil
+				s.mu.Lock()
+				defer s.mu.Unlock()
+				s.active = ""
+				if state == "done" {
+					entry := &s.doc.Runs[0].Entries[0]
+					entry.Status, entry.Result = "done", &MediaOrganizeResult{Status: "done", At: finishing.UpdatedAt}
+				} else if state == "deleted" {
+					s.doc.Runs = nil
+				}
+				if err := s.persistLocked(finishing.ID); err != nil {
+					t.Fatal(err)
+				}
+				s.releaseHistoryLocked()
+			}
+			page := mediaHistoryTest(t, s, "", "failed", 1)
+			if len(page.Items) != 2 || counter.runs != 2 || counter.tasks != 0 || len(s.doc.Runs) != 0 {
+				t.Fatal("只补读退出工作集的批次，不恢复已释放记录", len(page.Items), counter.runs, counter.tasks, len(s.doc.Runs))
+			}
+			for _, item := range page.Items {
+				if item.RunID == finishing.ID && (item.CanDelete != (state != "deleted") || item.CanRetry != (state == "failed")) {
+					t.Fatal("整理结束后的权限必须采用已保存的最新状态", item)
+				}
+			}
+		})
+	}
 }
 
 func TestMediaHistoryColdPageAndTaskDoNotRetainCompletedBatches(t *testing.T) {
@@ -74,6 +119,48 @@ func TestMediaHistoryColdFailureRetryAndClearKeepOtherRecords(t *testing.T) {
 	}
 	if _, err := s.Task(done.ID, done.Entries[0].File.ID); !errors.Is(err, ErrMediaOrganizeTaskNotFound) {
 		t.Fatal("已删除冷记录不能再次查询", err)
+	}
+}
+
+func TestMediaHistoryFailurePageLoadsEachBatchOnceAndUsesLivePermissions(t *testing.T) {
+	s, _, _ := newMediaSQLiteTest(t)
+	run := mediaRecordFixture("failed-page", "partial", 12)
+	for i := range run.Entries {
+		run.Entries[i].Status, run.Entries[i].Result = "error", nil
+	}
+	saveMediaFixtures(t, s, run)
+	s.releaseHistoryLocked()
+	counter := &mediaColdReadCounter{mediaOrganizeStorage: s.db}
+	s.db = counter
+	page := mediaHistoryTest(t, s, "", "failed", 1)
+	if page.Total != 12 || counter.runs != 1 || counter.tasks != 0 || len(s.doc.Runs) != 0 {
+		t.Fatal("同批失败分页只读一次且不进入工作集", page.Total, counter.runs, counter.tasks, len(s.doc.Runs))
+	}
+	for _, item := range page.Items {
+		if !item.CanDelete || !item.CanRetry {
+			t.Fatal("冷失败记录应可删除和重试", item)
+		}
+	}
+	// 工作集与在途保护优先于已持久化的失败状态，无须再次读取批次。
+	s.doc.Runs = []MediaOrganizeRun{run}
+	s.active = run.ID
+	s.inFlight = map[string]map[string]int{run.ID: {run.Entries[0].File.ID: 1}}
+	counter.runs = 0
+	page = mediaHistoryTest(t, s, "", "failed", 1)
+	if len(page.Items) != 12 || counter.runs != 0 || counter.tasks != 0 {
+		t.Fatal("工作集中的失败记录不能产生详情查询", len(page.Items), counter.runs, counter.tasks)
+	}
+	for _, item := range page.Items {
+		if item.CanRetry || item.CanDelete != (item.FileID != run.Entries[0].File.ID) {
+			t.Fatal("失败列表必须保留当前在途权限", item)
+		}
+	}
+	s.cloudMonitors = map[string]*mediaCloudRuntime{run.Rule.ID: {rule: run.Rule, eventRecoveryIDs: []string{run.ID}}}
+	page = mediaHistoryTest(t, s, "", "failed", 1)
+	for _, item := range page.Items {
+		if item.CanDelete || item.CanRetry {
+			t.Fatal("恢复证据不能删除或重试", item)
+		}
 	}
 }
 

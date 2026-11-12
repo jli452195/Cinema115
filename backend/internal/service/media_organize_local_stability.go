@@ -38,7 +38,7 @@ func mediaLocalCompanionOwners(files []OrganizeFile) map[string][]string {
 	for _, file := range files {
 		switch file.MediaType {
 		case "subtitle":
-			owners[file.ID], _ = mediaOrganizeSubtitleCandidates(file, files, matcher)
+			owners[file.ID], _ = mediaOrganizeSubtitleCandidates(file, matcher)
 		case "attachment":
 			owner, longest, _ := mediaAttachmentVideo(file, files)
 			if owner >= 0 {
