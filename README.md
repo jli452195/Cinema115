@@ -5,54 +5,39 @@
 <h1 align="center">Cinema115</h1>
 
 <p align="center">
-  围绕 115 网盘的 STRM 生成、下载整理与动漫订阅工具。<br>
-  支持 Emby 原文件直链播放，日常操作通过网页完成。
+  从 115 分享与 STRM，到动漫订阅、下载整理和 Emby 原文件直链播放。<br>
+  网页管理，一个 Docker 容器部署，支持 amd64 / arm64。
 </p>
 
 <p align="center">
   <a href="https://github.com/jli452195/Cinema115/releases/latest"><img src="https://img.shields.io/github/v/release/jli452195/Cinema115?style=flat-square&amp;label=Version&amp;color=2563eb" alt="最新正式版本"></a>
   <a href="https://jli452195.github.io/Cinema115/"><img src="https://img.shields.io/badge/Wiki-%E5%9C%A8%E7%BA%BF%E6%96%87%E6%A1%A3-2563eb?style=flat-square&amp;logo=vitepress&amp;logoColor=white" alt="Wiki 在线文档"></a>
   <a href="https://hub.docker.com/r/jli452195/cinema115"><img src="https://img.shields.io/badge/Docker-Hub-2496ed?style=flat-square&amp;logo=docker&amp;logoColor=white" alt="Docker Hub 镜像"></a>
-  <a href="https://github.com/jli452195/Cinema115"><img src="https://img.shields.io/badge/GitHub-%E9%A1%B9%E7%9B%AE%E6%BA%90%E7%A0%81-475569?style=flat-square&amp;logo=github&amp;logoColor=white" alt="GitHub 项目源码"></a>
 </p>
 
-## 界面预览
-
-浏览电影、剧集与动漫，按地区、年份和类型筛选，并查看 Emby 入库状态。
-
-![日本动漫浏览页](docs/site/public/screenshots/anime-library.webp)
-
-<details>
-<summary>查看动漫订阅与 115 网盘界面</summary>
-
-### 动漫订阅
-
-从 AniBT、蜜柑或 AnimeGarden 选择番剧与字幕组，预览匹配结果和整理后的文件名。
-
-![动漫订阅日历](docs/site/public/screenshots/anime-calendar.webp)
-
-### 115 网盘
-
-集中管理分享 STRM、云下载、下载整理与目录分享。
-
-![115 网盘功能入口](docs/site/public/screenshots/drive-overview.webp)
-
-</details>
+<p align="center">
+  <a href="https://jli452195.github.io/Cinema115/guide/installation">安装部署</a> ·
+  <a href="https://jli452195.github.io/Cinema115/anime/">动漫订阅教程</a> ·
+  <a href="https://jli452195.github.io/Cinema115/guide/appearance">界面与主题</a> ·
+  <a href="https://github.com/jli452195/Cinema115/issues">问题反馈</a>
+</p>
 
 ## 核心功能
 
-- **115 分享与 STRM**：从分享链接或网盘目录生成 STRM，支持转存再分享与配套字幕。
-- **下载与整理**：提交磁力或 ED2K 云下载，结合 TMDB 资料预览、校正命名并整理到目标目录。
-- **动漫 RSS 订阅**：按字幕组订阅，自动下载与重命名整理，支持缺集补齐和齐集归档。
-- **影视浏览与资源搜索**：浏览 TMDB 影视资料，在详情页使用已配置的资源站点、Telegram Bot 或频道搜索资源。
-- **Emby 直链播放**：通过 302 反代获取原文件直链，支持主网盘、用户个人网盘和动态小号池。
-- **用户与播放管理**：普通用户通过 Emby 登录个人中心，管理员管理邀请、播放子账号及播放会话。
+| 功能 | 可以做什么 |
+| --- | --- |
+| **115 分享与 STRM** | 从分享链接或网盘目录生成 STRM，支持转存再分享与配套字幕。 |
+| **动漫 RSS 订阅** | 从 AniBT、蜜柑或 AnimeGarden 选择番剧与字幕组，按规格筛选，自动下载、重命名整理与齐集归档。 |
+| **集号核对与命名** | 结合 Bangumi 与 TMDB 核对篇章，预览季集对应与文件名，支持偏移、自定义集号正则和备用 RSS。 |
+| **云下载与整理** | 提交磁力或 ED2K 云下载，结合 TMDB 资料预览、校正命名并整理到目标目录。 |
+| **影视浏览与搜索** | 浏览电影、剧集与动漫，查看 Emby 入库状态；通过已配置的资源站点、Telegram Bot 或频道搜索资源。 |
+| **Emby 与用户管理** | 原文件直链播放，支持主网盘、用户个人网盘和动态小号池；提供 Emby 个人中心，以及管理员使用的邀请、播放子账号与会话管理。 |
 
-动漫订阅可独立用于下载和整理。Emby 播放遵守 Emby 权限，仅支持原文件，不提供转码或重新封装。
+动漫订阅可独立用于下载和整理，无需先配置 Emby。Emby 播放遵守实时 Emby 授权，仅支持原文件直链，不进行转码或重新封装。
 
 ## 快速开始
 
-推荐在 Linux NAS 上使用 Docker Compose 部署。镜像为 `jli452195/cinema115`，支持 `amd64` 和 `arm64`，一个容器同时提供网页与 API。
+推荐在 Linux NAS 上使用 Docker Compose 部署。镜像为 `jli452195/cinema115`，一个容器同时提供网页与 API，默认管理端口为 `8115`。
 
 1. 从 [最新正式版](https://github.com/jli452195/Cinema115/releases/latest) 下载附件 `compose.yaml`，放进部署目录。
 2. 填写管理员账号、密码、随机 `JWT_SECRET` 和 TMDB API Key，修改 NAS 挂载路径及运行用户 UID/GID。提前创建 `data` 和媒体库挂载目录，并授予该 UID/GID 读写权限。
@@ -64,11 +49,50 @@
    docker compose up -d
    ```
 
-打开 `http://NAS_IP:8115`，使用配置的管理员账号登录，在「115 网盘 → 115 助手」创建并登录主账号，再设置所需功能的目录。
+打开 `http://NAS_IP:8115`，使用配置的管理员账号登录。在「115 网盘 → 115 助手」创建并登录主账号，再设置所需功能的目录。
+
+想先体验追番，可以接着按 [AniBT 订阅入门](https://jli452195.github.io/Cinema115/anime/) 配置下载与整理目录、选择字幕组、核对季集命名并保存订阅。
 
 Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。完整操作见 [Docker 部署](https://jli452195.github.io/Cinema115/guide/installation)。
 
 更新和迁移时保留原 `JWT_SECRET` 与运行数据，按照 [更新与备份](https://jli452195.github.io/Cinema115/guide/upgrade) 操作。
+
+## 界面预览
+
+**动漫订阅**：按季度、星期与资源站点浏览番剧，进入条目选择字幕组和资源规格。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/screenshots/anime-calendar-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/site/public/screenshots/anime-calendar-light.webp">
+  <img src="docs/site/public/screenshots/anime-calendar-light.webp" alt="动漫订阅目录：资源站点、季度、星期与番剧列表" width="960">
+</picture>
+
+<details>
+<summary>查看影视浏览与 115 网盘界面</summary>
+
+### 影视浏览
+
+按地区、年份和类型筛选电影、剧集与动漫，查看海报、评分和 Emby 入库状态。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/screenshots/anime-library-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/site/public/screenshots/anime-library-light.webp">
+  <img src="docs/site/public/screenshots/anime-library-light.webp" alt="日本动漫浏览页：筛选、海报与入库状态" width="960">
+</picture>
+
+### 115 网盘
+
+从功能总览进入分享 STRM、网盘 STRM、云下载或目录监控等工具。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/screenshots/drive-overview-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/site/public/screenshots/drive-overview-light.webp">
+  <img src="docs/site/public/screenshots/drive-overview-light.webp" alt="115 网盘功能总览" width="960">
+</picture>
+
+</details>
+
+截图使用 WebP，并按深浅主题选择对应图片。[在线 Wiki](https://jli452195.github.io/Cinema115/guide/appearance) 可查看轮播预览、体验主题切换动效。
 
 ## 使用文档
 
@@ -77,6 +101,8 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 | [开始使用](https://jli452195.github.io/Cinema115/guide/) | 安装、首次登录与功能配置顺序。 |
 | [115 账号配置](https://jli452195.github.io/Cinema115/guide/accounts) | 主账号、小号与用户个人网盘的用途。 |
 | [动漫订阅](https://jli452195.github.io/Cinema115/anime/) | 选择来源、字幕组、集号映射、整理与归档。 |
+| [匹配规则与命名](https://jli452195.github.io/Cinema115/anime/rules-and-naming) | 资源规格、备用 RSS、Bangumi 与 TMDB 对应、集数偏移和预览。 |
+| [订阅管理与故障排查](https://jli452195.github.io/Cinema115/anime/management) | 下载记录、整理进度、归档与通知。 |
 | [更新与备份](https://jli452195.github.io/Cinema115/guide/upgrade) | 镜像更新、运行数据备份与恢复。 |
 | [常见问题](https://jli452195.github.io/Cinema115/faq/) | 页面访问、路径权限与播放问题排查。 |
 
