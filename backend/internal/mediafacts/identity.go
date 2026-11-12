@@ -128,7 +128,8 @@ func ParseIdentity(name string, parents ...string) Identity {
 		}
 		// Reuse the release parser's ambiguity checks. Bare numbers in film
 		// names are retained unless the file has credible episode context.
-		if !identityMovie.MatchString(value) {
+		// 明确编号已提供截断位置，不能再用相同数字截掉编号前的正式片名。
+		if !identityMovie.MatchString(value) && !identityEpisode.MatchString(value) {
 			parsed, err := releaseparse.Title(value)
 			if err == nil && parsed.Kind == "episode" && identityBareEpisode.MatchString(parsed.RawEpisode) && (tvContext || year == nil && strings.HasPrefix(parsed.RawEpisode, "0")) {
 				if start := strings.LastIndex(value[:end], parsed.RawEpisode); start > 0 {

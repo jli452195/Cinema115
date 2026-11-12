@@ -7,7 +7,7 @@ func mediaOrganizeFileNumbering(file *OrganizeFile) {
 	if file.MediaType != "video" {
 		return
 	}
-	facts := mediafacts.ParseFilename(file.Name)
+	facts := mediaOrganizeFilenameFacts(file.Name)
 	file.filenameFacts = &facts
 	claim := facts.Coordinate
 	if claim.Found {

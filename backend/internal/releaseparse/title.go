@@ -67,6 +67,20 @@ func Title(title string) (Result, error) {
 
 // TitleForChapter 仅在已确认的特别篇篇章中忽略名称描述，保留特殊编号和歧义证据。
 func TitleForChapter(title string, specialChapter bool) (Result, error) {
+	return parseTitleForChapter(title, specialChapter, nil)
+}
+
+// EpisodePrefix 只返回唯一普通集号之前的原文，不改变编号判定或持久化结构。
+func EpisodePrefix(title string) (string, bool) {
+	var start int
+	parsed, err := parseTitleForChapter(title, false, &start)
+	if err != nil || parsed.Kind != "episode" || start <= 0 {
+		return "", false
+	}
+	return title[:start], true
+}
+
+func parseTitleForChapter(title string, specialChapter bool, episodeStart *int) (Result, error) {
 	out := Result{SchemaVersion: SchemaVersion, Kind: "unknown"}
 	if !validText(title, 1024) || strings.TrimSpace(title) == "" {
 		return out, ErrInput
@@ -249,6 +263,9 @@ func TitleForChapter(title string, specialChapter bool) (Result, error) {
 	if out.Kind == "episode" {
 		n := best.episode
 		out.Episode = &n
+		if episodeStart != nil {
+			*episodeStart = best.start
+		}
 	}
 	return out, nil
 }

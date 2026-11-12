@@ -7,9 +7,41 @@ import (
 	"strings"
 
 	"strm115/backend/internal/mediafacts"
+	"strm115/backend/internal/releaseparse"
 )
 
 var mediaIdentityNumberTail = regexp.MustCompile(`(?i)(?:^|[ ._-])([0-9]{1,4})(?:\s*v[0-9]{1,3})?(?:[ ._-]+(?:END|FIN|完结|完結|完))*[ ._-]*$`)
+var mediaIdentityDescriptionTag = regexp.MustCompile(`\[(?:原创|原創|主线|主線)\]|【(?:原创|原創|主线|主線)】`)
+
+// 描述词表只影响自动整理的作品身份；位于集号前的片名及方括号编号均保留。
+func mediaOrganizeFilenameFacts(name string) mediafacts.FilenameFacts {
+	facts := mediafacts.ParseFilename(name)
+	stem := strings.TrimSuffix(name, path.Ext(name))
+	matches := mediaIdentityDescriptionTag.FindAllStringIndex(stem, -1)
+	if len(matches) == 0 {
+		return facts
+	}
+	parsed, err := releaseparse.Title(stem)
+	if err != nil || parsed.Kind != "episode" || parsed.Episode == nil {
+		return facts
+	}
+	var cleaned strings.Builder
+	start := 0
+	for _, match := range matches {
+		prefix, err := releaseparse.Title(stem[:match[0]])
+		if err != nil || prefix.Kind != "episode" || prefix.Episode == nil || *prefix.Episode != *parsed.Episode {
+			continue
+		}
+		cleaned.WriteString(stem[start:match[0]])
+		start = match[1]
+	}
+	if start != 0 {
+		cleaned.WriteString(stem[start:])
+		// 坐标、特殊集及冲突仍使用原文事实，不因忽略描述标签改变编号。
+		facts.Identity = mediafacts.ParseFilename(cleaned.String() + ".mediafacts").Identity
+	}
+	return facts
+}
 
 // 日志上下文只包含结果与定位字段，不保存候选或阶段历史。
 type MediaRecognitionLogDetails struct {
@@ -45,13 +77,31 @@ func mediaEntryWaiting(entry MediaOrganizeEntry) bool {
 	return entry.Status != "done" && entry.Status != "retained" && (entry.P115Move != nil || entry.Failure != nil && entry.Failure.State == "moving" || entry.AttachmentKeep != nil && entry.AttachmentKeep.Phase == "recycling" || entry.VideoID != "" && entry.ResultCode == "WAITING_MAIN_FILE")
 }
 
-func mediaIdentityEndsWithEpisode(name string, episode int) bool {
-	match := mediaIdentityNumberTail.FindStringSubmatch(name)
+func mediaIdentityHasBareEpisode(identity mediafacts.Identity, file OrganizeFile) bool {
+	match := mediaIdentityNumberTail.FindStringSubmatch(identity.Name)
 	if match == nil {
 		return false
 	}
 	number, err := strconv.Atoi(match[1])
-	return err == nil && number == episode
+	if err != nil || number != file.Episode {
+		return false
+	}
+	facts := file.filenameFacts
+	if facts == nil {
+		parsed := mediafacts.ParseFilename(file.Name)
+		facts = &parsed
+	}
+	if facts.Coordinate.Found {
+		return false
+	}
+	stem := strings.TrimSuffix(file.Name, path.Ext(file.Name))
+	prefix, ok := releaseparse.EpisodePrefix(stem)
+	if !ok {
+		return false
+	}
+	// 必须对应原文件中的发布编号，不能把坐标或破折号前的正式数字片名再次截短。
+	base := mediafacts.ParseFilename(prefix + ".mediafacts").Identity.Name
+	return mediafacts.NameKey(base) == mediafacts.NameKey(mediaIdentityEpisodeBase(identity.Name))
 }
 
 func mediaIdentityEpisodeBase(name string) string {
@@ -68,6 +118,29 @@ func mediaIdentityNumberedTitle(name string) string {
 		return name
 	}
 	return strings.TrimRight(name[:match[3]], " ._-")
+}
+
+// 裸数字只有在同作品的剧集证据成立后才从片名中剥离，避免误改数字电影名。
+func mediaResolveEpisodeIdentity(identity mediafacts.Identity, file *OrganizeFile, contexts map[string]bool) mediafacts.Identity {
+	if identity.Conflict != "" || identity.Kind == "movie" {
+		return identity
+	}
+	if mediaIdentityHasBareEpisode(identity, *file) {
+		base := mediaIdentityEpisodeBase(identity.Name)
+		if identity.Kind == "tv" || contexts[file.ParentID+":"+mediafacts.NameKey(base)] {
+			identity.Name, identity.NameSource = base, "directory:numbering"
+			identity.Kind, identity.KindSource = "tv", "directory:numbering"
+		} else {
+			identity.Name = mediaIdentityNumberedTitle(identity.Name)
+			file.Episode, file.EndEpisode = 0, 0
+		}
+	} else {
+		identity.Kind = "tv"
+		if identity.KindSource == "" {
+			identity.KindSource = "filename:numbering"
+		}
+	}
+	return identity
 }
 
 // 同目录已明确的发布编号可补强其余集号，单独的数字片名仍保留电影解释。
@@ -99,15 +172,20 @@ func mediaScanIdentities(run *MediaOrganizeRun, entries []MediaOrganizeEntry) (m
 		if entry.File.filenameFacts != nil {
 			facts = *entry.File.filenameFacts
 		} else {
-			facts = mediafacts.ParseFilename(entry.File.Name)
+			facts = mediaOrganizeFilenameFacts(entry.File.Name)
 		}
 		identity := mediafacts.ResolveFilenameIdentity(facts, ctx)
 		if directoryErrors[directory] != nil {
 			identity.Conflict = "DIRECTORY_CONTEXT_INVALID"
 		}
 		identities[entry.File.ID] = identity
-		if mediaOrganizeHasNumbering(entry.File) && identity.Kind != "movie" && !mediaIdentityEndsWithEpisode(identity.Name, entry.File.Episode) {
+		if identity.Conflict != "" || identity.Kind == "movie" {
+			continue
+		}
+		if mediaOrganizeHasNumbering(entry.File) && !mediaIdentityHasBareEpisode(identity, entry.File) {
 			contexts[entry.File.ParentID+":"+mediafacts.NameKey(identity.Name)] = true
+		} else if mediaOrganizeHasNumbering(entry.File) && identity.Kind == "tv" {
+			contexts[entry.File.ParentID+":"+mediafacts.NameKey(mediaIdentityEpisodeBase(identity.Name))] = true
 		} else if entry.File.Episode > 0 && identity.Kind == "" {
 			key := entry.File.ParentID + ":" + mediafacts.NameKey(mediaIdentityEpisodeBase(identity.Name))
 			if weakNumbers[key] == nil {

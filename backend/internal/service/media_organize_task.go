@@ -106,6 +106,23 @@ func (s *MediaOrganizer) RetryContext(ctx context.Context, id string, input Medi
 				}
 			}
 			group := run.Groups[old]
+			// 未匹配的旧失败重试时，按当前词表重建片名；已选作品和未确认写入保持原计划。
+			if group.TMDBID == 0 && group.Identity.Kind != "movie" && group.Identity.Conflict == "" && video.P115Move == nil &&
+				(video.Failure == nil || video.Failure.State != "moving") && mediaIdentityDescriptionTag.MatchString(video.File.Name) {
+				identities, contexts := mediaScanIdentities(run, run.Entries)
+				inferred := video.File
+				identity := identities[inferred.ID]
+				if mediaOrganizeHasNumbering(inferred) {
+					identity = mediaResolveEpisodeIdentity(identity, &inferred, contexts)
+				}
+				if identity.Name != group.Identity.Name && identity.Conflict == "" {
+					group.Identity.Name, group.Identity.NameSource = identity.Name, identity.NameSource
+					group.Identity.Kind, group.Identity.KindSource = identity.Kind, identity.KindSource
+					if !video.File.EpisodeExplicit && input.Episode == nil {
+						video.File.Episode, video.File.EndEpisode = inferred.Episode, inferred.EndEpisode
+					}
+				}
+			}
 			group.ID = "task:" + input.FileID
 			if input.Season != nil {
 				group.Identity.Season, group.Identity.SeasonExplicit = *input.Season, true

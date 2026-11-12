@@ -159,22 +159,7 @@ func mediaAppendScanEntries(run *MediaOrganizeRun, entries []MediaOrganizeEntry)
 		}
 		identity := identities[e.File.ID]
 		if mediaOrganizeHasNumbering(e.File) {
-			// 片名仍保留尾部数字时，该数字只是弱编号，不能把电影强制改为剧集。
-			if identity.Kind == "" && mediaIdentityEndsWithEpisode(identity.Name, e.File.Episode) {
-				base := mediaIdentityEpisodeBase(identity.Name)
-				if episodeContexts[e.File.ParentID+":"+mediafacts.NameKey(base)] {
-					identity.Name, identity.NameSource = base, "directory:numbering"
-					identity.Kind, identity.KindSource = "tv", "directory:numbering"
-				} else {
-					identity.Name = mediaIdentityNumberedTitle(identity.Name)
-					e.File.Episode, e.File.EndEpisode = 0, 0
-				}
-			} else if identity.Kind != "movie" {
-				identity.Kind = "tv"
-				if identity.KindSource == "" {
-					identity.KindSource = "filename:numbering"
-				}
-			}
+			identity = mediaResolveEpisodeIdentity(identity, &e.File, episodeContexts)
 			if e.File.Season == 0 {
 				identity.Season, identity.SeasonExplicit = 0, true
 			}
