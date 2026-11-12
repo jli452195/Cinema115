@@ -44,14 +44,21 @@ func registerAnimeNaming(r *gin.RouterGroup, s *service.AnimeAdminService) {
 		}
 		names := []string{in.Keyword}
 		if in.Keyword == "" {
-			v, err := s.Discovery.Subject(c.Request.Context(), in.BangumiID)
-			if err != nil {
-				animeError(c, err)
-				return
+			// Bangumi 暂时不可用时仍可使用社区的精确作品关联。
+			if s.Discovery != nil {
+				v, err := s.Discovery.Subject(c.Request.Context(), in.BangumiID)
+				if err == nil {
+					names = []string{v.Subject.Title, v.Subject.OriginalTitle}
+				}
 			}
-			names = []string{v.Subject.Title, v.Subject.OriginalTitle}
 		}
-		v, err := s.Naming.Search(c.Request.Context(), names...)
+		var v service.AnimeNamingSearch
+		var err error
+		if in.Keyword == "" {
+			v, err = s.Naming.SearchSubject(c.Request.Context(), in.BangumiID, names...)
+		} else {
+			v, err = s.Naming.Search(c.Request.Context(), names...)
+		}
 		if err != nil {
 			animeError(c, err)
 			return
@@ -67,6 +74,8 @@ func registerAnimeNaming(r *gin.RouterGroup, s *service.AnimeAdminService) {
 			animeError(c, storage.ErrAnimeCapability)
 			return
 		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 50*time.Second)
+		defer cancel()
 		date := ""
 		var names []string
 		if in.BangumiID != "" {
@@ -74,15 +83,17 @@ func registerAnimeNaming(r *gin.RouterGroup, s *service.AnimeAdminService) {
 				animeError(c, storage.ErrAnimeInvalid)
 				return
 			}
-			v, err := s.Discovery.Subject(c.Request.Context(), in.BangumiID)
-			if err != nil {
-				animeError(c, err)
-				return
+			// 篇章资料只提供推荐线索，不阻断用户手动选择 TMDB 作品或季。
+			if s.Discovery != nil {
+				v, err := s.Discovery.Subject(ctx, in.BangumiID)
+				if err == nil {
+					date = v.Subject.Date
+					names = []string{v.Subject.Title, v.Subject.OriginalTitle}
+				}
 			}
-			date = v.Subject.Date
-			names = []string{v.Subject.Title, v.Subject.OriginalTitle}
 		}
-		v, err := s.Naming.Target(c.Request.Context(), in, date, names...)
+		discovery, _ := s.Discovery.(service.AnimeEpisodeDiscovery)
+		v, err := s.Naming.TargetWithChapters(ctx, discovery, in, date, names...)
 		if err != nil {
 			animeError(c, err)
 			return

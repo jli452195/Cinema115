@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { invalidateAnimeSubscriptions } from './useAnimeSubscriptionBrowser'
 import { useAnimeNaming } from './useAnimeNaming'
+import { firstAnimeSourceOffset } from '../utils/animeEpisodeMapping'
 import { portalUser } from './usePortalAuth'
 import { AnimeDiscoveryError, cachedAnime, requestAnime } from './useAnimeDiscovery'
 import { animeCatalogItemSnapshot, requestMikanCatalogEntry } from './useAnimeCatalog'
@@ -35,6 +36,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     return JSON.stringify({ archiveTotal: archiveTotal.value, naming: naming.signature.value, removed: removed.value, sources: sources.value.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))) })
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
+  watch(naming.signature, () => { for (const source of sources.value) source.mappingNotice = '' })
   const submittedSources = computed(() => sources.value.filter(s => s.role === 'main' || s.id || s.itemId || s.groupId))
   const resumesArchived = computed(() => local.value?.status === 'archived' && submittedSources.value.some(source =>
     source.runWhenEnabled && !local.value?.sources.some(prior => prior.id === source.id && prior.runWhenEnabled)))
@@ -175,6 +177,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   function addSource(source: SourceForm) {
     if (locked.value || previewBusy.value || sources.value.length >= 5 || source.role !== 'standby' || !animeSourceReady(source)) return
     cancelSourceEdit(source); source.searchBusy = false; source.sampleBusy = false
+    if (!source.mappingManual) applyFirstOffset(source)
     sources.value.push(source); activeRef.value = source.ref
   }
   function removeSource(source: SourceForm) {
@@ -227,6 +230,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       searchBusy: false, sampleBusy: false, id: changed ? '' : source.id, revision: changed ? 0 : source.revision,
       lockedItem: !changed && source.lockedItem, lockedGroup: !changed && source.lockedGroup }
     if (!changed) Object.assign(next, { preview: source.preview })
+    if (changed || !source.id && !source.mappingManual) applyFirstOffset(next)
     sources.value[position] = next; activeRef.value = next.ref
     if (!local.value && subject.value?.bangumiUnavailable && next.role === 'main' && next.entry) {
       const refreshNaming = subject.value.needsSource || subject.value.title !== next.entry.title && !naming.wasManuallyChanged()
@@ -235,9 +239,14 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
       if (refreshNaming) { naming.reset(); void naming.search(true) }
     }
   }
+  function applyFirstOffset(source: SourceForm) {
+    const result = firstAnimeSourceOffset(source, naming.target.value, naming.chapterMapping.value)
+    if (result.offset != null) source.mappingOffset = String(result.offset)
+    source.mappingNotice = result.message
+  }
   function resetRules(source: SourceForm) {
     sampleControllers.get(source.ref)?.abort()
-    Object.assign(source, { mappingOffset: '0', confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '0', exclude: '', preview: undefined, previewError: '' })
+    Object.assign(source, { mappingOffset: '0', mappingManual: false, mappingNotice: '', confirmed: false, confirmedFor: '', review: undefined, templateChosen: false, match: '', episodePattern: '', episodeGroup: '1', health: undefined, errorCode: undefined, ruleError: undefined, sample: undefined, sampleBusy: false, sampleError: '', sampleCooldown: 0, minimum: '0', exclude: '', preview: undefined, previewError: '' })
   }
   function groupChanged(source: SourceForm) {
     source.groupName = source.entry?.groups.find(item => item.id === source.groupId)?.name || ''; resetRules(source)

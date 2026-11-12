@@ -21,7 +21,7 @@ type Service struct {
 }
 
 var services = []Service{
-	{"tmdb", "TMDB"}, {"github", "GitHub 字幕库"}, {"mikan", "蜜柑"},
+	{"tmdb", "TMDB"}, {"github", "GitHub 数据与字幕库"}, {"mikan", "蜜柑"},
 	{"anibt", "AniBT"}, {"garden", "AnimeGarden"}, {"bangumi", "Bangumi"},
 	{"assrt", "射手网 Assrt"}, {"gying", "观影"}, {"woniu", "蜗牛"},
 	{"telegram_bot", "Telegram 机器人"},

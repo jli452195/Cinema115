@@ -219,6 +219,8 @@
 .ae-target-candidates > button { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px; text-align: left; border-radius: 10px; background: var(--ae-inset); }
 .ae-target-candidates strong { font-size: 12px; font-weight: 500; }.ae-target-candidates small { color: var(--ae-muted); font-size: 11px; }
 .ae-source-naming { margin-top: 0; }
+.ae-chapter-mapping { margin-top: 8px; }
+.ae-chapter-mapping strong { color: var(--ae-ink); font-weight: 600; }
 .ae-offset { max-width: 180px; }
 .ae-source-naming .ae-advanced > fieldset { display: grid; gap: 16px; padding-top: 12px; }
 @media (max-width: 639px) {

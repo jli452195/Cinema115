@@ -9,6 +9,7 @@ export interface SourceForm {
   keyword: string; searchedKeyword: string; search?: MikanSearch; entry?: MikanEntry; searchBusy: boolean; searchError: string; cooldown: number
   confirmed: boolean; confirmedFor: string; review?: AnimeBinding['review']
   mappingOffset: string
+  mappingManual?: boolean; mappingNotice?: string
   templateChosen: boolean; match: string; episodePattern: string; episodeGroup: string
   health?: string; errorCode?: string | null
   ruleError?: { field: string; message: string }

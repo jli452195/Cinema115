@@ -27,6 +27,7 @@ type EpisodeGroupSummary struct {
 }
 
 type EpisodeGroup struct {
+	CacheInfo
 	EpisodeGroupSummary
 	Seasons []SeasonDetail `json:"seasons"`
 }

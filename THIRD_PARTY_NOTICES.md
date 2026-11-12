@@ -7,6 +7,12 @@ ChenyangGao 的 `p115cipher 0.0.6`，原作者标注 GPLv3。
 
 项目运行不依赖 Python。测试向量由原实现离线生成，用于验证 Go 移植的一致性。
 
+## bangumi-data 交叉引用数据
+
+动漫订阅的 Bangumi → TMDB 作品关联使用 [bangumi-data](https://github.com/bangumi-data/bangumi-data)，由该项目的社区贡献者维护，数据采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) 许可。
+
+本项目运行时读取其公开 `dist/data.json`，按精确 Bangumi ID 提取并去重 TMDB TV 作品与季线索；不分发原始数据副本。章节对应建议由 Cinema115 根据 Bangumi 和 TMDB 资料另外推导，并非 bangumi-data 提供的逐集映射，也不表示上游项目为本项目背书。
+
 ## 蜜柑品牌素材
 
 `frontend/src/assets/mikan/` 的人物及 Mikan 字标来自 [Mikan Project](https://mikanani.me/)，用于标识蜜柑搜索的数据来源，不表示本站为蜜柑官方网站或获得其背书。

@@ -105,6 +105,12 @@ export interface AnimeSaveReceipt { id: string; entryId: string; revision: numbe
 export interface AnimeMappingSegment { first: number; last: number | null; sourceBase: number; targetSeason: number; targetBase: number }
 export interface AnimeMappingOverride { rawKind: 'episode' | 'special' | 'composite'; rawNumber: string; action: 'map' | 'ignore'; targetSeason: number; targetEpisode: number }
 export interface AnimeSourceMapping { sourceRef: string; segments: AnimeMappingSegment[]; overrides: AnimeMappingOverride[] }
+export interface AnimeEpisodeSuggestion {
+  status: 'verified' | 'partial' | 'unresolved' | 'conflict'
+  reason: string; season?: number; offset?: number; first?: number; last?: number
+  targetFirst?: number; targetLast?: number; matched: number; compared: number
+  pairs: { bangumiNumber: number; tmdbEpisode: number; date?: string; evidence: string }[]
+}
 export interface AnimeNamingTarget {
   tmdbId: string; title: string; originalTitle?: string; englishTitle?: string; year: string; groupId: string; groupName: string; season: number; fingerprint: string
   seasons: { number: number; name: string; date: string; episodeCount: number; episodes: { id: string; number: number; name: string; date?: string; sourceSeason: number; sourceNumber: number }[] | null }[]
@@ -113,4 +119,4 @@ export interface AnimeNamingInput { tmdbId: string; groupId: string; season: num
 export interface AnimeNamingPlan { schemaVersion: 1; target: AnimeNamingTarget; sources: AnimeSourceMapping[] }
 export interface AnimeOrganizationItem { id: string; kind: string; originalPath: string; targetPath: string; status: string; reason: string; error?: string; videoId?: string }
 export interface AnimeOrganizationPreview { mode: string; revision: number; items: AnimeOrganizationItem[]; cloudConflictChecked: boolean; ready?: number; needsReview?: number }
-export interface AnimeNamingCandidate { id: number; title: string; originalTitle: string; date: string }
+export interface AnimeNamingCandidate { id: number; title: string; originalTitle: string; date: string; season?: number }

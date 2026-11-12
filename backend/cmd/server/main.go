@@ -21,6 +21,7 @@ import (
 	"strm115/backend/internal/buildinfo"
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
+	"strm115/backend/internal/client/bangumidata"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
@@ -176,7 +177,7 @@ func main() {
 	animePreviews := &service.AnimePreviewService{Repository: database, Bindings: animeBindings}
 	cloudClient := p115.NewCloudClient()
 	downloadCoordinator := &service.CloudDownloadCoordinator{}
-	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService, Templates: database}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator, Logs: generationLogs}
+	animeAdmin := &service.AnimeAdminService{Store: database, Bindings: animeBindings, Previews: animePreviews, Discovery: animeDiscovery, Accounts: accounts, Directories: p115.NewShareClient(), Naming: &service.AnimeNamingService{Metadata: tmdbService, Templates: database, Links: bangumidata.New()}, Offline: cloudClient, SubmitGateway: cloudClient, DownloadCoordinator: downloadCoordinator, Logs: generationLogs}
 	httpapi.RegisterAnime(admin, animeAdmin)
 	animeDiscoveryRunner := &service.AnimeDiscoveryRunner{Admin: animeAdmin, Feeds: animeBindings}
 	animeAdmin.StatusGateway = cloudClient

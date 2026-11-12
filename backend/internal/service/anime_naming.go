@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"strm115/backend/internal/client/bangumidata"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
@@ -32,6 +33,11 @@ type AnimeNamingMetadata interface {
 type AnimeNamingService struct {
 	Metadata  AnimeNamingMetadata
 	Templates NamingTemplates
+	Links     AnimeNamingLinks
+}
+
+type AnimeNamingLinks interface {
+	Lookup(context.Context, string) (bangumidata.Result, error)
 }
 
 // These readers share the existing metadata cache, bypassing global numbering
@@ -89,7 +95,10 @@ func (s *TMDBService) AnimeGroup(ctx context.Context, id int, group string) (*tm
 	if !ok {
 		return nil, tmdb.ErrNotConfigured
 	}
-	v, _, err := cachedTMDB[tmdb.EpisodeGroup](ctx, s, "anime:group:"+strconv.Itoa(id)+":"+group, 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroup(ctx, id, group) })
+	v, info, err := cachedTMDB[tmdb.EpisodeGroup](ctx, s, "anime:group:"+strconv.Itoa(id)+":"+group, 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroup(ctx, id, group) })
+	if err == nil {
+		v.CacheInfo = info
+	}
 	return v, err
 }
 
@@ -181,6 +190,8 @@ func animeNameKey(s string) string {
 type AnimeNamingSearch struct {
 	Items         []tmdb.Item `json:"items"`
 	RecommendedID string      `json:"recommendedId"`
+	Source        string      `json:"source,omitempty"`
+	Notice        string      `json:"notice,omitempty"`
 }
 
 func (s *AnimeNamingService) Search(ctx context.Context, names ...string) (AnimeNamingSearch, error) {
@@ -351,11 +362,7 @@ func (s *AnimeNamingService) Target(ctx context.Context, in AnimeNamingTargetInp
 		if season == nil || len(season.Episodes) > 2000 {
 			return out, tmdb.ErrInput
 		}
-		episodes := make([]model.AnimeNamingEpisode, 0, len(season.Episodes))
-		for _, e := range season.Episodes {
-			episodes = append(episodes, model.AnimeNamingEpisode{ID: strconv.Itoa(e.ID), Number: e.Number, Name: e.Name, Date: e.Date, SourceSeason: e.SourceSeason, SourceNumber: e.SourceNumber})
-		}
-		out.Seasons[i].Episodes = episodes
+		out.Seasons[i].Episodes = animeNamingEpisodes(season.Episodes)
 	}
 	if !found {
 		return out, tmdb.ErrNotFound

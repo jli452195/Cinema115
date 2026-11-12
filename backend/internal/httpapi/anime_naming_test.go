@@ -47,6 +47,8 @@ func TestAnimeNamingReadOnlyRoutesAndAuthorization(t *testing.T) {
 	if len(fingerprint) != 64 || target["year"] != "2021" {
 		t.Fatal(target)
 	}
+	// 推导只供界面展示；前端必须剥离后再传递严格校验的命名快照。
+	delete(target, "chapterMapping")
 	mapping := model.AnimeSourceMapping{SourceRef: "main", Segments: []model.AnimeMappingSegment{{First: 0, SourceBase: 0, TargetSeason: 2, TargetBase: 0}}}
 	body := map[string]any{"target": target, "mapping": mapping, "group": "字幕组", "items": []map[string]any{{"id": "release", "title": "动画 - 13 [1080p][SC_TC]", "parse": map[string]any{"kind": "episode", "episode": 13, "rawEpisode": "13"}}}}
 	for _, token := range []string{"", f.user} {
