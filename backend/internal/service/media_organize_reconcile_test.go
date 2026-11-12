@@ -122,14 +122,59 @@ type mediaReconcileDequeuedFaultStore struct {
 	mediaOrganizeStorage
 	queryErr, saveErr           error
 	queryFailures, saveFailures int
+	beforeQuery                 func()
+	queries                     int
 }
 
 func (s *mediaReconcileDequeuedFaultStore) LoadMediaOrganizeResolvedCandidates(ctx context.Context, ids []string) ([]storage.MediaOrganizeResolutionCandidate, error) {
+	s.queries++
+	if s.beforeQuery != nil {
+		s.beforeQuery()
+	}
 	if s.queryFailures > 0 {
 		s.queryFailures--
 		return nil, s.queryErr
 	}
 	return s.mediaOrganizeStorage.LoadMediaOrganizeResolvedCandidates(ctx, ids)
+}
+
+func TestMediaReconcileWorkerShutdown(t *testing.T) {
+	for _, scenario := range []string{"before-cleanup", "during-cleanup", "storage-error"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, _, _, rule := newMediaOrganizeTest(t)
+			mediaTestFile(t, rule.Source, "Work.S01E01.strm", "原文件")
+			if _, err := s.Start(rule.ID); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			fault := &mediaReconcileDequeuedFaultStore{mediaOrganizeStorage: s.db, beforeQuery: cancel}
+			s.db = fault
+			var expected error
+			if scenario == "before-cleanup" {
+				cancel()
+			} else if scenario == "storage-error" {
+				expected = errors.New("模拟收尾查询存储故障")
+				fault.queryErr, fault.queryFailures = expected, 1
+			}
+			run, action, found := s.takeQueuedRunLocked()
+			if !found {
+				t.Fatal("未取到排队任务")
+			}
+			if err := s.processQueuedRun(ctx, run, action); !errors.Is(err, expected) {
+				t.Fatal("正常停机不返回取消错误，独立存储故障仍须返回", err)
+			}
+			if s.active != "" || len(s.inFlight) != 0 || scenario == "before-cleanup" && fault.queries != 0 {
+				t.Fatal("停机应释放执行占用，已取消时不启动收尾查询", s.active, fault.queries)
+			}
+			if scenario != "before-cleanup" {
+				task, err := s.Task(run.ID, "Work.S01E01.strm")
+				if err != nil || task.Status != "done" {
+					t.Fatal("收尾取消不能改变已保存成功结果", task, err)
+				}
+			}
+		})
+	}
 }
 
 func (s *mediaReconcileDequeuedFaultStore) SaveMediaOrganize(ctx context.Context, settings string, updates []storage.MediaOrganizeRunRow, removed []string) error {

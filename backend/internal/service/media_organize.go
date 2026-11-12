@@ -745,8 +745,12 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 			}
 		}
 		delete(s.stopping, run.ID)
-		if result == nil {
+		if result == nil && ctx.Err() == nil {
 			result = s.reconcileResolvedFailuresLocked(ctx, []string{run.ID})
+			// 停机也可能发生在查询途中；只忽略本次上下文取消，真实存储错误仍向上传递。
+			if ctx.Err() != nil && errors.Is(result, ctx.Err()) {
+				result = nil
+			}
 		}
 		s.releaseHistoryLocked()
 		s.historyChangedLocked()

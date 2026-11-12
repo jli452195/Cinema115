@@ -298,8 +298,15 @@ func TestMediaResultUnselectedEmptyTaskKeepsSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before.Tasks) != 2 || len(after.Tasks) != 1 || after.Tasks[0].FileID != "b" || before.Tasks[1] != after.Tasks[0] {
+	if len(before.Tasks) != 2 || len(after.Tasks) != 2 || before.Tasks[1] != after.Tasks[1] {
 		t.Fatal("重试当前任务改变了空消息兄弟任务", before, after)
+	}
+	if after.Tasks[0].FileID != "a" || after.Tasks[0].Group != "failed" {
+		t.Fatal("选中任务必须保留内部失败索引，供出队前协调旧成功", after)
+	}
+	tasks := mediaTasks(run)
+	if tasks[0].Status != "running" || tasks[1].Status != "failed" {
+		t.Fatal("实时摘要只能把选中任务显示为整理中", tasks)
 	}
 }
 
