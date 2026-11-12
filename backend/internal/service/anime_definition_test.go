@@ -82,6 +82,53 @@ func TestAnimeDefinitionSavesWithoutFirstEpisodeOrRSSReads(t *testing.T) {
 	}
 }
 
+func TestAnimeDefinitionFreezesSpecialChapterForPolling(t *testing.T) {
+	for _, special := range []bool{false, true} {
+		s, feed, in := newAnimeDefinitionService(t)
+		ctx := context.Background()
+		entry, err := s.Store.GetAnimeEntry(ctx, in.Config.Entry.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if special {
+			entry.OriginalTitle = "わたしの幸せな結婚 特別篇"
+			if _, err := s.Store.SaveAnimeEntry(ctx, entry); err != nil {
+				t.Fatal(err)
+			}
+		}
+		in.Config.Sources[0].Rules.SpecialChapter = !special
+		read := feed.read
+		feed.read = func(ctx context.Context, input mikan.SourceRequest) (mikan.SourcePage, error) {
+			p, err := read(ctx, input)
+			for i := range p.Releases {
+				p.Releases[i].Title = "[组] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 30 [1080p]"
+			}
+			return p, err
+		}
+		receipt, err := s.SaveDefinition(ctx, "admin", "special_chapter_01", "", in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runner := AnimeDiscoveryRunner{Admin: s, Feeds: s.Bindings}
+		if err := runner.PollOnce(ctx); err != nil {
+			t.Fatal(err)
+		}
+		sub, err := s.Store.GetAnimeSubscription(ctx, receipt.ID, false)
+		if err != nil || sub.Sources[0].Rules.SpecialChapter != special {
+			t.Fatal("篇章解析设置未保存", sub, err)
+		}
+		page, err := s.Store.ListAnimeReleases(ctx, storage.AnimeReleaseFilter{SourceID: sub.Sources[0].ID, Page: 1, PageSize: 20})
+		if err != nil || len(page.Items) == 0 {
+			t.Fatal("未读取发布", page, err)
+		}
+		for _, row := range page.Items {
+			if (row.Decision.Snapshot.Parse.Kind == "episode") != special || row.Decision.Snapshot.Rules.SpecialChapter != special {
+				t.Fatal("后台轮询未沿用已保存的篇章解析", row.Decision)
+			}
+		}
+	}
+}
+
 func TestAnimeDefinitionArchivedEditAndNewSubtitleGroup(t *testing.T) {
 	s, feed, in := newAnimeDefinitionService(t)
 	ctx := context.Background()

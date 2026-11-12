@@ -49,6 +49,21 @@ func TestBatchTitleExclusionsDoNotFetchMetadata(t *testing.T) {
 	}
 }
 
+func TestMatchBatchFilesSpecialChapter(t *testing.T) {
+	binding := model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}
+	rules := model.AnimeRules{SchemaVersion: 1, MinimumEpisode: ptr(1), SpecialChapter: true}
+	files := []torrentmeta.File{{Path: "我的幸福婚姻 特别篇 - 01.mkv", Size: 1}, {Path: "我的幸福婚姻 特别篇 - 02.mkv", Size: 1}, {Path: "我的幸福婚姻 特别篇 - 03.mkv", Size: 1}, {Path: "我的幸福婚姻 特别篇 SP01.mkv", Size: 1}}
+	got, err := MatchBatchFiles(binding, rules, "我的幸福婚姻 特别篇 01-03", files)
+	if err != nil || len(got) != 3 {
+		t.Fatal("特别篇合集未按冻结规则选择文件", got, err)
+	}
+	for i, file := range got {
+		if file.Parse.Episode == nil || *file.Parse.Episode != i+1 {
+			t.Fatal(file)
+		}
+	}
+}
+
 func TestMatchBatchFilesRealMikanCollectionNames(t *testing.T) {
 	binding := model.AnimeBinding{SchemaVersion: 1, Confirmed: true, Scope: &model.AnimeScope{Kind: "feed"}, Review: &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}}
 	// File names confirmed from the three real Mikan torrents on 2026-10-26.

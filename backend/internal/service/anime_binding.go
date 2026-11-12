@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"strm115/backend/internal/anime/binding"
@@ -15,6 +16,14 @@ import (
 )
 
 var ErrAnimeBindingInput = errors.New("动漫篇章或来源确认参数无效")
+
+var animeSpecialChapterTitle = regexp.MustCompile(`(?i)特别篇|特別篇|\bspecials?\b`)
+
+// 只用已绑定的 Bangumi 资料识别独立特别篇，不由发布标题或浏览器声明开启。
+func animeSpecialChapter(entry model.AnimeEntry) bool {
+	return entry.BangumiID != nil && !entry.Metadata.BangumiUnavailable &&
+		(animeSpecialChapterTitle.MatchString(entry.Title) || animeSpecialChapterTitle.MatchString(entry.OriginalTitle))
+}
 
 type animeBindingEntries interface {
 	GetAnimeEntry(context.Context, string) (model.AnimeEntry, error)
@@ -380,11 +389,12 @@ func (s *AnimeBindingService) PreviewBinding(ctx context.Context, budget *AnimeS
 	out.RawCount, out.ObservedAt, out.Completeness = &read.RawCount, &observed, read.Completeness
 	out.Releases = make([]AnimeBindingRelease, 0, len(read.Releases))
 	profileIndexes := make(map[string]int, min(12, len(read.Releases)))
+	specialChapter := animeSpecialChapter(check.Entry)
 	for _, release := range read.Releases {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		parsed, err := releaseparse.Title(release.Title)
+		parsed, err := releaseparse.TitleForChapter(release.Title, specialChapter)
 		if err != nil {
 			return out, fmt.Errorf("parse anime binding example: %w", err)
 		}

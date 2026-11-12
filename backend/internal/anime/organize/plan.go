@@ -156,7 +156,7 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		}
 		subtitleVideos = append(subtitleVideos, mediafacts.SubtitleVideo{ID: e.ID, ParentID: e.ParentCID, Name: e.Name})
 		item := Item{ID: e.ID, Kind: "video", OriginalPath: original(e), Status: "needs_review", Reason: "unmapped"}
-		parsed, err := releaseparse.Title(e.Name)
+		parsed, err := releaseparse.TitleForChapter(e.Name, job.Snapshot.Decision.Rules.SpecialChapter)
 		if batch {
 			file, ok := selected[e.ID]
 			if !ok {

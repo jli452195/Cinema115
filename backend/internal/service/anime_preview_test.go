@@ -59,6 +59,41 @@ func servicePreviewRef(b preview.Batch, index int) storage.AnimePreviewRef {
 	return storage.AnimePreviewRef{BatchID: b.ID, SourceRef: s.Ref, PreviewID: s.ID, LoadRevision: s.LoadRevision}
 }
 
+func TestAnimePreviewSpecialChapterUsesTrustedBangumi(t *testing.T) {
+	for _, special := range []bool{false, true} {
+		s, feed, store, c, _ := previewService(t)
+		ctx := context.Background()
+		entry, err := store.GetAnimeEntry(ctx, c.Chapter.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if special {
+			entry.OriginalTitle = "わたしの幸せな結婚 特別篇"
+			entry, err = store.SaveAnimeEntry(ctx, entry)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Chapter.Revision = entry.Revision
+		}
+		c.Sources[0].Rules.SpecialChapter = !special // 故意提交相反声明，服务端应自行判定。
+		read := feed.read
+		feed.read = func(ctx context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+			p, err := read(ctx, in)
+			for i := range p.Releases {
+				p.Releases[i].Title = fmt.Sprintf("[组] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - %02d [1080p]", 30+i)
+			}
+			return p, err
+		}
+		out, err := s.Generate(ctx, "admin", AnimePreviewInput{Config: c, SourceRef: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out.Batch.Config.Sources[0].Rules.SpecialChapter != special || (out.Sources[0].MatchedCount == 2) != special {
+			t.Fatal("未按可信 Bangumi 篇章解析", special, out)
+		}
+	}
+}
+
 func TestAnimePreviewServiceCachedSnapshotAndServerMetadata(t *testing.T) {
 	s, f, _, c, at := previewService(t)
 	ctx := context.Background()

@@ -120,6 +120,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	for i := range in.Config.Sources {
 		v := &in.Config.Sources[i]
 		v.GroupName = nil // Never trust or fingerprint browser display metadata.
+		v.Rules.SpecialChapter = false
 		v.Rules, err = preview.NormalizeRules(v.Rules)
 		if err != nil {
 			var rule *model.AnimeRuleError
@@ -349,6 +350,7 @@ func (s *AnimeAdminService) saveConfiguration(ctx context.Context, actor, key, i
 	issues := make([]string, 0, model.AnimeMaxSources)
 	for i := range c.Sources {
 		v := &c.Sources[i]
+		v.Rules.SpecialChapter = animeSpecialChapter(entry)
 		if v.Binding.Confirmed {
 			v.Binding.Scope = &model.AnimeScope{Kind: "feed"}
 			v.Binding.ChapterCorrespondence = nil

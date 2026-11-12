@@ -132,6 +132,7 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 		ref.BangumiID, ref.EditionKey = c.Chapter.BangumiID, c.Chapter.EditionKey
 	}
 	missingSubject := false
+	specialChapter := false
 	if ref.ID != "" || ref.BangumiID != nil {
 		entry, _, err := s.Bindings.resolveEntry(ctx, ref, "")
 		missingSubject = ref.ID == "" && errors.Is(err, bangumi.ErrNotFound)
@@ -140,7 +141,11 @@ func (s *AnimePreviewService) Generate(ctx context.Context, actor string, in Ani
 		}
 		if !missingSubject {
 			c.Chapter.ID, c.Chapter.BangumiID, c.Chapter.EditionKey, c.Chapter.Revision = entry.ID, entry.BangumiID, entry.EditionKey, entry.Revision
+			specialChapter = animeSpecialChapter(entry)
 		}
+	}
+	for i := range c.Sources {
+		c.Sources[i].Rules.SpecialChapter = specialChapter
 	}
 	if err := s.Repository.CheckAnimePreviewConfig(ctx, c); err != nil {
 		return out, err

@@ -208,7 +208,7 @@ func (s *AnimeNamingService) TargetWithChapters(ctx context.Context, discovery A
 		}
 		others := make([]model.AnimeNamingSeason, 0, len(target.Seasons))
 		for _, season := range target.Seasons {
-			if season.Number > 0 && season.Number != target.Season {
+			if (season.Number > 0 || season.Number == 0 && hint == 0) && season.Number != target.Season {
 				others = append(others, season)
 			}
 		}
@@ -309,8 +309,8 @@ func animeLinkFirstEpisode(out AnimeEpisodeSuggestion, links bangumidata.Result,
 		}
 		return out
 	}
-	// 多章节推导未确定时可能存在跨季或多方案歧义，不用单点覆盖原结论。
-	if len(points) != 1 {
+	// 特别篇由精确首集链接定位；普通多章节仍不以单点覆盖原有歧义。
+	if len(points) != 1 && *link.Season != 0 {
 		return out
 	}
 	for _, season := range seasons {
@@ -327,7 +327,8 @@ func animeLinkFirstEpisode(out AnimeEpisodeSuggestion, links bangumidata.Result,
 			if episode.number != *link.Episode {
 				continue
 			}
-			dateMatch := chapter.dateOK && episode.dateOK && animeDateDistance(chapter.date, episode.date) <= 24*time.Hour && !animeDateHasAmbiguousMatch(chapter, points) && !animeDateHasAmbiguousMatch(episode, episodes)
+			// 同日连播的特别篇通过精确链接区分首集，日期仅用于核对该定位。
+			dateMatch := chapter.dateOK && episode.dateOK && animeDateDistance(chapter.date, episode.date) <= 24*time.Hour && (*link.Season == 0 || !animeDateHasAmbiguousMatch(chapter, points) && !animeDateHasAmbiguousMatch(episode, episodes))
 			titleMatch := false
 			for _, title := range chapter.titles {
 				if len(chapterTitles[title]) == 1 && len(episodeTitles[title]) == 1 && episodeTitles[title][0] == episode.number {

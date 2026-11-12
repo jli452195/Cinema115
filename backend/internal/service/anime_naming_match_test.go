@@ -186,3 +186,57 @@ func TestAnimeNamingLinkFirstEpisode(t *testing.T) {
 		}
 	})
 }
+
+type animeSpecialMetadata struct{ animeNamingFake }
+
+func (f *animeSpecialMetadata) AnimeDetails(context.Context, int) (*tmdb.Detail, error) {
+	return &tmdb.Detail{Item: tmdb.Item{ID: 196944, Title: "我的幸福婚姻", Date: "2023-07-05"}, Seasons: []tmdb.SeasonSummary{{Number: 0, Name: "特别篇", EpisodeCount: 4}, {Number: 1, Name: "第 1 季", EpisodeCount: 25, Date: "2023-07-05"}}}, nil
+}
+
+func (f *animeSpecialMetadata) AnimeSeason(_ context.Context, _ int, season int) (*tmdb.SeasonDetail, error) {
+	episodes := []tmdb.Episode{{ID: 100, Number: 1, Name: "第 1 集", Date: "2023-07-05"}}
+	if season == 0 {
+		episodes = []tmdb.Episode{{ID: 1, Number: 1, Name: "旧 OVA", Date: "2024-03-15"}}
+		for i := 2; i <= 4; i++ {
+			episodes = append(episodes, tmdb.Episode{ID: i, Number: i, Name: fmt.Sprintf("Special: Part %d", i-1), Date: "2026-10-25"})
+		}
+	}
+	return &tmdb.SeasonDetail{Number: season, Episodes: episodes}, nil
+}
+
+func TestAnimeNamingSpecialChapterUsesExactFirstEpisode(t *testing.T) {
+	ctx := context.Background()
+	season, episode := 0, 2
+	links := bangumidata.Result{Candidates: []bangumidata.Candidate{{TMDBID: "196944", Season: &season, Episode: &episode}}}
+	chapters := &animeChapterFake{items: []bangumi.Episode{{Number: 1, Title: "前編", Date: "2026-10-25"}, {Number: 2, Title: "中編", Date: "2026-10-25"}, {Number: 3, Title: "後編", Date: "2026-10-25"}}}
+	s := &AnimeNamingService{Metadata: &animeSpecialMetadata{}, Links: animeNamingLinkFake{result: links}}
+	in := AnimeNamingTargetInput{TMDBID: "196944", BangumiID: "551304"}
+	view, err := s.TargetWithChapters(ctx, chapters, in, "2026-10-25", "我的幸福婚姻 特别篇")
+	if err != nil || view.Season != 0 || view.ChapterMapping == nil || view.ChapterMapping.Status != "partial" || view.ChapterMapping.First != 1 || view.ChapterMapping.TargetFirst != 2 || view.ChapterMapping.Last != 1 || view.ChapterMapping.Matched != 1 || view.ChapterMapping.Offset != 1 {
+		t.Fatal("同日特别篇未按首集定位", view, err)
+	}
+	manual := 1
+	in.Season = &manual
+	view, err = s.TargetWithChapters(ctx, chapters, in, "2026-10-25")
+	if err != nil || view.Season != 1 || view.ChapterMapping.Season != 0 || view.ChapterMapping.TargetFirst != 2 {
+		t.Fatal("覆盖了用户手选目标季", view, err)
+	}
+	in.Season = nil
+	for _, test := range []struct {
+		name   string
+		links  bangumidata.Result
+		status string
+	}{
+		{"没有链接不推断特别篇", bangumidata.Result{}, "unresolved"},
+		{"日期冲突不采用链接", bangumidata.Result{Candidates: []bangumidata.Candidate{{TMDBID: "196944", Season: &season, Episode: bindingPtr(1)}}}, "conflict"},
+		{"不同首集链接有歧义", bangumidata.Result{Candidates: append(append([]bangumidata.Candidate(nil), links.Candidates...), bangumidata.Candidate{TMDBID: "196944", Season: &season, Episode: bindingPtr(3)})}, "conflict"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s.Links = animeNamingLinkFake{result: test.links}
+			view, err := s.TargetWithChapters(ctx, chapters, in, "2026-10-25")
+			if err != nil || view.Season != 1 || view.ChapterMapping.Status != test.status {
+				t.Fatal(view, err)
+			}
+		})
+	}
+}

@@ -179,6 +179,29 @@ func TestAnimeBindingPreviewExplainsActualPublisherRows(t *testing.T) {
 	}
 }
 
+func TestAnimeBindingSpecialChapterSample(t *testing.T) {
+	s, feed, bgm := bindingTestService()
+	bgm.result = &bangumi.SubjectResult{Subject: bangumi.Subject{Card: bangumi.Card{ID: "278826", Title: "我的幸福婚姻 特别篇"}}}
+	feed.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {
+		p := animeMikanFakePage(in)
+		if in.Kind == "entry" {
+			p.Entry.BangumiIDs = []string{"278826"}
+		} else {
+			p.Releases = []mikan.SourceRelease{{PostKey: fmt.Sprintf("%040x", 1), Title: "[ToonsHub] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 01 [1080p]"}}
+			p.RawCount = 1
+		}
+		return p, nil
+	}
+	in := bindingTestInput()
+	in.Binding.Scope = &model.AnimeScope{Kind: "feed"}
+	in.Binding.ChapterCorrespondence = nil
+	in.Binding.Review = &model.AnimeSourceReview{Method: "source_review", ItemID: "2259", GroupID: "45"}
+	got, err := s.PreviewBinding(context.Background(), animeMikanTestBudget(t, nil), in)
+	if err != nil || len(got.Releases) != 1 || got.Releases[0].Parse.Episode == nil || *got.Releases[0].Parse.Episode != 1 {
+		t.Fatal("来源样本未保留特别篇内的首集编号", got, err)
+	}
+}
+
 func TestAnimeBindingCheckDoesNotRequireSuccessfulRSS(t *testing.T) {
 	s, f, _ := bindingTestService()
 	f.read = func(_ context.Context, in mikan.SourceRequest) (mikan.SourcePage, error) {

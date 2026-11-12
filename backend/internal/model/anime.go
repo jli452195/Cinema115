@@ -66,6 +66,8 @@ type AnimeRules struct {
 	MinimumEpisode *int     `json:"minimumEpisode"`
 	EpisodePattern string   `json:"episodePattern,omitempty"`
 	EpisodeGroup   int      `json:"episodeGroup,omitempty"`
+	// SpecialChapter 由服务端根据 Bangumi 篇章生成，随规则冻结到下载任务。
+	SpecialChapter bool `json:"specialChapter,omitempty"`
 }
 
 type AnimeForm struct {

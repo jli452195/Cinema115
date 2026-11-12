@@ -65,6 +65,32 @@ func TestAnimeOrganizationZeroWithoutTMDBEpisode(t *testing.T) {
 	}
 }
 
+func TestAnimeOrganizationSpecialChapterFrozenRules(t *testing.T) {
+	job := planJob("[组] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 01.mkv", "[组] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 02.mkv", "[组] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 03.mkv")
+	// 文件名不能含路径分隔符；发布标题中的双语分隔在文件名中通常省略。
+	for i := 1; i < len(job.Files.Entries); i++ {
+		job.Files.Entries[i].Name = strings.ReplaceAll(job.Files.Entries[i].Name, " / ", " ")
+	}
+	job.Snapshot.Naming.Target.Season = 0
+	job.Snapshot.Naming.Target.Seasons[0].Number = 0
+	job.Snapshot.Naming.Sources[0].Segments = []model.AnimeMappingSegment{{First: 1, SourceBase: 1, TargetSeason: 0, TargetBase: 2}}
+	job.Snapshot.Decision.Rules.SpecialChapter = true
+	p, err := Build(job)
+	if err != nil || p.Ready != 3 || p.NeedsReview != 0 {
+		t.Fatal(p, err)
+	}
+	for i, item := range p.Items {
+		if !strings.Contains(item.TargetPath, fmt.Sprintf(".S00E%02d", i+2)) {
+			t.Fatal("特别篇偏移未用于实际文件", item)
+		}
+	}
+	job.Snapshot.Decision.Rules.SpecialChapter = false
+	p, err = Build(job)
+	if err != nil || p.Ready != 0 || p.NeedsReview != 3 {
+		t.Fatal("普通篇章自动接收了特别篇", p, err)
+	}
+}
+
 func TestAnimeOrganizationDoesNotGuessMultiVideoOrSpecial(t *testing.T) {
 	for _, tc := range []struct {
 		names         []string

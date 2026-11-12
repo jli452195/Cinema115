@@ -12,7 +12,7 @@ import (
 	"unicode/utf8"
 )
 
-const ParserVersion int64 = 11
+const ParserVersion int64 = 13
 
 var ErrInput = errors.New("invalid release parser input")
 
@@ -35,6 +35,7 @@ var (
 	dashedEpisode  = regexp.MustCompile(`(?:^|[\s|：:])-\s*(` + expression + `)`)
 	bareEpisode    = regexp.MustCompile(`(?:^|[\s_])(` + expression + `)`)
 	seasonMetadata = regexp.MustCompile(`(?i)SEASON\s*[0-9]{1,3}`)
+	titleCounter   = regexp.MustCompile(`\p{L}\s+([1-9][0-9]?)\s+-\s+`)
 	audioMetadata  = regexp.MustCompile(`(?i)(?:HE[ ._-]?AAC|AAC|DDP|DD\+|DD|E[ ._-]?AC[ ._-]?3|AC[ ._-]?3|DTS(?:[ ._-]?(?:HD|MA|X))*|TRUE[ ._-]?HD|FLAC|OPUS|L?PCM|MP3)(?:[ ._-]+ATMOS)?[ ._-]*[1-9]\.[01](?:\.[2468])?`)
 	// More than one numbering system in a title needs confirmation, even when
 	// one of them looks like a perfectly ordinary standalone bracket number.
@@ -61,6 +62,11 @@ type candidate struct {
 // retains the publisher's actual notation; special/batch/composite/unknown
 // results never carry an executable ordinary episode number.
 func Title(title string) (Result, error) {
+	return TitleForChapter(title, false)
+}
+
+// TitleForChapter 仅在已确认的特别篇篇章中忽略名称描述，保留特殊编号和歧义证据。
+func TitleForChapter(title string, specialChapter bool) (Result, error) {
 	out := Result{SchemaVersion: SchemaVersion, Kind: "unknown"}
 	if !validText(title, 1024) || strings.TrimSpace(title) == "" {
 		return out, ErrInput
@@ -89,6 +95,21 @@ func Title(title string) (Result, error) {
 	for _, span := range seasonSpans {
 		if leftBoundary(title, span[0]) && rightBoundary(title, span[1]) {
 			metadataSpans = append(metadataSpans, span)
+		}
+	}
+	// “片名 2 - 05”中的续作数字属于片名；括号或 EP/第等明确集号范围仍保留。
+	for _, m := range titleCounter.FindAllStringSubmatchIndex(title, -1) {
+		explicit := false
+		for _, b := range brackets.FindAllStringIndex(title, -1) {
+			explicit = explicit || m[2] >= b[0] && m[3] <= b[1]
+		}
+		for _, rule := range []*regexp.Regexp{chineseNumber, seasonEpisode, labeledEpisode} {
+			for _, span := range rule.FindAllStringIndex(title, -1) {
+				explicit = explicit || m[2] >= span[0] && m[3] <= span[1]
+			}
+		}
+		if !explicit {
+			metadataSpans = append(metadataSpans, []int{m[2], m[3]})
 		}
 	}
 	audioSpans := audioMetadata.FindAllStringIndex(title, -1)
@@ -173,6 +194,10 @@ func Title(title string) (Result, error) {
 		add(m[0], m[1], "batch", true)
 	}
 	for _, m := range specialWords.FindAllStringIndex(title, -1) {
+		word := title[m[0]:m[1]]
+		if specialChapter && (word == "特别篇" || word == "特別篇" || strings.EqualFold(word, "SPECIAL")) {
+			continue
+		}
 		if title[m[0]] >= utf8.RuneSelf || leftBoundary(title, m[0]) && rightBoundary(title, m[1]) {
 			add(m[0], m[1], "special", true)
 		}

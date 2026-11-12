@@ -10,6 +10,52 @@ import (
 
 const starReleaseTitle = "六四位元字幕組★與暗黑召喚師秘密戀愛中 Dark Summoner to Dekiteiru★03★1920x1080★AVC AAC MP4★繁體中文"
 
+func TestTitleSpecialChapterContext(t *testing.T) {
+	const title = "[ToonsHub] 我的幸福婚姻 特别篇 / My Happy Marriage Special Episodes - 01 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]"
+	ordinary, err := Title(title)
+	if err != nil || ordinary.Kind != "special" || ordinary.Episode != nil {
+		t.Fatalf("missing chapter context must retain special evidence: %+v %v", ordinary, err)
+	}
+	for _, tc := range []struct {
+		title, kind string
+		episode     int
+	}{
+		{title, "episode", 1},
+		{strings.Replace(title, "- 01", "- 02", 1), "episode", 2},
+		{strings.Replace(title, "- 01", "- 03", 1) + ".mkv", "episode", 3},
+		{"[组] 特別篇 - 01 [1080p]", "episode", 1},
+		{"[Group] Show special Episodes [01][1080p]", "episode", 1},
+		{strings.Replace(title, "- 01", "- 01-03", 1), "batch", 0},
+		{"[组] 特别篇 SP01 [1080p]", "special", 0},
+		{"[组] 特别篇 SPECIAL01 [1080p]", "special", 0},
+		{"[组] 特别篇 SPECIAL 01 [1080p]", "special", 0},
+		{"[组] 特别篇 SPECIAL - 01 [1080p]", "special", 0},
+		{"[组] 特别篇 OVA2 [1080p]", "special", 0},
+		{"[组] 特别篇 OAD [01][1080p]", "special", 0},
+		{"[组] 特别篇 特典 [01][1080p]", "special", 0},
+		{"[组] 特别篇 [12.5][1080p]", "special", 0},
+		{"[组] 特别篇 [01][02][1080p]", "composite", 0},
+		{"[组] 特别篇 [1080p]", "unknown", 0},
+	} {
+		t.Run(tc.title, func(t *testing.T) {
+			got, err := TitleForChapter(tc.title, true)
+			if err != nil || got.Kind != tc.kind {
+				t.Fatalf("unexpected chapter parse: %+v %v", got, err)
+			}
+			if tc.kind == "episode" {
+				if got.Episode == nil || *got.Episode != tc.episode {
+					t.Fatalf("wrong chapter episode: %+v", got)
+				}
+			} else if got.Episode != nil {
+				t.Fatalf("ambiguous numbering became executable: %+v", got)
+			}
+			if err := got.Validate(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestTitleOrdinaryNumbering(t *testing.T) {
 	for _, tc := range []struct {
 		title, raw string
@@ -77,6 +123,9 @@ func TestTitleSeriesNumbersDoNotReplacePublisherEpisodes(t *testing.T) {
 		episode    int
 		version    string
 	}{
+		{"[ANi] 冰劍的魔術師將要統一世界 2 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", "05", 5, ""},
+		{"[ANi] 冰劍的魔術師將要統一世界 2 - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4", "03", 3, ""},
+		{"[Group] Show 2 - 01v2 [1080p]", "01v2", 1, "v2"},
 		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03v2 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "03v2", 3, "v2"},
 		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 03 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "03", 3, ""},
 		{"[ToonsHub] 乱马1/2 第三季 / Ranma 1-2 (2024) Season 3 - 02 [NF][1080P][DUAL][CHS&CHT&JP&EN&KO][MKV]", "02", 2, ""},
@@ -105,6 +154,24 @@ func TestTitleSeriesNumbersDoNotReplacePublisherEpisodes(t *testing.T) {
 
 func TestTitleNumberedSeriesStillRetainPackAndAmbiguityEvidence(t *testing.T) {
 	for _, tc := range []struct{ title, kind string }{
+		{"[星空字幕组][甜梦猫 Mix! / Mewkledreamy Mix!][31-39][简繁日内封][1080P][WEBRip][MKV]", "batch"},
+		{"[Group] Show 04-07 [1080p]", "batch"},
+		{"[Group] Show 02 ~ 05 [1080p]", "batch"},
+		{"[Group] Show 2~05 [1080p]", "batch"},
+		{"[Group] Show 2 ～ 05 [1080p]", "batch"},
+		{"[Group] Show [04 - 07] [1080p]", "batch"},
+		{"[Group] Show [2 - 05] [1080p]", "batch"},
+		{"[Group] Show [ 2 - 05 ] [1080p]", "batch"},
+		{"[Group] [Show 2 - 05] [1080p]", "batch"},
+		{"[Group] Show 04 - 07 [1080p]", "batch"},
+		{"[Group] Show Episode 2 - 05 [1080p]", "batch"},
+		{"[Group] Show EP 2 - 05 [1080p]", "batch"},
+		{"[Group] Show 第 2 - 05 集 [1080p]", "batch"},
+		{"[Group] Show 2 - 04-07 [1080p]", "batch"},
+		{"[Group] Show 2 - 02 ~ 05 [1080p]", "batch"},
+		{"[Group] Show 2 - 2~05 [1080p]", "batch"},
+		{"[Group] Show 2 - 05 合集 [1080p]", "batch"},
+		{"[Group] Show 2 - 05 [06][1080p]", "composite"},
 		{"[Group] [Ranma 1/2] [01-12] [1080p]", "batch"},
 		{"[Group] 乱马1/2 / Ranma 1-2 (2024) Season 3 - 01-12 [1080p]", "batch"},
 		{"[Group] 乱马1/2 / Ranma 1-2 (2024) - 03 [01-12] [1080p]", "batch"},

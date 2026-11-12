@@ -14,10 +14,11 @@ type SourceRules struct {
 	match, exclude []*regexp.Regexp
 	episode        *regexp.Regexp
 	group          int
+	specialChapter bool
 }
 
 func CompileRules(r model.AnimeRules) (SourceRules, error) {
-	out := SourceRules{group: r.EpisodeGroup}
+	out := SourceRules{group: r.EpisodeGroup, specialChapter: r.SpecialChapter}
 	for _, pair := range []struct {
 		patterns []string
 		target   *[]*regexp.Regexp
@@ -64,7 +65,7 @@ func (r SourceRules) Filter(titles ...string) string {
 // Parse overrides only the source's episode interpretation. A custom rule that
 // fails or matches multiple times never falls back to a different episode.
 func (r SourceRules) Parse(title string) (releaseparse.Result, error) {
-	out, err := releaseparse.Title(title)
+	out, err := releaseparse.TitleForChapter(title, r.specialChapter)
 	if err != nil || r.episode == nil || out.Kind == "batch" {
 		return out, err
 	}
