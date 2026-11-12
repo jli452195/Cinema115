@@ -96,6 +96,8 @@ type mediaOrganizeFiles struct {
 	partialCleanup       bool
 	sourceVacated        bool
 	deferSubtitles       bool
+	scanProgress         func(int, string)
+	localCheckpoint      func(MediaOrganizeEntry, string) error
 	cloudEmpty           *media115EmptyState
 }
 
@@ -229,7 +231,10 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
 		mediaOrganizeFileNumbering(&item)
 		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
-		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, Status: "pending", CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
+		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, LocalIdentity: f.localSnapshotKeys[file.ID], Status: "pending", CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
+		if f.scanProgress != nil {
+			f.scanProgress(len(out), file.Name)
+		}
 	}
 	if f.rule.Storage == "cd2" {
 		pending, err := f.scanCD2(ctx, appendFile)
@@ -327,12 +332,8 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 				return nil
 			}
 			id := filepath.ToSlash(rel)
-			if typeName := mediaFileType(entry.Name()); !mediaKeepFile(entry.Name()) || typeName == "subtitle" || typeName == "attachment" {
-				if err := f.rememberLocalSnapshot(full, id, info); err != nil {
-					return err
-				}
-			} else {
-				f.localSnapshots[id] = info
+			if err := f.rememberLocalSnapshot(full, id, info); err != nil {
+				return err
 			}
 			candidate := mediaLocalCandidate(filepath.ToSlash(rel), entry.Name(), info.Size())
 			if candidate.MediaType != "" {
@@ -576,6 +577,10 @@ func (f *mediaOrganizeFiles) move(ctx context.Context, e MediaOrganizeEntry) err
 		}
 		current := *f
 		current.rule.Source, current.rule.SourceID = f.rule.Failure, f.rule.FailureID
+		if f.rule.Storage == "local" {
+			e.LocalIdentity = e.Failure.LocalIdentity
+			current.localSnapshots, current.localSnapshotKeys = nil, nil
+		}
 		e.File.ParentID = e.Failure.ParentID
 		e.Failure = nil
 		return current.move(ctx, e)
@@ -743,27 +748,48 @@ func (f *mediaOrganizeFiles) move115FailureDuplicate(ctx context.Context, entry 
 }
 
 func (f *mediaOrganizeFiles) moveLocal(ctx context.Context, e MediaOrganizeEntry) error {
+	expected := e.LocalIdentity
+	if expected == "" {
+		expected = f.localSnapshotKeys[e.File.ID]
+	}
+	if expected == "" {
+		return fmt.Errorf("缺少来源文件原生身份，请重新扫描")
+	}
 	source, err := mediaLocalPath(f.rule.Source, e.File.ID, false)
 	if err != nil {
-		// A persisted quarantine intent may have completed before a restart.
-		// Only reconcile its exact destination; never scan or overwrite files.
+		// 隔离移动的来源消失时，仅接受持久化的原件或隔离目标身份。
 		if errors.Is(err, os.ErrNotExist) && e.Failure != nil && e.Failure.State == "moving" {
+			if e.Failure.LocalIdentity != "" {
+				expected = e.Failure.LocalIdentity
+			}
 			target, checkErr := mediaLocalPath(f.rule.Target, e.Relative, false)
 			if checkErr == nil {
 				info, checkErr := os.Stat(target)
-				if checkErr == nil && info.Mode().IsRegular() && info.Size() == e.File.Size && info.ModTime().UnixNano() == e.Modified {
+				if checkErr == nil && mediaLocalEntryMatches(target, info, e, expected) == nil {
+					if f.localCheckpoint != nil {
+						return f.localCheckpoint(e, expected)
+					}
 					return nil
 				}
 			}
 		}
 		return err
 	}
-	info, err := os.Stat(source)
+	// 从句柄获取身份快照，避免 Windows 的路径 Stat 延迟读取身份时认领替代文件。
+	snapshot, err := os.Open(source)
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Size() != e.File.Size || info.ModTime().UnixNano() != e.Modified {
-		return fmt.Errorf("来源文件已变化，请重新扫描")
+	info, err := snapshot.Stat()
+	closeErr := snapshot.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := mediaLocalEntryMatches(source, info, e, expected); err != nil {
+		return err
 	}
 	parent, err := mediaLocalPath(f.rule.Target, filepath.ToSlash(filepath.Dir(filepath.FromSlash(e.Relative))), true)
 	if path.Dir(e.Relative) == "." {
@@ -782,65 +808,170 @@ func (f *mediaOrganizeFiles) moveLocal(ctx context.Context, e MediaOrganizeEntry
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Link+unlink is an atomic no-overwrite move on supporting filesystems.
-	// Mounted/cloud filesystems fall back to an exclusive copy, never overwrite.
-	if err = os.Link(source, target); err != nil {
+	// 已保存目标身份的隔离意图允许继续删源，覆盖发布后、删源前退出的窗口。
+	publishedIdentity := ""
+	if e.Failure != nil && e.Failure.State == "moving" && e.Failure.LocalIdentity != "" {
+		if actual, statErr := os.Lstat(target); statErr == nil {
+			if err := mediaLocalEntryMatches(target, actual, e, e.Failure.LocalIdentity); err != nil {
+				return errMediaTargetExists
+			}
+			publishedIdentity = e.Failure.LocalIdentity
+		}
+	}
+	if publishedIdentity == "" {
 		if _, statErr := os.Lstat(target); statErr == nil {
 			return errMediaTargetExists
 		}
-		input, err := os.Open(source)
+		linked, err := mediaLinkLocalFile(ctx, source, target, info, e, expected)
 		if err != nil {
 			return err
 		}
-		defer input.Close()
-		opened, err := input.Stat()
-		if err != nil {
-			return err
-		}
-		if !os.SameFile(info, opened) {
-			return fmt.Errorf("来源文件已变化")
-		}
-		output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
-		if err != nil {
-			return fmt.Errorf("创建目标文件: %w", err)
-		}
-		ok := false
-		defer func() {
-			_ = output.Close()
-			if !ok {
-				_ = os.Remove(target)
+		if !linked {
+			publishedIdentity, err = mediaCopyLocalFile(ctx, source, target, info)
+			if err != nil {
+				return err
 			}
-		}()
-		written, copyErr := io.Copy(output, &mediaContextReader{ctx: ctx, r: input})
-		if copyErr != nil {
-			return fmt.Errorf("复制文件: %w", copyErr)
+		} else {
+			publishedIdentity = expected
 		}
-		if written != info.Size() {
-			return fmt.Errorf("文件大小在复制中发生变化")
-		}
-		if err = output.Sync(); err != nil {
+	}
+	if f.localCheckpoint != nil {
+		if err := f.localCheckpoint(e, publishedIdentity); err != nil {
 			return err
 		}
-		if err = output.Close(); err != nil {
-			return err
-		}
-		current, err := os.Lstat(source)
-		if err != nil || !os.SameFile(info, current) || current.Size() != info.Size() || current.ModTime() != info.ModTime() {
-			return fmt.Errorf("复制时来源文件已变化，保留来源")
-		}
-		if err = os.Chtimes(target, info.ModTime(), info.ModTime()); err != nil {
-			return err
-		}
-		ok = true
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	current, err := os.Lstat(source)
-	if err != nil || !os.SameFile(info, current) || current.Size() != info.Size() || current.ModTime() != info.ModTime() {
+	if err != nil || !os.SameFile(info, current) || mediaLocalEntryMatches(source, current, e, expected) != nil {
 		return fmt.Errorf("来源文件已变化，未删除来源")
 	}
 	if err = os.Remove(source); err != nil {
 		return fmt.Errorf("目标已生成，来源删除失败: %w", err)
 	}
 	return nil
+}
+
+// 先把来源固定为受控临时硬链接，再核验身份并发布，避免直接改名搬走同名替代文件。
+func mediaLinkLocalFile(ctx context.Context, source, target string, before os.FileInfo, entry MediaOrganizeEntry, expected string) (bool, error) {
+	directory, err := os.MkdirTemp(filepath.Dir(target), ".cinema115-organize-*.tmp")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(directory)
+	temporary := filepath.Join(directory, "content.tmp")
+	if err := os.Link(source, temporary); err != nil {
+		return false, nil
+	}
+	created, err := os.Lstat(temporary)
+	if err != nil {
+		return false, err
+	}
+	defer func() {
+		if current, err := os.Lstat(temporary); err == nil && os.SameFile(created, current) {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if !os.SameFile(before, created) {
+		return false, fmt.Errorf("来源文件原生身份已变化，请重新扫描")
+	}
+	if err := mediaLocalEntryMatches(temporary, created, entry, expected); err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := mediaRenameLocalNoReplace(temporary, target); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return false, errMediaTargetExists
+		}
+		return false, fmt.Errorf("不覆盖发布整理硬链接: %w", err)
+	}
+	return true, nil
+}
+
+func mediaLocalEntryMatches(full string, info os.FileInfo, entry MediaOrganizeEntry, expected string) error {
+	if expected == "" || !info.Mode().IsRegular() || info.Size() != entry.File.Size || info.ModTime().UnixNano() != entry.Modified {
+		return fmt.Errorf("来源文件已变化，请重新扫描")
+	}
+	identity, err := mediaLocalFileIdentityKey(full, info)
+	if err != nil {
+		return err
+	}
+	if identity != expected {
+		return fmt.Errorf("来源文件原生身份已变化，请重新扫描")
+	}
+	return nil
+}
+
+// 复制始终写入独占临时文件，完成核验和同步之前不暴露最终文件名。
+func mediaCopyLocalFile(ctx context.Context, source, target string, before os.FileInfo) (string, error) {
+	input, err := os.Open(source)
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+	opened, err := input.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !os.SameFile(before, opened) {
+		return "", fmt.Errorf("来源文件已变化")
+	}
+	output, err := os.CreateTemp(filepath.Dir(target), ".cinema115-organize-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("创建整理临时文件: %w", err)
+	}
+	temporary := output.Name()
+	created, err := output.Stat()
+	if err != nil {
+		_ = output.Close()
+		return "", err
+	}
+	defer func() {
+		_ = output.Close()
+		if current, err := os.Lstat(temporary); err == nil && os.SameFile(created, current) {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if err := output.Chmod(before.Mode().Perm()); err != nil {
+		return "", err
+	}
+	written, err := io.Copy(output, &mediaContextReader{ctx: ctx, r: input})
+	if err != nil {
+		return "", fmt.Errorf("复制文件: %w", err)
+	}
+	if written != before.Size() {
+		return "", fmt.Errorf("文件大小在复制中发生变化")
+	}
+	if err := output.Sync(); err != nil {
+		return "", err
+	}
+	if err := output.Close(); err != nil {
+		return "", err
+	}
+	current, err := os.Lstat(source)
+	if err != nil || !os.SameFile(before, current) || current.Size() != before.Size() || current.ModTime() != before.ModTime() {
+		return "", fmt.Errorf("复制时来源文件已变化，保留来源")
+	}
+	if err := os.Chtimes(temporary, before.ModTime(), before.ModTime()); err != nil {
+		return "", err
+	}
+	identity, err := mediaLocalFileIdentityKey(temporary, created)
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := mediaRenameLocalNoReplace(temporary, target); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return "", errMediaTargetExists
+		}
+		return "", fmt.Errorf("不覆盖发布整理文件: %w", err)
+	}
+	return identity, nil
 }
 
 type mediaContextReader struct {

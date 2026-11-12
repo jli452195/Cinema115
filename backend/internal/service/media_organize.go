@@ -48,6 +48,7 @@ type MediaOrganizeRule struct {
 type MediaOrganizeEntry struct {
 	File           OrganizeFile               `json:"file"`
 	Modified       int64                      `json:"modified,omitempty"`
+	LocalIdentity  string                     `json:"localIdentity,omitempty"`
 	CD2FileID      string                     `json:"cd2FileId,omitempty"`
 	CD2Hashes      map[uint32]string          `json:"cd2Hashes,omitempty"`
 	CD2Current     *MediaCD2Location          `json:"cd2Current,omitempty"`
@@ -161,6 +162,7 @@ type MediaOrganizer struct {
 	stopping       map[string]bool
 	cloudMonitors  map[string]*mediaCloudRuntime
 	historyChanges map[chan struct{}]struct{}
+	progress       *MediaOrganizeActivity
 }
 
 func (s *MediaOrganizer) persistLocked(changed ...string) error {
@@ -728,11 +730,37 @@ func mediaActionBefore(a MediaOrganizeRun, actionA string, b MediaOrganizeRun, a
 
 // 所有退出路径都释放当前批次，包括错误结果检查点或调度持久化失败。
 func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganizeRun, action string) (result error) {
+	s.Logs.Append("整理", run.ID, run.Rule.Name, "INFO", "开始整理批次")
+	stage := "scanning"
+	if action == "retry" {
+		stage = "planning"
+	}
+	s.publishMediaProgress(&run, stage, run.Rule.Source, 0, 0)
 	defer s.flushMediaRefresh(&run)
+	defer func() {
+		if result != nil || ctx.Err() != nil {
+			return
+		}
+		done, failed := 0, 0
+		for _, entry := range run.Entries {
+			if entry.File.MediaType != "video" || entry.Reference || !mediaSelectedTask(&run, entry) || entry.Status == "retained" {
+				continue
+			}
+			if entry.Status == "done" {
+				done++
+			} else {
+				failed++
+			}
+		}
+		s.Logs.Append("整理", run.ID, run.Rule.Name, "INFO", fmt.Sprintf("整理批次结束：成功 %d，未完成 %d；%s", done, failed, run.Message))
+	}()
 	defer func() {
 		s.mu.Lock()
 		if s.active == run.ID {
 			s.active = ""
+		}
+		if s.progress != nil && s.progress.RunID == run.ID {
+			s.progress = nil
 		}
 		delete(s.inFlight, run.ID)
 		// 提交回滚后仍为排队态的任务保留动作，不留下无人执行的整理中记录。

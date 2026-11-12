@@ -87,6 +87,8 @@ func (s *MediaOrganizer) executeCD2Batch(ctx context.Context, files *mediaOrgani
 			releaseEntries()
 		}
 	}()
+	s.publishMediaEntryProgress(run, run.Entries[indices[0]].File.Name)
+	defer s.publishMediaEntryProgress(run, "")
 	for _, index := range indices {
 		mediaClearMainFileWaiting(&run.Entries[index])
 	}
@@ -238,6 +240,8 @@ func (s *MediaOrganizer) executeCD2SingleEntry(ctx context.Context, files *media
 		return nil
 	}
 	defer releaseEntry()
+	s.publishMediaEntryProgress(run, entry.File.Name)
+	defer s.publishMediaEntryProgress(run, "")
 	mediaClearMainFileWaiting(entry)
 	mediaCD2SetResult(entry, files.move(ctx, *entry))
 	if err := s.checkpoint(run); err != nil {

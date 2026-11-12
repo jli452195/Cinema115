@@ -30,6 +30,8 @@ func (s *MediaOrganizer) executeMediaEntry(ctx context.Context, files *mediaOrga
 		return nil
 	}
 	defer releaseEntry()
+	s.publishMediaEntryProgress(run, e.File.Name)
+	defer s.publishMediaEntryProgress(run, "")
 	if e.VideoID != "" {
 		videoDone := false
 		for _, video := range run.Entries {

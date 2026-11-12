@@ -18,6 +18,11 @@ var organizeSPMarker = regexp.MustCompile(`(?i)(^|[^a-z0-9])SP($|[\[\]【】()�
 var organizeSpecialFile = regexp.MustCompile(`(?i)(?:^|[\[【 ._(（\-])(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE|MENU|MINI[ ._-]*ANIME|TOKUTEN)(?:[0-9]|$|[\]】 ._)）\-])|特典|番外|特别篇|特別篇|劇場版|剧场版`)
 var organizeSpecialDirectory = regexp.MustCompile(`(?i)^(?:NCOP|NCED|OP|ED|OVA|OAD|SP|PV|CM|SPECIALS?|BONUS|EXTRAS?|FILM|MOVIE|MENU|MINI[ ._-]*ANIME|TOKUTEN|特典(?:映像)?|番外|特别篇|特別篇|菜单|菜單)(?:[ ._-]?[0-9]{1,4})?$`)
 
+// 编号与作品身份共用解析副本，原始名称及标准坐标保持不变。
+func organizeNumberingStem(stem string) string {
+	return organizeCompactEpisode.ReplaceAllString(strings.ReplaceAll(stem, "_", " "), " - ${1}")
+}
+
 // Only a video's own numbering is evidence. Parent pack ranges never number
 // its children. Explicit SP numbering suggests season zero; other extras and
 // ambiguous expressions remain editable without an inferred episode.
@@ -53,10 +58,7 @@ func organizeFileNumbering(file *OrganizeFile) {
 		file.Season, file.Episode, file.EndEpisode = numbered.Season, numbered.Episode, numbered.EndEpisode
 		return
 	}
-	// Treat filename underscores as separators (Title_-_03_(BD...)), then reuse
-	// the existing dash, metadata and ambiguity checks. Keep the source untouched.
-	name = strings.ReplaceAll(name, "_", " ")
-	name = organizeCompactEpisode.ReplaceAllString(name, " - ${1}")
+	name = organizeNumberingStem(name)
 	parsed, err := releaseparse.Title(name)
 	if err != nil {
 		return

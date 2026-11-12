@@ -118,6 +118,8 @@ func (s *MediaOrganizer) execute115Batch(ctx context.Context, files *mediaOrgani
 		return nil, nil
 	}
 	defer releaseEntries()
+	s.publishMediaEntryProgress(run, run.Entries[valid[0]].File.Name)
+	defer s.publishMediaEntryProgress(run, "")
 	active := valid
 	defer func() {
 		if resultErr == nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -156,7 +157,11 @@ func TestMediaScanLimitNoVideoFailureLogsOnlyAfterCommit(t *testing.T) {
 				t.Fatal("缺少排队扫描")
 			}
 			err := s.processQueuedRun(context.Background(), run, action)
-			logs := s.Logs.Read("ALL", "整理", 0, false).Entries
+			// 过程日志可以即时发布，失败结果仍必须在提交成功后只发布一次。
+			terminal := func() []GenerationLog {
+				return slices.DeleteFunc(s.Logs.Read("ALL", "整理", 0, false).Entries, func(entry GenerationLog) bool { return entry.Level == "INFO" })
+			}
+			logs := terminal()
 			if fail {
 				if err == nil || len(logs) != 0 {
 					t.Fatal("提交失败不能发布扫描失败日志", err, logs)
@@ -167,10 +172,10 @@ func TestMediaScanLimitNoVideoFailureLogsOnlyAfterCommit(t *testing.T) {
 			if err != nil || snapshotErr != nil || stored.Status != "failed" || len(stored.Entries) != 0 || len(logs) != 1 || logs[0].Level != "ERROR" || logs[0].Recognition == nil || logs[0].Recognition.ResultCode != "BATCH_FAILED" || logs[0].Recognition.FileID != "" || !strings.Contains(logs[0].Message, "重复目录或目录循环") {
 				t.Fatal("无视频扫描失败应只输出一次必要终态错误", err, snapshotErr, stored, logs)
 			}
-			if err := s.checkpoint(&stored); err != nil || len(s.Logs.Read("ALL", "整理", 0, false).Entries) != 1 {
+			if err := s.checkpoint(&stored); err != nil || len(terminal()) != 1 {
 				t.Fatal("重复保存不应重复记录同次失败", err)
 			}
-			if _, err := s.Start(run.Rule.ID); err != nil || len(s.Logs.Read("ALL", "整理", 0, false).Entries) != 1 {
+			if _, err := s.Start(run.Rule.ID); err != nil || len(terminal()) != 1 {
 				t.Fatal("下一轮扫描不能抹去已经发布的失败日志", err)
 			}
 		})

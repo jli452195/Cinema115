@@ -17,7 +17,11 @@ export interface MediaHistoryItem {
   source: string; target?: string; status: string; message?: string; at: string; canDelete: boolean; canRetry: boolean
 }
 export type MediaHistoryStatus = 'all' | 'running' | 'done' | 'failed'
-export interface MediaActivity { runId: string; ruleName: string; status: string; message?: string; at: string }
+export interface MediaActivity {
+  runId: string; ruleName: string; status: string; message?: string; at: string
+  stage?: 'scanning' | 'recognizing' | 'planning' | 'organizing' | 'cleanup'
+  current?: string; completed?: number; total?: number; files?: number; startedAt?: string
+}
 export interface MediaRetryBatch {
   id: string; status: 'running' | 'stopping' | 'completed' | 'stopped' | 'interrupted'
   total: number; pending: number; success: number; failed: number; skipped: number
@@ -30,7 +34,7 @@ export interface MediaHistory {
 export interface MediaTask extends MediaHistoryItem { rule: Pick<MediaRule, 'name' | 'source' | 'failure'>; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }
 export interface MediaMonitorStatus { mode: 'starting' | 'connecting' | 'realtime' | 'event' | 'unavailable' | 'polling'; message?: string; lastEventAt?: string }
-export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; stoppingRules?: string[]; monitoring?: Record<string, MediaMonitorStatus> }
+export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: string[]; stoppingRules?: string[]; monitoring?: Record<string, MediaMonitorStatus>; activity?: MediaActivity[] }
 export interface MediaLocalDirectoryPage {
   path: string; parentPath: string | null; directories: { name: string; path: string }[]; truncated: boolean
 }

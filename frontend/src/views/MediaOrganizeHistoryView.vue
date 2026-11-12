@@ -7,7 +7,8 @@ import P115ActionDialog from '../components/P115ActionDialog.vue'
 import PaginationControl from '../components/PaginationControl.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import { useMediaOrganizeHistoryUpdates } from '../composables/useMediaOrganizeHistoryUpdates'
-import { mediaOrganizeRequest, MediaOrganizeRequestError, type MediaHistory, type MediaHistoryItem, type MediaHistoryStatus, type MediaTask, type MediaGroup, type MediaEntry, type MediaRetryBatch, type MediaBatchRetryResult } from '../lib/media-organize-api'
+import { mediaProgressSeconds } from '../lib/media-organize-progress'
+import { mediaOrganizeRequest, MediaOrganizeRequestError, type MediaHistory, type MediaHistoryItem, type MediaHistoryStatus, type MediaTask, type MediaGroup, type MediaEntry, type MediaRetryBatch, type MediaBatchRetryResult, type MediaState } from '../lib/media-organize-api'
 
 const props = defineProps<{ token: string }>()
 const route = useRoute(), router = useRouter()
@@ -28,6 +29,10 @@ const selectable = computed(() => history.value.items.filter(item => item.canDel
 const allSelected = computed(() => selectable.value.length > 0 && selectedItems.value.length === selectable.value.length)
 const retryBatchActive = computed(() => !!history.value.retryBatch && ['running', 'stopping'].includes(history.value.retryBatch.status))
 const retryBatchLabels = { running: '整理中', stopping: '正在停止', completed: '已完成', stopped: '已停止', interrupted: '已中断' }
+const activityClock = ref(Date.now())
+const activityRows = computed(() => history.value.activity.map(item => ({ ...item, elapsed: mediaProgressSeconds(item.startedAt, activityClock.value), idle: mediaProgressSeconds(item.at, activityClock.value) })))
+const activityStages = { scanning: '扫描文件', recognizing: '识别作品', planning: '生成整理计划', organizing: '整理文件', cleanup: '清理来源' }
+let activityTimer: ReturnType<typeof setInterval> | undefined
 const deletion = ref<{ status: 'done' | 'failed' } | { items: MediaHistoryItem[] }>()
 const current = ref<MediaTask>(), taskSnapshot = ref(''), matchChanged = ref(false), leaveDialog = ref(false)
 const detailLoading = ref('')
@@ -45,7 +50,7 @@ const taskLabels: Record<string, string> = { done: '成功', running: '整理中
 const batchLabels: Record<string, string> = { queued: '排队中', scanning: '识别中', running: '整理中', completed: '扫描完成', partial: '扫描结束', failed: '扫描失败', interrupted: '已中断' }
 const labels: Record<string, string> = { ready: '可整理', needs_match: '待匹配', invalid: '待修正', conflict: '冲突', error: '失败', done: '已完成', unmatched: '未关联', retained: '已保留', pending: '等待整理', waiting: '等待中', unconfirmed: '失败' }
 const lifecycle = new AbortController()
-let reader = new AbortController(), detailReader = new AbortController(), readVersion = 0, detailVersion = 0, mutationVersion = 0, generation = 0, canonicalPage: number | undefined
+let reader = new AbortController(), activityReader = new AbortController(), detailReader = new AbortController(), readVersion = 0, detailVersion = 0, mutationVersion = 0, generation = 0, canonicalPage: number | undefined
 let normalizedPath: string | undefined
 let leaveDecision: ((value: boolean) => void) | undefined
 const message = (reason: unknown) => reason instanceof Error ? reason.message : '操作失败，请重试'
@@ -84,6 +89,7 @@ async function loadDetail(item: MediaHistoryItem, preserveDraft = false): Promis
 }
 async function refresh(): Promise<boolean> {
   if (document.hidden || lifecycle.signal.aborted) return false
+  activityReader.abort()
   reader.abort(); reader = new AbortController()
   const signal = reader.signal, version = ++readVersion, mutation = mutationVersion
   refreshing.value = true
@@ -101,6 +107,21 @@ async function refresh(): Promise<boolean> {
     return true
   } catch (reason) { if (!signal.aborted && !lifecycle.signal.aborted && version === readVersion && mutation === mutationVersion) error.value = message(reason); return false }
   finally { if (version === readVersion) { if (!signal.aborted) loading.value = false; refreshing.value = false } }
+}
+async function refreshActivity(): Promise<boolean> {
+  if (document.hidden || lifecycle.signal.aborted) return false
+  activityReader.abort(); activityReader = new AbortController()
+  const signal = activityReader.signal, version = readVersion, mutation = mutationVersion, location = route.fullPath
+  try {
+    const state = await request<MediaState>('', { signal })
+    if (signal.aborted || version !== readVersion || mutation !== mutationVersion || location !== route.fullPath) return false
+    history.value.activity = state.activity || []; history.value.active = state.active
+    if (error.value.startsWith('更新整理进度失败：')) error.value = ''
+    return true
+  } catch (reason) {
+    if (!signal.aborted && !lifecycle.signal.aborted && version === readVersion && mutation === mutationVersion && location === route.fullPath) error.value = `更新整理进度失败：${message(reason)}`
+    return false
+  }
 }
 async function act(name: string, fn: () => Promise<void>, dialog = false) {
   if (busy.value) return
@@ -223,10 +244,11 @@ function sourcePath(entry: MediaEntry) { return entry.failure?.state === 'stored
 function failureNotice(entry: MediaEntry) { if (entryProcessing(entry)) return ''; if (entry.file.id !== current.value?.fileId) return entry.failure?.state === 'moving' || entry.p115Move ? '本次附件处理已结束，保留现有文件。' : ''; if (entry.failure?.state === 'stored') return '已移入失败目录；可在此修正匹配并重试当前任务。'; if (entry.failure?.state === 'moving') return `移入结果尚未确认，重试时将先核对文件位置${entry.failure.message ? `：${entry.failure.message}` : '。'}`; if (entry.p115Move) return '文件移动结果尚未确认，重试时将先核对文件位置。'; return entry.failure?.message ? `未能移入失败目录，文件保留原处：${entry.failure.message}` : '' }
 useMediaOrganizeHistoryUpdates(() => props.token, async () => {
   if (loading.value || page.value === 1 || retryBatchActive.value) return refresh()
-  if (current.value && taskProcessing.value) return loadDetail(current.value, true)
-  return true
-}, () => !busy.value && !refreshing.value && !detailLoading.value && (!bulk.value || retryBatchActive.value) && !deletion.value && (loading.value || page.value === 1 || taskProcessing.value || retryBatchActive.value))
-function visible() { if (document.hidden) { reader.abort(); cancelDetail() } }
+  const updated = await refreshActivity()
+  if (current.value && taskProcessing.value) return await loadDetail(current.value, true) && updated
+  return updated
+}, () => !busy.value && !refreshing.value && !detailLoading.value && (!bulk.value || page.value > 1 || retryBatchActive.value) && !deletion.value)
+function visible() { activityClock.value = Date.now(); if (document.hidden) { reader.abort(); activityReader.abort(); cancelDetail() } }
 function decideLeave(value: boolean) { leaveDialog.value = false; leaveDecision?.(value); leaveDecision = undefined }
 function guard() {
   leaveDecision?.(false); leaveDecision = undefined
@@ -241,12 +263,16 @@ watch(() => route.fullPath, value => {
   if (value === normalizedPath) { normalizedPath = undefined; return }
   canonicalPage = undefined; searchText.value = keyword.value; closeRun(); clearSelection(); notice.value = ''; void refresh()
 })
-onMounted(() => { window.addEventListener('beforeunload', beforeUnload); document.addEventListener('visibilitychange', visible) })
-onBeforeUnmount(() => { lifecycle.abort(); reader.abort(); cancelDetail(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('visibilitychange', visible); decideLeave(false) })
+onMounted(() => {
+  activityTimer = setInterval(() => { if (!document.hidden && history.value.activity.some(item => running(item.status))) activityClock.value = Date.now() }, 1000)
+  window.addEventListener('beforeunload', beforeUnload); document.addEventListener('visibilitychange', visible)
+})
+onBeforeUnmount(() => { clearInterval(activityTimer); lifecycle.abort(); reader.abort(); activityReader.abort(); cancelDetail(); window.removeEventListener('beforeunload', beforeUnload); document.removeEventListener('visibilitychange', visible); decideLeave(false) })
 </script>
 
 <template>
   <section class="mo-page mo-results" aria-label="整理记录">
+    <div v-if="activityRows.length" class="mo-activity" aria-label="整理阶段进度"><article v-for="item in activityRows" :key="item.runId"><div class="mo-activity-heading"><span class="mo-chip" :class="statusClass(item.status)">{{ item.status === 'queued' ? '排队中' : item.stage ? activityStages[item.stage] : batchLabels[item.status] || '扫描失败' }}</span><strong>{{ item.ruleName }}</strong><span v-if="item.files !== undefined">{{ item.stage === 'scanning' ? '已发现文件' : '主文件' }} {{ item.files }}</span><span v-if="item.completed !== undefined && item.total !== undefined">{{ item.completed }} / {{ item.total }} {{ item.stage === 'recognizing' ? '组' : '文件' }}</span></div><p v-if="item.current" class="mo-activity-current" :title="item.current">当前：{{ item.current }}</p><p v-if="item.message">{{ item.message }}</p><p v-if="running(item.status)" class="mo-activity-times"><span v-if="item.elapsed !== undefined">当前步骤等待 {{ item.elapsed }} 秒</span><span v-if="item.idle !== undefined">距最近进展 {{ item.idle }} 秒</span><span v-if="item.idle !== undefined && item.idle >= 60">较长时间没有新进展，可能仍在等待存储或元数据服务响应</span></p></article></div>
     <div class="mo-record-toolbar">
       <SegmentedControl class="mo-status-filter" role="group" label="记录状态" :model-value="filter" :options="filterOptions" :disabled="!!busy" @update:model-value="navigate($event)" />
       <div class="mo-record-actions"><button type="button" class="mo-button" :disabled="loading || !!busy" @click="bulk ? clearSelection() : bulk = true">{{ bulk ? '退出管理' : '批量管理' }}</button><button v-for="status in (['done', 'failed'] as const)" :key="status" type="button" class="mo-button" :disabled="loading || !!busy" @click="askClear(status)"><IconTrash :size="16" aria-hidden="true" />清理全部{{ taskLabels[status] }}</button><button type="button" class="mo-icon" aria-label="刷新记录" :disabled="refreshing || !!busy" @click="refresh"><IconRefresh :size="18" aria-hidden="true" /></button></div>
@@ -256,7 +282,6 @@ onBeforeUnmount(() => { lifecycle.abort(); reader.abort(); cancelDetail(); windo
     <p v-if="error" role="alert" class="mo-error">{{ error }}</p>
     <p v-if="notice" role="status" class="mo-muted">{{ notice }}</p>
     <p v-if="detailLoading && !current" role="status" class="mo-muted">正在读取整理详情…</p>
-    <div v-if="history.activity.length" class="mo-activity" aria-label="扫描状态"><p v-for="item in history.activity" :key="item.runId"><span class="mo-chip" :class="statusClass(item.status)">{{ batchLabels[item.status] || '扫描失败' }}</span><strong>{{ item.ruleName }}</strong><span>{{ item.message || (running(item.status) ? '正在扫描来源并识别文件，完成后显示整理结果' : '本次扫描未生成媒体任务') }}</span></p></div>
     <div v-if="history.retryBatch" class="mo-retry-progress" role="status" aria-label="批量重试进度"><div><strong>批量重试{{ retryBatchLabels[history.retryBatch.status] }}</strong><span>共 {{ history.retryBatch.total }} 条 · 待处理 {{ history.retryBatch.pending }} · 成功 {{ history.retryBatch.success }} · 失败 {{ history.retryBatch.failed }} · 跳过 {{ history.retryBatch.skipped }}</span><span v-if="history.retryBatch.status === 'stopping'" class="mo-muted">正在处理的文件继续核对结果</span></div><button v-if="retryBatchActive" type="button" class="mo-button" :disabled="!!busy || history.retryBatch.status === 'stopping'" @click="stopRetryBatch">停止剩余重试</button></div>
     <div v-if="bulk" class="mo-bulk-bar"><label><input type="checkbox" :checked="allSelected" :disabled="!!busy || !selectable.length" @change="selectAll" />全选当前页</label><span>已选 {{ selectedItems.length }} 条</span><div class="mo-bulk-actions"><button type="button" class="mo-button mo-primary" :disabled="!!busy || retryBatchActive || !selectedRetryItems.length" @click="retryRecords(selectedRetryItems)">重试选中 {{ selectedRetryItems.length }} 条</button><button type="button" class="mo-button mo-danger" :disabled="!!busy || !selectedDeleteItems.length" @click="askDelete(selectedDeleteItems)">删除选中 {{ selectedDeleteItems.length }} 条</button></div></div>
     <p v-if="loading" class="mo-empty" role="status">正在读取整理记录…</p>
@@ -297,6 +322,7 @@ onBeforeUnmount(() => { lifecycle.abort(); reader.abort(); cancelDetail(); windo
 
 <style scoped src="../styles/media-organize.css"></style>
 <style scoped>
+.mo-activity{position:sticky;top:8px;z-index:5;padding:12px 14px;border-radius:12px;background:rgb(var(--surface-card,255 255 255));box-shadow:0 3px 14px rgb(15 23 42/.06)}.mo-activity article+article{margin-top:10px;padding-top:10px;border-top:1px solid rgb(148 163 184/.16)}.mo-activity-heading,.mo-activity-times{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px}.mo-activity-current{overflow-wrap:anywhere;word-break:break-word}.mo-activity article>p{margin-top:6px}.mo-activity-times{color:rgb(var(--color-slate-500));font-variant-numeric:tabular-nums}
 .mo-specifications{display:flex;flex-wrap:wrap;gap:7px 18px;margin-top:12px;font-size:12px;line-height:1.6}.mo-specifications>div{display:flex;gap:6px;min-width:0}.mo-specifications dt{color:rgb(var(--color-slate-500))}.mo-specifications dd{overflow-wrap:anywhere}.mo-attachment-list{display:grid;gap:0;min-width:0;list-style:none}.mo-attachment-list>li{display:grid;gap:5px;min-width:0;padding:10px 0;font-size:12px;line-height:1.7}.mo-attachment-list>li+li{border-top:1px solid rgb(148 163 184/.12)}.mo-attachment-name{display:flex;justify-content:space-between;align-items:baseline;gap:12px;min-width:0}.mo-attachment-name strong{min-width:0;font-size:13px;font-weight:500;overflow-wrap:anywhere}.mo-attachment-name .mo-status{flex:none;width:auto}.mo-attachment-path{overflow-wrap:anywhere;font-size:11px}.mo-attachment-path.mo-target{color:#2563eb}:global(.dark .mo-attachment-path.mo-target){color:#93c5fd}
 .mo-record-toolbar,.mo-record-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.mo-record-toolbar{justify-content:space-between;min-width:0}.mo-record-search{display:flex;gap:8px;align-items:center;max-width:560px;min-width:0}.mo-record-search>svg{color:#64748b;flex:none}.mo-record-search input{flex:1;min-width:0;width:100%;height:38px;background:rgb(148 163 184/.08);border-radius:9px;padding:8px 11px;font-size:13px;outline:none}.mo-record-search input:focus{box-shadow:0 0 0 2px rgb(59 130 246/.3)}.mo-record-search input::-webkit-search-cancel-button{display:none}.mo-bulk-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-radius:11px;background:#dbeafe;padding:10px 13px;font-size:12px;color:#1e40af}.mo-bulk-bar label{display:inline-flex;align-items:center;gap:8px;min-height:30px}.mo-bulk-bar input{width:17px;height:17px;accent-color:#2563eb}.mo-bulk-actions{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}.mo-retry-search{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}.mo-retry-progress{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 14px;border-radius:11px;background:rgb(148 163 184/.08);font-size:12px}.mo-retry-progress>div{display:grid;gap:5px;min-width:0}.mo-retry-progress strong{font-weight:600}.mo-danger{color:#b91c1c;background:#fee2e2}.mo-danger:hover{background:#fecaca}.mo-activity{display:grid;gap:7px;color:rgb(var(--color-slate-600));font-size:12px}.mo-activity p{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.mo-activity strong{font-weight:500}.mo-cleanup{min-width:0;padding:12px 14px;border-radius:12px;background:rgb(148 163 184/.08);font-size:12px;color:rgb(var(--color-slate-600))}.mo-cleanup summary{cursor:pointer}.mo-cleanup summary span{margin-left:8px;color:rgb(var(--color-slate-500))}.mo-cleanup p{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:12px}.mo-cleanup time{margin-left:auto}.mo-results{min-width:0}.mo-history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:12px}.mo-result{display:flex;flex-direction:column;min-width:0;gap:7px;padding:14px;text-align:left;border-radius:14px;border:1px solid transparent;background:#fff;box-shadow:0 2px 8px rgb(15 23 42/.035);transition:background-color .16s,box-shadow .16s}.mo-result:hover{background:#eff6ff;box-shadow:0 4px 16px rgb(37 99 235/.1)}.mo-result.is-selected{background:#dbeafe;border-color:#60a5fa;box-shadow:0 3px 12px rgb(37 99 235/.15)}.mo-selection{width:19px;height:19px;border:1.5px solid #94a3b8;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;flex:none}.is-selected .mo-selection{background:#2563eb;border-color:#2563eb;color:white}.mo-result-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px;line-height:1.6}.mo-result-heading strong{display:flex;align-items:center;flex:1;min-width:0;gap:8px;font-weight:600}.mo-result-heading>svg{flex:none;color:rgb(var(--color-slate-400))}.mo-result-name,.mo-result-path code,.mo-result-message{display:block;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.mo-episode{flex:none;border-radius:5px;padding:2px 6px;background:#2563eb;color:#fff;font-size:11px;font-weight:500;line-height:1.5;font-variant-numeric:tabular-nums}.mo-result-meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11px}.mo-chip{display:inline-flex;align-items:center;gap:4px;border-radius:5px;padding:2px 7px;line-height:1.5;font-weight:500}.mo-status-chip{font-size:12px;font-weight:600}.mo-success{color:#fff;background:#15803d}.mo-failure{color:#fff;background:#b91c1c}.mo-processing{color:#1d4ed8;background:#dbeafe}.mo-kind{color:#1d4ed8;background:#bfdbfe}.mo-format{color:#475569;background:#e2e8f0}.mo-result-path{display:grid;grid-template-columns:32px minmax(0,1fr);gap:8px;align-items:baseline;font-size:12px;line-height:1.7;color:rgb(var(--color-slate-500))}.mo-result-path code{color:rgb(var(--color-slate-600));font-size:11px}.mo-result-message{font-size:12px;line-height:1.7}.mo-result time{margin-top:auto;padding-top:2px;font-size:11px;color:rgb(var(--color-slate-500))}
 .mo-work h3,.mo-title h3{font-size:16px;font-weight:600}.mo-title h3{min-width:0;overflow-wrap:anywhere}.mo-meta{margin-left:12px}.mo-preview{display:grid;gap:18px}.mo-work{padding-top:16px}.mo-work>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.mo-work+.mo-work{border-top:1px solid rgb(148 163 184/.18)}.mo-file{display:flex;align-items:center;gap:14px;padding:11px 0}.mo-file+.mo-file{border-top:1px solid rgb(148 163 184/.09)}.mo-file-path{flex:1;min-width:0;display:grid;gap:6px}.mo-file-path code{font-size:13px;overflow-wrap:anywhere;line-height:1.75;color:rgb(var(--color-slate-600))}.mo-file-path code.mo-target{color:#2563eb}.mo-file-path strong{font-size:13px;overflow-wrap:anywhere}.mo-file-path p{font-size:13px;line-height:1.6}.mo-file-controls{display:flex;align-items:center;gap:7px;flex-shrink:0}.mo-file-controls label{display:grid;gap:3px;font-size:12px;color:rgb(var(--color-slate-500))}.mo-file-controls input,.mo-search input{width:100%;min-width:0;min-height:36px;padding:7px 10px;border:1px solid rgb(148 163 184/.23);border-radius:9px;background:rgb(var(--color-slate-50));color:rgb(var(--color-slate-900));font-size:13px;outline:none}.mo-file-controls input{width:72px;font-size:14px}.mo-file-controls input:focus,.mo-search input:focus{border-color:#3b82f6}.mo-status{width:56px;text-align:right;font-size:12px;color:rgb(var(--color-slate-500))}.mo-search{padding:10px 0}.mo-input-action{display:flex;gap:6px}.mo-input-action input{flex:1}.mo-candidates{display:grid;gap:4px;margin-top:8px;max-height:220px;overflow:auto}.mo-candidates button{display:flex;justify-content:space-between;gap:10px;text-align:left;padding:10px;border-radius:8px;background:rgb(148 163 184/.08);font-size:12px}.mo-candidates span{font-size:11px;color:rgb(var(--color-slate-500))}:global(.mo-preview-dialog.anime-floating.anime-floating-organize){height:fit-content;min-height:min(360px,calc(100dvh - 48px))}:global(.mo-preview-dialog .anime-floating-body){flex:0 1 auto}:global(.mo-preview-dialog .mo-muted),:global(.mo-preview-dialog .mo-button){font-size:13px}

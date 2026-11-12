@@ -96,6 +96,13 @@ func mediaMonitorVideoFound(t *testing.T, root, name string) bool {
 	t.Helper()
 	found := false
 	err := filepath.WalkDir(root, func(_ string, entry os.DirEntry, err error) error {
+		// 临时目录尚未发布，轮询最终文件时不进入，避免与 Windows 清理操作争用。
+		if entry != nil && entry.IsDir() && strings.HasPrefix(entry.Name(), ".cinema115-organize-") {
+			return filepath.SkipDir
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -124,6 +131,8 @@ func TestMediaLocalMonitorRealEventsAndMovedTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E02.strm") })
+	// 最终文件发布先于空目录清理，下一次写入须等待本轮文件操作收尾。
+	mediaMonitorWait(t, func() bool { return !s.State().Active })
 	mediaTestFile(t, rule.Source, "moved/deeper/Work.S01E03.strm", "http://original/three")
 	mediaMonitorWait(t, func() bool { return mediaMonitorVideoFound(t, rule.Target, "作品.S01E03.strm") })
 	rule.RealtimeEnabled = false

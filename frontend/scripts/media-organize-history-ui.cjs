@@ -91,9 +91,6 @@ async function historyEventModels(browser) {
     await page.getByRole('group', { name: '记录状态', exact: true }).getByRole('button', { name: /^成功/ }).click()
     await page.waitForTimeout(1250); baseline = reads
     await send(); await page.waitForTimeout(1250); assert.equal(reads, baseline + 1, '成功筛选也接收更新')
-    await page.goto(origin + '/media/organize/history?page=2'); await page.locator('.mo-result').first().waitFor()
-    baseline = reads; await send(1000); await page.waitForTimeout(1250); assert.equal(reads, baseline, '历史分页保持位置')
-    await page.goto(origin + '/media/organize/history'); await page.locator('.mo-result').first().waitFor()
     await page.evaluate(() => { window.__hidden = true; Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__hidden }); document.dispatchEvent(new Event('visibilitychange')) })
     assert.equal(await page.evaluate(() => window.__historyEvents.active), 0)
     baseline = reads; await page.waitForTimeout(1100); assert.equal(reads, baseline, '隐藏页面释放连接并停止查询')
@@ -113,6 +110,65 @@ async function historyEventModels(browser) {
     assert.deepEqual(errors, [])
     return { burstNotifications: 1000, burstQueries: 1, burstMilliseconds, continuousSeconds: 3, continuousQueries, idleQueries: 0, overlappingQueries: 0, errors }
   } finally { held?.release(); await context.close() }
+}
+// 阶段进度使用模拟时钟与接口，确认计时不查询数据库、后页不改动列表选择。
+async function activityProgressModel(browser) {
+  const context = await browser.newContext({ serviceWorkers: 'block' }), errors = []
+  await mockHistoryEvents(context)
+  await context.addInitScript(() => {
+    localStorage.setItem('admin_token', 'mock-token')
+    const originalNow = Date.now
+    window.__progressClockOffset = 0
+    Date.now = () => originalNow() + window.__progressClockOffset
+  })
+  const timestamp = offset => new Date(Date.now() - offset * 1000).toISOString()
+  let stateReads = 0, historyReads = 0, active = true
+  let activity = [{ runId: 'progress-run', ruleName: '阶段测试', status: 'scanning', stage: 'scanning', files: 3, current: '来源目录', message: '已发现可处理文件', startedAt: timestamp(4), at: timestamp(2) }]
+  const item = { runId: 'done-run', fileId: 'video', name: 'Work.S01E01.mkv', title: '作品', kind: 'tv', mediaType: 'video', season: 1, episode: 1, source: '/inbox/Work.mkv', status: 'done', at: timestamp(100), canDelete: true, canRetry: false, attachmentCount: 0 }
+  await context.route('**/api/**', async route => {
+    const endpoint = new URL(route.request().url()).pathname
+    let data = {}
+    if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
+    else if (endpoint === '/api/admin/media-organize') { stateReads++; data = { rules: [], active, activeRules: [], activity } }
+    else if (endpoint === '/api/admin/media-organize/history') {
+      historyReads++; data = { items: [item], page: 2, pages: 2, total: 21, counts: { all: 21, running: 1, done: 20, failed: 0 }, active, activity, cleanup: [] }
+    } else throw new Error(`Unexpected progress API ${endpoint}`)
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
+  })
+  const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
+  try {
+    await page.goto(origin + '/media/organize/history?page=2')
+    const progress = page.getByLabel('整理阶段进度', { exact: true })
+    await progress.getByText('扫描文件', { exact: true }).waitFor()
+    await progress.getByText('已发现文件 3', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '批量管理', exact: true }).click()
+    await page.getByRole('checkbox', { name: '全选当前页', exact: true }).check()
+    const baselineHistory = historyReads
+    activity = [{ ...activity[0], status: 'running', stage: 'recognizing', current: '当前作品', files: 2, completed: 1, total: 3, startedAt: timestamp(15), at: timestamp(65) }]
+    await page.evaluate(() => window.__historyEvents.send())
+    await progress.getByText('识别作品', { exact: true }).waitFor()
+    await progress.getByText('主文件 2', { exact: true }).waitFor()
+    await progress.getByText('1 / 3 组', { exact: true }).waitFor()
+    await progress.getByText('当前：当前作品', { exact: true }).waitFor()
+    await progress.getByText('较长时间没有新进展，可能仍在等待存储或元数据服务响应', { exact: true }).waitFor()
+    assert.equal(historyReads, baselineHistory, '后页SSE只能更新进度摘要')
+    assert.equal(await page.getByRole('checkbox', { name: '全选当前页', exact: true }).isChecked(), true)
+    assert.equal(await page.locator('.mo-result[aria-pressed="true"]').count(), 1, '摘要更新保留批量选择')
+    const elapsed = await progress.getByText(/^当前步骤等待/).textContent(), baselineState = stateReads
+    await page.evaluate(() => { window.__progressClockOffset += 6_000 })
+    await page.waitForTimeout(1100)
+    assert.notEqual(await progress.getByText(/^当前步骤等待/).textContent(), elapsed, '本地计时继续增长')
+    assert.equal(stateReads, baselineState, '计时不额外读取状态')
+    assert.equal(historyReads, baselineHistory, '计时不额外读取历史')
+    activity = []; active = false
+    await page.evaluate(() => window.__historyEvents.send())
+    await progress.waitFor({ state: 'detached' })
+    assert.equal(historyReads, baselineHistory)
+    assert.equal(await page.getByRole('checkbox', { name: '全选当前页', exact: true }).isChecked(), true)
+    assert.deepEqual(errors, [])
+    return { pageTwoListReads: baselineHistory, stateUpdates: stateReads, selectionPreserved: true, clockQueries: 0, errors }
+  } finally { await context.close() }
 }
 // 批量重试只验证搜索范围、选中集合与停止回执，所有数据均来自模拟接口。
 async function batchRetryModel(browser) {
@@ -236,6 +292,7 @@ async function loadingModels(browser) {
 }
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+  if (process.argv.includes('--progress-only')) { try { console.log(JSON.stringify(await activityProgressModel(browser), null, 2)) } finally { await browser.close() }; return }
   if (process.argv.includes('--retry-only')) { try { console.log(JSON.stringify(await batchRetryModel(browser), null, 2)) } finally { await browser.close() }; return }
   if (process.argv.includes('--events-only')) { try { console.log(JSON.stringify(await historyEventModels(browser), null, 2)) } finally { await browser.close() }; return }
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })

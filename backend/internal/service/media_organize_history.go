@@ -63,13 +63,21 @@ type MediaOrganizeState struct {
 	Active        bool                                  `json:"active"`
 	ActiveRules   []string                              `json:"activeRules"`
 	Monitoring    map[string]MediaOrganizeMonitorStatus `json:"monitoring"`
+	Activity      []MediaOrganizeActivity               `json:"activity"`
 }
 type MediaOrganizeActivity struct {
-	RunID    string    `json:"runId"`
-	RuleName string    `json:"ruleName"`
-	Status   string    `json:"status"`
-	Message  string    `json:"message,omitempty"`
-	At       time.Time `json:"at"`
+	RunID      string    `json:"runId"`
+	RuleName   string    `json:"ruleName"`
+	Status     string    `json:"status"`
+	Message    string    `json:"message,omitempty"`
+	At         time.Time `json:"at"`
+	Stage      string    `json:"stage,omitempty"`
+	Current    string    `json:"current,omitempty"`
+	Completed  int       `json:"completed"`
+	Total      int       `json:"total,omitempty"`
+	Files      int       `json:"files,omitempty"`
+	StartedAt  time.Time `json:"startedAt,omitempty"`
+	notifiedAt time.Time
 }
 type MediaOrganizeDeleteItem struct {
 	RunID  string `json:"runId"`
@@ -170,7 +178,7 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 	tasks := make([]MediaOrganizeTask, 0, len(run.Entries))
 	for _, e := range run.Entries {
 		completed, hasCompletion := mediaPrimaryCompletion(e)
-		if e.File.MediaType != "video" || e.Reference && !hasCompletion {
+		if e.File.MediaType != "video" || e.Status == "retained" || e.Reference && !hasCompletion {
 			continue
 		}
 		g := groups[e.Group]
@@ -296,6 +304,7 @@ func (s *MediaOrganizer) State() MediaOrganizeState {
 	defer s.mu.Unlock()
 	state := MediaOrganizeState{Rules: append([]MediaOrganizeRule{}, s.doc.Rules...), Active: s.active != "" || len(s.actions) > 0, ActiveRules: []string{}}
 	state.Monitoring = make(map[string]MediaOrganizeMonitorStatus, len(s.localMonitors))
+	state.Activity = s.mediaActivitiesLocked()
 	for _, rule := range s.doc.Rules {
 		if rule.ScheduleEnabled && rule.Storage != "local" {
 			state.Monitoring[rule.ID] = MediaOrganizeMonitorStatus{Mode: "polling"}
@@ -400,6 +409,11 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 	}
 	out.Active = s.active != "" || len(s.actions) > 0
 	out.RetryBatch = s.retryBatchProgressLocked()
+	liveActivity := s.mediaActivitiesLocked()
+	for _, item := range liveActivity {
+		out.Activity = slices.DeleteFunc(out.Activity, func(previous MediaOrganizeActivity) bool { return previous.RunID == item.RunID })
+	}
+	out.Activity = append(liveActivity, out.Activity...)
 	for i := range out.Items {
 		item := &out.Items[i]
 		permission := permissions[item.RunID+"\x00"+item.FileID]

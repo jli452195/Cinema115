@@ -74,6 +74,7 @@ func (s *MediaOrganizer) processCloudAuto(ctx context.Context, files *mediaOrgan
 		} else {
 			files.cd2ScanPath, files.cd2Shallow = scope.ID, true
 		}
+		s.publishMediaProgress(run, "scanning", path.Join(run.Rule.Source, scope.Relative), 0, 0)
 		entries, err := files.scan(ctx)
 		if err != nil {
 			if scope.Relative != "" && errors.Is(err, clouddrive2.ErrNotFound) {

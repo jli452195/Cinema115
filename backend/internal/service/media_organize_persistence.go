@@ -24,7 +24,7 @@ func mediaPersistentRun(run MediaOrganizeRun) MediaOrganizeRun {
 	stored.Groups = make([]MediaOrganizeGroup, 0, len(run.Groups))
 	unfinished, groups := make(map[string]bool), make(map[string]bool)
 	for _, entry := range run.Entries {
-		if entry.File.MediaType != "video" {
+		if entry.File.MediaType != "video" || entry.Status == "retained" {
 			continue
 		}
 		completed, hasCompletion := mediaPrimaryCompletion(entry)
@@ -39,7 +39,7 @@ func mediaPersistentRun(run MediaOrganizeRun) MediaOrganizeRun {
 			continue
 		}
 		index := MediaOrganizeEntry{
-			File: entry.File, Modified: entry.Modified, CD2FileID: entry.CD2FileID,
+			File: entry.File, Modified: entry.Modified, LocalIdentity: entry.LocalIdentity, CD2FileID: entry.CD2FileID,
 			CD2Hashes: entry.CD2Hashes, CD2Current: entry.CD2Current, CD2Duplicate: entry.CD2Duplicate,
 			Reference: true, Group: entry.Group, Relative: entry.Relative, Target: entry.Target, Status: "done",
 		}
@@ -179,6 +179,9 @@ func mediaResolvedSameSource(previous, current MediaOrganizeEntry, storageType s
 			return false
 		}
 	case "local":
+		if previous.LocalIdentity != "" && current.LocalIdentity != "" && previous.LocalIdentity != current.LocalIdentity {
+			return false
+		}
 		if previous.Modified == 0 || previous.Modified != current.Modified || previous.File.SourcePath != current.File.SourcePath {
 			return false
 		}

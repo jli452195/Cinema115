@@ -19,6 +19,7 @@
     "test:media-monitor-ui": "node scripts/media-monitor-ui.cjs",
     "test:media-organize-history-ui": "node scripts/media-organize-history-ui.cjs",
     "test:media-organize-history-retry-ui": "node scripts/media-organize-history-ui.cjs --retry-only",
+    "test:media-organize-history-progress-ui": "node scripts/media-organize-history-ui.cjs --progress-only",
     "test:media-organize-history-events-ui": "node scripts/media-organize-history-ui.cjs --events-only",
     "test:naming-settings-ui": "node scripts/naming-settings-ui.cjs",
     "test:gying-organize-ui": "node scripts/download-organize-ui.cjs gying",

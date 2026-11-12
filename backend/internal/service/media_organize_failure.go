@@ -12,12 +12,13 @@ import (
 
 // 失败搬运保留原任务关联键；去重完成后另存实际保留身份用于纠正重试。
 type MediaOrganizeFailure struct {
-	State     string `json:"state"`
-	ParentID  string `json:"parentId,omitempty"`
-	FileID    string `json:"fileId,omitempty"`
-	CD2FileID string `json:"cd2FileId,omitempty"`
-	Reason    string `json:"reason"`
-	Message   string `json:"message,omitempty"`
+	State         string `json:"state"`
+	ParentID      string `json:"parentId,omitempty"`
+	FileID        string `json:"fileId,omitempty"`
+	CD2FileID     string `json:"cd2FileId,omitempty"`
+	LocalIdentity string `json:"localIdentity,omitempty"`
+	Reason        string `json:"reason"`
+	Message       string `json:"message,omitempty"`
 }
 
 func mediaTransientGroups(run *MediaOrganizeRun) map[string]bool {
@@ -142,6 +143,8 @@ func (s *MediaOrganizer) quarantineEntry(ctx context.Context, files *mediaOrgani
 		return false, nil
 	}
 	defer releaseEntry()
+	s.publishMediaEntryProgress(run, run.Entries[index].File.Name)
+	defer s.publishMediaEntryProgress(run, "")
 	e := &run.Entries[index]
 	if e.Failure == nil {
 		e.Failure = &MediaOrganizeFailure{State: "pending", Reason: e.Message}
@@ -182,6 +185,14 @@ func (s *MediaOrganizer) quarantineEntry(ctx context.Context, files *mediaOrgani
 		e.Failure.State = "moving"
 		if saveErr = s.checkpoint(run); saveErr != nil {
 			return saveErr
+		}
+		if run.Rule.Storage == "local" {
+			// 先保存隔离目标身份再删源，跨文件系统复制中断也可严格恢复。
+			target.localCheckpoint = func(_ MediaOrganizeEntry, identity string) error {
+				e.Failure.LocalIdentity = identity
+				saveErr = s.checkpoint(run)
+				return saveErr
+			}
 		}
 		if err := target.move(work, plan); err != nil {
 			var receipt *mediaDuplicateReceipt

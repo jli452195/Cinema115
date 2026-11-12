@@ -131,7 +131,7 @@ func (f *mediaOrganizeFiles) recheckLocalCompanions(ctx context.Context, run *Me
 			return true
 		}
 		x, y := f.localSnapshots[id], current.localSnapshots[id]
-		return x == nil || y == nil || !x.ModTime().Equal(y.ModTime()) || !slices.Equal(beforeOwners[id], currentOwners[id])
+		return x == nil || y == nil || f.localSnapshotKeys[id] == "" || f.localSnapshotKeys[id] != current.localSnapshotKeys[id] || !x.ModTime().Equal(y.ModTime()) || !slices.Equal(beforeOwners[id], currentOwners[id])
 	}
 	for _, files := range []map[string]OrganizeFile{before, after} {
 		for id, file := range files {

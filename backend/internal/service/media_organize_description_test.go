@@ -80,6 +80,40 @@ func TestMediaDescriptionDoesNotBorrowOtherWorkOrDirectory(t *testing.T) {
 	}
 }
 
+func TestMediaCompactEpisodeGrouping(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		files    []string
+		title    string
+		kind     string
+		episodes []int
+	}{
+		{"紧凑编号与修订", []string{"Animation-02.WMV", "Animation-03v2.mkv"}, "Animation", "tv", []int{2, 3}},
+		{"中文紧凑编号", []string{"陰陽大戰記-02.wmv", "陰陽大戰記-03.wmv"}, "陰陽大戰記", "tv", []int{2, 3}},
+		{"正式数字片名", []string{"Work 2-02.mkv", "Work 2-03.mkv"}, "Work 2", "tv", []int{2, 3}},
+		{"孤立紧凑编号仍需证据", []string{"Animation-02.mkv"}, "Animation-02", "", []int{0}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := MediaOrganizeRun{Rule: MediaOrganizeRule{Source: "/inbox"}}
+			entries := make([]MediaOrganizeEntry, 0, len(tc.files))
+			for _, name := range tc.files {
+				file := OrganizeFile{ShareFile: p115.ShareFile{ID: name, Name: name}, SourcePath: name, ParentID: ".", MediaType: "video", Season: 1}
+				mediaOrganizeFileNumbering(&file)
+				entries = append(entries, MediaOrganizeEntry{File: file})
+			}
+			mediaAppendScanEntries(&run, entries)
+			if len(run.Groups) != 1 || run.Groups[0].Identity.Name != tc.title || run.Groups[0].Identity.Kind != tc.kind {
+				t.Fatalf("紧凑编号应沿用同一作品身份：%+v", run.Groups)
+			}
+			for i, entry := range run.Entries {
+				if entry.Group != run.Groups[0].ID || entry.File.Episode != tc.episodes[i] || entry.File.Name != tc.files[i] {
+					t.Fatalf("分组、集号或原始名称错误：%+v", entry)
+				}
+			}
+		})
+	}
+}
+
 func TestMediaDescriptionRetryRefreshesUnmatchedIdentity(t *testing.T) {
 	s, metadata, _, rule := newMediaOrganizeTest(t)
 	for _, file := range []string{"Work 100 [原创].strm", "Work 101 [主线].strm"} {

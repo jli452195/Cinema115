@@ -95,7 +95,7 @@ func mediaIdentityHasBareEpisode(identity mediafacts.Identity, file OrganizeFile
 		return false
 	}
 	stem := strings.TrimSuffix(file.Name, path.Ext(file.Name))
-	prefix, ok := releaseparse.EpisodePrefix(stem)
+	prefix, ok := releaseparse.EpisodePrefix(organizeNumberingStem(stem))
 	if !ok {
 		return false
 	}

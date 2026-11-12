@@ -30,8 +30,10 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 		return err
 	}
 	defer files.close()
+	files.scanProgress = func(count int, name string) { s.publishMediaProgress(run, "scanning", name, count, 0) }
 	if action == "auto" {
 		defer func() {
+			s.publishMediaProgress(run, "cleanup", "", 0, 0)
 			if err := ctx.Err(); err != nil {
 				processErr = errors.Join(processErr, err)
 				return
@@ -70,6 +72,9 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 			s.localScanSucceeded(run.Rule)
 		}
 	} else if action == "retry" {
+		if err = s.restoreRetryLocations(ctx, files, run); err != nil {
+			return err
+		}
 		if err = s.recognize(ctx, run, nil); err != nil {
 			return err
 		}
@@ -114,6 +119,7 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
 	var err error
 	run.Status = "scanning"
+	s.publishMediaProgress(run, "scanning", "", 0, 0)
 	if err = s.checkpoint(run); err != nil {
 		return err
 	}
@@ -126,6 +132,10 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 	}
 	files.scanned = entries
 	mediaAppendScanEntries(run, entries)
+	// 扫描完成即公布待处理文件，识别期间无需等待整批查询结束。
+	if err = s.checkpoint(run); err != nil {
+		return err
+	}
 	if err = s.recognize(ctx, run, nil); err != nil {
 		return err
 	}
@@ -196,7 +206,7 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 			groups[i] = i
 		}
 	}
-	for _, i := range groups {
+	for progress, i := range groups {
 		if err := s.checkOrganizeStop(run); err != nil {
 			return err
 		}
@@ -207,6 +217,7 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 			return ErrMediaOrganizeInput
 		}
 		g := &run.Groups[i]
+		s.publishMediaProgress(run, "recognizing", g.Identity.Name, progress, len(groups))
 		indices := byGroup[g.ID]
 		if len(indices) == 0 {
 			continue
@@ -252,10 +263,12 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 			}
 		}
 	}
+	s.publishMediaProgress(run, "recognizing", "", len(groups), len(groups))
 	return nil
 }
 
 func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	s.publishMediaProgress(run, "planning", "", 0, 0)
 	prepared := make(map[string]preparedMediaNaming)
 	if files.naming != nil {
 		prepared = files.naming
@@ -501,6 +514,7 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 		}
 	}
 	run.Status = "running"
+	s.publishMediaEntryProgress(run, "")
 	if err := s.checkpoint(run); err != nil {
 		return err
 	}
@@ -536,6 +550,7 @@ func (s *MediaOrganizer) execute(ctx context.Context, files *mediaOrganizeFiles,
 	if run.streaming {
 		return nil
 	}
+	s.publishMediaEntryProgress(run, "")
 	mediaFinishRun(run)
 	return nil
 }
