@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
@@ -128,6 +129,46 @@ func TestAnimeNamingDoesNotReadOrChangeGlobalNumbering(t *testing.T) {
 	after, err := s.NumberingRevision(ctx, 80462)
 	if err != nil || after != info.Revision {
 		t.Fatal("global revision changed", after, err)
+	}
+}
+
+func TestAnimeNamingRefreshesExpiredMetadataOnly(t *testing.T) {
+	ctx := context.Background()
+	_, _, db := numberingFixture(t)
+	source := &cacheTMDBFake{episodes: []tmdb.Episode{{Number: 1}}}
+	s := NewTMDBService(source, db)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	for i := 0; i < 2; i++ {
+		if value, err := s.AnimeDetails(ctx, 42); err != nil || value.CacheStale {
+			t.Fatal(value, err)
+		}
+		if value, err := s.AnimeSeason(ctx, 42, 1); err != nil || value.CacheStale {
+			t.Fatal(value, err)
+		}
+	}
+	if source.detailCalls.Load() != 1 || source.calls.Load() != 1 {
+		t.Fatal("未复用未过期缓存")
+	}
+	now = now.Add(7 * time.Hour)
+	key := "season:42:1"
+	if value, info, err := cachedTMDB[tmdb.SeasonDetail](ctx, s, key, time.Hour, nil); err != nil || value == nil || !info.CacheStale || source.calls.Load() != 1 {
+		t.Fatal("普通读取的缓存策略被改变", value, info, err)
+	}
+	source.episodes = []tmdb.Episode{{Number: 1}, {Number: 2}}
+	if value, err := s.AnimeDetails(ctx, 42); err != nil || value.CacheStale || source.detailCalls.Load() != 2 {
+		t.Fatal(value, err)
+	}
+	if value, err := s.AnimeSeason(ctx, 42, 1); err != nil || value.CacheStale || len(value.Episodes) != 2 || source.calls.Load() != 2 {
+		t.Fatal(value, err)
+	}
+	now = now.Add(2 * time.Hour)
+	source.failure = true
+	if _, err := s.AnimeSeason(ctx, 42, 1); err == nil || source.calls.Load() != 3 {
+		t.Fatal("刷新失败未返回错误或重复请求", err)
+	}
+	if value, info, err := cachedTMDB[tmdb.SeasonDetail](ctx, s, key, time.Hour, nil); err != nil || value == nil || len(value.Episodes) != 2 || !info.CacheStale || source.calls.Load() != 3 {
+		t.Fatal("刷新失败丢失了旧缓存", value, info, err)
 	}
 }
 

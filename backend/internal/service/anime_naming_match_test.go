@@ -131,3 +131,58 @@ func TestAnimeNamingChapterFailuresRemainAdvisory(t *testing.T) {
 		})
 	}
 }
+
+func TestAnimeNamingExactLinkRetainedDuringMetadataFailure(t *testing.T) {
+	s := &AnimeNamingService{Metadata: &animeNamingFake{offline: true}, Links: animeNamingLinkFake{result: bangumidata.Result{Candidates: []bangumidata.Candidate{{TMDBID: "117061", Title: "作品"}}}}}
+	got, err := s.SearchSubject(context.Background(), "548156", "作品")
+	if err != nil || got.Source != "bangumi-data" || len(got.Items) != 1 || got.Items[0].ID != 117061 || got.RecommendedID != "" || !strings.Contains(got.Notice, "暂时无法读取") {
+		t.Fatal(got, err)
+	}
+}
+
+func TestAnimeNamingLinkFirstEpisode(t *testing.T) {
+	season, episode := 1, 26
+	links := bangumidata.Result{Candidates: []bangumidata.Candidate{{TMDBID: "207347", Season: &season, Episode: &episode}}}
+	chapters := []bangumi.Episode{{Number: 26, Date: "2026-10-04", Title: "似曾相识"}}
+	seasons := []model.AnimeNamingSeason{{Number: 1, Episodes: []model.AnimeNamingEpisode{{ID: "26", Number: 26, Date: "2026-10-04", Name: "似曾相识"}}}}
+	t.Run("只确认首集不声称整篇已核对", func(t *testing.T) {
+		got := animeLinkFirstEpisode(InferAnimeEpisodes(chapters, seasons), links, "207347", chapters, seasons)
+		if got.Status != "partial" || got.Matched != 1 || got.First != 26 || got.TargetFirst != 26 || got.Last != 26 || got.TargetLast != 26 {
+			t.Fatal(got)
+		}
+	})
+	t.Run("无独立证据不能采用链接", func(t *testing.T) {
+		got := animeLinkFirstEpisode(AnimeEpisodeSuggestion{Status: "unresolved"}, links, "207347", []bangumi.Episode{{Number: 26}}, seasons)
+		if got.Status != "unresolved" {
+			t.Fatal(got)
+		}
+	})
+	t.Run("多章节未确定时不使用单点覆盖", func(t *testing.T) {
+		multiple := append(append([]bangumi.Episode(nil), chapters...), bangumi.Episode{Number: 27})
+		got := animeLinkFirstEpisode(AnimeEpisodeSuggestion{Status: "unresolved"}, links, "207347", multiple, seasons)
+		if got.Status != "unresolved" {
+			t.Fatal(got)
+		}
+	})
+	t.Run("标题相同但日期冲突仍需手动", func(t *testing.T) {
+		got := animeLinkFirstEpisode(AnimeEpisodeSuggestion{Status: "unresolved"}, links, "207347", []bangumi.Episode{{Number: 26, Date: "2026-01-01", Title: "似曾相识"}}, seasons)
+		if got.Status != "conflict" {
+			t.Fatal(got)
+		}
+	})
+	t.Run("已推导关系与首集链接冲突", func(t *testing.T) {
+		got := animeLinkFirstEpisode(AnimeEpisodeSuggestion{Status: "verified", Season: 2, First: 26, TargetFirst: 1}, links, "207347", chapters, seasons)
+		if got.Status != "conflict" {
+			t.Fatal(got)
+		}
+	})
+	t.Run("多个不同首集链接不能自动采用", func(t *testing.T) {
+		other := 27
+		ambiguous := links
+		ambiguous.Candidates = append(append([]bangumidata.Candidate(nil), links.Candidates...), bangumidata.Candidate{TMDBID: "207347", Season: &season, Episode: &other})
+		got := animeLinkFirstEpisode(AnimeEpisodeSuggestion{Status: "unresolved"}, ambiguous, "207347", chapters, seasons)
+		if got.Status != "conflict" {
+			t.Fatal(got)
+		}
+	})
+}

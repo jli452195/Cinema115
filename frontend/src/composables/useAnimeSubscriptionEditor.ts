@@ -37,6 +37,12 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
   }
   const dirty = computed(() => !!baseline.value && rawForm() !== baseline.value && !receipt.value)
   watch(naming.signature, () => { for (const source of sources.value) source.mappingNotice = '' })
+  watch([naming.target, naming.chapterMapping, naming.busy, naming.searching, locked, previewBusy, () => sources.value.map(source => source.sample)], () => {
+    if (locked.value || previewBusy.value || naming.busy.value || naming.searching.value) return
+    for (const source of sources.value) {
+      if (!source.id && !source.mappingManual && animeSourceReady(source)) applyFirstOffset(source)
+    }
+  })
   const submittedSources = computed(() => sources.value.filter(s => s.role === 'main' || s.id || s.itemId || s.groupId))
   const resumesArchived = computed(() => local.value?.status === 'archived' && submittedSources.value.some(source =>
     source.runWhenEnabled && !local.value?.sources.some(prior => prior.id === source.id && prior.runWhenEnabled)))
@@ -240,6 +246,7 @@ export function useAnimeSubscriptionEditor(token: Ref<string>, subscriptionID: R
     }
   }
   function applyFirstOffset(source: SourceForm) {
+    if (naming.busy.value || naming.searching.value) { source.mappingNotice = '正在核对目标季集，资料就绪后自动计算偏移。'; return }
     const result = firstAnimeSourceOffset(source, naming.target.value, naming.chapterMapping.value)
     if (result.offset != null) source.mappingOffset = String(result.offset)
     source.mappingNotice = result.message

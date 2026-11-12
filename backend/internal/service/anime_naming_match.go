@@ -2,17 +2,19 @@ package service
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strconv"
 	"time"
 
 	"strm115/backend/internal/client/bangumi"
+	"strm115/backend/internal/client/bangumidata"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 )
 
-// SearchSubject 优先读取精确条目关联；网络失败或没有映射时保留原有名称搜索。
+// SearchSubject 优先读取精确条目关联；TMDB 临时不可用时保留关联，缺少关联再按名称搜索。
 func (s *AnimeNamingService) SearchSubject(ctx context.Context, id string, names ...string) (AnimeNamingSearch, error) {
 	if s == nil || s.Metadata == nil {
 		return AnimeNamingSearch{Items: []tmdb.Item{}}, tmdb.ErrNotConfigured
@@ -30,6 +32,7 @@ func (s *AnimeNamingService) SearchSubject(ctx context.Context, id string, names
 			out := AnimeNamingSearch{Items: []tmdb.Item{}, Source: "bangumi-data"}
 			seen := make(map[string]bool, len(links.Candidates))
 			failed := false
+			unavailable := false
 			for _, candidate := range links.Candidates {
 				if seen[candidate.TMDBID] {
 					continue
@@ -45,6 +48,16 @@ func (s *AnimeNamingService) SearchSubject(ctx context.Context, id string, names
 					continue
 				}
 				detail, err := s.Metadata.AnimeDetails(ctx, n)
+				if err != nil && !errors.Is(err, tmdb.ErrNotFound) || err == nil && detail != nil && detail.ID == n && detail.CacheStale {
+					failed, unavailable = true, true
+					item := tmdb.Item{ID: n, Kind: "tv", Title: candidate.Title}
+					if detail != nil && detail.ID == n {
+						item = detail.Item
+						item.Kind = "tv"
+					}
+					out.Items = append(out.Items, item)
+					continue
+				}
 				if err != nil || detail == nil || detail.CacheStale || detail.ID != n || detail.Title == "" {
 					failed = true
 					continue
@@ -59,6 +72,9 @@ func (s *AnimeNamingService) SearchSubject(ctx context.Context, id string, names
 				}
 				if failed {
 					out.Notice = "部分 bangumi-data 关联未能通过 TMDB 核验，请手动选择作品。"
+				}
+				if unavailable {
+					out.Notice = "已保留 bangumi-data 精确关联；TMDB 资料暂时无法读取，请稍后重新读取目标资料。"
 				}
 				return out, nil
 			}
@@ -162,7 +178,7 @@ func (s *AnimeNamingService) TargetWithChapters(ctx context.Context, discovery A
 	}
 	seasons := make([]model.AnimeNamingSeason, 0, 4)
 	if !s.currentAnimeSeason(readCtx, target) {
-		return unavailable("当前目标季的 TMDB 资料已过期或发生变化，请刷新资料后重试。")
+		return unavailable("当前 TMDB 资料暂时无法核验，请重新读取目标资料后重试。")
 	}
 	for _, season := range target.Seasons {
 		if season.Number == target.Season {
@@ -170,13 +186,15 @@ func (s *AnimeNamingService) TargetWithChapters(ctx context.Context, discovery A
 		}
 	}
 	// 用户明确选择的季和自定义编排只核验当前季，避免推导替换手动选择。
+	var links bangumidata.Result
 	if in.GroupID == "" {
 		hint := -1
 		if s.Links != nil {
 			linkCtx, stop := context.WithTimeout(readCtx, time.Second)
-			links, linkErr := s.Links.Lookup(linkCtx, in.BangumiID)
+			result, linkErr := s.Links.Lookup(linkCtx, in.BangumiID)
 			stop()
-			if linkErr == nil && !links.Stale {
+			if linkErr == nil && !result.Stale {
+				links = result
 				for _, candidate := range links.Candidates {
 					if candidate.TMDBID == in.TMDBID && candidate.Season != nil {
 						if hint >= 0 && hint != *candidate.Season {
@@ -233,6 +251,7 @@ func (s *AnimeNamingService) TargetWithChapters(ctx context.Context, discovery A
 		}
 	}
 	suggestion := InferAnimeEpisodes(chapters, seasons)
+	suggestion = animeLinkFirstEpisode(suggestion, links, in.TMDBID, chapters, seasons)
 	if (suggestion.Status == "verified" || suggestion.Status == "partial") && suggestion.Season != target.Season && in.Season == nil {
 		selected := suggestion.Season
 		in.Season = &selected
@@ -255,7 +274,74 @@ func (s *AnimeNamingService) TargetWithChapters(ctx context.Context, discovery A
 			}
 		}
 		suggestion = InferAnimeEpisodes(chapters, seasons)
+		suggestion = animeLinkFirstEpisode(suggestion, links, in.TMDBID, chapters, seasons)
 	}
 	view.ChapterMapping = &suggestion
 	return view, nil
+}
+
+// 首集链接与独立日期或具体标题核对后，只补充首集对应，不把整篇章标为已核对。
+func animeLinkFirstEpisode(out AnimeEpisodeSuggestion, links bangumidata.Result, tmdbID string, chapters []bangumi.Episode, seasons []model.AnimeNamingSeason) AnimeEpisodeSuggestion {
+	var link *bangumidata.Candidate
+	conflict := func() AnimeEpisodeSuggestion {
+		return AnimeEpisodeSuggestion{Status: "conflict", Reason: "bangumi-data 首集定位与章节资料不一致，请手动核对集数偏移。"}
+	}
+	for _, candidate := range links.Candidates {
+		if candidate.TMDBID != tmdbID || candidate.Season == nil || candidate.Episode == nil {
+			continue
+		}
+		if link != nil && (*link.Season != *candidate.Season || *link.Episode != *candidate.Episode) {
+			return conflict()
+		}
+		copy := candidate
+		link = &copy
+	}
+	if link == nil || out.Status == "conflict" {
+		return out
+	}
+	points, first, _, ok := animeInferenceChapters(chapters)
+	if !ok || len(points) == 0 {
+		return out
+	}
+	if out.Status == "verified" || out.Status == "partial" {
+		if out.Season != *link.Season || out.TargetFirst != *link.Episode {
+			return conflict()
+		}
+		return out
+	}
+	// 多章节推导未确定时可能存在跨季或多方案歧义，不用单点覆盖原结论。
+	if len(points) != 1 {
+		return out
+	}
+	for _, season := range seasons {
+		if season.Number != *link.Season {
+			continue
+		}
+		episodes, valid := animeInferenceTMDB(season.Episodes)
+		if !valid {
+			return out
+		}
+		chapterTitles, episodeTitles := animeTitleNumberIndex(points), animeTitleNumberIndex(episodes)
+		chapter := points[0]
+		for _, episode := range episodes {
+			if episode.number != *link.Episode {
+				continue
+			}
+			dateMatch := chapter.dateOK && episode.dateOK && animeDateDistance(chapter.date, episode.date) <= 24*time.Hour && !animeDateHasAmbiguousMatch(chapter, points) && !animeDateHasAmbiguousMatch(episode, episodes)
+			titleMatch := false
+			for _, title := range chapter.titles {
+				if len(chapterTitles[title]) == 1 && len(episodeTitles[title]) == 1 && episodeTitles[title][0] == episode.number {
+					titleMatch = true
+				}
+			}
+			if chapter.dateOK && episode.dateOK && animeDateDistance(chapter.date, episode.date) > 24*time.Hour {
+				return conflict()
+			}
+			if !dateMatch && !titleMatch {
+				return out
+			}
+			return AnimeEpisodeSuggestion{Status: "partial", Reason: "bangumi-data 首集定位已按日期或具体标题核对，仅确认首集对应", Season: season.Number, First: first, Last: first, TargetFirst: episode.number, TargetLast: episode.number, Offset: episode.number - first, Matched: 1, Compared: 1, Pairs: []AnimeEpisodeSuggestionPair{{BangumiNumber: first, TMDBEpisode: episode.number, Evidence: "bangumi-data,first"}}}
+		}
+	}
+	return out
 }

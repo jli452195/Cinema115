@@ -17,8 +17,9 @@ export function firstAnimeSourceOffset(source: SourceForm, target?: AnimeNamingT
       if (offset > -99999 && offset < 99999) candidates.set(offset, number)
     }
     if (!first && mapping?.status !== 'conflict' && !target.groupId && number === 1 && target.seasons.some(season => season.number === target.season && season.episodes?.some(episode => episode.number === 1))) {
-      const declared = /\bS(\d{1,3})\s*E0*1\b/i.exec(item.title)
-      if (declared && Number(declared[1]) === target.season) candidates.set(0, 1)
+      const seasons = [...item.title.matchAll(/\bS(\d{1,3})\s*E0*1\b|\bSeason\s*(\d{1,3})\b|第\s*(\d{1,3}|[一二三四五六七八九十]{1,3})\s*季/gi)].map(match => seasonNumber(match[1] || match[2] || match[3]!))
+      if (seasons.some(season => season !== target.season)) return unresolved
+      if (seasons.length) candidates.set(0, 1)
     }
   }
   if (candidates.size !== 1) return unresolved
@@ -26,5 +27,14 @@ export function firstAnimeSourceOffset(source: SourceForm, target?: AnimeNamingT
   const episode = resource + offset
   if (episode < 1) return unresolved
   const coordinate = `S${String(target.season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
-  return { offset, message: `已按首集计算偏移 ${offset}：资源 ${resource} → ${coordinate}，保存后生效。` }
+  return { offset, message: `自动计算：资源 ${resource} → ${coordinate}，偏移 ${offset}` }
+}
+
+function seasonNumber(value: string): number {
+  if (/^\d+$/.test(value)) return Number(value)
+  const digits = '零一二三四五六七八九'
+  if (!value.includes('十')) return value.length === 1 ? digits.indexOf(value) : NaN
+  const parts = value.split('十'), [tens = '', units = ''] = parts
+  return parts.length === 2 && tens.length <= 1 && units.length <= 1
+    ? (tens ? digits.indexOf(tens) : 1) * 10 + (units ? digits.indexOf(units) : 0) : NaN
 }

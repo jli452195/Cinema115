@@ -40,13 +40,21 @@ type AnimeNamingLinks interface {
 	Lookup(context.Context, string) (bangumidata.Result, error)
 }
 
-// These readers share the existing metadata cache, bypassing global numbering
-// selection. They never call SaveNumbering or publish other-business events.
+// 自动匹配需要时效明确的资料；过期时只刷新当前缓存项，复用原有请求合并。
+func cachedAnimeTMDB[T any](ctx context.Context, s *TMDBService, key string, ttl time.Duration, load func(context.Context) (any, error)) (*T, tmdb.CacheInfo, error) {
+	value, info, err := cachedTMDB[T](ctx, s, key, ttl, load)
+	if err == nil && info.CacheStale && !tmdb.WantsFresh(ctx) {
+		return cachedTMDB[T](tmdb.WithFresh(ctx), s, key, ttl, load)
+	}
+	return value, info, err
+}
+
+// 动漫命名读取共用元数据缓存，不读取或修改全局季集编排。
 func (s *TMDBService) AnimeDetails(ctx context.Context, id int) (*tmdb.Detail, error) {
 	if id < 1 {
 		return nil, tmdb.ErrInput
 	}
-	v, info, err := cachedTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+"tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
+	v, info, err := cachedAnimeTMDB[tmdb.Detail](ctx, s, tmdbDetailCachePrefix+"tv:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return s.source.Details(ctx, "tv", id) })
 	if err == nil {
 		v.CacheInfo = info
 	}
@@ -56,7 +64,7 @@ func (s *TMDBService) AnimeSeason(ctx context.Context, id, n int) (*tmdb.SeasonD
 	if id < 1 || n < 0 || n > 1000 {
 		return nil, tmdb.ErrInput
 	}
-	v, info, err := cachedTMDB[tmdb.SeasonDetail](ctx, s, "season:"+strconv.Itoa(id)+":"+strconv.Itoa(n), time.Hour, func(ctx context.Context) (any, error) { return s.source.Season(ctx, id, n) })
+	v, info, err := cachedAnimeTMDB[tmdb.SeasonDetail](ctx, s, "season:"+strconv.Itoa(id)+":"+strconv.Itoa(n), time.Hour, func(ctx context.Context) (any, error) { return s.source.Season(ctx, id, n) })
 	if err == nil {
 		v.CacheInfo = info
 	}
@@ -67,7 +75,7 @@ func (s *TMDBService) AnimeGroups(ctx context.Context, id int) ([]tmdb.EpisodeGr
 	if !ok {
 		return nil, tmdb.ErrNotConfigured
 	}
-	v, _, err := cachedTMDB[[]tmdb.EpisodeGroupSummary](ctx, s, "anime:groups:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroups(ctx, id) })
+	v, _, err := cachedAnimeTMDB[[]tmdb.EpisodeGroupSummary](ctx, s, "anime:groups:"+strconv.Itoa(id), 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroups(ctx, id) })
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +103,7 @@ func (s *TMDBService) AnimeGroup(ctx context.Context, id int, group string) (*tm
 	if !ok {
 		return nil, tmdb.ErrNotConfigured
 	}
-	v, info, err := cachedTMDB[tmdb.EpisodeGroup](ctx, s, "anime:group:"+strconv.Itoa(id)+":"+group, 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroup(ctx, id, group) })
+	v, info, err := cachedAnimeTMDB[tmdb.EpisodeGroup](ctx, s, "anime:group:"+strconv.Itoa(id)+":"+group, 6*time.Hour, func(ctx context.Context) (any, error) { return r.EpisodeGroup(ctx, id, group) })
 	if err == nil {
 		v.CacheInfo = info
 	}

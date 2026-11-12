@@ -35,6 +35,7 @@ export function useAnimeNaming(token: Ref<string>, subject: Ref<{ id: string; ti
       if (!response.fingerprint || !Array.isArray(response.seasons) || response.tmdbId !== id) throw new Error('TMDB 资料不完整，请重新读取')
       const { chapterMapping: mapping, ...data } = response
       target.value = data; chapterMapping.value = mapping; picker.value = false
+      if (mapping?.season === data.season && ['verified', 'partial'].includes(mapping.status)) searchNotice.value = ''
     } catch (reason) { if (current === sequence && !lifetime.aborted) error.value = animeConfigMessage(reason) }
     finally { if (current === sequence) busy.value = false }
   }

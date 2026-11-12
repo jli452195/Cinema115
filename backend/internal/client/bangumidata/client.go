@@ -30,10 +30,11 @@ var (
 )
 
 type Candidate struct {
-	TMDBID string `json:"tmdbId"`
-	Season *int   `json:"season,omitempty"`
-	Title  string `json:"title"`
-	Year   string `json:"year,omitempty"`
+	TMDBID  string `json:"tmdbId"`
+	Season  *int   `json:"season,omitempty"`
+	Episode *int   `json:"episode,omitempty"`
+	Title   string `json:"title"`
+	Year    string `json:"year,omitempty"`
 }
 
 type Result struct {
@@ -165,6 +166,10 @@ func resultFor(data *snapshot, subjectID string, stale bool) Result {
 			season := *candidates[i].Season
 			candidates[i].Season = &season
 		}
+		if candidates[i].Episode != nil {
+			episode := *candidates[i].Episode
+			candidates[i].Episode = &episode
+		}
 	}
 	return Result{Candidates: candidates, FetchedAt: data.fetchedAt, Stale: stale}
 }
@@ -232,7 +237,14 @@ func (c *Client) fetch(ctx context.Context) (*snapshot, error) {
 					}
 					candidate.Season = &season
 				}
-				// 部分链接定位到一集；这里只保留作品和季线索，不据此断言整篇章的逐集映射。
+				// 首集定位只作为待核对的线索，不据此断言整篇章的逐集映射。
+				if match[3] != "" {
+					episode, parseErr := strconv.Atoi(match[3])
+					if parseErr != nil {
+						continue
+					}
+					candidate.Episode = &episode
+				}
 				targets = append(targets, candidate)
 			}
 		}
@@ -243,6 +255,9 @@ func (c *Client) fetch(ctx context.Context) (*snapshot, error) {
 			key := subjectID + ":" + target.TMDBID + ":"
 			if target.Season != nil {
 				key += strconv.Itoa(*target.Season)
+			}
+			if target.Episode != nil {
+				key += ":" + strconv.Itoa(*target.Episode)
 			}
 			if _, ok := seen[key]; ok {
 				continue

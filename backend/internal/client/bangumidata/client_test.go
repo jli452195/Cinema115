@@ -32,12 +32,13 @@ func TestLookupExactSubjectAndTVReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Stale || len(got.Candidates) != 2 || got.Candidates[0].TMDBID != "261343" || got.Candidates[0].Season == nil || *got.Candidates[0].Season != 1 || got.Candidates[0].Year != "2025" || got.Candidates[1].Season != nil {
+	if got.Stale || len(got.Candidates) != 3 || got.Candidates[0].TMDBID != "261343" || got.Candidates[0].Season == nil || *got.Candidates[0].Season != 1 || got.Candidates[0].Year != "2025" || got.Candidates[1].Episode == nil || *got.Candidates[1].Episode != 14 || got.Candidates[2].Season != nil {
 		t.Fatalf("unexpected exact lookup result: %+v", got)
 	}
 	*got.Candidates[0].Season = 99
+	*got.Candidates[1].Episode = 99
 	again, err := client.Lookup(context.Background(), "584847")
-	if err != nil || *again.Candidates[0].Season != 1 {
+	if err != nil || *again.Candidates[0].Season != 1 || *again.Candidates[1].Episode != 14 {
 		t.Fatalf("caller mutated shared snapshot: %+v, %v", again, err)
 	}
 	other, err := client.Lookup(context.Background(), "1584847")
