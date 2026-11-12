@@ -128,7 +128,7 @@ func mediaValidateAttachmentOwners(run *MediaOrganizeRun, files []OrganizeFile) 
 		}
 		if !valid {
 			mediaClearMainFileWaiting(e)
-			if run.TaskFileID != "" {
+			if mediaHasTaskSelection(run) {
 				e.Relative, e.Target = "", ""
 				e.Status, e.Message = "retained", "附件未匹配对应视频，保留来源待核对"
 				continue
@@ -212,7 +212,7 @@ func mediaOrganizeAttachments(run *MediaOrganizeRun, results map[string]naming.R
 				e.ResultCode = "WAITING_MAIN_FILE"
 			}
 		}
-		if run.TaskFileID != "" && e.VideoID != originalVideo {
+		if mediaHasTaskSelection(run) && e.VideoID != originalVideo {
 			mediaClearMainFileWaiting(e)
 			e.Group, e.VideoID = originalGroup, originalVideo
 			e.Relative, e.Target = "", ""

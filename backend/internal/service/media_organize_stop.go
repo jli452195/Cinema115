@@ -42,8 +42,10 @@ func (s *MediaOrganizer) Stop(ctx context.Context, ruleID string) (MediaOrganize
 		}
 		queued = append(queued, run.ID)
 		mediaFinishStoppedRun(run)
+		s.cancelRetryBatchRunLocked(run)
 		changed = append(changed, run.ID)
 	}
+	s.normalizeRetryBatchProgressLocked()
 	if err := s.persistMonitorRulesLocked(changed...); err != nil {
 		return MediaOrganizeRule{}, err
 	}
@@ -64,6 +66,10 @@ func (s *MediaOrganizer) Stop(ctx context.Context, ruleID string) (MediaOrganize
 }
 
 func mediaFinishStoppedRun(run *MediaOrganizeRun) {
+	if mediaHasTaskSelection(run) {
+		run.Status, run.Message = "interrupted", "已停止整理，未完成项可重试"
+		return
+	}
 	run.Entries = slices.DeleteFunc(run.Entries, func(entry MediaOrganizeEntry) bool {
 		return entry.Result == nil && entry.P115Move == nil && entry.Failure == nil && entry.CD2Current == nil
 	})

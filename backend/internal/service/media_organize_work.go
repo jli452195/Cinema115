@@ -326,7 +326,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			continue
 		}
 		if e.File.MediaType != "video" && e.Status != "done" {
-			if run.TaskFileID == "" {
+			if !mediaHasTaskSelection(run) {
 				e.Group, e.VideoID = "", ""
 			}
 			e.Relative, e.Target, e.ResultCode = "", "", ""

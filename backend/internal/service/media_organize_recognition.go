@@ -291,7 +291,7 @@ func mediaCheckpointResults(run *MediaOrganizeRun, previous MediaOrganizeRun) {
 		} else {
 			entry.UpdatedAt = run.UpdatedAt
 		}
-		if mediaRunActive(run.Status) || !mediaInTask(*entry, run.TaskFileID) || entry.File.MediaType == "cleanup" || entry.Reference {
+		if mediaRunActive(run.Status) || !mediaSelectedTask(run, *entry) || entry.File.MediaType == "cleanup" || entry.Reference {
 			continue
 		}
 		if current.Status == "done" || current.Status == "retained" || current.Status == "ready" || current.Status == "pending" {

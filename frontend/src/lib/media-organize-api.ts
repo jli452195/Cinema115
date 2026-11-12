@@ -18,9 +18,14 @@ export interface MediaHistoryItem {
 }
 export type MediaHistoryStatus = 'all' | 'running' | 'done' | 'failed'
 export interface MediaActivity { runId: string; ruleName: string; status: string; message?: string; at: string }
+export interface MediaRetryBatch {
+  id: string; status: 'running' | 'stopping' | 'completed' | 'stopped' | 'interrupted'
+  total: number; pending: number; success: number; failed: number; skipped: number
+}
+export interface MediaBatchRetryResult { queued: number; skipped: number; reasons: Record<string, number>; batch: MediaRetryBatch | null }
 export interface MediaHistory {
   items: MediaHistoryItem[]; page: number; pages: number; total: number
-  counts: Record<MediaHistoryStatus, number>; active: boolean; activity: MediaActivity[]; cleanup: MediaCleanup[]
+  counts: Record<MediaHistoryStatus, number>; active: boolean; activity: MediaActivity[]; cleanup: MediaCleanup[]; retryBatch?: MediaRetryBatch | null
 }
 export interface MediaTask extends MediaHistoryItem { rule: Pick<MediaRule, 'name' | 'source' | 'failure'>; group: MediaGroup; entries: MediaEntry[] }
 export interface MediaCleanup { runId: string; ruleName: string; files: number; directories: number; failed: number; at: string }

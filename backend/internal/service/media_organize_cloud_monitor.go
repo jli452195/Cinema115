@@ -138,7 +138,7 @@ func (s *MediaOrganizer) refreshCloudMonitorsLocked(now time.Time) {
 func (s *MediaOrganizer) pendingCloudScanLocked(rule MediaOrganizeRule) (*MediaOrganizeRun, error) {
 	for i := range s.doc.Runs {
 		candidate := &s.doc.Runs[i]
-		if candidate.Rule.ID != rule.ID || candidate.TaskFileID != "" || !mediaRunActive(candidate.Status) && !s.busyRunLocked(candidate.ID) {
+		if candidate.Rule.ID != rule.ID || mediaHasTaskSelection(candidate) || !mediaRunActive(candidate.Status) && !s.busyRunLocked(candidate.ID) {
 			continue
 		}
 		// 已开始的扫描不能证明稍后到达的变更已被覆盖。

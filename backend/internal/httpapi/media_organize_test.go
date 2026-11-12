@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,6 +182,13 @@ func TestMediaOrganizeAPIWorkflowAndValidation(t *testing.T) {
 	request("GET", "/runs/"+run.ID+"/task?fileId=", "", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{\"fileId\":\"Work.2024.strm\",\"season\":-1}", 400)
 	request("POST", "/runs/"+run.ID+"/retry", "{}", 400)
+	request("POST", "/history/retry", "{}", 400)
+	request("POST", "/history/retry", `{"status":"done"}`, 400)
+	response = request("POST", "/history/retry", fmt.Sprintf(`{"items":[{"runId":%q,"fileId":"Work.2024.strm"}]}`, run.ID), 202)
+	if !strings.Contains(response.Body.String(), `"queued":0`) || !strings.Contains(response.Body.String(), `"skipped":1`) {
+		t.Fatal("批量接口应跳过已完成任务并报告数量", response.Body.String())
+	}
+	request("POST", "/history/retry/missing/stop", "", 400)
 	readState("?page=99")
 	if state.Page != 1 || state.Total != 1 || state.Counts["done"] != 1 || len(state.Items) != 1 || !state.Items[0].At.Equal(completedAt) || state.Items[0].RunID != successfulRunID {
 		t.Fatal("本轮结束后成功历史应继续可查询，并保持实际完成时间", state)

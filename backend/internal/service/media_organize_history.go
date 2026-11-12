@@ -39,14 +39,15 @@ type MediaOrganizeHistoryItem struct {
 	MediaOrganizeResult
 }
 type MediaOrganizeHistory struct {
-	Items    []MediaOrganizeHistoryItem `json:"items"`
-	Page     int                        `json:"page"`
-	Pages    int                        `json:"pages"`
-	Total    int                        `json:"total"`
-	Counts   map[string]int             `json:"counts"`
-	Active   bool                       `json:"active"`
-	Activity []MediaOrganizeActivity    `json:"activity"`
-	Cleanup  []MediaOrganizeCleanup     `json:"cleanup"`
+	Items      []MediaOrganizeHistoryItem  `json:"items"`
+	Page       int                         `json:"page"`
+	Pages      int                         `json:"pages"`
+	Total      int                         `json:"total"`
+	Counts     map[string]int              `json:"counts"`
+	Active     bool                        `json:"active"`
+	Activity   []MediaOrganizeActivity     `json:"activity"`
+	Cleanup    []MediaOrganizeCleanup      `json:"cleanup"`
+	RetryBatch *MediaOrganizeRetryProgress `json:"retryBatch,omitempty"`
 }
 type MediaOrganizeCleanup struct {
 	RunID       string    `json:"runId"`
@@ -101,7 +102,18 @@ func mediaInTask(e MediaOrganizeEntry, fileID string) bool {
 }
 
 func mediaInRunTask(run *MediaOrganizeRun, entry MediaOrganizeEntry) bool {
-	return mediaInTask(entry, run.TaskFileID) && (run.processing == nil || run.processing[entry.File.ID])
+	return mediaSelectedTask(run, entry) && (run.processing == nil || run.processing[entry.File.ID])
+}
+
+func mediaHasTaskSelection(run *MediaOrganizeRun) bool {
+	return run.TaskFileID != "" || run.TaskFileIDs != nil || run.RetryBatchID != ""
+}
+
+func mediaSelectedTask(run *MediaOrganizeRun, entry MediaOrganizeEntry) bool {
+	if run.TaskFileIDs != nil || run.RetryBatchID != "" {
+		return slices.Contains(run.TaskFileIDs, mediaEntryOwner(entry))
+	}
+	return mediaInTask(entry, run.TaskFileID)
 }
 func mediaRunActive(status string) bool {
 	return status == "queued" || status == "scanning" || status == "running"
@@ -186,7 +198,7 @@ func mediaTasks(run MediaOrganizeRun) []MediaOrganizeTask {
 			if result.Action == "duplicate" {
 				result.Message = "SHA1 一致，已删除来源重复文件"
 			}
-		case mediaRunActive(run.Status) && (run.TaskFileID == e.File.ID || run.TaskFileID == "" && (e.Status == "pending" || e.Status == "ready")):
+		case mediaRunActive(run.Status) && (mediaHasTaskSelection(&run) && mediaSelectedTask(&run, e) || !mediaHasTaskSelection(&run) && (e.Status == "pending" || e.Status == "ready")):
 			result.Status, result.Message = "running", e.Message
 			if run.Status == "queued" {
 				result.Message = "已排队，等待整理"
@@ -387,6 +399,7 @@ func (s *MediaOrganizer) History(ctx context.Context, query, status string, page
 		return out, err
 	}
 	out.Active = s.active != "" || len(s.actions) > 0
+	out.RetryBatch = s.retryBatchProgressLocked()
 	for i := range out.Items {
 		item := &out.Items[i]
 		permission := permissions[item.RunID+"\x00"+item.FileID]
@@ -498,6 +511,7 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 		}
 		var run MediaOrganizeRun
 		cloneMediaRun(original, &run)
+		s.skipRemovedRetryTasksLocked(&run, valid)
 		run.Entries = slices.DeleteFunc(run.Entries, func(e MediaOrganizeEntry) bool { return valid[e.File.ID] || valid[e.VideoID] })
 		used := map[string]bool{}
 		hasVideo := false
@@ -508,11 +522,15 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 			}
 		}
 		run.Groups = slices.DeleteFunc(run.Groups, func(g MediaOrganizeGroup) bool { return !used[g.ID] })
+		selectedRetry := mediaHasTaskSelection(&run)
+		run.TaskFileIDs = slices.DeleteFunc(run.TaskFileIDs, func(id string) bool { return valid[id] })
 		if valid[run.TaskFileID] {
 			run.TaskFileID = ""
+		}
+		if selectedRetry && run.TaskFileID == "" && len(run.TaskFileIDs) == 0 {
+			mediaFinishRun(&run)
 			if s.actions[run.ID] == "retry" && s.active != run.ID {
 				cancelled = append(cancelled, run.ID)
-				mediaFinishRun(&run)
 			}
 		}
 		deleted += len(valid)
@@ -525,6 +543,7 @@ func (s *MediaOrganizer) DeleteHistory(ctx context.Context, input MediaOrganizeD
 		return 0, nil
 	}
 	s.doc.Runs = runs
+	s.normalizeRetryBatchProgressLocked()
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
 		return 0, err
 	}

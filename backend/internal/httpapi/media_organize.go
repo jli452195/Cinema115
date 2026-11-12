@@ -51,6 +51,26 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 		c.JSON(200, out)
 	})
 	g.GET("/history/events", func(c *gin.Context) { mediaOrganizeHistoryEvents(c, s) })
+	g.POST("/history/retry", func(c *gin.Context) {
+		var in service.MediaOrganizeBatchRetry
+		if !bindNamingJSON(c, &in) {
+			return
+		}
+		out, err := s.RetryBatchContext(c.Request.Context(), in)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, out)
+	})
+	g.POST("/history/retry/:id/stop", func(c *gin.Context) {
+		out, err := s.StopRetryBatchContext(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 	g.DELETE("/history", func(c *gin.Context) {
 		var in service.MediaOrganizeDelete
 		if !bindNamingJSON(c, &in) {

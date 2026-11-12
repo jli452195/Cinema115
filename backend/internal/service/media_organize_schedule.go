@@ -103,7 +103,7 @@ func (s *MediaOrganizer) cancelAutomaticScansLocked(ruleID string) []string {
 		if run.Rule.ID != ruleID || run.ID == s.active || run.Status != "queued" || run.Trigger != "schedule" && run.Trigger != "realtime" {
 			return false
 		}
-		if run.TaskFileID != "" || s.actions[run.ID] == "retry" {
+		if mediaHasTaskSelection(&run) || s.actions[run.ID] == "retry" {
 			return false
 		}
 		removed = append(removed, run.ID)

@@ -22,11 +22,14 @@ type mediaOrganizeStorage interface {
 	LoadMediaOrganizeTask(context.Context, string, string) (string, error)
 	LoadMediaOrganizeReferences(context.Context, string, []string, []string, bool) ([]string, error)
 	LoadMediaOrganizeFailures(context.Context, string, []string) ([]string, error)
+	QueryMediaOrganizeFailedRefs(context.Context, string) ([]storage.MediaOrganizeTaskRef, error)
+	LoadMediaOrganizeResolvedCandidates(context.Context, []string) ([]storage.MediaOrganizeResolutionCandidate, error)
 }
 
 type mediaOrganizeSettings struct {
-	Rules   []MediaOrganizeRule         `json:"rules"`
-	Orphans map[string]mediaOrphanState `json:"orphans,omitempty"`
+	Rules      []MediaOrganizeRule         `json:"rules"`
+	Orphans    map[string]mediaOrphanState `json:"orphans,omitempty"`
+	RetryBatch *MediaOrganizeRetryProgress `json:"retryBatch,omitempty"`
 }
 
 // OpenMediaOrganizerSQLite imports the previous local snapshot only once. The
@@ -54,7 +57,7 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 			if err != nil {
 				return nil, err
 			}
-			s.doc.Rules, s.doc.Orphans = settings.Rules, settings.Orphans
+			s.doc.Rules, s.doc.Orphans, s.doc.RetryBatch = settings.Rules, settings.Orphans, settings.RetryBatch
 		}
 	}
 	if s.doc.Rules == nil {
@@ -84,7 +87,12 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 			changed = append(changed, r.ID)
 		}
 	}
+	s.doc.RetryBatch = s.retryBatchProgressLocked()
+	mediaInterruptRetryBatch(s.doc.RetryBatch)
 	if err := s.persistSQLiteLockedContext(ctx, changed); err != nil {
+		return nil, err
+	}
+	if err := s.reconcileResolvedFailuresLocked(ctx, nil); err != nil {
 		return nil, err
 	}
 	s.releaseHistoryLocked()
@@ -97,7 +105,7 @@ func OpenMediaOrganizerSQLite(ctx context.Context, db *storage.Store, dir, secre
 
 // 只恢复尚未开始的事件扫描；已开始的外部写入仍走原有中断核对流程。
 func (s *MediaOrganizer) resume115EventScanLocked(run MediaOrganizeRun) bool {
-	if run.Status != "queued" || run.TaskFileID != "" || run.Rule.Storage != "115" || s.accounts == nil {
+	if run.Status != "queued" || mediaHasTaskSelection(&run) || run.Rule.Storage != "115" || s.accounts == nil {
 		return false
 	}
 	if _, err := s.accounts.Primary(run.Rule.AccountID); err != nil {
@@ -110,7 +118,7 @@ func (s *MediaOrganizer) resume115EventScanLocked(run MediaOrganizeRun) bool {
 
 // 中断的实时任务只触发来源补扫；旧记录保留到补扫持久化，防止启动期间再次退出丢失恢复证据。
 func (s *MediaOrganizer) repair115EventScanLocked(run MediaOrganizeRun) bool {
-	if run.TaskFileID != "" || run.Rule.Storage != "115" || s.accounts == nil {
+	if mediaHasTaskSelection(&run) || run.Rule.Storage != "115" || s.accounts == nil {
 		return false
 	}
 	if _, err := s.accounts.Primary(run.Rule.AccountID); err != nil {
@@ -135,7 +143,7 @@ func (s *MediaOrganizer) decodeSQLite(rows storage.MediaOrganizeRows) error {
 		if err != nil {
 			return err
 		}
-		doc.Rules, doc.Orphans = settings.Rules, settings.Orphans
+		doc.Rules, doc.Orphans, doc.RetryBatch = settings.Rules, settings.Orphans, settings.RetryBatch
 	}
 	for _, raw := range rows.Runs {
 		run, err := mediaDecodeStoredRun(raw)
@@ -193,6 +201,7 @@ func mediaStoredSettings(raw []byte) (mediaOrganizeSettings, error) {
 		Rules      []json.RawMessage           `json:"rules"`
 		Orphans    map[string]mediaOrphanState `json:"orphans"`
 		CD2Orphans map[string]mediaOrphanState `json:"cd2Orphans"`
+		RetryBatch *MediaOrganizeRetryProgress `json:"retryBatch"`
 	}
 	if strings.HasPrefix(strings.TrimSpace(string(raw)), "[") {
 		if err := json.Unmarshal(raw, &stored.Rules); err != nil {
@@ -203,7 +212,7 @@ func mediaStoredSettings(raw []byte) (mediaOrganizeSettings, error) {
 			return mediaOrganizeSettings{}, fmt.Errorf("解码整理规则列表: %w", err)
 		}
 	}
-	settings := mediaOrganizeSettings{Rules: make([]MediaOrganizeRule, 0, len(stored.Rules)), Orphans: stored.Orphans}
+	settings := mediaOrganizeSettings{Rules: make([]MediaOrganizeRule, 0, len(stored.Rules)), Orphans: stored.Orphans, RetryBatch: stored.RetryBatch}
 	if settings.Orphans == nil {
 		settings.Orphans = stored.CD2Orphans
 		for id, state := range settings.Orphans {
@@ -255,7 +264,7 @@ func (s *MediaOrganizer) persistSQLiteRecoveryLockedContext(ctx context.Context,
 	if s.persistErr != nil {
 		return s.persistErr
 	}
-	raw, err := json.Marshal(mediaOrganizeSettings{Rules: s.doc.Rules, Orphans: s.doc.Orphans})
+	raw, err := json.Marshal(mediaOrganizeSettings{Rules: s.doc.Rules, Orphans: s.doc.Orphans, RetryBatch: s.doc.RetryBatch})
 	if err != nil {
 		return err
 	}
@@ -327,7 +336,12 @@ func mediaRunRow(run MediaOrganizeRun) (storage.MediaOrganizeRunRow, error) {
 		return storage.MediaOrganizeRunRow{}, err
 	}
 	row := storage.MediaOrganizeRunRow{ID: run.ID, RuleID: run.Rule.ID, At: mediaSortTime(run.UpdatedAt), Record: string(raw), Tasks: []storage.MediaOrganizeTaskRow{}}
-	for _, task := range mediaTasks(run) {
+	history := run
+	// 重试保留失败索引供成功协调使用，列表再由实时摘要覆盖为整理中。
+	if mediaHasTaskSelection(&history) && mediaRunActive(history.Status) {
+		history.Status = "interrupted"
+	}
+	for _, task := range mediaTasks(history) {
 		item := task.MediaOrganizeHistoryItem
 		if item.Status != "failed" && item.Status != "done" {
 			continue

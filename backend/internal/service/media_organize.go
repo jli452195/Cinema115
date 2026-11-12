@@ -92,6 +92,8 @@ type MediaOrganizeRun struct {
 	Groups             []MediaOrganizeGroup   `json:"groups"`
 	Entries            []MediaOrganizeEntry   `json:"entries"`
 	TaskFileID         string                 `json:"taskFileId,omitempty"`
+	TaskFileIDs        []string               `json:"taskFileIds,omitempty"`
+	RetryBatchID       string                 `json:"retryBatchId,omitempty"`
 	RecognitionVersion string                 `json:"recognitionVersion,omitempty"`
 	StoredScanScopes   []mediaScanScope       `json:"scanScopes,omitempty"`
 	streaming          bool
@@ -126,9 +128,10 @@ type ClassificationRules interface {
 }
 
 type mediaOrganizeDocument struct {
-	Rules   []MediaOrganizeRule         `json:"rules"`
-	Runs    []MediaOrganizeRun          `json:"runs"`
-	Orphans map[string]mediaOrphanState `json:"orphans,omitempty"`
+	Rules      []MediaOrganizeRule         `json:"rules"`
+	Runs       []MediaOrganizeRun          `json:"runs"`
+	Orphans    map[string]mediaOrphanState `json:"orphans,omitempty"`
+	RetryBatch *MediaOrganizeRetryProgress `json:"retryBatch,omitempty"`
 }
 
 // MediaOrganizer has its own state and worker; it never updates anime tasks.
@@ -183,6 +186,7 @@ func cloneMediaRun(source MediaOrganizeRun, target *MediaOrganizeRun) {
 	target.recognitionEvents = nil
 	target.refreshPaths = nil
 	target.Groups = slices.Clone(source.Groups)
+	target.TaskFileIDs = slices.Clone(source.TaskFileIDs)
 	for i := range target.Groups {
 		target.Groups[i].MatchedSeason = mediaOptionalNumber(source.Groups[i].MatchedSeason)
 	}
@@ -401,10 +405,12 @@ func (s *MediaOrganizer) DeleteRule(id string) error {
 				if run.Rule.ID != id {
 					runs = append(runs, run)
 				} else {
+					s.cancelRetryBatchRunLocked(&run)
 					removed = append(removed, run.ID)
 				}
 			}
 			s.doc.Runs = runs
+			s.normalizeRetryBatchProgressLocked()
 			if err := s.persistMonitorRulesLocked(removed...); err != nil {
 				return err
 			}
@@ -439,7 +445,7 @@ func (s *MediaOrganizer) queueScanLocked(rule MediaOrganizeRule) (MediaOrganizeR
 
 func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigger string, scopes ...mediaScanScope) (MediaOrganizeRun, error) {
 	for i, run := range s.doc.Runs {
-		if run.Rule.ID != rule.ID || run.TaskFileID != "" || !mediaRunActive(run.Status) && !s.busyRunLocked(run.ID) {
+		if run.Rule.ID != rule.ID || mediaHasTaskSelection(&run) || !mediaRunActive(run.Status) && !s.busyRunLocked(run.ID) {
 			continue
 		}
 		if trigger == "manual" && run.Status == "queued" && run.ID != s.active && run.Trigger != "manual" {
@@ -566,6 +572,9 @@ func (s *MediaOrganizer) checkpoint(r *MediaOrganizeRun) error {
 				if err := s.includeHistoryLocked(rows); err != nil {
 					return err
 				}
+			}
+			if !mediaRunActive(published.Status) {
+				s.settleRetryBatchRunLocked(&published)
 			}
 			cloneMediaRun(published, &s.doc.Runs[i])
 			changed := append([]string{r.ID}, mediaForgetResolvedFailures(&s.doc, resolved, s.busyRunLocked)...)
@@ -718,7 +727,7 @@ func mediaActionBefore(a MediaOrganizeRun, actionA string, b MediaOrganizeRun, a
 }
 
 // 所有退出路径都释放当前批次，包括错误结果检查点或调度持久化失败。
-func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganizeRun, action string) error {
+func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganizeRun, action string) (result error) {
 	defer s.flushMediaRefresh(&run)
 	defer func() {
 		s.mu.Lock()
@@ -726,14 +735,45 @@ func (s *MediaOrganizer) processQueuedRun(ctx context.Context, run MediaOrganize
 			s.active = ""
 		}
 		delete(s.inFlight, run.ID)
+		// 提交回滚后仍为排队态的任务保留动作，不留下无人执行的整理中记录。
+		if result != nil {
+			for _, current := range s.doc.Runs {
+				if current.ID == run.ID && mediaRunActive(current.Status) {
+					s.enqueueActionLocked(run.ID, action)
+					break
+				}
+			}
+		}
 		delete(s.stopping, run.ID)
+		if result == nil {
+			result = s.reconcileResolvedFailuresLocked(ctx, []string{run.ID})
+		}
 		s.releaseHistoryLocked()
 		s.historyChangedLocked()
 		s.mu.Unlock()
 	}()
-	work, cancel := context.WithTimeout(ctx, 2*time.Hour)
-	err := s.process(work, &run, action)
-	cancel()
+	var err error
+	if action == "retry" {
+		s.mu.Lock()
+		// 工作线程尚未访问来源，此时可核对刚出队的任务；其他请求始终保护 active。
+		s.active = ""
+		err = s.reconcileResolvedFailuresLocked(ctx, []string{run.ID})
+		s.active = run.ID
+		pos := slices.IndexFunc(s.doc.Runs, func(current MediaOrganizeRun) bool { return current.ID == run.ID })
+		if err == nil && pos >= 0 {
+			cloneMediaRun(s.doc.Runs[pos], &run)
+			run.seenTasks = mediaVideoIDs(run)
+		}
+		s.mu.Unlock()
+		if err == nil && (pos < 0 || !mediaRunActive(run.Status)) {
+			return nil
+		}
+	}
+	if err == nil {
+		work, cancel := context.WithTimeout(ctx, 2*time.Hour)
+		err = s.process(work, &run, action)
+		cancel()
+	}
 	if errors.Is(err, errMediaOrganizeStopped) {
 		mediaFinishStoppedRun(&run)
 		if saveErr := s.checkpoint(&run); saveErr != nil {

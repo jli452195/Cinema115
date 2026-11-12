@@ -114,6 +114,59 @@ async function historyEventModels(browser) {
     return { burstNotifications: 1000, burstQueries: 1, burstMilliseconds, continuousSeconds: 3, continuousQueries, idleQueries: 0, overlappingQueries: 0, errors }
   } finally { held?.release(); await context.close() }
 }
+// 批量重试只验证搜索范围、选中集合与停止回执，所有数据均来自模拟接口。
+async function batchRetryModel(browser) {
+  const context = await browser.newContext({ serviceWorkers: 'block' }), calls = [], errors = []
+  await mockHistoryEvents(context)
+  await context.addInitScript(() => localStorage.setItem('admin_token', 'mock-token'))
+  const records = ['done', 'failed', 'failed', 'running'].map((status, index) => ({ runId: `run-${index}`, fileId: `file-${index}`, name: `Work.S01E${index + 1}.mkv`, title: `作品 ${index}`, kind: 'tv', mediaType: 'video', season: 1, episode: index + 1, source: `/inbox/${index}`, status, at: '2026-11-12T00:00:00Z', canDelete: index < 2, canRetry: status === 'failed', attachmentCount: 0 }))
+  let batch = null, nextID = 0
+  await context.route('**/api/**', async route => {
+    const request = route.request(), url = new URL(request.url()), endpoint = url.pathname, method = request.method()
+    let data = {}
+    if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
+    else if (endpoint === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
+    else if (endpoint === '/api/admin/media-organize/history') data = { items: records, page: Number(url.searchParams.get('page') || 1), pages: 2, total: 24, counts: { all: 24, running: 1, done: 1, failed: 22 }, active: true, activity: [], cleanup: [], retryBatch: batch }
+    else if (endpoint === '/api/admin/media-organize/history/retry' && method === 'POST') {
+      const body = request.postDataJSON(); calls.push(body)
+      const total = body.items ? body.items.length : 22
+      batch = { id: `batch-${++nextID}`, status: 'running', total, pending: total, success: 0, failed: 0, skipped: 0 }
+      data = { queued: total, skipped: 0, reasons: {}, batch }
+    } else if (/\/history\/retry\/[^/]+\/stop$/.test(endpoint) && method === 'POST') {
+      calls.push({ stop: endpoint.split('/').at(-2) }); batch = { ...batch, status: 'stopping' }; data = batch
+    } else throw new Error(`Unexpected batch retry API ${method} ${endpoint}`)
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
+  })
+  const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
+  try {
+    await page.goto(origin + '/media/organize/history?status=failed&q=needle_%&page=2'); await page.locator('.mo-result').first().waitFor()
+    await page.getByRole('button', { name: '批量管理', exact: true }).click()
+    await page.getByRole('checkbox', { name: '全选当前页', exact: true }).check()
+    assert.equal(await page.getByRole('button', { name: '重试选中 2 条', exact: true }).isEnabled(), true)
+    assert.equal(await page.getByRole('button', { name: '删除选中 2 条', exact: true }).isEnabled(), true)
+    await page.getByRole('button', { name: '重试选中 2 条', exact: true }).click()
+    await page.getByRole('button', { name: '停止剩余重试', exact: true }).waitFor()
+    assert.deepEqual(calls[0], { items: [{ runId: 'run-1', fileId: 'file-1' }, { runId: 'run-2', fileId: 'file-2' }] })
+    assert.equal(await page.getByRole('button', { name: '重试当前搜索全部失败', exact: true }).isDisabled(), true)
+    batch = { ...batch, pending: 1, success: 1 }
+    await page.evaluate(() => window.__historyEvents.send())
+    await page.getByRole('status', { name: '批量重试进度', exact: true }).getByText('共 2 条 · 待处理 1 · 成功 1 · 失败 0 · 跳过 0', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '停止剩余重试', exact: true }).click()
+    await page.getByRole('status', { name: '批量重试进度', exact: true }).getByText('批量重试正在停止', { exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: '停止剩余重试', exact: true }).isDisabled(), true)
+    batch = { ...batch, status: 'stopped', pending: 0, skipped: 1 }
+    await page.evaluate(() => window.__historyEvents.send())
+    await page.getByRole('status', { name: '批量重试进度', exact: true }).getByText('批量重试已停止', { exact: true }).waitFor()
+    assert.deepEqual(calls[1], { stop: 'batch-1' })
+    await page.getByRole('searchbox', { name: '搜索整理记录', exact: true }).fill('尚未提交的搜索')
+    await page.getByRole('button', { name: '重试当前搜索全部失败', exact: true }).click()
+    await page.getByRole('button', { name: '停止剩余重试', exact: true }).waitFor()
+    assert.deepEqual(calls[2], { status: 'failed', q: 'needle_%' }, '全量搜索使用已提交词，不传当前页或输入草稿')
+    assert.deepEqual(errors, [])
+    return { selectedRetry: 2, searchAllPages: 22, sseProgressOnPageTwo: true, stopped: true, errors }
+  } finally { await context.close() }
+}
 // 慢请求使用独立浏览器上下文与全模拟接口，不改变真实页面或后端耗时。
 async function loadingModels(browser) {
   const results = []
@@ -183,6 +236,7 @@ async function loadingModels(browser) {
 }
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
+  if (process.argv.includes('--retry-only')) { try { console.log(JSON.stringify(await batchRetryModel(browser), null, 2)) } finally { await browser.close() }; return }
   if (process.argv.includes('--events-only')) { try { console.log(JSON.stringify(await historyEventModels(browser), null, 2)) } finally { await browser.close() }; return }
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   await mockHistoryEvents(context)

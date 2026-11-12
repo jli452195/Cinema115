@@ -94,6 +94,7 @@ func mediaPublishRun(worker *MediaOrganizeRun, current MediaOrganizeRun) MediaOr
 	if deleted[published.TaskFileID] {
 		published.TaskFileID = ""
 	}
+	published.TaskFileIDs = slices.DeleteFunc(published.TaskFileIDs, func(id string) bool { return deleted[id] })
 	published.Entries = slices.DeleteFunc(published.Entries, func(entry MediaOrganizeEntry) bool {
 		return deleted[mediaEntryOwner(entry)]
 	})

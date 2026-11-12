@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 	"time"
 
@@ -72,7 +71,10 @@ func mediaPersistentRun(run MediaOrganizeRun) MediaOrganizeRun {
 	}
 	if len(unfinished) == 0 && !mediaRunActive(run.Status) {
 		stored.Classification = ClassificationSnapshot{}
-		stored.TaskFileID, stored.RecognitionVersion, stored.Trigger = "", "", ""
+		if stored.RetryBatchID == "" {
+			stored.TaskFileID, stored.TaskFileIDs = "", nil
+		}
+		stored.RecognitionVersion, stored.Trigger = "", ""
 		if len(stored.Entries) > 0 || stored.Status != "failed" {
 			stored.Status, stored.Message = "completed", ""
 		}
@@ -151,10 +153,7 @@ func mediaForgetResolvedFailures(doc *mediaOrganizeDocument, completed MediaOrga
 			kept = append(kept, old)
 			continue
 		}
-		old.Entries = slices.DeleteFunc(slices.Clone(old.Entries), func(entry MediaOrganizeEntry) bool {
-			return removed[entry.File.ID] || removed[entry.VideoID]
-		})
-		old = mediaPersistentRun(old)
+		mediaRemoveResolvedTasks(&old, removed)
 		changed = append(changed, old.ID)
 		if len(old.Entries) > 0 {
 			kept = append(kept, old)

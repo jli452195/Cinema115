@@ -35,6 +35,8 @@ func NewMediaOrganizer(store accountSecretStore, metadata MediaRecognitionSource
 		}
 		changed = append(changed, r.ID)
 	}
+	s.doc.RetryBatch = s.retryBatchProgressLocked()
+	mediaInterruptRetryBatch(s.doc.RetryBatch)
 	if err := s.persistLocked(changed...); err != nil {
 		return nil, err
 	}
@@ -52,7 +54,7 @@ func (s *testMediaOrganizeStore) LoadMediaOrganize(ctx context.Context) (storage
 			return out, err
 		}
 	}
-	raw, err := json.Marshal(mediaOrganizeSettings{Rules: doc.Rules, Orphans: doc.Orphans})
+	raw, err := json.Marshal(mediaOrganizeSettings{Rules: doc.Rules, Orphans: doc.Orphans, RetryBatch: doc.RetryBatch})
 	if err != nil {
 		return out, err
 	}
@@ -208,6 +210,65 @@ func (s *testMediaOrganizeStore) LoadMediaOrganizeFailures(ctx context.Context, 
 	}
 	return out, ctx.Err()
 }
+
+func (s *testMediaOrganizeStore) QueryMediaOrganizeFailedRefs(ctx context.Context, query string) ([]storage.MediaOrganizeTaskRef, error) {
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]storage.MediaOrganizeTaskRef, 0)
+	for _, run := range runs {
+		row, err := mediaRunRow(run)
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range row.Tasks {
+			if task.Group == "failed" && strings.Contains(task.Search, strings.ToLower(strings.TrimSpace(query))) {
+				refs = append(refs, storage.MediaOrganizeTaskRef{RunID: run.ID, FileID: task.FileID})
+			}
+		}
+	}
+	return refs, ctx.Err()
+}
+
+func (s *testMediaOrganizeStore) LoadMediaOrganizeResolvedCandidates(ctx context.Context, ids []string) ([]storage.MediaOrganizeResolutionCandidate, error) {
+	runs, err := s.storedRuns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]storage.MediaOrganizeResolutionCandidate, 0)
+	for _, failed := range runs {
+		if ids != nil && !slices.Contains(ids, failed.ID) {
+			continue
+		}
+		for _, completed := range runs {
+			if failed.ID == completed.ID || failed.Rule.ID != completed.Rule.ID {
+				continue
+			}
+			count := 0
+			raw, err := testMediaProjectRun(completed, func(entry MediaOrganizeEntry) bool {
+				if entry.File.MediaType != "video" || entry.Status != "done" {
+					return false
+				}
+				if slices.ContainsFunc(failed.Entries, func(old MediaOrganizeEntry) bool {
+					return old.File.MediaType == "video" && old.Status != "done" && old.File.ID == entry.File.ID
+				}) {
+					count++
+					return true
+				}
+				return false
+			})
+			if err != nil {
+				return nil, err
+			}
+			if count > 0 {
+				out = append(out, storage.MediaOrganizeResolutionCandidate{RunID: failed.ID, Completed: raw})
+			}
+		}
+	}
+	return out, ctx.Err()
+}
+
 func (s *testMediaOrganizeStore) SaveMediaOrganize(ctx context.Context, rules string, updates []storage.MediaOrganizeRunRow, removed []string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -222,7 +283,7 @@ func (s *testMediaOrganizeStore) SaveMediaOrganize(ctx context.Context, rules st
 	if err != nil {
 		return err
 	}
-	doc.Rules, doc.Orphans = settings.Rules, settings.Orphans
+	doc.Rules, doc.Orphans, doc.RetryBatch = settings.Rules, settings.Orphans, settings.RetryBatch
 	runs := make(map[string]MediaOrganizeRun, len(doc.Runs)+len(updates))
 	for _, run := range doc.Runs {
 		runs[run.ID] = run
@@ -256,10 +317,11 @@ func (s *testMediaOrganizeStore) SaveMediaOrganize(ctx context.Context, rules st
 		encoded = append(encoded, raw)
 	}
 	raw, err := json.Marshal(struct {
-		Rules   []MediaOrganizeRule         `json:"rules"`
-		Runs    []json.RawMessage           `json:"runs"`
-		Orphans map[string]mediaOrphanState `json:"orphans,omitempty"`
-	}{Rules: doc.Rules, Runs: encoded, Orphans: doc.Orphans})
+		Rules      []MediaOrganizeRule         `json:"rules"`
+		Runs       []json.RawMessage           `json:"runs"`
+		Orphans    map[string]mediaOrphanState `json:"orphans,omitempty"`
+		RetryBatch *MediaOrganizeRetryProgress `json:"retryBatch,omitempty"`
+	}{Rules: doc.Rules, Runs: encoded, Orphans: doc.Orphans, RetryBatch: doc.RetryBatch})
 	if err != nil {
 		return err
 	}
