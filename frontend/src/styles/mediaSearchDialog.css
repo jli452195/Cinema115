@@ -154,7 +154,7 @@ dialog.media-search-dialog .mikan-batch-footer {
   }
 }
 
-.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) {
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) {
   position: relative;
   isolation: isolate;
   display: inline-flex;
@@ -174,8 +174,8 @@ dialog.media-search-dialog .mikan-batch-footer {
   overflow-wrap: anywhere;
 }
 
-/* The inset surface stays compact without reducing the clickable area. */
-.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button)::before {
+/* 内缩背景保持紧凑，同时保留足够的点击区域。 */
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button)::before {
   content: '';
   position: absolute;
   z-index: -1;
@@ -187,44 +187,53 @@ dialog.media-search-dialog .mikan-batch-footer {
   transition: background-color .15s;
 }
 
-.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) svg {
+.media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) svg {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
 }
 
-.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button) {
+.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button, .resource-primary-button) {
   --search-dialog-button-background: var(--search-dialog-action-background);
   color: var(--search-dialog-primary);
 }
 
-.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button) {
+.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button, .resource-secondary-button) {
   --search-dialog-button-background: var(--search-dialog-secondary-background);
   color: var(--search-dialog-muted);
 }
 
+.media-search-dialog .resource-action-button:focus-visible {
+  outline: 2px solid var(--search-dialog-primary);
+  outline-offset: 3px;
+}
+
+.media-search-dialog .resource-action-button:disabled { cursor: default; opacity: .45; }
+.media-search-dialog .resource-action-button.is-complete:disabled { opacity: 1; }
+.media-search-dialog .resource-strm-label { min-width: 6em; text-align: center; }
+
 @media (hover: hover) {
-  .media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button):hover:not(:disabled) {
+  .media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button, .resource-primary-button):hover:not(:disabled) {
     --search-dialog-button-background: var(--search-dialog-action-hover);
   }
 
-  .media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button):hover:not(:disabled) {
+  .media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button, .resource-secondary-button):hover:not(:disabled) {
     --search-dialog-button-background: var(--search-dialog-secondary-hover);
   }
 }
 
-.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button):active:not(:disabled) {
+.media-search-dialog :is(.re0-primary-button, .bot-primary-button, .gy-primary-button, .mikan-primary-button, .resource-primary-button):active:not(:disabled) {
   --search-dialog-button-background: var(--search-dialog-action-pressed);
 }
 
-.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button):active:not(:disabled) {
+.media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button, .resource-secondary-button):active:not(:disabled) {
   --search-dialog-button-background: var(--search-dialog-secondary-pressed);
 }
 
 @media (max-width: 639px) {
-  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button) { min-height: 48px; }
+  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) { min-height: 48px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button)::before { transition: none; }
+  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button)::before { transition: none; }
 }

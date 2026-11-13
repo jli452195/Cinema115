@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import ShareTransferDirectory from './ShareTransferDirectory.vue'
+import ShareTransferButton from './ShareTransferButton.vue'
+import { useShareTransfer } from '../composables/useShareTransfer'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
@@ -33,9 +36,9 @@ function showError(e: unknown): string {
   return e instanceof Error ? e.message : '搜索失败'
 }
 const lifecycle = new AbortController()
+const transfers = useShareTransfer(props.token, lifecycle.signal)
 let searchFinished: Promise<void> = Promise.resolve()
 const shareRuns = useShareSTRMRun(props.token, lifecycle.signal, { scope: `bot/${props.kind}/${props.tmdbId}`, beforeLoad: () => searchFinished })
-const generating = shareRuns.busy
 const generationStatus = shareRuns.statuses
 const activeRunID = shareRuns.activeRunID
 const stopping = shareRuns.stopping
@@ -217,6 +220,7 @@ onBeforeUnmount(() => {
             <input v-model="query" type="search" placeholder="筛选资源名称、大小或 TMDB ID" :disabled="!resources.length" />
           </label>
           <div class="bot-tools">
+            <button v-if="resources.length" type="button" class="bot-tool-button" :disabled="!activeRunID || stopping" title="停止本窗口已提交的 STRM 批次" @click="stopRun">{{ stopping ? '停止中…' : '停止批次' }}</button>
             <button type="button" :disabled="!state?.botConfigured || !state.hasSession || busy || checking || retrySeconds > 0" class="bot-tool-button" @click="request(undefined, true)">
               <svg aria-hidden="true" :class="{ 'bot-spinning': searchBusy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               刷新搜索
@@ -242,10 +246,6 @@ onBeforeUnmount(() => {
             <template v-else-if="searchStage === 'collecting'"><strong>已收到首批结果，继续收集回复…</strong><span>关闭窗口后继续收尾并缓存，重新打开可查看。</span></template>
             <template v-else><strong>正在等待 Bot 回复…</strong><span>单次查询最多等待 45 秒，已开始的查询会在后台收尾。</span></template>
           </div>
-          <div v-if="generating" role="status" class="bot-notice bot-info bot-task-notice">
-            <div><strong>{{ activeRunID ? 'STRM 任务在后台执行' : '正在准备 STRM 任务' }}</strong><span>{{ activeRunID ? '可以继续选择其他资源，已提交任务不受窗口关闭影响。' : '提交成功后可关闭窗口。' }}</span></div>
-            <button v-if="activeRunID" type="button" :disabled="stopping" class="bot-text-button" @click="stopRun">{{ stopping ? '正在停止…' : '停止已提交批次' }}</button>
-          </div>
           <p v-if="error" role="alert" class="bot-notice bot-error">{{ error }}</p>
           <p v-if="retryAt" role="status" class="bot-notice bot-warning">{{ retrySeconds > 0 ? '正在隔离迟到回复，' + retrySeconds + ' 秒后可重试。' : '等待时间已结束，可以重新搜索。' }}</p>
 
@@ -253,6 +253,7 @@ onBeforeUnmount(() => {
             <p v-if="result.partial" role="status" class="bot-notice bot-warning">{{ result.warning || '当前为部分结果，稍后可刷新补充。' }}</p>
             <div class="bot-results-heading">
               <h3>115 资源</h3>
+              <ShareTransferDirectory v-if="resources.length" :transfer="transfers" @settings="emit('close')" />
               <span role="status">{{ query.trim() ? '显示 ' + filteredResources.length + ' / ' + resources.length + ' 个资源' : resources.length + ' 个资源' }}</span>
             </div>
             <div v-if="result.remaining !== undefined || (result.cached && !searchBusy)" class="bot-search-meta">
@@ -286,24 +287,18 @@ onBeforeUnmount(() => {
                       <span v-else class="bot-badge bot-neutral">未标注 TMDB</span>
                       <span v-if="item.size">大小 {{ item.size }}</span>
                       <span v-if="item.tmdbId">TMDB {{ item.tmdbId }}</span>
+                      <a v-if="(resolvedLinks[item.id]?.length || 0) === 1 || item.direct" :href="resolvedLinks[item.id]?.[0] || normalize115Share(item.direct)" target="_blank" rel="noopener noreferrer" data-bot-action="open" class="bot-open-link">打开分享<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></a>
+                      <button v-else type="button" data-bot-action="open" :disabled="!!linkPending[item.id] || retrySeconds > 0" class="bot-open-link" @click="openResource(item)">{{ linkPending[item.id] ? '获取链接…' : (resolvedLinks[item.id]?.length || 0) > 1 ? '选择分享' : '打开分享' }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></button>
                     </div>
                   </div>
                   <div class="bot-actions">
-                    <a v-if="(resolvedLinks[item.id]?.length || 0) === 1 || item.direct" :href="resolvedLinks[item.id]?.[0] || normalize115Share(item.direct)" target="_blank" rel="noopener noreferrer" data-bot-action="open" class="bot-button bot-outlined-button">
-                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
-                      打开分享
-                    </a>
-                    <button v-else type="button" data-bot-action="open" :disabled="!!linkPending[item.id] || retrySeconds > 0" class="bot-button bot-outlined-button" @click="openResource(item)">
-                      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
-                      {{ linkPending[item.id] ? '获取链接…' : (resolvedLinks[item.id]?.length || 0) > 1 ? '选择分享' : '打开分享' }}
-                    </button>
-                    <button type="button" data-bot-action="strm" :disabled="shareRuns.pending.value[item.id] || generationStatus[item.id]?.success || retrySeconds > 0" class="bot-button bot-primary-button" @click="shareSTRM(item)">
+                    <ShareTransferButton :transfer="transfers" :resource="{ load: shareResource(item).load }" :disabled="retrySeconds > 0" />
+                    <button type="button" data-bot-action="strm" :disabled="shareRuns.pending.value[item.id] || generationStatus[item.id]?.success || retrySeconds > 0" :aria-busy="!!shareRuns.pending.value[item.id]" :title="generationStatus[item.id]?.message" class="bot-button bot-primary-button" @click="shareSTRM(item)">
                       <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
-                      {{ shareRuns.pending.value[item.id] ? '已加入任务…' : generationStatus[item.id]?.success ? '已生成' : '分享 STRM' }}
+                      <span class="resource-strm-label">{{ shareRuns.pending.value[item.id] ? '处理中…' : generationStatus[item.id]?.success ? '已生成' : '分享 STRM' }}</span>
                     </button>
                   </div>
                 </div>
-                <p v-if="linkPending[item.id]" role="status" class="bot-notice bot-info">{{ searchBusy ? '等待搜索结束后获取链接…' : '正在获取分享链接…' }}</p>
                 <p v-if="linkErrors[item.id]" role="status" class="bot-notice bot-warning">{{ linkErrors[item.id] }}</p>
                 <div v-if="(resolvedLinks[item.id]?.length || 0) > 1" class="bot-share-links">
                   <p>该资源包含 {{ resolvedLinks[item.id]?.length }} 个分享，请选择打开。</p>
@@ -314,14 +309,13 @@ onBeforeUnmount(() => {
                     </a>
                   </div>
                 </div>
-                <p v-if="generationStatus[item.id]" role="status" class="bot-notice bot-generation-status" :class="generationStatus[item.id]?.success ? 'bot-success' : 'bot-info'">{{ generationStatus[item.id]?.message }}</p>
               </li>
             </ul>
 
             <div v-if="nextPage" class="bot-list-end">
               <button type="button" :disabled="busy || retrySeconds > 0" class="bot-button bot-outlined-button" @click="request(nextPage.id)">{{ loadingMore ? '正在加载更多…' : '加载更多资源' }}</button>
             </div>
-            <p v-else-if="result.allLoaded && resources.length && !busy" role="status" class="bot-all-loaded">已加载全部资源</p>
+            <p v-else-if="result.allLoaded && resources.length && !searchBusy" role="status" class="bot-all-loaded">已加载全部资源</p>
             <details v-if="result.text" :open="!resources.length" class="bot-raw-reply">
               <summary><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 5 7 7-7 7" /></svg>Bot 原始回复</summary>
               <p>{{ result.text }}</p>
@@ -335,6 +329,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.bot-open-link { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; color: var(--bot-muted); font-size: 11px; }.bot-open-link svg { width: 13px; height: 13px; }.bot-open-link:hover { color: var(--bot-primary); text-decoration: underline; }.bot-open-link:disabled { opacity: .45; }.bot-open-link:focus-visible { outline: 2px solid var(--bot-primary); outline-offset: 2px; }
 .bot-dialog {
   --bot-max-height: 90dvh;
   --bot-container: var(--search-dialog-container);
@@ -345,8 +340,6 @@ onBeforeUnmount(() => {
   --bot-primary: var(--search-dialog-primary);
   --bot-tonal: var(--search-dialog-tonal);
   --bot-on-tonal: var(--search-dialog-on-tonal);
-  --bot-success: #246044;
-  --bot-success-bg: #e6f2e9;
   --bot-warning: #765500;
   --bot-warning-bg: #fff1cd;
   --bot-error: #a12b2b;
@@ -370,8 +363,6 @@ onBeforeUnmount(() => {
   --bot-primary: var(--search-dialog-primary);
   --bot-tonal: var(--search-dialog-tonal);
   --bot-on-tonal: var(--search-dialog-on-tonal);
-  --bot-success: #a5d8b8;
-  --bot-success-bg: #223d31;
   --bot-warning: #eed085;
   --bot-warning-bg: #42371e;
   --bot-error: #ffb4ab;
@@ -397,7 +388,7 @@ onBeforeUnmount(() => {
 .bot-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 0 12px; border: 0; border-radius: 24px; background: transparent; color: var(--bot-muted); font-size: 12px; font-weight: 550; text-decoration: none; white-space: nowrap; }
 .bot-tool-button svg { width: 18px; height: 18px; }
 .bot-body { min-height: 0; padding: 0 24px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.bot-results-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.bot-results-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .bot-results-heading h3 { margin: 0; font-size: 13px; line-height: 20px; font-weight: 600; }
 .bot-results-heading span { color: var(--bot-muted); font-size: 12px; }
 .bot-search-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 14px; color: var(--bot-muted); font-size: 11px; line-height: 18px; }
@@ -414,16 +405,13 @@ onBeforeUnmount(() => {
 .bot-neutral { background: color-mix(in srgb, var(--bot-outline) 18%, transparent); color: var(--bot-muted); }
 .bot-actions { display: flex; align-items: center; gap: 8px; }
 .bot-info { color: var(--bot-on-tonal); background: var(--bot-tonal); }
-.bot-success { color: var(--bot-success); background: var(--bot-success-bg); }
 .bot-warning { color: var(--bot-warning); background: var(--bot-warning-bg); }
 .bot-error { color: var(--bot-error); background: var(--bot-error-bg); }
 .bot-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
 .bot-notice.bot-info { border: 1px solid color-mix(in srgb, var(--bot-outline) 45%, transparent); background: var(--bot-card); color: var(--bot-text); }
 .bot-notice strong { font-weight: 600; }
-.bot-notice > span, .bot-task-notice > div > span { display: block; font-size: 11px; }
+.bot-notice > span { display: block; font-size: 11px; }
 .bot-resource .bot-notice { margin: 12px 0 0; }
-.bot-generation-status { white-space: pre-wrap; }
-.bot-task-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .bot-text-button { min-height: 48px; padding: 10px 12px; border: 0; border-radius: 24px; background: transparent; color: var(--bot-primary); font-size: 12px; line-height: 20px; font-weight: 600; }
 .bot-share-links { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--bot-outline); }
 .bot-share-links p { margin: 0 0 8px; color: var(--bot-muted); font-size: 12px; line-height: 20px; }

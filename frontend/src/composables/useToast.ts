@@ -54,6 +54,7 @@ function clear() {
 
 const toast = {
   show, dismiss, clear,
+  promise: sonner.promise,
   success: (message: string, options?: number | ToastOptions) => show(message, 'success', options),
   error: (message: string, options?: number | ToastOptions) => show(message, 'error', options),
   warning: (message: string, options?: number | ToastOptions) => show(message, 'warning', options),

@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { copyText } from '../utils/clipboard'
+import ShareTransferDirectory from './ShareTransferDirectory.vue'
+import ShareTransferButton from './ShareTransferButton.vue'
+import { useShareTransfer } from '../composables/useShareTransfer'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRouter } from 'vue-router'
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
@@ -35,6 +38,7 @@ const activeItemId = ref('all')
 const activeResourceType = ref('all')
 const activeMagnetSubType = ref('all')
 const lifecycle = new AbortController()
+const transfers = useShareTransfer(props.token, lifecycle.signal)
 const router = useRouter()
 const toast = useToast()
 const searchState = useMediaResourceSearch(props, lifecycle.signal)
@@ -320,6 +324,7 @@ onBeforeUnmount(() => {
           </span>
           <span v-else>选择影视条目，筛选网盘与磁力资源</span>
           <div>
+            <button v-if="resultItems.length" type="button" class="gy-tool-button" :disabled="!shareRuns.activeRunID.value || shareRuns.stopping.value" title="停止本窗口已提交的 STRM 批次" @click="stopShareRun">{{ shareRuns.stopping.value ? '停止中…' : '停止批次' }}</button>
             <button v-if="searchEnabled" type="button" :disabled="busy" class="gy-tool-button" aria-label="重新搜索" @click="search(true)">
               <svg aria-hidden="true" :class="{ 'gy-spinning': phase === 'search' }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               {{ phase === 'search' ? '搜索中 ' + elapsedSeconds + ' 秒' : '重搜' }}
@@ -342,10 +347,6 @@ onBeforeUnmount(() => {
             <span v-else>已等待 {{ elapsedSeconds }} 秒，最多等待约 2 分钟。</span>
             <span v-if="result">下方保留上次搜索结果，搜索完成后更新。</span>
           </p>
-          <div v-if="shareRuns.busy.value" role="status" class="gy-notice gy-info gy-task-notice">
-            <div><strong>{{ shareRuns.activeRunID.value ? 'STRM 任务在后台执行' : '正在准备 STRM 任务' }}</strong><span>{{ shareRuns.activeRunID.value ? '可以继续选择其他资源，关闭窗口不影响已提交任务。' : '提交成功后可关闭窗口。' }}</span></div>
-            <button v-if="shareRuns.activeRunID.value" type="button" :disabled="shareRuns.stopping.value" class="gy-text-button" @click="stopShareRun">{{ shareRuns.stopping.value ? '正在停止…' : '停止已提交批次' }}</button>
-          </div>
           <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="closeDialog">前往配置</RouterLink></p>
           <template v-if="result">
             <section v-if="!resultItems.length" class="gy-search-process" aria-label="搜索过程">
@@ -380,6 +381,7 @@ onBeforeUnmount(() => {
                 <div class="gy-filter-context">
                   <h3 class="gy-filter-title">资源筛选</h3>
                   <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
+                  <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="closeDialog" />
                 </div>
                 <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll">
                   <div class="gy-selection-indicator gy-chip-indicator" :style="sourceIndicatorStyle" aria-hidden="true"></div>
@@ -431,14 +433,12 @@ onBeforeUnmount(() => {
                             <span v-else-if="link.type === 'magnet'" class="gy-badge gy-neutral">分类未知</span>
                             <span v-if="link.size">{{ link.size }}</span><span v-if="link.seeds !== undefined">做种 {{ link.seeds }}</span>
                             <span v-if="link.updatedAt">{{ link.updatedAt }}</span><span v-if="link.password">提取码 {{ link.password }}</span>
+                            <a :href="link.url" target="_blank" rel="noopener noreferrer" data-gy-action="open" class="gy-open-link">{{ link.category === 'torrent' ? '打开' : '打开分享' }}<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg></a>
                           </div>
                         </div>
                       </div>
                       <div class="gy-actions" :class="{ 'gy-actions-organize': canOrganize(link) }">
-                        <a :href="link.url" target="_blank" rel="noopener noreferrer" data-gy-action="open" class="gy-button gy-outlined-button">
-                          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4 10 14M10 4H4v16h16v-6" /></svg>
-                          {{ link.category === 'torrent' ? '打开' : '打开分享' }}
-                        </a>
+                        <ShareTransferButton v-if="canShareSTRM(link)" :transfer="transfers" :resource="{ load: async () => [{ url: link.url, password: link.password }] }" :disabled="phase !== ''" />
                         <button v-if="canOrganize(link)" type="button" data-gy-action="organize" :disabled="downloadBlocked(item, link)" :aria-busy="preparingOrganize === cloudResourceID(item, link)" class="gy-button gy-outlined-button" @click="openOrganize(item, link, $event)">
                           <component :is="preparingOrganize === cloudResourceID(item, link) ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'gy-spinning': preparingOrganize === cloudResourceID(item, link) }" />
                           {{ preparingOrganize === cloudResourceID(item, link) ? '解析中…' : '115 整理' }}
@@ -451,9 +451,9 @@ onBeforeUnmount(() => {
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18H6a4 4 0 0 1-.7-7.94 7 7 0 0 1 13.4 0A4 4 0 0 1 18 18h-1M12 12v9m-4-4 4 4 4-4" /></svg>
                           {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : organizeNotices[cloudResourceID(item, link)] ? '普通离线' : '115 云下载' }}
                         </button>
-                        <button v-if="canShareSTRM(link)" type="button" data-gy-action="strm" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" class="gy-button gy-primary-button" @click="shareSTRM(item, link)">
+                        <button v-if="canShareSTRM(link)" type="button" data-gy-action="strm" :disabled="phase !== '' || shareRuns.pending.value[shareResourceID(item, link)] || shareRuns.statuses.value[shareResourceID(item, link)]?.success" :aria-busy="!!shareRuns.pending.value[shareResourceID(item, link)]" :title="shareRuns.statuses.value[shareResourceID(item, link)]?.message" class="gy-button gy-primary-button" @click="shareSTRM(item, link)">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9Zm0 0v6h6" /><path d="m10 12 5 3-5 3Z" /></svg>
-                          {{ shareRuns.pending.value[shareResourceID(item, link)] ? '已加入任务…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM' }}
+                          <span class="resource-strm-label">{{ shareRuns.pending.value[shareResourceID(item, link)] ? '处理中…' : shareRuns.statuses.value[shareResourceID(item, link)]?.success ? '已生成' : '分享 STRM' }}</span>
                         </button>
                       </div>
                     </div>
@@ -464,7 +464,6 @@ onBeforeUnmount(() => {
                     <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
                     <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-warning">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
                     <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
-                    <p v-if="shareRuns.statuses.value[shareResourceID(item, link)]" role="status" class="gy-notice gy-task-status" :class="shareRuns.statuses.value[shareResourceID(item, link)]?.success ? 'gy-success' : 'gy-info'">{{ shareRuns.statuses.value[shareResourceID(item, link)]?.message }}</p>
                   </li>
                 </ul>
               </article>
@@ -489,6 +488,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.gy-open-link { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; font-size: 11px; }.gy-open-link svg { width: 13px; height: 13px; }.gy-open-link:hover { color: var(--gy-primary); text-decoration: underline; }.gy-open-link:focus-visible { outline: 2px solid var(--gy-primary); outline-offset: 2px; }
 .gy-dialog {
   --gy-max-height: 90dvh;
   --gy-container: var(--search-dialog-container);
@@ -499,7 +499,6 @@ onBeforeUnmount(() => {
   --gy-primary: var(--search-dialog-primary);
   --gy-tonal: var(--search-dialog-tonal);
   --gy-on-tonal: var(--search-dialog-on-tonal);
-  --gy-success: #246044; --gy-success-bg: #e6f2e9;
   --gy-warning: #765500; --gy-warning-bg: #fff1cd;
   --gy-error: #a12b2b; --gy-error-bg: #ffe9e7;
   margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--gy-max-height);
@@ -515,7 +514,6 @@ onBeforeUnmount(() => {
   --gy-primary: var(--search-dialog-primary);
   --gy-tonal: var(--search-dialog-tonal);
   --gy-on-tonal: var(--search-dialog-on-tonal);
-  --gy-success: #a5d8b8; --gy-success-bg: #223d31;
   --gy-warning: #eed085; --gy-warning-bg: #42371e;
   --gy-error: #ffb4ab; --gy-error-bg: #502c2b;
   color-scheme: dark;
@@ -569,7 +567,7 @@ onBeforeUnmount(() => {
 .gy-all-items { width: 160px; padding: 12px; }
 .gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
 .gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; }
-.gy-filter-context { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
+.gy-filter-context { display: flex; flex-wrap: wrap; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
 .gy-filter-context > span { flex-shrink: 0; font-size: 11px; line-height: 18px; color: var(--gy-muted); }
 .gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }
 .gy-short-viewport .gy-filters { position: static; }
@@ -600,7 +598,6 @@ onBeforeUnmount(() => {
 .gy-badge { display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 8px; font-size: 11px; line-height: 18px; font-weight: 550; }
 .gy-neutral { background: color-mix(in srgb, var(--gy-outline) 18%, transparent); color: var(--gy-muted); }
 .gy-info { color: var(--gy-on-tonal); background: var(--gy-tonal); }
-.gy-success { color: var(--gy-success); background: var(--gy-success-bg); }
 .gy-warning { color: var(--gy-warning); background: var(--gy-warning-bg); }
 .gy-error { color: var(--gy-error); background: var(--gy-error-bg); }
 .gy-actions { display: flex; grid-column: 2; grid-row: 2; align-items: center; gap: 8px; }
@@ -608,16 +605,14 @@ onBeforeUnmount(() => {
 .gy-copy-button svg { width: 14px; height: 14px; }
 .gy-notice { margin: 0 0 14px; padding: 12px 14px; border-radius: 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
 .gy-notice.gy-info { border: 1px solid color-mix(in srgb, var(--gy-outline) 45%, transparent); background: var(--gy-card); color: var(--gy-text); }
-.gy-notice.gy-info > span, .gy-task-notice.gy-info > div > span { color: var(--gy-muted); }
-.gy-notice > span, .gy-task-notice > div > span { display: block; font-size: 11px; }
+.gy-notice.gy-info > span { color: var(--gy-muted); }
+.gy-notice > span { display: block; font-size: 11px; }
 .gy-notice strong { font-weight: 600; }
 .gy-notice p { margin: 0; }
-.gy-task-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .gy-resource .gy-notice { margin: 8px 0 8px; }
 .gy-task-status { white-space: pre-wrap; }
 .gy-task-status a { margin-left: 8px; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .gy-notice textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; border: 1px solid var(--gy-outline); border-radius: 8px; background: var(--gy-card); color: var(--gy-text); font-size: 16px; }
-.gy-text-button { min-height: 48px; padding: 10px 12px; border: 0; border-radius: 24px; background: transparent; color: var(--gy-primary); font-size: 12px; line-height: 20px; font-weight: 600; }
 .gy-list-end { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 20px; }
 .gy-list-end > span, .gy-all-loaded { color: var(--gy-muted); font-size: 11px; line-height: 18px; }
 .gy-all-loaded { margin: 20px 0 0; text-align: center; }
@@ -642,7 +637,7 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
 .gy-spinning { animation: gy-spin 1s linear infinite; }
 @keyframes gy-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
-  .gy-icon-button:hover, .gy-tool-button:hover:not(:disabled), .gy-copy-button:hover, .gy-text-button:hover:not(:disabled) { background: color-mix(in srgb, var(--gy-primary) 8%, transparent); }
+  .gy-icon-button:hover, .gy-tool-button:hover:not(:disabled), .gy-copy-button:hover { background: color-mix(in srgb, var(--gy-primary) 8%, transparent); }
   .gy-item-card:hover:not([aria-pressed="true"]), .gy-chip:hover:not([aria-pressed="true"])::before { background: var(--search-dialog-secondary-hover); }
   .gy-item-strip:has(.gy-item-card[aria-pressed="true"]:hover) > .gy-selection-indicator,
   .gy-source-strip:has(.gy-chip[aria-pressed="true"]:hover) > .gy-selection-indicator { background: var(--search-dialog-action-hover); }

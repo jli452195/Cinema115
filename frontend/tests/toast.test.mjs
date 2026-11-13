@@ -9,7 +9,7 @@ const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.Scri
 function setup() {
   const calls = [], dismissed = [], exports = {}
   let counter = 0
-  const sonner = { dismiss: id => dismissed.push(id) }
+  const sonner = { dismiss: id => dismissed.push(id), promise: (promise, options) => { calls.push({ promise, options }); return 'promise-id' } }
   for (const type of ['success', 'error', 'warning', 'info']) {
     sonner[type] = (title, options) => {
       const id = options.id ?? ++counter
@@ -34,6 +34,15 @@ test('共享入口把四种类型、标题和正文交给 vue-sonner', () => {
     { type: 'warning', title: '配置结果', description: '通知正文', duration: 3000 },
     { type: 'info', title: '配置结果', description: '通知正文', duration: 3000 },
   ])
+})
+
+test('Promise 通知复用 vue-sonner 原生能力并保留返回值', () => {
+  const { toast, calls } = setup()
+  const promise = Promise.resolve('accepted')
+  const options = { loading: '正在提交', success: '已提交', error: '提交失败' }
+  assert.equal(toast.promise(promise, options), 'promise-id')
+  assert.equal(calls[0].promise, promise)
+  assert.equal(calls[0].options, options)
 })
 
 test('旧数字时长和零时长持续提示保持兼容，空消息不显示', () => {

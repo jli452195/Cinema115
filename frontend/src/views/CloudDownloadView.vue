@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { IconCloudDownload, IconMagnet, IconShare } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
@@ -14,7 +15,8 @@ type TransferTab = 'magnet' | 'share'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const lifecycle = new AbortController()
-const activeTab = ref<TransferTab>('magnet')
+const route = useRoute()
+const activeTab = ref<TransferTab>(route.query.tab === 'share' ? 'share' : 'magnet')
 const accounts = ref<P115Account[]>([])
 const accountsLoaded = ref(false)
 const accountId = ref('')
@@ -142,10 +144,10 @@ onBeforeUnmount(() => lifecycle.abort())
 
       <section v-else id="share-panel" role="tabpanel" aria-labelledby="share-tab" class="space-y-5 pt-5">
         <section class="rounded-xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900 sm:p-6">
-          <div class="flex items-start gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"><IconShare :size="18" aria-hidden="true" /></span><div><h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">115 分享链接接收目录</h2><p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">Telegram 私聊收到链接后，直接把分享条目转存到所选目录，不生成 STRM。配置多个目录时，发送者会先选择目标。</p></div></div>
+          <div class="flex items-start gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"><IconShare :size="18" aria-hidden="true" /></span><div><h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">115 分享链接接收目录</h2><p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">网页资源搜索与 Telegram 共用转存目录，直接保存分享内容，不生成 STRM。网页只有一个有效目录时自动使用；多个目录选择一次后继续复用。</p></div></div>
           <P115PrimaryStatus v-if="accountsLoaded" :accounts="accounts" class="mt-4" />
         </section>
-        <P115TransferTargetSettings :token="token" endpoint="share-transfer/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" title="Bot 115 链接转存目录" description="每个目录会作为一个独立 Bot 功能显示在 Telegram Bot 配置页。" empty-text="还没有 115 链接转存目录" />
+        <P115TransferTargetSettings :token="token" endpoint="share-transfer/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" title="115 链接转存目录" description="创建后即可在网页搜索结果中选择；也可在 Telegram Bot 配置页将目录分配给 Bot，无需绑定 Bot 即可用于网页。" empty-text="还没有 115 链接转存目录" />
       </section>
     </div>
     <P115DirectoryDialog v-if="directoryDialogOpen" :token="token" :account-id="accountId" @close="directoryDialogOpen = false" @select="selectDirectory" />

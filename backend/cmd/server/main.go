@@ -392,7 +392,7 @@ func main() {
 	shareCookie := func() string { return primaryCookie(automation.Value().AccountID) }
 	shareAPI.Cookie = shareCookie
 	shareTransfers := &service.ShareLinkTransferService{Accounts: accounts, Settings: shareTransferSettings, Client: shareAPI.Client}
-	httpapi.RegisterShareLinkTransfer(admin, shareTransferSettings)
+	httpapi.RegisterShareLinkTransfer(admin, shareTransferSettings, shareTransfers)
 	generator := &service.STRMGenerator{Client: shareAPI.Client, Cookie: shareCookie, Root: shareAPI.OutputRoot}
 	workflow := service.NewShareWorkflow(shareAPI.Client, generator, shareCookie, automation, shareAPI.OutputRoot, database)
 	httpapi.RegisterReshareJobs(admin, database)

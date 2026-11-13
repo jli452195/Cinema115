@@ -148,11 +148,20 @@ func TestShareLinkTransferReportsUncertainBatchWithoutClaimingCompletion(t *test
 	client.failBatch = 2
 	client.fail = errors.New("receive failed")
 	receipt, err := service.Transfer(context.Background(), target, "https://115.com/s/share-code?password=abcd", "")
-	if err == nil || receipt.AcceptedItems != 100 || receipt.BatchCount != 1 || len(client.received) != 2 {
+	if !errors.Is(err, ErrShareTransferUncertain) || receipt.AcceptedItems != 100 || receipt.BatchCount != 1 || len(client.received) != 2 {
 		t.Fatalf("partial result was not preserved: receipt=%+v err=%v", receipt, err)
 	}
 	if !containsError(err, "100/101") || !containsError(err, "结果可能不确定") {
 		t.Fatalf("partial result did not explain retry risk: %v", err)
+	}
+}
+
+func TestShareLinkTransferFirstBatchFailureIsUncertain(t *testing.T) {
+	service, client, target := shareLinkTransferFixture(t, numberedShareFiles(1))
+	client.failBatch, client.fail = 1, context.DeadlineExceeded
+	receipt, err := service.Transfer(context.Background(), target, "https://115.com/s/share-code?password=abcd", "")
+	if !errors.Is(err, ErrShareTransferUncertain) || !errors.Is(err, context.DeadlineExceeded) || receipt.AcceptedItems != 0 || len(client.received) != 1 {
+		t.Fatalf("first write failure must require verification: receipt=%+v err=%v", receipt, err)
 	}
 }
 

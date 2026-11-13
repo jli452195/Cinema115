@@ -24,6 +24,9 @@ type ShareLinkTransferReceipt struct {
 	BatchCount    int    `json:"batchCount"`
 }
 
+// 转存写请求失败时，上游仍可能已接收，调用方应先核对目录再决定是否重试。
+var ErrShareTransferUncertain = errors.New("转存结果待核对")
+
 // ShareLinkTransferExecution keeps task credentials only in process memory.
 type ShareLinkTransferExecution func(context.Context, string, string) (ShareLinkTransferReceipt, error)
 
@@ -142,7 +145,7 @@ func (s *ShareLinkTransferService) transferSnapshot(ctx context.Context, target 
 			ids = append(ids, item.ID)
 		}
 		if err := s.Client.ReceiveShare(ctx, share, ids, target.TargetCID, account.Cookie); err != nil {
-			return receipt, fmt.Errorf("提交到 %s 的第 %d 批转存失败；已确认提交 %d/%d 个条目，本批结果可能不确定，请先检查目标目录再重试: %w", target.TargetPath, start/100+1, receipt.AcceptedItems, receipt.ItemCount, err)
+			return receipt, fmt.Errorf("提交到 %s 的第 %d 批转存失败；已确认提交 %d/%d 个条目，本批结果可能不确定，请先检查目标目录再重试: %w", target.TargetPath, start/100+1, receipt.AcceptedItems, receipt.ItemCount, errors.Join(ErrShareTransferUncertain, err))
 		}
 		receipt.AcceptedItems += len(ids)
 		receipt.BatchCount++

@@ -1,4 +1,6 @@
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { useToast } from './useToast'
 import { normalize115Share } from '../utils/shareLink'
 import { cancelShareRun, newShareRunID, savedSTRMSettings, ShareRunError, submitShareRun, waitForShareRun, type ShareRun } from '../utils/shareGeneration'
 
@@ -77,6 +79,8 @@ function runMessage(run: ShareRun): ShareSTRMStatus {
 }
 
 export function useShareSTRMRun(token: string, signal: AbortSignal, options: { scope?: string; beforeLoad?: () => Promise<void> } = {}) {
+  const toast = useToast(), router = useRouter()
+  const logAction = { label: '查看日志', onClick: () => { void router.push('/115/share/logs') } }
   const pending = ref<Record<string, boolean>>({})
   const preparing = ref(0)
   const busy = computed(() => Object.values(pending.value).some(Boolean))
@@ -88,15 +92,20 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
   let preparation: Promise<void> = Promise.resolve()
   const scope = options.scope ? `${options.scope}/${newShareRunID()}` : undefined
 
-  async function follow(resource: ShareSTRMResource, id: string, key: string, taskIDs?: string[]) {
+  async function follow(resource: ShareSTRMResource, id: string, key: string, taskIDs?: string[], notify = false) {
     pending.value[resource.id] = true; runIDs.value[resource.id] = id
     try {
-      await waitForShareRun(token, id, signal, run => { statuses.value[resource.id] = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds }) })
+      const run = await waitForShareRun(token, id, signal, run => { statuses.value[resource.id] = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds }) })
       rememberRun(key)
+      if (notify && !signal.aborted) {
+        const status = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds })
+        toast[status.success ? 'success' : run.status === 'cancelled' ? 'warning' : 'error'](status.message, { title: status.success ? 'STRM 生成完成' : 'STRM 任务结束', action: logAction })
+      }
     } catch (error) {
       if (!signal.aborted) {
         if (error instanceof ShareRunError && error.status === 404) rememberRun(key)
         statuses.value[resource.id] = { message: `暂时无法查询进度：${error instanceof Error ? error.message : '网络异常'}。后台任务不会因页面断开而取消，请查看分享日志或 Telegram 通知。`, success: false }
+        toast.warning(statuses.value[resource.id]!.message, { title: 'STRM 进度暂不可用', action: logAction })
       }
     } finally {
       delete pending.value[resource.id]; delete runIDs.value[resource.id]
@@ -121,14 +130,14 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
     const update = (message: string, success = false) => { statuses.value[resource.id] = { message, success } }
     update('已选择，等待搜索或前面的资源取链完成…')
     const prepare = async () => {
-      let following = false
+      let following = false, submitting = false
       try {
         signal.throwIfAborted()
         await options.beforeLoad?.()
         signal.throwIfAborted()
         const key = await identityHash(resource.identity)
         const existing = savedRuns().find(entry => entry.key === key)
-        if (existing) { following = true; void follow(resource, existing.id, key, existing.taskIDs); return }
+        if (existing) { following = true; void follow(resource, existing.id, key, existing.taskIDs); return true }
         update('正在读取生成配置…')
         const settings = await savedSTRMSettings(token, signal)
         update('正在获取并校验 115 分享链接…')
@@ -145,21 +154,36 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
         const id = newShareRunID()
         rememberRun(key, id)
         update('正在提交全部链接到后台…')
+        submitting = true
         const run = await submitShareRun(token, id, [...unique.values()].map(link => ({ ...settings, mode: '', url: link.url, password: link.password, cid: '0' })), scope)
         rememberRun(key, run.id, run.selectedTaskIds)
         if (!signal.aborted) {
           statuses.value[resource.id] = runMessage(run)
           following = true
-          void follow(resource, run.id, key, run.selectedTaskIds)
+          void follow(resource, run.id, key, run.selectedTaskIds, true)
         }
+        return true
       } catch (error) {
-        if (!signal.aborted) update(`${error instanceof Error ? error.message : '提交失败'}；若未收到确认，请重新打开弹窗查询原任务或查看分享日志。`)
+        // 关闭弹窗只取消尚未提交的准备；已经发出的提交仍需显示真实结果。
+        if (signal.aborted && !submitting) return false
+        const message = `${error instanceof Error ? error.message : '提交失败'}${submitting ? '；若未收到确认，请重新打开弹窗查询原任务或查看分享日志。' : ''}`
+        if (!signal.aborted) update(message)
+        throw new Error(message)
       } finally {
         preparing.value--
         if (!following) delete pending.value[resource.id]
       }
     }
-    preparation = preparation.then(prepare, prepare)
+    const submission = preparation.then(prepare, prepare)
+    toast.promise(submission, {
+      loading: '正在准备分享 STRM…',
+      success: (accepted: boolean) => accepted
+        ? { message: '已提交后台', description: '可关闭窗口，STRM 任务会继续执行。', action: logAction, duration: 3000 }
+        : { message: '已取消准备', type: 'info', description: '本次资源尚未提交后台。', duration: 3000 },
+      error: (error: unknown) => ({ message: 'STRM 提交失败', description: error instanceof Error ? error.message : '请稍后重试', action: logAction, duration: 5000 }),
+    })
+    // 页面点击调用无需处理异常；Promise Toast 接收真实错误，准备队列继续执行。
+    preparation = submission.then(() => {}, () => {})
     await preparation
   }
 
@@ -170,6 +194,7 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
     try { await Promise.all(ids.map(id => cancelShareRun(token, id))) }
     catch (error) {
       for (const [resource, id] of Object.entries(runIDs.value)) if (ids.includes(id)) statuses.value[resource] = { message: error instanceof Error ? error.message : '停止任务失败', success: false }
+      toast.error(error instanceof Error ? error.message : '停止任务失败', { title: '停止 STRM 任务失败', action: logAction })
     } finally {
       stopping.value = false
     }

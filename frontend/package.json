@@ -65,6 +65,7 @@
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test:share-runs": "node --test tests/share-strm-run.test.mjs",
+    "test:share-transfer": "node --test tests/share-transfer.test.mjs",
     "test:season-library": "node --test tests/season-library.test.mjs",
     "test:tv-numbering-ui": "node scripts/tv-numbering-ui.cjs",
     "test:season-episodes-ui": "node scripts/season-episodes-ui.cjs",
