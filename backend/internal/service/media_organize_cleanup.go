@@ -148,10 +148,6 @@ func (f *mediaOrganizeFiles) cleanupListing(ctx context.Context, parent, relativ
 	return files, nil
 }
 
-type media115CleanupBatchDrive interface {
-	DeleteEntriesBatch(context.Context, string, []string, string) error
-}
-
 func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFiles, run *MediaOrganizeRun, candidates []MediaOrganizeEntry) error {
 	parents := make(map[string][]MediaOrganizeEntry)
 	sharedScopes := make(map[string]bool)
@@ -174,10 +170,10 @@ func (s *MediaOrganizer) cleanupEntries(ctx context.Context, f *mediaOrganizeFil
 			defer cancel()
 			entries := parents[parent]
 			var siblings []p115.ShareFile
-			var recycler media115CleanupBatchDrive
+			var recycler organizeRecycleBatchDrive
 			if run.Rule.Storage == "115" {
 				var ok bool
-				recycler, ok = f.drive.(media115CleanupBatchDrive)
+				recycler, ok = f.drive.(organizeRecycleBatchDrive)
 				if !ok {
 					return fmt.Errorf("当前网盘不支持批量移入回收站")
 				}

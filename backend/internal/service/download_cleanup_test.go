@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 )
@@ -16,6 +17,98 @@ type downloadCleanupFixture struct {
 	adder   *cloudAdderStub
 	tracker *gardenTrackerFake
 	p       *downloadPending
+}
+
+type downloadCleanupBatchDrive struct {
+	*cleanupFakeDrive
+	calls     [][]string
+	applied   int
+	err       error
+	work      context.Context
+	parent    string
+	verifyErr error
+	verified  bool
+}
+
+func (d *downloadCleanupBatchDrive) DeleteEntriesBatch(ctx context.Context, parent string, ids []string, cookie string) error {
+	d.calls = append(d.calls, append([]string(nil), ids...))
+	d.work, d.parent = ctx, parent
+	count := d.applied
+	if count < 0 {
+		count = len(ids)
+	}
+	if err := d.cleanupFakeDrive.DeleteEntries(ctx, ids[:min(count, len(ids))], cookie); err != nil {
+		return err
+	}
+	return d.err
+}
+
+func (d *downloadCleanupBatchDrive) DriveFiles(ctx context.Context, cid string, offset int, cookie string) (*p115.SharePage, error) {
+	if d.work != nil && cid == d.parent {
+		if d.work == ctx || ctx.Err() != nil {
+			return nil, errors.New("删除结果核对必须使用独立的有效上下文")
+		}
+		d.verified = true
+		if d.verifyErr != nil {
+			return nil, d.verifyErr
+		}
+	}
+	return d.cleanupFakeDrive.DriveFiles(ctx, cid, offset, cookie)
+}
+
+func TestDownloadCleanupBatchConfirmsEachRootWithoutReplayingWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		applied   int
+		writeErr  error
+		verifyErr error
+		pending   int
+	}{
+		{"全部成功", -1, nil, nil, 0},
+		{"超时但已全部回收", -1, context.DeadlineExceeded, nil, 0},
+		{"成功回执但仅部分回收", 1, nil, nil, 2},
+		{"失败但部分已回收", 1, errors.New("115 busy"), nil, 2},
+		{"核对失败保留待清理记录", -1, nil, errors.New("listing unavailable"), 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newDownloadCollectionFixture(t, 3)
+			for i := range f.jobs {
+				f.ready(t, i)
+			}
+			if err := f.s.sealShareCollections(time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			drive := &downloadCleanupBatchDrive{cleanupFakeDrive: f.client.cleanupFakeDrive, applied: tc.applied, err: tc.writeErr, verifyErr: tc.verifyErr}
+			f.s.Organize.drive = drive
+			p := f.leader(t)
+			roots := append([]string(nil), p.job.Download.CleanupDirs...)
+			f.finish(t, p)
+			if len(drive.calls) != 1 || !slices.Equal(drive.calls[0], roots) || !drive.verified || len(p.job.Download.CleanupDirs) != tc.pending {
+				t.Fatal("批量删除没有逐项确认结果", drive.calls, drive.verified, p.job.Download.CleanupDirs)
+			}
+			if tc.writeErr != nil && tc.pending > 0 && !strings.Contains(p.job.Message, tc.writeErr.Error()) {
+				t.Fatal("清理失败原因被隐藏", p.job.Message)
+			}
+			if tc.verifyErr != nil && !strings.Contains(p.job.Message, "未确认") {
+				t.Fatal("核对失败被误报成功", p.job.Message)
+			}
+			if tc.pending == 2 && !slices.Equal(p.job.Download.CleanupDirs, roots[1:]) {
+				t.Fatal("已经回收的目录仍待重试", p.job.Download.CleanupDirs)
+			}
+		})
+	}
+}
+
+func TestDownloadCleanupBatchRejectsUnownedRootBeforeAnyWrite(t *testing.T) {
+	f := newDownloadCleanupFixture(t)
+	f.finish(t)
+	drive := &downloadCleanupBatchDrive{cleanupFakeDrive: f.drive, applied: -1}
+	f.s.Organize.drive = drive
+	f.p.job.Download.CleanupDirs = []string{f.p.job.Download.DirectoryID, f.p.job.Download.ParentCID}
+	issue, err := f.s.cleanupDownload(context.Background(), f.p)
+	if err != nil || !strings.Contains(issue, "归属") || len(drive.calls) != 0 {
+		t.Fatal("批量清理未在写入前核验全部目录归属", issue, err, drive.calls)
+	}
 }
 
 func newDownloadCleanupFixture(t *testing.T) downloadCleanupFixture {

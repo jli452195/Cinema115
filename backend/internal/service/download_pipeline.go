@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -164,6 +165,7 @@ func aggregateDownloadPipeline(ctx context.Context, id string, jobs []OrganizeJo
 	p := DownloadPipeline{ID: id, Title: jobs[0].Title, CreatedAt: jobs[0].CreatedAt, Total: len(jobs), JobIDs: make([]string, 0, len(jobs)), Shares: []DownloadPipelineShare{}}
 	shares := make(map[string]bool, len(jobs))
 	videos := make(map[string]bool)
+	cleanupDirs := make(map[string]bool)
 	queued, downloading, organizing, generating, review, success, interrupted := 0, 0, 0, 0, 0, 0, false
 	failedShares, expected := 0, len(jobs)
 	issues := make([]string, 0, len(jobs))
@@ -195,6 +197,14 @@ func aggregateDownloadPipeline(ctx context.Context, id string, jobs []OrganizeJo
 		case "running":
 			organizing++
 		case "completed":
+			if pendingDownloadCleanup(job) {
+				for _, root := range d.CleanupDirs {
+					cleanupDirs[root] = true
+				}
+				if job.Message != "" && !slices.Contains(issues, job.Message) {
+					issues = append(issues, job.Message)
+				}
+			}
 		default:
 			p.Failed++
 			if job.Message != "" {
@@ -273,6 +283,9 @@ func aggregateDownloadPipeline(ctx context.Context, id string, jobs []OrganizeJo
 	if p.Failed+failedShares > 0 {
 		p.Message += fmt.Sprintf(" · %d 项失败或中断", p.Failed+failedShares)
 	}
+	if len(cleanupDirs) > 0 {
+		p.Message += fmt.Sprintf(" · %d 个下载目录待清理", len(cleanupDirs))
+	}
 	if len(issues) > 0 {
 		reason := []rune(strings.Join(strings.Fields(issues[0]), " "))
 		if len(reason) > 120 {
@@ -301,8 +314,10 @@ func aggregateDownloadPipeline(ctx context.Context, id string, jobs []OrganizeJo
 	default:
 		p.Finished = true
 		switch {
-		case p.Failed+failedShares == 0:
+		case p.Failed+failedShares == 0 && len(cleanupDirs) == 0:
 			p.Status = "success"
+		case len(cleanupDirs) > 0:
+			p.Status = "partial"
 		case success > 0 || p.Organized > 0 && p.Failed > 0:
 			p.Status = "partial"
 		case interrupted:

@@ -97,6 +97,40 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     passed.push('同一通知从短内容更新为多行后，桌面浅色及手机深色悬停均不压缩背景或溢出文字')
 
     await page.evaluate(() => {
+      window.finishStackTests = []
+      for (let index = 0; index < 3; index++) window.toastFixture.promise(new Promise(resolve => window.finishStackTests.push(resolve)), {
+        loading: `准备任务 ${index}`, duration: 10000,
+        success: () => ({ message: `正在整理 ${index}`, description: ('羽球青春 · 下载完成，正在整理视频、字幕并生成 STRM。').repeat(index + 2) }),
+      })
+    })
+    await page.waitForFunction(() => document.querySelectorAll('[data-sonner-toast]').length === 3)
+    const stackHandles = await toasts.elementHandles()
+    await page.evaluate(() => window.finishStackTests.forEach(resolve => resolve()))
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-sonner-toast]')].every(el => el.dataset.type === 'success'))
+    for (const [width, dark] of [[1100, false], [320, true]]) {
+      await page.setViewportSize({ width, height: 800 })
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      await page.mouse.move(0, 700)
+      await page.waitForTimeout(450)
+      await toasts.first().hover()
+      await page.waitForTimeout(450)
+      const layouts = await toasts.evaluateAll(elements => elements.map(el => {
+        const box = el.getBoundingClientRect(), content = el.querySelector('[data-content]').getBoundingClientRect()
+        return { top: box.top, bottom: box.bottom, containsContent: content.top >= box.top && content.bottom <= box.bottom, expanded: el.dataset.expanded }
+      }))
+      for (const [index, layout] of layouts.entries()) {
+        assert.equal(layout.expanded, 'true')
+        assert.equal(layout.containsContent, true)
+        if (index > 0) assert.ok(layout.top - layouts[index - 1].bottom >= 9, 'updated toasts must retain the configured gap when expanded')
+      }
+      for (const handle of stackHandles) assert.equal(await handle.evaluate(el => el.isConnected), true)
+    }
+    await clear()
+    await page.setViewportSize({ width: 1100, height: 800 })
+    await page.evaluate(() => document.documentElement.classList.remove('dark'))
+    passed.push('三条同 ID 通知由短变长后，桌面及手机展开保留真实高度和堆叠间距')
+
+    await page.evaluate(() => {
       for (const id of ['toast-parent', 'toast-child']) {
         const dialog = document.createElement('dialog')
         dialog.id = id

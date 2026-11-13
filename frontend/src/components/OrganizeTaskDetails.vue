@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
 import SegmentedControl from './SegmentedControl.vue'
-import { historyDuration, historyTasks, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, shareTaskStatus, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
+import { historyDuration, historyTasks, historyTime, isActiveTask, isCleanupOnly, itemStatus, needsAttention, resultSummary, shareTaskStatus, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
 import type { OrganizeJob } from '../types/organize'
 
 const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; historyError: string; unavailable: boolean; resuming: boolean; resumingId?: string; resumeError: string; retrying?: string; retryError?: string }>()
@@ -16,14 +16,19 @@ const counts = computed(() => taskCounts(props.task))
 const items = computed(() => props.task.items.filter(item => filter.value !== 'attention' || needsAttention(item, props.task)))
 const stats = computed(() => props.task.organize?.stats)
 const resumable = computed(() => !!props.task.organize?.resumable)
-const resources = computed(() => historyTasks(props.task.organizeJobs || []))
-const cleanupOnly = computed(() => {
-  const job = props.task.organize, download = job?.download
-  return job?.status === 'completed' && !!download?.cleanupDirs?.length && job.items.length > 0
-    && job.items.every(item => item.status === 'done')
-    && !download.subtitles?.some(sub => sub.status !== 'done' && sub.status !== 'skipped')
-    && (!download.share || download.share.handedOff)
+const resources = computed(() => {
+  const attention = historyTasks(props.task.organizeJobs || []).filter(resource => resource.organize?.resumable || taskCounts(resource).attention || !isActiveTask(resource) && resource.status !== 'completed')
+  // 合并批次的恢复操作由主记录执行，避免成员重复显示同一个重试入口。
+  return attention.filter(resource => {
+    const leader = resource.organize?.download?.share?.leaderId
+    return !leader || resource.organize?.id === leader || !attention.some(candidate => candidate.organize?.id === leader)
+  })
 })
+const cleanupOnly = computed(() => isCleanupOnly(props.task.organize || props.task.organizeJobs?.find(job => job.id === props.resumingId)))
+const resourceTitle = (resource: HistoryTask) => {
+  const video = resource.organize?.items.find(item => item.file.mediaType === 'video')
+  return video?.name || video?.targetPath.split('/').at(-1) || resource.title
+}
 const folders = computed(() => [{ label: '来源目录', path: props.task.source }, { label: '目标目录', path: props.task.target }].filter(row => row.path))
 watch(() => props.resumeError, async message => {
   if (message) { await nextTick(); resumeAlert.value?.scrollIntoView({ block: 'nearest' }) }
@@ -86,11 +91,11 @@ async function copy(value: string) {
           <div class="task-detail-path rounded-lg p-3"><dt class="text-slate-500 dark:text-slate-400">整理完成</dt><dd class="mt-2 font-medium">{{ task.pipeline.organized }}/{{ task.pipeline.total }} 个资源</dd></div>
           <div v-if="task.pipeline.shareSTRM" class="task-detail-path rounded-lg p-3"><dt class="text-slate-500 dark:text-slate-400">STRM 生成</dt><dd class="mt-2 font-medium">已写入 {{ task.pipeline.written }} 个</dd></div>
         </dl>
-        <ul class="divide-y divide-slate-200 dark:divide-slate-700">
+        <ul v-if="resources.length" aria-label="需处理的资源" class="divide-y divide-slate-200 dark:divide-slate-700">
           <li v-for="resource in resources" :key="resource.key" class="py-3 first:pt-0 last:pb-0">
-            <div class="flex items-start justify-between gap-3"><p class="min-w-0 break-all text-xs font-medium">{{ resource.title }}</p><span class="shrink-0 text-xs text-slate-500 dark:text-slate-400">{{ taskStatus(resource) }}</span></div>
+            <div class="flex items-start justify-between gap-3"><p class="min-w-0 break-all text-xs font-medium">{{ resourceTitle(resource) }}</p><span class="shrink-0 text-xs text-slate-500 dark:text-slate-400">{{ isCleanupOnly(resource.organize) ? '待清理' : taskStatus(resource) }}</span></div>
             <p v-if="resource.message" class="mt-1 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">{{ resource.message }}</p>
-            <button v-if="resource.organize?.resumable" class="action mt-2" :disabled="resuming || !!retrying || !!blockedReason" :title="blockedReason" @click="$emit('resume', resource.organize)">{{ resumingId === resource.organize.id ? '检查中…' : '检查并继续此资源' }}</button>
+            <button v-if="resource.organize?.resumable" class="action mt-2" :disabled="resuming || !!retrying || !!blockedReason" :title="blockedReason" @click="$emit('resume', resource.organize)">{{ resumingId === resource.organize.id ? isCleanupOnly(resource.organize) ? '清理中…' : '检查中…' : isCleanupOnly(resource.organize) ? '重试清理' : '检查并继续此资源' }}</button>
           </li>
         </ul>
       </section>

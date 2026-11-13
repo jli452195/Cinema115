@@ -38,7 +38,17 @@ func organizeFileNumbering(file *OrganizeFile) {
 	name = organizeSPMarker.ReplaceAllString(name, "${1}${2}")
 	spDirectory := strings.EqualFold(directory, "SP")
 	special := name != original || spDirectory
-	if organizeSpecialFile.MatchString(name) || organizeSpecialDirectory.MatchString(directory) && !spDirectory {
+	if organizeSpecialFile.MatchString(name) {
+		return
+	}
+	if organizeSpecialDirectory.MatchString(directory) && !spDirectory {
+		// 特别篇目录仅放行文件自身明确且无歧义的季零坐标，附加内容仍排除。
+		switch strings.ToUpper(directory) {
+		case "SPECIAL", "SPECIALS", "特别篇", "特別篇":
+			if numbered, found := mediafacts.StandardNumbering(name); found && numbered.Season == 0 && numbered.Episode > 0 {
+				file.Season, file.Episode, file.EndEpisode = numbered.Season, numbered.Episode, numbered.EndEpisode
+			}
+		}
 		return
 	}
 	season := file.Season

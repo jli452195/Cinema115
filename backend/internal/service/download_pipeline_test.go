@@ -201,3 +201,21 @@ func TestDownloadPipelineMessageIncludesFailureAndConcurrentReview(t *testing.T)
 		t.Fatal(p, err)
 	}
 }
+
+func TestDownloadPipelineReportsPendingCleanupOncePerRoot(t *testing.T) {
+	one, two := pipelineJob("one", "completed"), pipelineJob("two", "completed")
+	one.Download.CleanupDirs = []string{"11", "12"}
+	two.Download.CleanupDirs = []string{"12"}
+	one.Download.Share.LeaderID, two.Download.Share.LeaderID = one.ID, one.ID
+	one.Message, two.Message = "下载目录清理失败，可重试清理", "下载目录清理失败，可重试清理"
+	reader := &pipelineShareReader{tasks: map[string]DownloadPipelineShare{"one": {ID: "one", Status: "success", Written: 2}}}
+	p, err := aggregateDownloadPipeline(context.Background(), "batch", []OrganizeJob{one, two}, reader)
+	if err != nil || p.Status != "partial" || !p.Finished || p.Failed != 0 || p.Written != 2 || !strings.Contains(p.Message, "2 个下载目录待清理") || strings.Count(p.Message, one.Message) != 1 {
+		t.Fatal("清理残留被漏报或重复计算", p, err)
+	}
+	one.Download.CleanupDirs, two.Download.CleanupDirs = nil, nil
+	p, err = aggregateDownloadPipeline(context.Background(), "batch", []OrganizeJob{one, two}, reader)
+	if err != nil || p.Status != "success" || strings.Contains(p.Message, "待清理") {
+		t.Fatal("清理恢复后仍未完成", p, err)
+	}
+}

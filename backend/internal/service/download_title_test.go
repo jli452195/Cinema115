@@ -144,6 +144,40 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 	}
 }
 
+func TestDownloadTitleBindsAniOneVideoAndThreeSubtitleLanguages(t *testing.T) {
+	const stem = "Love All Play.S01E24"
+	job := OrganizeJob{
+		Config:   OrganizeConfig{SourcePath: "/staging", TargetPath: "/target"},
+		Download: &ResourceDownload{DirectoryID: "100", CleanupDirs: []string{"100"}},
+		Items:    []OrganizeItem{{File: OrganizeFile{TitleOnly: true, Season: 1, Episode: 24}, Name: stem, Stem: stem, Directory: "Love All Play/Season 01"}},
+	}
+	names := []string{
+		"《Love All Play》#24 (日語原聲)【Ani-One】.mp4",
+		"《Love All Play》#24 (簡中字幕)【Ani-One】.ass",
+		"《Love All Play》#24 (繁中字幕)【Ani-One】.ass",
+		"《Love All Play》#24 (日文自動產生字幕)【Ani-One】.ass",
+	}
+	files := make([]OrganizeFile, 0, len(names))
+	for i, name := range names {
+		files = append(files, OrganizeFile{ShareFile: p115.ShareFile{ID: fmt.Sprint(901 + i), Name: name}, ParentID: "100", SourcePath: name, MediaType: organizeMedia(name)})
+	}
+	if err := bindDownloadFiles(&job, files, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(job.Items) != 4 {
+		t.Fatal("Ani-One 视频和三种字幕未全部进入整理计划", job.Items)
+	}
+	for i, suffix := range []string{".mp4", ".zh-Hans.ass", ".zh-Hant.ass", ".ja.ass"} {
+		item := job.Items[i]
+		if item.File.ID != files[i].ID || item.Name != stem+suffix || item.TargetPath != "/target/Love All Play/Season 01/"+stem+suffix {
+			t.Fatal("字幕关联或独立语言目标名称错误", item)
+		}
+	}
+	if job.Download.KeepExtras || len(job.Download.CleanupDirs) != 1 || job.Download.CleanupDirs[0] != "100" {
+		t.Fatal("字幕绑定意外改变了临时目录清理", job.Download)
+	}
+}
+
 func TestDownloadTitleBindingRejectsAmbiguityWithoutChangingPlan(t *testing.T) {
 	for _, names := range [][]string{
 		{"Show [12].mkv", "Show [13].mkv"}, {"Show [13].mkv"}, {"Show [11-12].mkv"},

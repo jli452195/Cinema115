@@ -6,7 +6,7 @@ import ts from 'typescript'
 const code = ts.transpileModule(readFileSync(new URL('../src/utils/organizeHistory.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
 const module = { exports: {} }
 new Function('module', 'exports', code)(module, module.exports)
-const { historyTasks, isActiveTask, taskCounts, taskStatus, taskTone, resultSummary, needsAttention, itemStatus } = module.exports
+const { historyTasks, isActiveTask, isCleanupOnly, taskCounts, taskStatus, taskTone, resultSummary, needsAttention, itemStatus } = module.exports
 const task = (statuses, status = 'partial') => ({ key: 'organize:1', status, items: statuses.map((status, i) => ({ id: String(i), status })) })
 
 test('partial operations preserve renamed, unprocessed, uncertain and skipped outcomes', () => {
@@ -138,4 +138,28 @@ test('merged leader files and external subtitles count once and use the leader o
   assert.equal(batch.items.find(item => item.name === 'b.mkv').message, '主记录待核实')
   assert.equal(batch.items.find(item => item.name === '02.ass').status, 'uncertain')
   assert.equal(batch.items.find(item => item.name === '02.ass').jobId, leader.id)
+})
+
+test('外部字幕明细使用原文件名，不显示内部附件编号或误标共享计划', () => {
+  const job = downloadJob('a')
+  job.download = { subtitles: [{ file: { name: '01.zh.ass', path: 'private-local-attachment-id' }, targetPath: '/out/01.zh.ass', status: 'done' }] }
+  const subtitle = historyTasks([job])[0].items.find(item => item.mediaType === 'subtitle')
+  assert.equal(subtitle.source, '外部字幕 / 01.zh.ass')
+  assert.ok(!JSON.stringify(subtitle).includes('private-local-attachment-id'))
+})
+
+test('清理重试只适用于文件和字幕完成、分享已交接的原资源', () => {
+  const job = downloadJob('a')
+  job.download = { cleanupDirs: ['staging'] }
+  assert.equal(isCleanupOnly(job), true)
+  job.download.subtitles = [{ status: 'pending' }]
+  assert.equal(isCleanupOnly(job), false)
+  job.download.subtitles[0].status = 'done'
+  job.download.share = { handedOff: false }
+  assert.equal(isCleanupOnly(job), false)
+  job.download.share.handedOff = true
+  assert.equal(isCleanupOnly(job), true)
+  job.download.cleanupDirs = []
+  assert.equal(isCleanupOnly(job), false)
+  assert.equal(isCleanupOnly(undefined), false)
 })

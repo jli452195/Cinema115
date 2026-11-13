@@ -69,6 +69,23 @@ func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bo
 			return owners, stem[end:]
 		}
 	}
+	// Ani-One 的音轨与字幕说明不同，仅在同目录按完整作品及集号原文匹配。
+	sub := aniOneSubtitleStem.FindStringSubmatch(stem)
+	if sub == nil || sub[2] == "日語原聲" {
+		return nil, ""
+	}
+	var owners []string
+	for _, video := range m.videos[parentID] {
+		name := strings.TrimSuffix(video.Name, path.Ext(video.Name))
+		v := aniOneSubtitleStem.FindStringSubmatch(name)
+		if v != nil && v[2] == "日語原聲" && strings.EqualFold(v[1], sub[1]) {
+			owners = append(owners, video.ID)
+		}
+	}
+	if len(owners) > 0 {
+		tails := map[string]string{"簡中字幕": ".zh-Hans", "繁中字幕": ".zh-Hant", "日文自動產生字幕": ".ja"}
+		return owners, tails[sub[2]]
+	}
 	return nil, ""
 }
 
@@ -77,8 +94,9 @@ func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bo
 const subtitleMetadataToken = `(?:[0-9]{3,4}[pi]|[0-9]{3,4}\s*[x×]\s*[0-9]{3,4}(?:[pi])?|[48]k|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ -]?bit|mkv|mp4|chs|cht|sc|tc|gb|big5|ja|jpn|eng|简体(?:中文)?|簡體(?:中文)?|繁体(?:中文)?|繁體(?:中文)?|简繁|簡繁|简|繁|内嵌|內嵌|内封|內封|外挂|外掛|forced|sdh|default)`
 
 var (
-	subtitleMetadata = regexp.MustCompile(`(?i)^` + subtitleMetadataToken + `(?:[ ._+&/-]+` + subtitleMetadataToken + `)*$`)
-	subtitleBrackets = regexp.MustCompile(`[\[【(（]([^\[\]【】()（）]+)[\]】)）]`)
+	subtitleMetadata   = regexp.MustCompile(`(?i)^` + subtitleMetadataToken + `(?:[ ._+&/-]+` + subtitleMetadataToken + `)*$`)
+	subtitleBrackets   = regexp.MustCompile(`[\[【(（]([^\[\]【】()（）]+)[\]】)）]`)
+	aniOneSubtitleStem = regexp.MustCompile(`^(.+?)\s*\((日語原聲|簡中字幕|繁中字幕|日文自動產生字幕)\)【Ani-One】$`)
 )
 
 func subtitleFileIdentity(name string) *subtitleIdentity {

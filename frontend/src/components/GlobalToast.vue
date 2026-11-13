@@ -9,9 +9,42 @@ const target = shallowRef<HTMLElement>(document.body)
 const theme = ref<'light' | 'dark'>('light')
 let modalStack: HTMLDialogElement[] = []
 let observer: MutationObserver | undefined
+let resizeObserver: ResizeObserver | undefined
+const observedContents = new Set<Element>()
 let disposed = false
 
-async function syncHost() {
+function syncToastLayout() {
+  // Sonner 只在挂载时缓存高度，同 ID 更新内容后同步展开间距与收起卡片高度。
+  const contents = new Set(host.value?.querySelectorAll('[data-content]'))
+  for (const content of observedContents) {
+    if (!contents.has(content)) {
+      resizeObserver?.unobserve(content)
+      observedContents.delete(content)
+    }
+  }
+  for (const content of contents) {
+    if (!observedContents.has(content)) {
+      resizeObserver?.observe(content)
+      observedContents.add(content)
+    }
+  }
+  for (const list of host.value?.querySelectorAll<HTMLElement>('[data-sonner-toaster]') || []) {
+    let offset = 0
+    const gap = parseFloat(getComputedStyle(list).getPropertyValue('--gap')) || 0
+    for (const [index, toast] of [...list.querySelectorAll<HTMLElement>('[data-sonner-toast]')].entries()) {
+      const previousHeight = toast.style.height
+      toast.style.height = 'auto'
+      const height = toast.offsetHeight
+      toast.style.height = previousHeight
+      toast.style.setProperty('--measured-height', `${height}px`)
+      toast.style.setProperty('--measured-offset', `${offset}px`)
+      if (index === 0) list.style.setProperty('--measured-front-height', `${height}px`)
+      offset += height + gap
+    }
+  }
+}
+
+async function syncHost(refreshLayout = false) {
   theme.value = document.documentElement.classList.contains('dark') ? 'dark' : 'light'
   const modals = [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')]
   modalStack = [...modalStack.filter(modal => modals.includes(modal)), ...modals.filter(modal => !modalStack.includes(modal))]
@@ -23,6 +56,7 @@ async function syncHost() {
   }
   await nextTick()
   if (!disposed && host.value?.isConnected && !host.value.matches(':popover-open')) host.value.showPopover()
+  if (!disposed && refreshLayout) syncToastLayout()
 }
 
 function keepFocusPaused(event: FocusEvent | MouseEvent) {
@@ -41,6 +75,7 @@ function resumeAfterFocus(event: FocusEvent) {
 }
 
 onMounted(() => {
+  resizeObserver = new ResizeObserver(syncToastLayout)
   observer = new MutationObserver(records => {
     for (const record of records) {
       const modal = record.target
@@ -48,15 +83,17 @@ onMounted(() => {
         modalStack = [...modalStack.filter(item => item !== modal), modal]
       }
     }
-    void syncHost()
+    void syncHost(records.some(record => host.value?.contains(record.target)))
   })
-  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true })
+  observer.observe(document.body, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['open'], attributeOldValue: true })
   observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-  void syncHost()
+  void syncHost(true)
 })
 onBeforeUnmount(() => {
   disposed = true
   observer?.disconnect()
+  resizeObserver?.disconnect()
+  observedContents.clear()
   host.value?.hidePopover()
   useToast().clear()
 })
@@ -87,8 +124,8 @@ onBeforeUnmount(() => {
   top: calc(var(--workbench-header-height) + 1px + 1rem);
 }
 .toast-host :deep([data-sonner-toast]) { width: 100%; padding-right: 44px; border-radius: 14px; pointer-events: none; overflow-wrap: anywhere; }
-/* 同一通知更新内容后，展开时按实际内容撑开，避免沿用首次显示的缓存高度。 */
-.toast-host :deep([data-sonner-toast][data-mounted='true'][data-expanded='true']) { height: auto; }
+.toast-host :deep([data-sonner-toast][data-expanded='false'][data-front='false']) { height: var(--measured-front-height, var(--front-toast-height)); }
+.toast-host :deep([data-sonner-toast][data-mounted='true'][data-expanded='true']) { --offset: var(--measured-offset, 0px) !important; height: var(--measured-height, auto); }
 .toast-host :deep([data-sonner-toast][data-visible='true']:not([data-removed='true'])) { pointer-events: auto; }
 .toast-host :deep([data-sonner-toast]:has([data-button])) { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; }
 .toast-host :deep([data-type='success'] [data-icon]) { color: rgb(var(--status-success)); }

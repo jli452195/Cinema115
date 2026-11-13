@@ -2,7 +2,10 @@ package service
 
 import (
 	"context"
+	"errors"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
 
 func downloadItemsDone(job OrganizeJob) bool {
@@ -50,38 +53,67 @@ func (s *DownloadOrganize) ownsCleanupRoot(job OrganizeJob, root string) bool {
 	return false
 }
 
-// Successful cleanup costs one recycle request per saved staging root. Only an
-// ambiguous failure needs a parent listing; no source tree is scanned again.
-// Ordinary drive errors stay on this job; only persistence errors stop workers.
+// 同一父目录的任务根目录按批回收，避免逐目录请求耗尽整批超时。
+// 批量回执逐项核对；失败仍保留原任务的待清理目录，不重放整批写入。
 func (s *DownloadOrganize) cleanupDownload(ctx context.Context, p *downloadPending) (string, error) {
 	o, job := s.Organize, &p.job
 	if !pendingDownloadCleanup(*job) {
 		return "", nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	recycle, ok := o.drive.(organizeRecycleDrive)
 	if !ok {
 		return "目录清理服务不可用，可重试清理", nil
 	}
+	batchRecycle, _ := o.drive.(organizeRecycleBatchDrive)
 	for len(job.Download.CleanupDirs) > 0 {
-		root := job.Download.CleanupDirs[0]
+		size := 1
+		useBatch := batchRecycle != nil && len(job.Download.CleanupDirs) > 1
+		if useBatch {
+			size = min(len(job.Download.CleanupDirs), p115.DriveMutationBatchLimit)
+		}
+		roots := job.Download.CleanupDirs[:size]
 		account, err := o.account(job.Config.AccountID)
 		if err != nil || account.ID != p.account.ID {
 			return "原任务账号配置已变化，下载目录未清理", nil
 		}
-		if !s.ownsCleanupRoot(*job, root) {
-			return "下载目录归属未确认，未执行清理", nil
-		}
-		if err := recycle.DeleteEntries(ctx, []string{root}, p.account.Cookie); err != nil {
-			children, readErr := o.list(ctx, job.Download.ParentCID, p.account.Cookie)
-			if readErr != nil || slicesContainFile(children, root) {
-				return "下载目录清理失败，可重试清理", nil
+		for _, root := range roots {
+			if !s.ownsCleanupRoot(*job, root) {
+				return "下载目录归属未确认，未执行清理", nil
 			}
 		}
-		job.Download.CleanupDirs = job.Download.CleanupDirs[1:]
-		if err := o.checkpoint(job); err != nil {
-			return "", err
+		work, cancel := context.WithTimeout(ctx, 30*time.Second)
+		if useBatch {
+			err = batchRecycle.DeleteEntriesBatch(work, job.Download.ParentCID, roots, p.account.Cookie)
+		} else {
+			err = recycle.DeleteEntries(work, roots, p.account.Cookie)
+		}
+		cancel()
+		remaining := make([]string, 0, len(job.Download.CleanupDirs))
+		if useBatch || err != nil {
+			// 写入超时后仍使用独立预算读取，不能沿用已耗尽的写入上下文。
+			verify, cancelVerify := context.WithTimeout(ctx, 30*time.Second)
+			children, readErr := o.list(verify, job.Download.ParentCID, p.account.Cookie)
+			cancelVerify()
+			if readErr != nil {
+				return "下载目录清理结果未确认，可重试清理：" + organizePublicError(errors.Join(err, readErr), p.account.Cookie), nil
+			}
+			for _, root := range roots {
+				if slicesContainFile(children, root) {
+					remaining = append(remaining, root)
+				}
+			}
+		}
+		pending := len(remaining)
+		job.Download.CleanupDirs = append(remaining, job.Download.CleanupDirs[size:]...)
+		if saveErr := o.checkpoint(job); saveErr != nil {
+			return "", saveErr
+		}
+		if pending > 0 {
+			message := "下载目录清理未完成，可重试清理"
+			if err != nil {
+				message += "：" + organizePublicError(err, p.account.Cookie)
+			}
+			return message, nil
 		}
 	}
 	return "", nil

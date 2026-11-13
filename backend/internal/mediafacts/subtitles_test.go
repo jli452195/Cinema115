@@ -34,6 +34,37 @@ func TestSubtitleStemCandidates(t *testing.T) {
 	}
 }
 
+func TestSubtitleAniOneMatchesKnownLanguagesInSameDirectory(t *testing.T) {
+	video := SubtitleVideo{"video", "local", "《Love All Play》#24 (日語原聲)【Ani-One】.mp4"}
+	for _, tc := range []struct {
+		name, parent, tail string
+		sameDirectory      bool
+		videos             []SubtitleVideo
+		owners             []string
+	}{
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】.ass", "local", ".zh-Hans", true, []SubtitleVideo{video}, []string{"video"}},
+		{"《Love All Play》#24 (繁中字幕)【Ani-One】.ass", "local", ".zh-Hant", true, []SubtitleVideo{video}, []string{"video"}},
+		{"《Love All Play》#24 (日文自動產生字幕)【Ani-One】.ass", "local", ".ja", true, []SubtitleVideo{video}, []string{"video"}},
+		{"《Love All Play》#23 (簡中字幕)【Ani-One】.ass", "local", "", true, []SubtitleVideo{video}, nil},
+		{"《Other Show》#24 (簡中字幕)【Ani-One】.ass", "local", "", true, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】.ass", "other", "", true, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】.ass", "other", "", false, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (英文字幕)【Ani-One】.ass", "local", "", true, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (簡中字幕)【Other Group】.ass", "local", "", true, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】[Commentary].ass", "local", "", true, []SubtitleVideo{video}, nil},
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】.ass", "local", ".zh-Hans", true, []SubtitleVideo{video, {"duplicate", "local", "《Love All Play》#24 (日語原聲)【Ani-One】.mkv"}}, []string{"video", "duplicate"}},
+		{"《Love All Play》#24 (簡中字幕)【Ani-One】.ass", "local", "", true, []SubtitleVideo{video, {"exact", "local", "《Love All Play》#24 (簡中字幕)【Ani-One】.mp4"}}, []string{"exact"}},
+	} {
+		t.Run(tc.name+"/"+tc.parent, func(t *testing.T) {
+			matcher := NewSubtitleMatcher(tc.videos)
+			owners, tail := matcher.StemCandidates(tc.parent, tc.name, tc.sameDirectory)
+			if !slices.Equal(owners, tc.owners) || tail != tc.tail {
+				t.Fatalf("字幕归属或语言后缀错误：%v %q，期望 %v %q", owners, tail, tc.owners, tc.tail)
+			}
+		})
+	}
+}
+
 func TestSubtitleFallbackMatchesOnlyUniqueWorkEpisodeAndSpecifications(t *testing.T) {
 	for _, tc := range []struct {
 		name, sub, parent, tail string

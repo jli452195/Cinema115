@@ -47,6 +47,12 @@ const failedRefresh = process.argv.includes('--failed-refresh')
         if (lostRetry) return route.abort('failed')
         data = { results: [{ id: 'share-2', accepted: true }] }
       }
+      else if (endpoint.endsWith('/download-organize/resume')) {
+        assert.deepEqual(req.postDataJSON(), { jobId: 'job-1' })
+        for (const job of jobs) { job.resumable = false; job.download.cleanupDirs = []; job.message = '所选文件已整理，下载目录已清理' }
+        Object.assign(pipeline, { status: 'success', message: '全部资源已整理，下载目录已清理' })
+        data = jobs[0]
+      }
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
     })
     await page.goto(`${origin}/115/download-organize`)
@@ -72,6 +78,8 @@ const failedRefresh = process.argv.includes('--failed-refresh')
     await page.getByRole('button', { name: '查看批次作品的详情', exact: true }).click()
     const details = page.getByRole('dialog', { name: '下载整理详情', exact: true })
     await details.getByRole('region', { name: '流程进度', exact: true }).waitFor()
+    assert.equal(await details.getByRole('list', { name: '需处理的资源', exact: true }).count(), 0, 'successful resources are summarized instead of repeated')
+    assert.equal(await details.getByRole('region', { name: '文件明细', exact: true }).getByRole('listitem').count(), 2)
     const shares = details.getByRole('region', { name: '分享 STRM 进度', exact: true })
     assert.equal(await shares.getByRole('button', { name: '重试 STRM', exact: true }).count(), 1)
     await shares.getByText('模拟 STRM 写入失败', { exact: true }).waitFor()
@@ -92,7 +100,30 @@ const failedRefresh = process.argv.includes('--failed-refresh')
     }
     assert.equal(await details.isVisible(), true, 'refresh preserves the open batch details')
     assert.deepEqual(writes, [{ endpoint: '/api/admin/p115/share/tasks/retry', body: { ids: ['share-2'] } }], 'retry only submits the failed STRM stage')
+    if (!failedRefresh) {
+      jobs[0].items.push(jobs[1].items[0])
+      for (const job of jobs) {
+        job.resumable = true; job.download.cleanupDirs = ['temporary-directory']; job.download.share.leaderId = 'job-1'
+        job.message = '所选文件已整理；下载目录清理失败，可重试清理'
+      }
+      jobs[0].download.subtitles = [{ file: { name: '01.zh.ass', path: 'internal-local-attachment-id' }, targetPath: '/结果/Show.S01E01.zh.ass', status: 'done' }]
+      Object.assign(pipeline, { status: 'partial', message: '1 个下载目录待清理' })
+      await details.getByRole('button', { name: '关闭详情', exact: true }).click()
+      await page.getByRole('button', { name: '刷新记录', exact: true }).click()
+      await page.getByRole('button', { name: '查看批次作品的详情', exact: true }).click()
+      const attention = details.getByRole('list', { name: '需处理的资源', exact: true })
+      await attention.waitFor()
+      assert.equal(await attention.getByRole('listitem').count(), 1, 'merged members share one recovery action')
+      await attention.getByText('Show.S01E01.mkv', { exact: true }).waitFor()
+      await attention.getByText('待清理', { exact: true }).waitFor()
+      await details.getByText('外部字幕 / 01.zh.ass', { exact: true }).waitFor()
+      assert.equal(await details.getByText(/internal-local-attachment-id/).count(), 0)
+      await attention.getByRole('button', { name: '重试清理', exact: true }).click()
+      await attention.waitFor({ state: 'detached' })
+      assert.deepEqual(writes.at(-1), { endpoint: '/api/admin/p115/download-organize/resume', body: { jobId: 'job-1' } })
+      assert.equal(writes.length, 2, 'cleanup resumes the original job without submitting another download')
+    }
     assert.deepEqual(errors, [])
-    console.log(JSON.stringify({ lostRetry, failedRefresh, passed: ['one real Sonner element updates through download, organize, STRM, review and success, then auto-dismisses', 'one batch card for two resources with linked STRM results', 'light desktop and dark 320px details fit', 'retry only the failed STRM stage; details stay open; no duplicate download or organize request'], errors }, null, 2))
+    console.log(JSON.stringify({ lostRetry, failedRefresh, passed: ['one real Sonner element updates through download, organize, STRM, review and success, then auto-dismisses', 'one batch card for two resources with linked STRM results', 'light desktop and dark 320px details fit', 'retry only the failed STRM stage; details stay open; no duplicate download or organize request', ...(!failedRefresh ? ['successful resources stay summarized; merged cleanup resumes one original job; external subtitle details hide internal attachment IDs'] : [])], errors }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })
