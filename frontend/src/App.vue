@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
@@ -7,10 +7,16 @@ import GlobalToast from './components/GlobalToast.vue'
 import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
+import { networkConnectionTest, closeNetworkConnectionTest } from './composables/useNetworkConnectionTest'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
 const router = useRouter()
+const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
+watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
+  const request = networkConnectionTest.value
+  if (request && (request.token !== token.value || portalUser.value?.role !== 'admin' || portalAuthError.value || route.meta.public)) closeNetworkConnectionTest()
+})
 const { desktop, collapsed } = useManagementSidebar()
 // Apply page defaults on confirmed path changes; query/hash edits keep the layout.
 watch(() => route.path, () => {
@@ -64,6 +70,7 @@ window.addEventListener('storage', syncLogin)
 document.addEventListener('visibilitychange', resumeLogin)
 const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true, { background: true }) }, 60000)
 onBeforeUnmount(() => {
+  closeNetworkConnectionTest()
   window.clearInterval(authTimer)
   window.removeEventListener('storage', syncLogin)
   document.removeEventListener('visibilitychange', resumeLogin)
@@ -84,6 +91,7 @@ onBeforeUnmount(() => {
     <RouterView v-slot="{ Component }">
       <component :is="Component" v-bind="viewProps" @logout="logout" />
     </RouterView>
+    <NetworkConnectionTestDialog v-if="networkConnectionTest && portalUser.role === 'admin'" :request="networkConnectionTest" @close="closeNetworkConnectionTest" />
   </div>
   <ReloadPrompt />
   <GlobalToast />

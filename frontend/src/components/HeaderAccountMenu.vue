@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
+import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTest'
 import { websiteUnread } from '../composables/useWebsiteNotifications'
 import { isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
 
@@ -55,6 +56,13 @@ function logout() {
           <NavigationIcon :name="link.icon" class="account-icon" />
           <span>{{ link.label }}</span>
         </RouterLink>
+      </div>
+
+      <div v-if="isPortalAdmin" class="account-group connection-test-utility">
+        <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
+          <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
+          <span>服务连通性</span>
+        </button>
       </div>
 
       <div class="account-group">
@@ -153,6 +161,9 @@ function logout() {
   .account-menu { right: 2rem; }
   .mobile-utilities { display: none; }
   .mobile-utilities + .account-group { margin-top: 0; }
+}
+@media (min-width: 768px) {
+  .connection-test-utility { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .account-menu .ambient-glow::before, .account-menu .ambient-glow::after { transition: none; }

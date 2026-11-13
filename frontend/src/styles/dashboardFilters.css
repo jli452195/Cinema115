@@ -93,23 +93,137 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 6%);
   pointer-events: none;
 }
-.catalog-year-picker { color: var(--filter-text); }
-.catalog-decade-strip {
+.catalog-year-picker {
+  --filter-tone: rgb(var(--selection-surface));
+  --filter-on-tone: rgb(var(--selection-content));
   display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  padding: 6px 34px 6px 6px;
-  scroll-padding-inline: 6px 34px;
-  scrollbar-width: none;
-  /* Trailing space keeps the oldest decade and its focus ring clear of the fade. */
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
-  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent);
+  flex-direction: column;
+  color: var(--filter-text);
+  gap: 0;
 }
-.catalog-decade-strip::-webkit-scrollbar { display: none; }
-.catalog-decade-strip .catalog-chip { padding: 0 12px; min-height: 40px; font-size: 12px; }
-.catalog-decade-strip .catalog-chip[aria-pressed="true"] { background: var(--filter-hover); color: var(--filter-text); }
-.catalog-year-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
-.catalog-year-grid .catalog-chip { min-height: 44px; padding: 0 5px; font-variant-numeric: tabular-nums; }
+.catalog-year-trigger {
+  --filter-tone: rgb(var(--selection-surface));
+  --filter-on-tone: rgb(var(--selection-content));
+}
+.catalog-year-trigger.is-open {
+  background: var(--filter-tone);
+  color: var(--filter-on-tone);
+  font-weight: 600;
+}
+.catalog-year-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--filter-outline);
+  box-sizing: border-box;
+}
+.catalog-year-nav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--filter-muted);
+  cursor: pointer;
+  transition: color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.catalog-year-nav-btn svg {
+  width: 16px;
+  height: 16px;
+}
+.catalog-year-nav-btn:hover:not(:disabled) {
+  color: var(--filter-on-tone);
+}
+.catalog-year-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.catalog-year-header-label {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--filter-text);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.catalog-year-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  padding: 12px 14px;
+  box-sizing: border-box;
+}
+.catalog-year-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 60px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--filter-text);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.catalog-year-cell:hover:not([aria-pressed="true"]):not(:disabled) {
+  color: var(--filter-on-tone);
+  background: transparent;
+}
+.catalog-year-cell.is-selected,
+.catalog-year-cell[aria-pressed="true"] {
+  background: transparent;
+  color: var(--filter-on-tone);
+  font-weight: 700;
+}
+.catalog-year-cell:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--filter-muted);
+}
+.catalog-year-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-top: 1px solid var(--filter-outline);
+  padding: 4px 14px;
+}
+.catalog-year-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--filter-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.catalog-year-reset-btn:hover:not([aria-pressed="true"]) {
+  color: var(--filter-on-tone);
+  background: transparent;
+}
+.catalog-year-reset-btn.is-selected,
+.catalog-year-reset-btn[aria-pressed="true"] {
+  background: transparent;
+  color: var(--filter-on-tone);
+  font-weight: 600;
+}
 /* Shared poster density, including loading placeholders. */
 .catalog-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(178px, 1fr)); column-gap: 16px; row-gap: 24px; }
 @media (max-width: 639px) { .catalog-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; } }
@@ -118,7 +232,12 @@
   .catalog-segments button:hover { color: var(--filter-text); }
 }
 @media (pointer: coarse), (max-width: 639px) {
-  .catalog-chip, .catalog-text-button, .catalog-segments button { min-height: 44px; }
+  .catalog-chip,
+  .catalog-text-button,
+  .catalog-segments button,
+  .catalog-year-nav-btn,
+  .catalog-year-cell,
+  .catalog-year-reset-btn { min-height: 44px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .catalog-filter-theme *, .catalog-filter-theme *::before { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

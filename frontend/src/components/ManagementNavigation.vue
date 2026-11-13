@@ -96,7 +96,7 @@ onBeforeUnmount(() => {
       <div v-for="link in group.links" :key="link.to" class="management-nav-item" :data-section="link.to">
         <div class="management-nav-row ambient-glow" :class="{ 'is-section-active': currentCategory?.to === link.to }">
           <span class="management-nav-marker" aria-hidden="true" />
-          <RouterLink :to="link.to" class="management-nav-link" :title="isDockMode ? undefined : link.label" :aria-label="link.label" :aria-describedby="tooltip?.label === link.label ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, link.label)" @mouseleave="hideTooltip" @focus="showTooltip($event, link.label)" @blur="hideTooltip" @click="hideTooltip">
+          <RouterLink :to="link.to" class="management-nav-link" :aria-label="link.label" :aria-describedby="tooltip?.label === link.label ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, link.label)" @mouseleave="hideTooltip" @focus="showTooltip($event, link.label)" @blur="hideTooltip" @click="hideTooltip">
             <NavigationIcon :name="link.icon" :stroke="isDockMode && currentCategory?.to === link.to ? 2.25 : 1.75" /><span>{{ link.label }}</span>
           </RouterLink>
         </div>
@@ -174,9 +174,9 @@ onBeforeUnmount(() => {
   padding: 0 calc(var(--dock-icon-size, 19px) * 0.6578947368);
   border-radius: 11px;
 }
-.management-nav-tooltip { position: fixed; z-index: 60; transform: translateY(-50%); max-width: 220px; padding: 7px 11px; border-radius: 8px; background: #263346; color: #fff; box-shadow: 0 4px 14px rgb(15 23 42 / 12%); font-size: 12px; line-height: 20px; pointer-events: none; }
+.management-nav-tooltip { position: fixed; z-index: 60; transform: translateY(-50%); max-width: 220px; padding: 7px 11px; border: 1px solid rgb(var(--line-default)); border-radius: 8px; background: rgb(var(--surface-elevated)); color: rgb(var(--content-primary)); box-shadow: 0 4px 16px rgb(15 23 42 / 12%); font-size: 12px; line-height: 20px; pointer-events: none; }
 .dark .management-navigation { color: rgb(var(--color-slate-300)); }.dark .management-nav-label { color: rgb(var(--color-slate-500)); }.dark .management-nav-row.is-section-active { background: #293b56; color: #b9d3ff; }
-.dark .management-nav-tooltip { background: #dce5f3; color: #243247; }
+.dark .management-nav-tooltip { box-shadow: 0 4px 16px rgb(0 0 0 / 24%); }
 @media (hover: hover) { .management-navigation:not(.is-collapsed) .management-nav-row:hover { background-color: rgb(116 143 180 / 9%); }.management-navigation:not(.is-collapsed) .management-nav-row.is-section-active:hover { background-color: #d5e3fa; }.dark .management-navigation:not(.is-collapsed) .management-nav-row.is-section-active:hover { background-color: #314665; } }
 @media (hover: hover) and (pointer: fine) { .management-nav-row:hover > .management-nav-marker { opacity: 1; transform: translateY(-50%) scaleY(1); } }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {

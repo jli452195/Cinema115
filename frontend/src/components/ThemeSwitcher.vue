@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useTheme } from '../composables/useTheme'
+import { useTheme, type ThemeMode } from '../composables/useTheme'
+import { vTooltip } from '../directives/tooltip'
 
 interface Props {
   showLabel?: boolean
@@ -11,39 +12,35 @@ const props = withDefaults(defineProps<Props>(), {
   showLabel: false,
 })
 
-const { currentTheme, resolvedTheme, setTheme } = useTheme()
+const { currentTheme, setTheme } = useTheme()
 
-// 主切换目标：当前为深色时切换至浅色，当前为浅色时切换至深色
-const targetTheme = computed(() => (resolvedTheme.value === 'dark' ? 'light' : 'dark'))
-const toggleLabel = computed(() => (targetTheme.value === 'dark' ? '切换为深色' : '切换为浅色'))
-const displayLabel = computed(() => (resolvedTheme.value === 'dark' ? '主题：深色' : '主题：浅色'))
+// 按用户选择的模式循环，避免跟随系统时跳过某一种模式。
+const nextTheme: Record<ThemeMode, ThemeMode> = { light: 'dark', dark: 'system', system: 'light' }
+const themeNames: Record<ThemeMode, string> = { light: '浅色', dark: '深色', system: '跟随系统' }
+const targetTheme = computed(() => nextTheme[currentTheme.value])
+const toggleLabel = computed(() => `当前：${themeNames[currentTheme.value]}，点击切换为${themeNames[targetTheme.value]}`)
+const displayLabel = computed(() => `主题：${themeNames[currentTheme.value]}`)
 
-// 点击主切换按钮，触发二元切换
 function toggleTheme(event: MouseEvent) {
   void setTheme(targetTheme.value, event, props.beforeChange)
-}
-
-// 点击跟随系统按钮，设置模式为系统跟随
-function setSystemTheme(event: MouseEvent) {
-  void setTheme('system', event, props.beforeChange)
 }
 </script>
 
 <template>
   <div class="theme-switcher" :class="{ 'theme-switcher-menu': showLabel }">
-    <!-- 主切换按钮：根据解析出的主题在浅色与深色间二元切换 -->
+    <!-- 单按钮依次切换浅色、深色、跟随系统。 -->
     <button
       type="button"
       class="theme-toggle"
       :class="showLabel ? 'theme-menu-button' : 'icon-button'"
-      :title="toggleLabel"
+      v-tooltip="toggleLabel"
       :aria-label="toggleLabel"
       @click="toggleTheme"
     >
       <!-- 保留同一 SVG，仅切换内部编组的透明度和旋转。 -->
       <svg
         class="theme-glyph"
-        :class="resolvedTheme === 'dark' ? 'is-dark' : 'is-light'"
+        :class="`is-${currentTheme}`"
         viewBox="0 0 24 24"
         fill="none"
         stroke="currentColor"
@@ -59,33 +56,12 @@ function setSystemTheme(event: MouseEvent) {
         <g class="theme-glyph-moon">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </g>
+        <g class="theme-glyph-system">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+          <path d="M8 21h8M12 17v4" />
+        </g>
       </svg>
       <span v-if="showLabel" class="theme-label">{{ displayLabel }}</span>
-    </button>
-
-    <!-- 系统跟随按钮：独立较小显示器图标，激活时展示蓝色高亮 -->
-    <button
-      type="button"
-      class="theme-system-button"
-      :class="{ 'is-active': currentTheme === 'system' }"
-      :aria-pressed="currentTheme === 'system'"
-      title="跟随系统"
-      aria-label="跟随系统"
-      @click="setSystemTheme"
-    >
-      <svg
-        class="system-glyph"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.7"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-        aria-hidden="true"
-      >
-        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
-        <path d="M8 21h8M12 17v4" />
-      </svg>
     </button>
   </div>
 </template>
@@ -130,42 +106,6 @@ function setSystemTheme(event: MouseEvent) {
   outline-offset: 2px;
 }
 
-/* 系统模式按钮：紧凑尺寸、默认低调、激活时高亮主蓝色 */
-.theme-system-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  min-width: 1.75rem;
-  min-height: 1.75rem;
-  padding: 0;
-  border: none;
-  border-radius: 0.45rem;
-  background: transparent;
-  color: rgb(var(--content-secondary));
-  cursor: pointer;
-  outline: none;
-  transition: color 150ms ease, background-color 150ms ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.theme-system-button:hover {
-  color: rgb(var(--content-primary));
-  background-color: rgb(var(--surface-hover));
-}
-
-.theme-system-button:focus-visible {
-  outline: 2px solid rgb(var(--focus, 37 99 235));
-  outline-offset: 2px;
-}
-
-.theme-system-button.is-active,
-.theme-system-button[aria-pressed="true"] {
-  color: rgb(var(--selection-content));
-  background-color: rgb(var(--selection-surface));
-}
-
 /* 菜单展开模式（showLabel 为真） */
 .theme-switcher-menu {
   display: flex;
@@ -195,15 +135,6 @@ function setSystemTheme(event: MouseEvent) {
   background-color: rgb(var(--surface-hover, var(--color-slate-100)));
 }
 
-.theme-switcher-menu .theme-system-button {
-  flex: 0 0 auto;
-  width: 2.25rem;
-  height: 2.25rem;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
-  border-radius: 0.5rem;
-}
-
 /* 图标持久化与微动效控制 */
 .theme-glyph {
   width: 1.25rem;
@@ -213,9 +144,12 @@ function setSystemTheme(event: MouseEvent) {
 }
 
 .theme-glyph-sun,
-.theme-glyph-moon {
+.theme-glyph-moon,
+.theme-glyph-system {
   transform-box: fill-box;
   transform-origin: center;
+  opacity: 0;
+  transform: scale(0.6) rotate(-45deg);
   transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
 }
 
@@ -241,10 +175,9 @@ function setSystemTheme(event: MouseEvent) {
   transform: scale(1) rotate(0deg);
 }
 
-.system-glyph {
-  width: 1rem;
-  height: 1rem;
-  flex-shrink: 0;
+.theme-glyph.is-system .theme-glyph-system {
+  opacity: 1;
+  transform: scale(1) rotate(0deg);
 }
 
 .theme-label {
@@ -254,9 +187,7 @@ function setSystemTheme(event: MouseEvent) {
 
 /* 移动端保留完整触控面积，图标本身维持轻量尺寸。 */
 @media (max-width: 639px), (pointer: coarse) {
-  .theme-toggle,
-  .theme-system-button,
-  .theme-switcher-menu .theme-system-button {
+  .theme-toggle {
     min-width: 44px;
     min-height: 44px;
   }
@@ -265,9 +196,9 @@ function setSystemTheme(event: MouseEvent) {
 /* 减弱动态效果适配 */
 @media (prefers-reduced-motion: reduce) {
   .theme-toggle,
-  .theme-system-button,
   .theme-glyph-sun,
-  .theme-glyph-moon {
+  .theme-glyph-moon,
+  .theme-glyph-system {
     transition: none !important;
   }
 }
