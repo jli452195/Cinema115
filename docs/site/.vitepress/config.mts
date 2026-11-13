@@ -3,6 +3,7 @@ import { defineTeekConfig } from 'vitepress-theme-teek/config'
 
 const sections = [
   { text: '开始使用', link: '/guide/', activeMatch: '/guide/' },
+  { text: '资源搜索与整理', link: '/resources/', activeMatch: '/resources/' },
   { text: '动漫订阅', link: '/anime/', activeMatch: '/anime/' },
   { text: '常见问题', link: '/faq/', activeMatch: '/faq/' },
   { text: '编写文档', link: '/contributing/', activeMatch: '/contributing/' },
@@ -38,6 +39,14 @@ const animeSidebar = [
   },
 ]
 
+const resourcesSidebar = [{
+  text: '操作指南',
+  link: '/resources/',
+}, {
+  text: '实战：妹妹公主两季 BDRip',
+  link: '/resources/sister-princess',
+}]
+
 const teekConfig = defineTeekConfig({
   teekHome: false,
   windowTransition: false,
@@ -65,7 +74,7 @@ const teekConfig = defineTeekConfig({
         ? sections.map(section => ({
             text: section.text,
             collapsed: false,
-            items: section.link === '/anime/' ? animeSidebar : sidebar.find(group =>
+            items: section.link === '/anime/' ? animeSidebar : section.link === '/resources/' ? resourcesSidebar : sidebar.find(group =>
               group.items?.some(item => item.link?.startsWith(section.link)),
             )?.items ?? [],
           }))
@@ -78,13 +87,13 @@ export default defineConfig({
   extends: teekConfig,
   lang: 'zh-CN',
   title: 'Cinema115',
-  description: 'Cinema115 使用文档：安装部署、115 账号配置、动漫订阅与更新备份。',
+  description: 'Cinema115 使用文档：安装部署、115 账号配置、资源搜索与下载整理、字幕匹配、动漫订阅与更新备份。',
   base: '/Cinema115/',
   // Teek 默认忽略死链；用户文档保留构建检查，避免发布失效的教程链接。
   ignoreDeadLinks: false,
-  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/Cinema115/logo.svg' }]],
+  head: [['link', { rel: 'icon', type: 'image/svg+xml', href: '/Cinema115/cinema115-mark.svg' }]],
   themeConfig: {
-    logo: { src: '/logo.svg', alt: 'Cinema115' },
+    logo: { src: '/cinema115-mark.svg', alt: 'Cinema115' },
     siteTitle: 'Cinema115 文档',
     nav: sections,
     socialLinks: [{ icon: 'github', link: 'https://github.com/jli452195/Cinema115' }],

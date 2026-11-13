@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/site/public/logo.svg" width="72" height="72" alt="Cinema115 Logo">
+  <img src="frontend/public/brand/cinema115-mark.svg" width="72" height="69" alt="Cinema115 Logo">
 </p>
 
 <h1 align="center">Cinema115</h1>
 
 <p align="center">
-  从 115 分享与 STRM，到动漫订阅、下载整理和 Emby 原文件直链播放。<br>
+  搜索资源、选择正片、匹配字幕，下载整理到 115；也支持动漫订阅、STRM 与 Emby 原文件直链播放。<br>
   网页管理，一个 Docker 容器部署，支持 amd64 / arm64。
 </p>
 
@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="https://jli452195.github.io/Cinema115/guide/installation">安装部署</a> ·
+  <a href="https://jli452195.github.io/Cinema115/resources/">资源搜索与整理</a> ·
   <a href="https://jli452195.github.io/Cinema115/anime/">动漫订阅教程</a> ·
   <a href="https://jli452195.github.io/Cinema115/guide/appearance">界面与主题</a> ·
   <a href="https://github.com/jli452195/Cinema115/issues">问题反馈</a>
@@ -26,10 +27,12 @@
 
 | 功能 | 可以做什么 |
 | --- | --- |
-| **115 分享与 STRM** | 从分享链接或网盘目录生成 STRM，支持转存再分享与配套字幕。 |
+| **115 转存与 STRM** | 将分享资源转存到配置的主账号目录；从分享链接或网盘目录生成 STRM，支持转存再分享与配套字幕。 |
+| **资源搜索与下载整理** | 从详情页搜索种子，查看文件树，排除重复版本，分季选择并暂存正片，下载后重命名、移动到目标目录。 |
+| **字幕查找与匹配** | 搜索动漫字幕库与已配置的射手网，或导入本地字幕与压缩包；按季匹配视频、核对语言及目标名称，随视频一起整理。 |
 | **动漫 RSS 订阅** | 从 AniBT、蜜柑或 AnimeGarden 选择番剧与字幕组，按规格筛选，自动下载、重命名整理与齐集归档。 |
-| **集号核对与命名** | 结合 Bangumi 与 TMDB 核对篇章，预览季集对应与文件名，支持偏移、自定义集号正则和备用 RSS。 |
-| **云下载与整理** | 提交磁力或 ED2K 云下载，结合 TMDB 资料预览、校正命名并整理到目标目录。 |
+| **集号核对与命名** | 结合 Bangumi 与 TMDB 核对篇章，预览季集对应与文件名；整理支持应用偏移、连续编号，订阅支持自定义集号正则和备用 RSS。 |
+| **任务进度与恢复** | 在下载整理记录中查看下载、整理、字幕与 STRM 进度，按任务状态核对结果、继续处理或重试。关闭搜索弹窗后任务继续执行。 |
 | **影视浏览与搜索** | 浏览电影、剧集与动漫，查看 Emby 入库状态；通过已配置的资源站点、Telegram Bot 或频道搜索资源。 |
 | **Emby 与用户管理** | 原文件直链播放，支持主网盘、用户个人网盘和动态小号池；提供 Emby 个人中心，以及管理员使用的邀请、播放子账号与会话管理。 |
 
@@ -51,7 +54,11 @@
 
 打开 `http://NAS_IP:8115`，使用配置的管理员账号登录。在「115 网盘 → 115 助手」创建并登录主账号，再设置所需功能的目录。
 
-想先体验追番，可以接着按 [AniBT 订阅入门](https://jli452195.github.io/Cinema115/anime/) 配置下载与整理目录、选择字幕组、核对季集命名并保存订阅。
+配置主账号后，按需要选择入口：
+
+- **整理已有合集**：按[资源搜索与整理](https://jli452195.github.io/Cinema115/resources/)选择视频、核对季集并配字幕；[妹妹公主两季 BDRip 实战](https://jli452195.github.io/Cinema115/resources/sister-princess.html)提供完整图解。
+- **自动追番**：按 [AniBT 订阅入门](https://jli452195.github.io/Cinema115/anime/) 配置下载与整理目录、选择字幕组，核对季集后保存订阅。
+- **直接转存资源**：在「115 网盘 → 115 转存」配置分享接收与磁力下载目录，再使用搜索结果中的转存或云下载按钮。
 
 Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。完整操作见 [Docker 部署](https://jli452195.github.io/Cinema115/guide/installation)。
 
@@ -68,7 +75,17 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 </picture>
 
 <details>
-<summary>查看影视浏览与 115 网盘界面</summary>
+<summary>查看资源整理、影视浏览与 115 网盘界面</summary>
+
+### 资源整理与字幕
+
+合集按季选择正片、校正编号并暂存，再从各季分组查找字幕。图中演示第一季已暂存、第二季应用 `S02` 编号后的状态。
+
+<a href="https://jli452195.github.io/Cinema115/resources/sister-princess.html">
+  <img src="docs/site/public/images/resources/sispri-season-two-mapping.webp" alt="妹妹公主两季 BDRip 整理：第一季暂存，第二季编号与暂存入口" width="960">
+</a>
+
+完整步骤见[两季 BDRip 图解教程](https://jli452195.github.io/Cinema115/resources/sister-princess.html)：查看文件 → 选择正片 → 分季暂存 → 匹配字幕 → 核对提交。
 
 ### 影视浏览
 
@@ -82,7 +99,7 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 
 ### 115 网盘
 
-从功能总览进入分享 STRM、网盘 STRM、云下载或目录监控等工具。
+从功能总览进入分享 STRM、网盘 STRM、115 转存、下载整理或目录监控等工具。
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/site/public/screenshots/drive-overview-dark.webp">
@@ -92,7 +109,7 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 
 </details>
 
-截图使用 WebP，并按深浅主题选择对应图片。[在线 Wiki](https://jli452195.github.io/Cinema115/guide/appearance) 可查看轮播预览、体验主题切换动效。
+截图使用 WebP，动漫订阅、影视浏览与网盘预览按深浅主题选择对应图片。[在线 Wiki](https://jli452195.github.io/Cinema115/guide/appearance) 可查看轮播预览、体验主题切换动效。
 
 ## 使用文档
 
@@ -100,6 +117,8 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 | --- | --- |
 | [开始使用](https://jli452195.github.io/Cinema115/guide/) | 安装、首次登录与功能配置顺序。 |
 | [115 账号配置](https://jli452195.github.io/Cinema115/guide/accounts) | 主账号、小号与用户个人网盘的用途。 |
+| [资源搜索与下载整理](https://jli452195.github.io/Cinema115/resources/) | 搜索种子、选择正片、应用偏移与连续编号、配字幕和追踪任务。 |
+| [实战：妹妹公主两季 BDRip](https://jli452195.github.io/Cinema115/resources/sister-princess.html) | 按图完成两季暂存、第一季 26 份字幕、第二季 13 份字幕及最终清单核对。 |
 | [动漫订阅](https://jli452195.github.io/Cinema115/anime/) | 选择来源、字幕组、集号映射、整理与归档。 |
 | [匹配规则与命名](https://jli452195.github.io/Cinema115/anime/rules-and-naming) | 资源规格、备用 RSS、Bangumi 与 TMDB 对应、集数偏移和预览。 |
 | [订阅管理与故障排查](https://jli452195.github.io/Cinema115/anime/management) | 下载记录、整理进度、归档与通知。 |
