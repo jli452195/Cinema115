@@ -66,6 +66,36 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     passed.push('悬停和焦点暂停、离开后关闭、重复提示重新计时及持续转定时')
 
+    await page.evaluate(() => window.toastFixture.promise(new Promise(resolve => { window.finishHeightTest = resolve }), {
+      loading: '准备任务', duration: 10000,
+      success: () => ({ message: '正在整理', description: '羽球青春 · 24 项资源 · 24 个视频 · 下载 → 整理 → STRM · 资源 24/24 已就绪 · 0/24 已整理 · STRM 已写入 0 个', classes: { description: 'task-resource-summary' } }),
+    }))
+    await toasts.getByText('准备任务', { exact: true }).waitFor()
+    const sameToast = await toasts.elementHandle()
+    await page.evaluate(() => window.finishHeightTest())
+    await toasts.getByText('正在整理', { exact: true }).waitFor()
+    for (const [width, dark] of [[1100, false], [320, true]]) {
+      await page.setViewportSize({ width, height: 800 })
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      await page.mouse.move(0, 700)
+      await page.waitForTimeout(450)
+      const initialHeight = await toasts.evaluate(el => el.getBoundingClientRect().height)
+      await toasts.hover()
+      await page.waitForTimeout(450)
+      const layout = await toasts.evaluate(el => {
+        const box = el.getBoundingClientRect(), content = el.querySelector('[data-content]').getBoundingClientRect()
+        return { height: box.height, containsContent: content.top >= box.top && content.bottom <= box.bottom, expanded: el.dataset.expanded }
+      })
+      assert.equal(layout.expanded, 'true')
+      assert.equal(layout.containsContent, true, 'hover must keep the updated text inside the toast background')
+      assert.ok(Math.abs(layout.height - initialHeight) <= 1, 'hover must not collapse the updated toast')
+      assert.equal(await sameToast.evaluate(el => el.isConnected), true)
+    }
+    await clear()
+    await page.setViewportSize({ width: 1100, height: 800 })
+    await page.evaluate(() => document.documentElement.classList.remove('dark'))
+    passed.push('同一通知从短内容更新为多行后，桌面浅色及手机深色悬停均不压缩背景或溢出文字')
+
     await page.evaluate(() => {
       for (const id of ['toast-parent', 'toast-child']) {
         const dialog = document.createElement('dialog')

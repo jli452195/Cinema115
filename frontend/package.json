@@ -27,6 +27,8 @@
     "test:garden-organize": "node --test tests/garden-organize.test.mjs",
     "test:garden-organize-ui": "node scripts/download-organize-ui.cjs",
     "test:download-confirmation-ui": "node scripts/download-confirmation-ui.cjs",
+    "test:download-pipeline": "node --test tests/download-pipeline.test.mjs tests/organize-history.test.mjs",
+    "test:download-pipeline-ui": "node scripts/download-pipeline-ui.cjs",
     "test:download-share-ui": "node scripts/download-organize-ui.cjs garden share && node scripts/download-organize-ui.cjs mikan share && node scripts/download-organize-ui.cjs gying share",
     "test:mikan-organize-ui": "node scripts/download-organize-ui.cjs mikan",
     "test:download-organize-batch-ui": "node scripts/download-organize-batch-ui.cjs && node scripts/download-organize-batch-ui.cjs mikan",

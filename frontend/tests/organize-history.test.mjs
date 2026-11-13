@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 
-const code = ts.transpileModule(readFileSync(new URL('../src/utils/organizeHistory.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText
+const code = ts.transpileModule(readFileSync(new URL('../src/utils/organizeHistory.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
 const module = { exports: {} }
 new Function('module', 'exports', code)(module, module.exports)
 const { historyTasks, isActiveTask, taskCounts, taskStatus, taskTone, resultSummary, needsAttention, itemStatus } = module.exports
@@ -61,4 +61,81 @@ test('download task identities stay stable when records are sorted by creation t
   const second = { ...first, id: 'second', createdAt: '2026-10-16T00:00:00Z' }
   assert.deepEqual(historyTasks([first, second]).map(task => task.key), ['organize:second', 'organize:first'])
   assert.equal(historyTasks([second])[0].title, first.title)
+})
+
+const downloadJob = (id, status = 'completed') => ({
+  id, title: `资源 ${id}`, status, createdAt: '2026-11-13T00:00:00Z', resumable: status === 'partial',
+  config: { accountId: 'main', sourcePath: `/in/${id}`, targetPath: '/out' },
+  items: [{ file: { id: 'same-file-id', name: `${id}.mkv`, mediaType: 'video' }, status: status === 'completed' ? 'done' : 'pending' }],
+})
+const pipeline = (overrides = {}) => ({
+  id: 'batch', title: '一次提交', createdAt: '2026-11-13T00:00:00Z', jobIds: ['a', 'b'],
+  shareSTRM: true, status: 'generating', finished: false, message: '',
+  total: 2, ready: 2, organized: 2, failed: 0, videoCount: 2, written: 1, shares: [], ...overrides,
+})
+
+test('one submission groups its resources without hiding unrelated organize records', () => {
+  const jobs = [downloadJob('a'), downloadJob('b'), downloadJob('ordinary')]
+  const tasks = historyTasks(jobs, [pipeline({ jobIds: ['a', 'b', 'a'] })])
+  assert.equal(tasks.length, 2)
+  const batch = tasks.find(task => task.pipeline)
+  assert.equal(batch.key, 'pipeline:batch')
+  assert.deepEqual(batch.organizeJobs, jobs.slice(0, 2))
+  assert.deepEqual(batch.items.map(item => item.jobId), ['a', 'b'])
+  assert.equal(new Set(batch.items.map(item => item.id)).size, 2)
+  assert.equal(tasks.find(task => !task.pipeline).organize, jobs[2])
+})
+
+test('organize completion keeps the batch active until STRM completes', () => {
+  const [batch] = historyTasks([downloadJob('a'), downloadJob('b')], [pipeline()])
+  assert.equal(taskCounts(batch).done, 2)
+  assert.equal(isActiveTask(batch), true)
+  assert.equal(taskStatus(batch), '生成 STRM 中')
+  assert.equal(taskTone(batch), 'active')
+  assert.equal(resultSummary(batch), '整理 2/2 个资源 · STRM 1 个')
+  batch.pipeline.status = 'success'; batch.pipeline.finished = true
+  assert.equal(taskTone(batch), 'success')
+  assert.equal(taskStatus(batch), '已完成')
+})
+
+test('failed resources stay actionable while other resources in their batch are downloading', () => {
+  const failed = downloadJob('a', 'partial'), waiting = downloadJob('b', 'downloading')
+  const [batch] = historyTasks([failed, waiting], [pipeline({ status: 'downloading', ready: 0, organized: 0, failed: 1 })])
+  assert.equal(taskCounts(batch).attention, 1)
+  assert.equal(needsAttention(batch.items[0], batch), true)
+  assert.equal(needsAttention(batch.items[1], batch), false)
+  assert.equal(batch.organizeJobs.find(job => job.resumable), failed)
+})
+
+test('a failed STRM phase cannot appear successful because all resource files were organized', () => {
+  const [batch] = historyTasks([downloadJob('a'), downloadJob('b')], [pipeline({ status: 'failed', finished: true })])
+  assert.equal(taskCounts(batch).done, 2)
+  assert.equal(taskTone(batch), 'warning')
+  assert.equal(taskStatus(batch), '失败')
+  assert.equal(isActiveTask(batch), false)
+})
+
+test('different resource directories cannot be presented as a shared batch destination', () => {
+  const a = downloadJob('a'), b = downloadJob('b')
+  b.config.targetPath = '/other-task-directory'
+  const [batch] = historyTasks([a, b], [pipeline()])
+  assert.equal(batch.target, undefined)
+  assert.equal(batch.organizeJobs[1].config.targetPath, '/other-task-directory')
+})
+
+test('merged leader files and external subtitles count once and use the leader outcome', () => {
+  const leader = downloadJob('a'), member = downloadJob('b')
+  leader.items[0].file.id = 'first-file'
+  member.items[0].file.id = 'second-file'
+  leader.items.push({ ...member.items[0], status: 'uncertain', message: '主记录待核实' })
+  const subtitle = { file: { name: '02.ass', path: 'show/02.ass' }, targetPath: '/out/02.ass', status: 'done' }
+  leader.download = { share: { leaderId: 'a' }, subtitles: [{ ...subtitle, file: { name: '01.ass', path: 'show/01.ass' }, targetPath: '/out/01.ass' }, { ...subtitle, status: 'uncertain' }] }
+  member.download = { share: { leaderId: 'a' }, subtitles: [subtitle] }
+  const [batch] = historyTasks([member, leader], [pipeline({ jobIds: ['b', 'a'] })])
+  assert.equal(batch.items.length, 4)
+  assert.equal(taskCounts(batch).done, 2)
+  assert.equal(taskCounts(batch).uncertain, 2)
+  assert.equal(batch.items.find(item => item.name === 'b.mkv').message, '主记录待核实')
+  assert.equal(batch.items.find(item => item.name === '02.ass').status, 'uncertain')
+  assert.equal(batch.items.find(item => item.name === '02.ass').jobId, leader.id)
 })

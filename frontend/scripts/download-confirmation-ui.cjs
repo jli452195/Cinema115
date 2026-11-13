@@ -29,6 +29,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       else if (endpoint.endsWith('/download-organize/files')) data = { files, subtitles: [] }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/整理' }
+      else if (endpoint.endsWith('/download-organize/progress')) data = { pipelines: [{ id: 'plan', title: '测试作品', jobIds: ['plan'], status: 'success', finished: true, message: '已完成全部整理', total: 1, ready: 1, organized: 1, failed: 0, videoCount: 4, written: 0, shares: [] }] }
       else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: true }
       else if (endpoint.endsWith('/naming/media-preview')) data = naming.preview(body)
       else if (endpoint.endsWith('/download-organize/preview')) data = { id: 'plan', ...naming.plan(body.files.map(row => files.find(file => file.id === row.id))) }
@@ -119,7 +120,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await dialog.getByRole('button', { name: '确认任务状态', exact: true }).waitFor()
     assert.equal(await confirm().isDisabled(), true)
     await dialog.getByRole('button', { name: '确认任务状态', exact: true }).click()
-    await dialog.getByText('后台将下载整条磁力', { exact: false }).waitFor()
+    await dialog.waitFor({ state: 'detached' })
     const preview = calls.find(call => call.endpoint.endsWith('/download-organize/preview')).body
     assert.deepEqual(preview.files.map(file => [file.id, file.season, file.episode]), [['a', 1, 1], ['b', 1, 2], ['c', 2, 3], ['d', 2, 2]])
     assert.equal(preview.subtitles[0].videoId, 'c')

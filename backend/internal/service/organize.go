@@ -403,13 +403,21 @@ func cloneOrganizeJob(job OrganizeJob) OrganizeJob {
 	return job
 }
 
-// Retain active work even when completed jobs fill the recent history.
-func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob) []OrganizeJob {
+// 历史按完整批次保留，避免同一批资源被截断后误报全部完成。
+func prependOrganizeJob(job OrganizeJob, jobs []OrganizeJob, protected ...map[string]bool) []OrganizeJob {
+	retained := make(map[string]bool, len(jobs)+1)
+	retained[downloadPipelineID(job)] = true
+	for _, old := range jobs {
+		sealed := unhandedDownloadShare(old) && old.Download.Share.LeaderID != ""
+		sharing := len(protected) > 0 && protected[0][downloadPipelineID(old)]
+		if len(retained) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed || sharing || pendingDownloadCleanup(old) {
+			retained[downloadPipelineID(old)] = true
+		}
+	}
 	out := make([]OrganizeJob, 0, len(jobs)+1)
 	out = append(out, job)
 	for _, old := range jobs {
-		sealed := unhandedDownloadShare(old) && old.Download.Share.LeaderID != ""
-		if len(out) < 30 || old.Status == "queued" || old.Status == "submitting" || old.Status == "downloading" || old.Status == "running" || sealed || pendingDownloadCleanup(old) {
+		if retained[downloadPipelineID(old)] {
 			out = append(out, old)
 		}
 	}

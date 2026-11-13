@@ -287,6 +287,7 @@ func (s *DownloadOrganize) PreviewBatch(ctx context.Context, in DownloadBatchInp
 			return DownloadBatchResult{}, err
 		}
 		jobs[i].Download.BatchID = id
+		jobs[i].Download.BatchSize = len(jobs)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -342,13 +343,17 @@ func (s *DownloadOrganize) StartBatch(id string) (DownloadBatchResult, error) {
 	}
 	jobs := cloneDownloadJobs(batch.jobs)
 	doc := o.doc
+	protected, err := s.activeSharePipelines(doc.Jobs)
+	if err != nil {
+		return DownloadBatchResult{}, err
+	}
 	for i := range jobs {
 		jobs[i].Status, jobs[i].UpdatedAt, jobs[i].CreatedAt = "queued", time.Now(), time.Now()
 		jobs[i].Message = "已加入批量下载整理队列，完成一项即整理一项"
 		if jobs[i].Download.Share != nil {
 			jobs[i].Message = "已加入批量下载队列，就绪资源将合并整理与分享；晚到资源自动补批"
 		}
-		doc.Jobs = prependOrganizeJob(jobs[i], doc.Jobs)
+		doc.Jobs = prependOrganizeJob(jobs[i], doc.Jobs, protected)
 	}
 	c := jobs[0].Config
 	if jobs[0].Download.Share == nil {

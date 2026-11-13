@@ -7,12 +7,15 @@ const props = defineProps<{ task: HistoryTask }>()
 const emit = defineEmits<{ details: [] }>()
 const active = computed(() => isActiveTask(props.task))
 const counts = computed(() => taskCounts(props.task))
-const typeIcon = computed(() => props.task.organize?.naming?.template.kind === 'movie' ? IconMovie : props.task.organize?.naming?.template.kind === 'tv' ? IconDeviceTv : IconFolders)
+const typeIcon = computed(() => {
+  const kind = (props.task.organize || props.task.organizeJobs?.[0])?.naming?.template.kind
+  return kind === 'movie' ? IconMovie : kind === 'tv' ? IconDeviceTv : IconFolders
+})
 const episode = computed(() => {
   if (props.task.organize?.naming?.template.kind !== 'tv') return ''
   const videos = props.task.organize.items.filter(item => item.file.mediaType === 'video')
   if (videos.length !== 1) return ''
-  // Source numbering can differ after manual mapping; use the actual target filename.
+  // 手动映射后原集数可能不同，使用实际目标文件名。
   const name = videos[0]!.name || videos[0]!.targetPath.split('/').at(-1) || ''
   const matches = [...name.matchAll(/(?:^|[^a-z0-9])(S[0-9]{1,3}E[0-9]{1,4})(?=$|[^a-z0-9])/gi)]
   return matches.length === 1 ? matches[0]![1]!.toUpperCase() : ''
@@ -45,7 +48,7 @@ function open(event: MouseEvent) {
     </span>
     <span class="task-card-result"><span class="task-card-badge" :class="`badge-${taskTone(task)}`"><IconCircleCheck v-if="taskTone(task) === 'success'" :size="14" class="task-card-success" aria-hidden="true" />{{ taskStatus(task) }}</span><span>{{ summary }}</span></span>
     <span v-if="paths.length" class="task-card-paths"><span v-for="path in paths" :key="path.label"><span class="task-card-label">{{ path.label }}</span><span class="task-card-path" :title="path.value">{{ path.preview }}</span></span></span>
-    <span v-if="active" class="task-card-progress">
+    <span v-if="active && !task.pipeline" class="task-card-progress">
       <span>{{ activePhase(task) }}</span>
       <span v-if="counts.total" role="progressbar" :aria-label="`${task.title}已完成文件进度`" :aria-valuemin="0" :aria-valuemax="counts.total" :aria-valuenow="counts.done" :aria-valuetext="`${resultSummary(task)}，${activePhase(task)}`" class="task-card-track"><span :style="{ width: `${counts.done / counts.total * 100}%` }" /></span>
     </span>

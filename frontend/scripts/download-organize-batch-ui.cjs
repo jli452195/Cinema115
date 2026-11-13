@@ -41,6 +41,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
         return route.fulfill({ contentType: 'application/x-ndjson', body: events.map(event => JSON.stringify(event)).join('\n') + '\n' })
       }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/目标' }
+      else if (endpoint.endsWith('/download-organize/progress')) data = { pipelines: new URL(req.url()).searchParams.get('ids').split(',').map(id => ({ id, title: '测试作品', jobIds: [id], status: 'success', finished: true, message: '已完成全部整理', total: 1, ready: 1, organized: 1, failed: 0, videoCount: 2, written: 0, shares: [] })) }
       else if (endpoint.endsWith('/naming/media-preview')) data = naming.preview(body)
       else if (endpoint.endsWith('/download-organize/batch/preview')) data = { id: 'batch-plan', jobs: body.resources.map((r, i) => ({ id: `job-${i}`, download: { hash: r.magnet.slice(-40) }, ...naming.plan(r.files, `${r.magnet.slice(-40)}:`) })) }
       else if (endpoint.endsWith('/download-organize/batch/jobs')) {
@@ -58,7 +59,6 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     }
     const search = page.locator('dialog.mikan-dialog'), editor = page.locator('dialog.anime-floating-organize')
     const submit = () => page.getByRole('button', { name: '下载并自动整理', exact: true })
-    const closeEditor = () => page.getByRole('button', { name: '关闭下载并整理', exact: true }).click()
     await page.goto(`${origin}/tv/12501`)
     await openSearch()
     await page.getByRole('button', { name: '批量选择', exact: true }).click()
@@ -147,7 +147,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     await submit().click()
     await page.getByRole('button', { name: '确认任务状态', exact: true }).click()
-    await page.getByText('任务已创建', { exact: true }).waitFor()
+    await editor.waitFor({ state: 'detached' })
     const previews = calls.filter(c => c.endpoint.endsWith('/download-organize/batch/preview'))
     assert.equal(previews.length, 1)
     assert.deepEqual(previews[0].body.resources.map(r => r.manifestId), ['manifest-1', 'manifest-2', 'manifest-4'])
@@ -156,7 +156,6 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.deepEqual(calls.filter(c => c.endpoint.endsWith('/download-organize/batch/jobs')).map(c => c.body.previewId), ['batch-plan', 'batch-plan'])
     assert.equal(count('/cloud-download/tasks'), 0)
     assert.equal(count('/cloud-download/tasks/batch'), 0)
-    await closeEditor()
     await page.getByRole('textbox', { name: isMikan ? '筛选蜜柑结果' : '筛选Garden结果' }).fill('')
     await page.getByRole('button', { name: '批量整理（1）', exact: true }).waitFor()
     passed.push('hidden selections, progressive edit, pause/continue, failed parse retry, per-file numbering, collisions, editor-only removal and atomic idempotent submit')
@@ -229,10 +228,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
       assert.equal(await editor.locator('.confirmed-group').count(), 0)
       await submit().click()
-      await page.getByText('任务已创建', { exact: true }).waitFor()
+      await editor.waitFor({ state: 'detached' })
     assert.equal(count('/download-organize/files') - before, 61)
     assert.equal(calls.filter(c => c.endpoint.endsWith('/download-organize/batch/preview')).at(-1).body.resources.length, 60)
-    await closeEditor()
     assert.equal(await search.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
     const actions = await search.locator('.mikan-batch-actions').boundingBox()
     assert.ok(actions.x >= 0 && actions.x + actions.width <= 320)
@@ -320,11 +318,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await editor.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
     assert.equal(await editor.locator('.confirmed-group').count(), 0)
     await submit().click()
-    await page.getByText('任务已创建', { exact: true }).waitFor()
+    await editor.waitFor({ state: 'detached' })
     assert.equal(count('/download-organize/files'), beforeSingle + 1)
     assert.equal(calls.filter(c => c.endpoint.endsWith('/download-organize/preview')).at(-1).body.files[0].id, 'title')
     passed.push('single title intent preselected, deferred subtitle/extension explanation and no preparation refetch on submit')
-    await closeEditor()
     await page.getByRole('button', { name: '批量选择', exact: true }).click()
     await spec('1080P').check(); await rendered([1, 3, 4]); await selected([])
     assert.equal(await checks.first().isDisabled(), true)

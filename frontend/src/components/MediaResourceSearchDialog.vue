@@ -83,19 +83,13 @@ function openTask(path: string, event: MouseEvent) {
 
 function cloudTask(item: GyingSearchItem, link: GyingResourceLink) {
   const status = cloudStatuses.value[cloudResourceID(item, link)]
-  return status?.shareSTRM ? { path: '/115/share/logs', label: '查看分享 STRM 日志' }
-    : status?.organize ? { path: '/115/download-organize', label: '查看下载整理任务' }
+  return status?.organize ? { path: '/115/download-organize', label: '查看下载整理任务' }
       : { path: '/115/cloud-download', label: '查看云下载' }
 }
 
-async function organized(keys: string[], shareSTRM = false) {
-  recordOrganized(keys, false, shareSTRM)
+async function organized(keys: string[]) {
+  recordOrganized(keys)
   await closeOrganize()
-  if (lifecycle.signal.aborted) return
-  toast.success(shareSTRM ? '已创建分享 STRM 任务，后台继续执行。' : '已创建下载整理任务，后台继续执行。', {
-    title: '任务已创建', key: `organize:${keys.join(',')}`,
-    action: { label: shareSTRM ? '查看分享 STRM 日志' : '查看任务', onClick: event => openTask(shareSTRM ? '/115/share/logs' : '/115/download-organize', event) },
-  })
 }
 
 async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
@@ -484,7 +478,7 @@ onBeforeUnmount(() => {
       </div>
     </dialog>
   </Teleport>
-  <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="(keys, shareSTRM) => recordOrganized(keys, true, shareSTRM)" />
+  <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => recordOrganized(keys, true)" />
 </template>
 
 <style scoped>

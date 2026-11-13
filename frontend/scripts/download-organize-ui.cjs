@@ -79,6 +79,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: omitOrganizeDirectory ? '' : '20', targetPath: omitOrganizeDirectory ? '' : '/动漫' }
       else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: shareConfigured, reason: '请先完善分享 STRM 设置' }
+      else if (endpoint.endsWith('/download-organize/progress')) data = { pipelines: new URL(req.url()).searchParams.get('ids').split(',').map(id => ({ id, title: '测试作品', jobIds: [id], status: 'success', finished: true, message: '已完成全部整理', total: 1, ready: 1, organized: 1, failed: 0, videoCount: 2, written: 0, shares: [] })) }
       else if (endpoint.endsWith('/download-organize/jobs') && req.method() === 'GET') data = { jobs: [] }
       else if (endpoint.endsWith('/cloud-download/paths')) data = { directories: [{ id: '30', name: '自选目录' }], hasMore: false }
       else if (endpoint.endsWith('/naming/media-preview')) {
@@ -245,7 +246,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).click()
       await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).waitFor()
       await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).click()
-      await organizeDialog.getByText('任务已创建', { exact: true }).waitFor()
+      await organizeDialog.waitFor({ state: 'detached' })
       assert.equal(count('/download-organize/subtitles/attachments'), 1)
       const preview = calls.find(c => c.endpoint.endsWith('/download-organize/preview')).body
       assert.equal(preview.subtitles.length, 2)
@@ -383,7 +384,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(count('/download-organize/jobs'), 0)
       await organizeDialog.getByRole('button', { name: '确认下载并整理', exact: true }).click()
       await organizeDialog.getByRole('button', { name: '确认任务状态', exact: true }).click()
-      await organizeDialog.getByText('任务已创建', { exact: true }).waitFor()
+      await organizeDialog.waitFor({ state: 'detached' })
       assert.equal(count('/download-organize/subtitles/attachments'), 2, 'creation receipt retry must not upload again')
       assert.equal(count('/download-organize/preview'), 1)
       const preview = calls.find(c => c.endpoint.endsWith('/download-organize/preview')).body
@@ -555,7 +556,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         await organizeDialog.locator('.confirmation-subtitles').getByText(/外部字幕 1 个/).waitFor()
 
         await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).click()
-        await page.getByText('任务已创建', { exact: true }).waitFor()
+        await organizeDialog.waitFor({ state: 'detached' })
         const moviePayload = calls.filter(c => c.endpoint.endsWith('/download-organize/preview')).at(-1).body
         assert.equal(moviePayload.kind, 'movie')
         assert.equal(moviePayload.subtitles[0].videoId, files[1].id)
@@ -615,13 +616,15 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await page.getByRole('button', { name: '正在创建分享任务…', exact: true }).waitFor()
       assert.equal(await original.isDisabled(), true)
       releaseJob()
-      await page.getByText('任务已创建', { exact: true }).waitFor()
-      if (isGying) {
-        await organizeDialog.waitFor({ state: 'detached' })
-        assert.equal(await row.locator('[data-gy-action="cloud-task"]').getAttribute('href'), '/115/share/logs')
-        await page.getByRole('button', { name: '查看分享 STRM 日志', exact: true }).click()
-        await page.waitForURL('**/115/share/logs')
-      } else assert.equal(await page.getByRole('link', { name: '查看分享 STRM 日志', exact: true }).getAttribute('href'), '/115/share/logs')
+      await organizeDialog.waitFor({ state: 'detached' })
+      await page.getByText('任务完成', { exact: true }).waitFor()
+      assert.equal(await page.locator('[data-sonner-toast]').count(), 1, 'one batch uses one toast')
+      assert.equal(await page.getByRole('link', { name: '查看分享 STRM 日志', exact: true }).count(), 0)
+      if (isGying) assert.equal(await row.locator('[data-gy-action="cloud-task"]').getAttribute('href'), '/115/download-organize')
+      else {
+        assert.equal(await row.getByRole('link', { name: '已提交，查看下载整理任务', exact: true }).getAttribute('href'), '/115/download-organize')
+        assert.equal(await row.locator('.mikan-notice').count(), 0, 'submitted organize task does not repeat the toast in a resource notice')
+      }
       const previews = calls.filter(c => c.endpoint.endsWith('/download-organize/preview'))
       assert.equal(previews.length, 1)
       assert.equal(previews[0].body.shareSTRM, true)
@@ -629,7 +632,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(previews[0].body.targetPath, undefined)
       assert.deepEqual(calls.filter(c => c.endpoint.endsWith('/download-organize/jobs')).map(c => c.body.previewId), ['share-plan', 'share-plan'])
       assert.deepEqual(errors, [])
-      console.log(JSON.stringify({ passed: ['share and ordinary directory settings are independent; share works without organize directory; canonical names stay unchanged; mobile light/dark fit; shared lock and lost response preserve the same plan; logs link'], errors }, null, 2))
+      console.log(JSON.stringify({ passed: ['share and ordinary directory settings are independent; share works without organize directory; canonical names stay unchanged; mobile light/dark fit; shared lock and lost response preserve the same plan; closes editor with one batch toast and unified history link'], errors }, null, 2))
       return
     }
     const namingCalls = count('/naming/media-preview')
@@ -740,13 +743,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await organizeDialog.getByRole('button', { name: '退回编辑第 2 季', exact: true }).isDisabled(), true)
     const previews = count('/download-organize/preview')
     await page.getByRole('button', { name: '确认任务状态', exact: true }).click()
-    await page.getByText('任务已创建', { exact: true }).waitFor()
+    await organizeDialog.waitFor({ state: 'detached' })
     assert.equal(count('/download-organize/preview'), previews)
     assert.deepEqual(calls.filter(c => c.endpoint.endsWith('/download-organize/jobs')).map(c => c.body.previewId), ['one-plan', 'one-plan'])
     assert.equal(count('/cloud-download/tasks'), 0)
     passed.push('independent dialog and focus trap, nested directory Escape/focus, busy close guard, conflicts and idempotent retry')
-    if (!isGying) await page.getByRole('button', { name: '关闭下载并整理', exact: true }).click()
-    await organizeDialog.waitFor({ state: 'detached' })
     assert.equal(await page.locator('dialog[open]').count(), 1)
     assert.equal(await list.isVisible(), true)
     assert.equal(count(searchSuffix), 1)
@@ -833,7 +834,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await organizeDialog.locator('.confirmed-group').count(), 0)
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()
     if (isGying) await fourth.locator('[data-gy-action="cloud-task"]').click()
-    else await page.getByRole('link', { name: '查看下载整理任务', exact: true }).click()
+    else await fourth.getByRole('link', { name: '已提交，查看下载整理任务', exact: true }).click()
     await page.waitForURL('**/115/download-organize')
     await searchDialog.waitFor({ state: 'detached' })
     assert.equal(await page.locator('dialog[open]').count(), 0)
@@ -978,7 +979,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(await page.getByRole('combobox', { name: '目标季', exact: true }).count(), 0)
       assert.equal(await organizeDialog.locator('.confirmed-group').count(), 0)
       await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()
-      await page.getByText('任务已创建', { exact: true }).waitFor()
+      await organizeDialog.waitFor({ state: 'detached' })
       const preview = calls.filter(c => c.endpoint.endsWith('/download-organize/preview')).at(-1).body
       assert.equal(preview.kind, 'movie')
       assert.equal(preview.source, 'gying')

@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import P115Icon from './P115Icon.vue'
 import OrganizeTaskDetails from './OrganizeTaskDetails.vue'
 import OrganizeTaskCard from './OrganizeTaskCard.vue'
-import type { OrganizeJob } from '../types/organize'
+import type { DownloadPipeline, OrganizeJob } from '../types/organize'
 import type { P115Account } from '../types/p115Accounts'
 import { historyTasks, historyTime, isActiveTask, type HistoryTask } from '../utils/organizeHistory'
 
@@ -11,16 +11,21 @@ const props = defineProps<{
   jobs: OrganizeJob[]; accounts: P115Account[]
   ready: boolean; error: string; refreshing: boolean; refreshedAt: string
   resuming: string; resumeError?: { id: string; message: string }
+  pipelines?: DownloadPipeline[]; retrying?: string; retryError?: { id: string; message: string }
 }>()
-const emit = defineEmits<{ refresh: []; resume: [job: OrganizeJob] }>()
+const emit = defineEmits<{ refresh: []; resume: [job: OrganizeJob]; retryShare: [id: string] }>()
 const limit = ref(12)
 const selected = ref<{ key: string; snapshot: HistoryTask }>()
-const tasks = computed(() => historyTasks(props.jobs))
+const tasks = computed(() => historyTasks(props.jobs, props.pipelines))
 const activeTasks = computed(() => tasks.value.filter(isActiveTask))
 const history = computed(() => tasks.value.filter(task => !isActiveTask(task)))
 const visible = computed(() => history.value.slice(0, limit.value))
 const selectedTask = computed(() => tasks.value.find(task => task.key === selected.value?.key) || selected.value?.snapshot)
 const unavailable = computed(() => !!selected.value && !tasks.value.some(task => task.key === selected.value?.key))
+const selectedJobs = computed(() => selectedTask.value?.organizeJobs || (selectedTask.value?.organize ? [selectedTask.value.organize] : []))
+const selectedShares = computed(() => selectedTask.value?.pipeline?.shares || [])
+const selectedResumeError = computed(() => selectedJobs.value.some(job => job.id === props.resumeError?.id) ? props.resumeError?.message || '' : '')
+const selectedRetryError = computed(() => selectedShares.value.some(share => share.id === props.retryError?.id) ? props.retryError?.message || '' : '')
 const accountName = computed(() => {
   const account = props.accounts.find(account => account.id === selectedTask.value?.accountId)
   return account?.primary ? '主账号' : account?.name || selectedTask.value?.accountId || ''
@@ -32,9 +37,12 @@ const blockedReason = computed(() => {
   return ''
 })
 function openDetails(task: HistoryTask) { selected.value = { key: task.key, snapshot: task } }
-function resume() {
-  const job = selectedTask.value?.organize
-  if (job?.resumable && !blockedReason.value && !props.resuming) emit('resume', job)
+function resume(candidate?: OrganizeJob) {
+  const job = candidate || selectedTask.value?.organize
+  if (job?.resumable && selectedJobs.value.some(current => current.id === job.id) && !blockedReason.value && !props.resuming && !props.retrying) emit('resume', job)
+}
+function retryShare(id: string) {
+  if (!blockedReason.value && !props.resuming && !props.retrying && selectedShares.value.some(share => share.id === id && share.canRetry)) emit('retryShare', id)
 }
 </script>
 
@@ -49,9 +57,9 @@ function resume() {
     <div v-if="ready" class="mt-4" aria-label="整理历史记录">
       <ul class="history-grid"><li v-for="task in visible" :key="task.key" class="min-w-0"><OrganizeTaskCard :task="task" @details="openDetails(task)" /></li></ul>
       <p v-if="!history.length" class="py-8 text-center text-sm text-slate-500 dark:text-slate-400">{{ activeTasks.length ? '当前任务的进度显示在上方，结束后会归入记录。' : '暂无整理记录，任务执行后会在这里显示结果。' }}</p>
-      <div v-if="history.length" class="history-footer mt-3 flex flex-wrap items-center justify-between gap-3 pt-3 text-xs text-slate-500 dark:text-slate-400"><p>已显示 {{ visible.length }}/{{ history.length }} 条，最多保留最近 30 条整理记录<span class="block mt-1">文件数包含视频及字幕</span></p><button v-if="visible.length < history.length" class="action" @click="limit += 8">显示更多</button></div>
+      <div v-if="history.length" class="history-footer mt-3 flex flex-wrap items-center justify-between gap-3 pt-3 text-xs text-slate-500 dark:text-slate-400"><p>已显示 {{ visible.length }}/{{ history.length }} 条最近记录<span class="block mt-1">文件数包含视频及字幕</span></p><button v-if="visible.length < history.length" class="action" @click="limit += 8">显示更多</button></div>
     </div>
-    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :history-error="error" :unavailable="unavailable" :resuming="resuming === selectedTask.organize?.id" :resume-error="resumeError && resumeError.id === selectedTask.organize?.id ? resumeError.message : ''" @close="selected = undefined" @resume="resume" />
+    <OrganizeTaskDetails v-if="selectedTask" :key="selectedTask.key" :task="selectedTask" :account-name="accountName" :blocked-reason="blockedReason" :history-error="error" :unavailable="unavailable" :resuming="selectedJobs.some(job => job.id === resuming)" :resuming-id="resuming" :resume-error="selectedResumeError" :retrying="retrying" :retry-error="selectedRetryError" @close="selected = undefined" @resume="resume" @retry-share="retryShare" />
   </section>
 </template>
 

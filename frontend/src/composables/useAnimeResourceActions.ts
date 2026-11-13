@@ -8,7 +8,6 @@ import type { AnimeResourceItem as Item, AnimeResourceGroup as Group } from '../
 
 interface AnimeResourceActionOptions {
   token: string
-  title: string
   provider?: 'mikan' | 'garden'
   tmdbId?: number
   searching: () => boolean
@@ -90,10 +89,11 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
   }
   function organized(keys: string[]) {
     for (const key of keys) {
-      submissions.value[key] = { organize: true, success: true, message: `已创建下载整理任务：${options.title}。可在下载整理的任务记录查看进度。` }
+      submissions.value[key] = { organize: true, success: true }
       batch.statuses.value[key] = submissions.value[key]!
       batchSelected.value.delete(key)
     }
+    organizeEntries.value = []
   }
   async function submit(item: Item) {
     if (signal.aborted || interactionBusy.value || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain) return

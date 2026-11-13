@@ -52,7 +52,8 @@ func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
 			t.Fatal("task response must not be cached")
 		}
 		var data struct {
-			Jobs []service.OrganizeJob `json:"jobs"`
+			Jobs      []service.OrganizeJob      `json:"jobs"`
+			Pipelines []service.DownloadPipeline `json:"pipelines"`
 		}
 		if err := json.Unmarshal(response.Body.Bytes(), &data); err != nil {
 			t.Fatal(err)
@@ -63,7 +64,16 @@ func TestOrganizeWorkflowHistoryAndResumeIsolation(t *testing.T) {
 		if strings.Contains(response.Body.String(), a.Cookie) {
 			t.Fatal("history exposed credentials")
 		}
+		if len(data.Pipelines) != 1 || data.Pipelines[0].ID != "download" || data.Pipelines[0].Status != "interrupted" {
+			t.Fatal("下载整理汇总缺失或混入手动整理", data.Pipelines)
+		}
 	}
+	progress := accountRequest(t, router, "GET", "/download-organize/progress?ids=download", "", 200)
+	if !strings.Contains(progress.Body.String(), `"pipelines"`) || strings.Contains(progress.Body.String(), a.Cookie) {
+		t.Fatal("进度汇总缺失或泄露凭据", progress.Body.String())
+	}
+	accountRequest(t, router, "GET", "/download-organize/progress?ids=missing", "", 409)
+	accountRequest(t, router, "GET", "/download-organize/progress", "", 409)
 	response := accountRequest(t, router, "GET", "/download-organize/config", "", 200)
 	if !strings.Contains(response.Body.String(), "download-target") || strings.Contains(response.Body.String(), "sourceCID") {
 		t.Fatal("download target depends on manual configuration")

@@ -18,6 +18,35 @@ export interface DownloadOrganizeResource {
   files?: DownloadFiles
 }
 export interface DownloadBatchResult { id: string; jobs: OrganizeJob[] }
+export interface DownloadPipelineShare {
+  id: string
+  status: string
+  written: number
+  total: number
+  error: string
+  note: string
+  shareUrl: string
+  canRetry: boolean
+  retryReason?: string
+  nextRetryAt: string | null
+}
+export interface DownloadPipeline {
+  id: string
+  title: string
+  createdAt: string
+  jobIds: string[]
+  shareSTRM: boolean
+  status: 'queued' | 'downloading' | 'organizing' | 'generating' | 'review' | 'success' | 'partial' | 'failed' | 'interrupted'
+  finished: boolean
+  message: string
+  total: number
+  ready: number
+  organized: number
+  failed: number
+  videoCount: number
+  written: number
+  shares: DownloadPipelineShare[]
+}
 export interface OrganizeConfig {
   accountId: string
   sourceCID: string
@@ -52,7 +81,7 @@ export interface OrganizeItem {
 export interface OrganizeJob {
 	naming?: NamingRecord
 	resumable?: boolean
-  download?: { hash: string; directoryId?: string; cleanupDirs?: string[]; share?: { directory: string; handedOff?: boolean }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
+  download?: { hash: string; batchId?: string; batchSize?: number; directoryId?: string; cleanupDirs?: string[]; share?: { directory: string; handedOff?: boolean; leaderId?: string }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig
@@ -61,6 +90,7 @@ export interface OrganizeJob {
   message?: string
   createdAt: string
   items: OrganizeItem[]
+  updatedAt?: string
   stats?: {
     batchSize: number
     batchesTotal: number

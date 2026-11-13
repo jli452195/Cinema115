@@ -87,6 +87,8 @@ onBeforeUnmount(() => {
   top: calc(var(--workbench-header-height) + 1px + 1rem);
 }
 .toast-host :deep([data-sonner-toast]) { width: 100%; padding-right: 44px; border-radius: 14px; pointer-events: none; overflow-wrap: anywhere; }
+/* 同一通知更新内容后，展开时按实际内容撑开，避免沿用首次显示的缓存高度。 */
+.toast-host :deep([data-sonner-toast][data-mounted='true'][data-expanded='true']) { height: auto; }
 .toast-host :deep([data-sonner-toast][data-visible='true']:not([data-removed='true'])) { pointer-events: auto; }
 .toast-host :deep([data-sonner-toast]:has([data-button])) { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; }
 .toast-host :deep([data-type='success'] [data-icon]) { color: rgb(var(--status-success)); }

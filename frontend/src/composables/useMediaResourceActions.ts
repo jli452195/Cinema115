@@ -15,7 +15,7 @@ interface MediaResourceActionOptions {
   tmdbId: string
 }
 
-interface CloudDownloadStatus extends CloudDownloadActionStatus { organize?: boolean; shareSTRM?: boolean }
+interface CloudDownloadStatus extends CloudDownloadActionStatus { organize?: boolean }
 
 export function useMediaResourceActions(options: MediaResourceActionOptions, signal: AbortSignal, searching: () => boolean) {
   const shareRuns = useShareSTRMRun(options.token, signal, { scope: `${options.source}/${options.kind}/${options.tmdbId}` })
@@ -86,8 +86,8 @@ export function useMediaResourceActions(options: MediaResourceActionOptions, sig
     }
   }
 
-  function organized(keys: string[], uncertain = false, shareSTRM = false) {
-    for (const key of keys) cloudStatuses.value[key] = { success: !uncertain, uncertain, organize: true, shareSTRM, message: uncertain ? '任务创建结果待核对，请查看整理任务记录。' : '已创建下载整理任务，可在整理任务记录查看进度。' }
+  function organized(keys: string[], uncertain = false) {
+    for (const key of keys) cloudStatuses.value[key] = { success: !uncertain, uncertain, organize: true, message: uncertain ? '任务创建结果待核对，请查看整理任务记录。' : undefined }
   }
 
   async function closeOrganize() {

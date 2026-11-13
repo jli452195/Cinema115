@@ -9,6 +9,7 @@ import SelectMenu from './SelectMenu.vue'
 import { p115Request } from '../lib/p115-api'
 import type { DownloadBatchResult, DownloadOrganizeResource, OrganizeJob, OrganizeRow, OrganizeSubtitle } from '../types/organize'
 import { useDownloadOrganizeFiles } from '../composables/useDownloadOrganizeFiles'
+import { trackDownloadPipeline } from '../composables/useDownloadPipelineToast'
 import { applyOrganizeMapping } from '../utils/organizeNaming'
 import { useMediaNamingPreview } from '../composables/useMediaNamingPreview'
 import { useStickySurface } from '../composables/useStickySurface'
@@ -27,7 +28,7 @@ const props = defineProps<{
   themeColors?: Record<string, string>
   animationLibrary?: boolean; originalTitle?: string
 }>()
-const emit = defineEmits<{ close: []; submitted: [keys: string[], shareSTRM: boolean]; uncertain: [keys: string[], shareSTRM: boolean] }>()
+const emit = defineEmits<{ close: []; submitted: [keys: string[]]; uncertain: [keys: string[]] }>()
 const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states } = preparation
@@ -94,11 +95,10 @@ const seasonOptions = computed(() => props.seasons.map(s => {
   return { value: String(s.number), label: [label, s.name && s.name !== label ? s.name : '', `${s.episodeCount} 集`].filter(Boolean).join(' · ') }
 }))
 const selectedSeason = computed(() => props.seasons.find(s => String(s.number) === season.value))
-const job = ref<OrganizeJob>()
 const fileSelection = ref<InstanceType<typeof OrganizeFileSelection>>()
 const lastProblem = ref('')
 const namingNumber = (value: unknown) => Number.isInteger(Number(value)) ? Number(value) : -1
-const namingPreview = useMediaNamingPreview(props.token, () => rows.value.length && !parsing.value && !job.value ? {
+const namingPreview = useMediaNamingPreview(props.token, () => rows.value.length && !parsing.value ? {
   kind: props.kind, tmdbId: props.tmdbId,
   files: rows.value.map(row => ({ id: row.id, name: row.name, titleOnly: row.titleOnly, namingValues: row.namingValues, season: namingNumber(row.season), episode: namingNumber(row.episode) })),
   subtitles: subtitles.value.filter(sub => sub.videoId).map(sub => ({ file: { id: sub.file.id, name: sub.file.name }, videoId: sub.videoId, tail: sub.tail })),
@@ -225,7 +225,7 @@ async function loadConfig() {
 }
 async function start(sharing = false) {
   if (confirming.value && sharing !== shareAction.value || sharing && shareIssue.value && !confirming.value) return
-  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !selected.value.length || invalid.value || externalIssue.value || Object.keys(localConflicts.value).length || !sharing && !targetCID.value || !accountId.value || job.value) return
+  if (busy.value || loading.value || !confirming.value && !namingPreview.ready.value || parsing.value || !selected.value.length || invalid.value || externalIssue.value || Object.keys(localConflicts.value).length || !sharing && !targetCID.value || !accountId.value) return
   busy.value = true; error.value = ''; notice.value = ''
   shareAction.value = sharing
   let creationAttempt = false
@@ -264,19 +264,22 @@ async function start(sharing = false) {
       await p115Request<void>(props.token, 'download-organize/subtitles/attachments', { method: 'POST', signal: signal(), body })
       uploadedPreview = previewId.value
     }
-    // Reuse the ID after a lost response; the server persists before submitting.
+    // 回执丢失时复用同一编号，服务端先保存任务再提交下载。
     creationAttempt = true
-    if (props.batch) {
-      const created = await p115Request<DownloadBatchResult>(props.token, 'download-organize/batch/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
-      job.value = created.jobs[0]
-    } else job.value = await p115Request<OrganizeJob>(props.token, 'download-organize/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
+    const created = props.batch
+      ? await p115Request<DownloadBatchResult>(props.token, 'download-organize/batch/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })
+      : { id: '', jobs: [await p115Request<OrganizeJob>(props.token, 'download-organize/jobs', { method: 'POST', signal: signal(), body: JSON.stringify({ previewId: previewId.value }) })] }
+    const pipelineID = created.id || created.jobs[0]?.id
+    if (!pipelineID || !created.jobs.length) throw new Error('创建回执缺少任务编号，请确认任务状态')
     confirming.value = false
-    emit('submitted', selectedKeys.value, shareAction.value)
+    const summary = [props.title, `${created.jobs.length} 项资源 · ${selected.value.length} 个视频`, shareAction.value ? '下载 → 整理 → STRM' : '下载 → 整理'].join(' · ')
+    trackDownloadPipeline(props.token, pipelineID, summary)
+    emit('submitted', selectedKeys.value)
   } catch (e) {
     if (!lifecycle.signal.aborted) {
       const status = (e as { status?: number }).status
       if (creationAttempt && (!status || status >= 500)) {
-        confirming.value = true; emit('uncertain', selectedKeys.value, shareAction.value)
+        confirming.value = true; emit('uncertain', selectedKeys.value)
         error.value = '创建结果暂未确认，请点击“确认任务状态”读取同一任务，或在整理任务记录中核对。'
       } else {
         confirming.value = false
@@ -293,16 +296,9 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <AnimeFloatingDialog ref="floatingDialog" class="download-organize-dialog" :title="job ? '任务已创建' : `下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
+  <AnimeFloatingDialog ref="floatingDialog" class="download-organize-dialog" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
-    <template v-if="job">
-      <p role="status" class="notice">后台将下载{{ batch ? `所选 ${selectedKeys.length} 条磁力` : '整条磁力' }}，并按本次映射整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">及 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，另上传 {{ selectedExternal.length }} 个外部字幕</span>。<span v-if="selected.some(row => row.titleOnly)">按标题识别的单集将自动匹配实际视频与同名字幕。</span>整理成功后回收本任务临时目录及所有残留。关闭弹窗后继续执行。</p>
-      <RouterLink to="/115/download-organize" class="task-link">查看下载整理任务</RouterLink>
-      <p v-if="shareAction" class="notice"><span v-if="batch">同批就绪资源合并整理并生成分享 STRM，慢资源随后自动补批，各批使用独立的 Cinema115-任务编号 文件夹。</span><span v-else>文件将整理到主网盘根目录下独立的 Cinema115-任务编号 文件夹，再生成分享 STRM。</span>生成进度和重试请查看分享日志。</p>
-      <RouterLink v-if="shareAction" to="/115/share/logs" class="task-link block">查看分享 STRM 日志</RouterLink>
-    </template>
-    <template v-else>
       <div class="organize-config">
         <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
         <div class="naming-summary"><RouterLink :to="{ name: 'naming-settings', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary tool-action" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh"><IconRefresh :size="15" aria-hidden="true" />刷新命名</button></div>
@@ -367,18 +363,17 @@ onBeforeUnmount(() => lifecycle.abort())
         <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
         <div>
           <p class="scope-note">整条磁力下载，整理已暂存和当前勾选的视频及其关联字幕；全部整理成功后，临时目录连同未选、排除及其他残留文件一并回收。暂存只保留本次映射，最终提交后才执行网盘操作。</p>
-          <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。设置与日志沿用 115 分享 STRM 页面。</p>
+          <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。完整进度与重试可在下载整理的任务记录中查看，分享设置沿用 115 分享 STRM 页面。</p>
           <p v-if="titleOnlyCount" class="scope-note">{{ titleOnlyCount }} 项单集按标题预览命名，扩展名与关联字幕下载后确认；合集及不明确的资源读取文件清单。</p>
           <div class="reference"><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>
           <p v-if="downloadPath" class="scope-note">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</p>
           <p class="scope-note">批量编号仅影响待处理区中勾选的文件。暂存后可继续处理其他季，或退回编辑并保留已有映射；无需暂存也可直接提交。</p>
         </div>
       </details>
-    </template>
     <p v-if="error" ref="errorElement" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/cloud-download">前往云下载设置</RouterLink></p>
     <p v-if="loading" role="status" class="notice">读取目录配置…</p>
   </section>
-    <template v-if="!job" #footer>
+    <template #footer>
       <div class="submit-bar">
         <span>待整理 {{ selected.length }} 个视频<span v-if="selectedSubtitleCount">，关联 {{ selectedSubtitleCount }} 个字幕</span><span v-if="selectedExternal.length">，外部字幕 {{ selectedExternal.length }} 个</span><button v-if="Object.keys(rowProblems).length" type="button" class="locate-problem" @click="locateProblem">{{ Object.keys(rowProblems).length }} 项待处理 · 定位问题</button></span>
         <div class="submit-actions">
@@ -426,7 +421,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .primary { @apply w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 sm:w-auto; }
 .submit-bar { @apply flex flex-wrap items-center justify-between gap-3 text-xs; }
 .submit-actions { @apply flex flex-wrap items-center gap-2; }.submit-actions>button { min-height: 44px; }.secondary.share-action { @apply h-auto px-4 py-2.5 text-sm; }.share-config-note { @apply mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400; }.share-config-note a,.share-config-note button { @apply text-blue-600 dark:text-blue-400; }.share-config-note button { @apply ml-2 disabled:opacity-40; }
-.notice { @apply text-xs leading-6 text-slate-600 dark:text-slate-300; }.error { @apply break-all text-sm leading-6 text-red-600 dark:text-red-400; }.error a,.task-link { @apply text-sm text-blue-600 underline dark:text-blue-400; }
+.notice { @apply text-xs leading-6 text-slate-600 dark:text-slate-300; }.error { @apply break-all text-sm leading-6 text-red-600 dark:text-red-400; }.error a { @apply text-sm text-blue-600 underline dark:text-blue-400; }
 @media (max-width: 639px) {
   .submit-actions { width: 100%; }.submit-actions > button { width: 100%; }.submit-bar > span { width: 100%; }
   .download-organize { padding-top: 8px; }

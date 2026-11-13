@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -29,7 +30,22 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 		}
 		c.JSON(200, gin.H{"ready": err == nil, "reason": reason})
 	})
-	r.GET("/jobs", func(c *gin.Context) { c.JSON(200, gin.H{"jobs": s.History()}) })
+	r.GET("/jobs", func(c *gin.Context) {
+		jobs, pipelines, err := s.PipelineHistory(c.Request.Context())
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"jobs": jobs, "pipelines": pipelines})
+	})
+	r.GET("/progress", func(c *gin.Context) {
+		pipelines, err := s.Progress(c.Request.Context(), strings.Split(c.Query("ids"), ","))
+		if err != nil {
+			organizeError(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"pipelines": pipelines})
+	})
 	r.POST("/subtitles/attachments", func(c *gin.Context) {
 		values, files, ok := readSubtitleUpload(c)
 		if !ok {

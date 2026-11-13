@@ -123,7 +123,7 @@ func (s *DownloadOrganize) finishDownload(ctx context.Context, p *downloadPendin
 			}
 			share.HandedOff = true
 		}
-		job.Message = "文件已整理并交给 115 分享 STRM；生成进度和重试请查看分享日志"
+		job.Message = "文件已整理，正在生成分享 STRM；可在下载整理记录中查看整批进度"
 	}
 	if issue != "" {
 		job.Message = "所选文件已整理；" + issue

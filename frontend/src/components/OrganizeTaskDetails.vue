@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
 import SegmentedControl from './SegmentedControl.vue'
-import { historyDuration, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
+import { historyDuration, historyTasks, historyTime, isActiveTask, itemStatus, needsAttention, resultSummary, shareTaskStatus, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
+import type { OrganizeJob } from '../types/organize'
 
-const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; historyError: string; unavailable: boolean; resuming: boolean; resumeError: string }>()
-defineEmits<{ close: []; resume: [] }>()
-// This component is keyed by task identity, not the polling snapshot.
+const props = defineProps<{ task: HistoryTask; accountName: string; blockedReason: string; historyError: string; unavailable: boolean; resuming: boolean; resumingId?: string; resumeError: string; retrying?: string; retryError?: string }>()
+defineEmits<{ close: []; resume: [job?: OrganizeJob]; retryShare: [id: string] }>()
+// 按任务身份保留筛选，轮询快照更新不会重置详情。
 const filter = ref(taskCounts(props.task).attention ? 'attention' : 'all')
 const feedback = ref('')
 const resumeButton = ref<HTMLButtonElement>(), closeButton = ref<HTMLButtonElement>(), resumeAlert = ref<HTMLElement>()
@@ -16,6 +16,7 @@ const counts = computed(() => taskCounts(props.task))
 const items = computed(() => props.task.items.filter(item => filter.value !== 'attention' || needsAttention(item, props.task)))
 const stats = computed(() => props.task.organize?.stats)
 const resumable = computed(() => !!props.task.organize?.resumable)
+const resources = computed(() => historyTasks(props.task.organizeJobs || []))
 const cleanupOnly = computed(() => {
   const job = props.task.organize, download = job?.download
   return job?.status === 'completed' && !!download?.cleanupDirs?.length && job.items.length > 0
@@ -37,30 +38,31 @@ async function copy(value: string) {
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value)
-      feedback.value = '已复制完整路径。'
+      feedback.value = '已复制。'
       return
     }
-  } catch { /* LAN HTTP and browser permissions may require the selection fallback. */ }
+  } catch { /* 局域网 HTTP 或浏览器权限受限时回退到文本选择。 */ }
   const focused = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const field = document.createElement('textarea')
   field.value = value
   field.readOnly = true
   field.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none'
-  // A modal dialog makes elements outside it inert, so keep the temporary selection inside it.
+  // 模态弹窗外元素不可操作，将临时文本域放进当前弹窗。
   const container = focused?.closest('dialog') || document.body
   container.append(field)
   try {
     field.select()
-    feedback.value = document.execCommand('copy') ? '已复制完整路径。' : '复制失败，请选择路径文本后复制。'
-  } catch { feedback.value = '复制失败，请选择路径文本后复制。' }
+    feedback.value = document.execCommand('copy') ? '已复制。' : '复制失败，请选择文本后复制。'
+  } catch { feedback.value = '复制失败，请选择文本后复制。' }
   finally { field.remove(); focused?.focus({ preventScroll: true }) }
 }
 </script>
 
 <template>
-  <AnimeFloatingDialog title="整理历史详情" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
+  <AnimeFloatingDialog :title="task.pipeline ? '下载整理详情' : '整理历史详情'" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
     <div class="task-detail-sections">
       <p v-if="resumeError" ref="resumeAlert" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ resumeError }}</p>
+      <p v-if="retryError" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ retryError }}</p>
       <p v-if="historyError || unavailable" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ unavailable ? '此任务已不在最近记录中，当前显示打开时保留的快照。' : '记录刷新失败，当前结果可能已过期。请刷新记录后再执行操作。' }}</p>
       <section aria-label="任务摘要" class="detail-panel space-y-3 text-sm">
         <h3 class="break-words text-xl font-semibold leading-7 text-slate-900 dark:text-slate-100 [overflow-wrap:anywhere]">{{ task.title }}</h3>
@@ -70,14 +72,44 @@ async function copy(value: string) {
         <dl class="task-detail-meta"><div><dt>账号</dt><dd>{{ accountName }}</dd></div><div><dt>创建时间</dt><dd>{{ historyTime(task.createdAt, true) }}</dd></div></dl>
       </section>
 
-      <div v-if="cleanupOnly || counts.attention || (!isActiveTask(task) && task.status !== 'completed')" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+      <div v-if="!task.pipeline && (cleanupOnly || counts.attention || (!isActiveTask(task) && task.status !== 'completed'))" class="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
         <p class="flex items-center gap-2 font-medium"><P115Icon name="warning" />{{ cleanupOnly ? '文件已整理，临时目录尚未清理完成' : counts.uncertain ? '有文件结果待核实' : '任务有未完成的条目' }}</p>
         <p v-if="task.message" class="mt-1 break-all">{{ task.message }}</p>
         <p>{{ cleanupOnly ? '点击“重试清理”回收本任务临时目录，已整理文件保持原位。' : resumable ? '点击“检查并继续”核对剩余文件后继续原任务，保留已完成进度。' : '请核对原位置与目标位置的实际文件，再重新预览。待核实条目不会自动重复执行。' }}</p>
       </div>
       <p v-else-if="task.message" class="break-all text-xs leading-6 text-slate-600 dark:text-slate-300">{{ task.message }}</p>
 
-      <RouterLink v-if="task.organize?.download?.share?.handedOff" to="/115/share/logs" class="text-xs text-blue-600 underline dark:text-blue-400">查看分享 STRM 日志与重试</RouterLink>
+      <section v-if="task.pipeline" aria-label="流程进度" class="detail-panel space-y-4">
+        <h3 class="text-sm font-semibold">流程进度</h3>
+        <dl class="grid grid-cols-2 gap-3 text-xs" :class="task.pipeline.shareSTRM ? 'sm:grid-cols-3' : ''">
+          <div class="task-detail-path rounded-lg p-3"><dt class="text-slate-500 dark:text-slate-400">下载就绪</dt><dd class="mt-2 font-medium">{{ task.pipeline.ready }}/{{ task.pipeline.total }} 个资源</dd></div>
+          <div class="task-detail-path rounded-lg p-3"><dt class="text-slate-500 dark:text-slate-400">整理完成</dt><dd class="mt-2 font-medium">{{ task.pipeline.organized }}/{{ task.pipeline.total }} 个资源</dd></div>
+          <div v-if="task.pipeline.shareSTRM" class="task-detail-path rounded-lg p-3"><dt class="text-slate-500 dark:text-slate-400">STRM 生成</dt><dd class="mt-2 font-medium">已写入 {{ task.pipeline.written }} 个</dd></div>
+        </dl>
+        <ul class="divide-y divide-slate-200 dark:divide-slate-700">
+          <li v-for="resource in resources" :key="resource.key" class="py-3 first:pt-0 last:pb-0">
+            <div class="flex items-start justify-between gap-3"><p class="min-w-0 break-all text-xs font-medium">{{ resource.title }}</p><span class="shrink-0 text-xs text-slate-500 dark:text-slate-400">{{ taskStatus(resource) }}</span></div>
+            <p v-if="resource.message" class="mt-1 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">{{ resource.message }}</p>
+            <button v-if="resource.organize?.resumable" class="action mt-2" :disabled="resuming || !!retrying || !!blockedReason" :title="blockedReason" @click="$emit('resume', resource.organize)">{{ resumingId === resource.organize.id ? '检查中…' : '检查并继续此资源' }}</button>
+          </li>
+        </ul>
+      </section>
+      <section v-if="task.pipeline?.shareSTRM" aria-label="分享 STRM 进度" class="detail-panel space-y-3">
+        <h3 class="text-sm font-semibold">分享 STRM</h3>
+        <p v-if="!task.pipeline.shares.length" class="text-xs leading-5 text-slate-500 dark:text-slate-400">{{ task.pipeline.finished ? '尚未创建 STRM 任务，请先处理上方未完成的资源。' : '资源整理后自动生成 STRM，后续就绪的资源会继续加入。' }}</p>
+        <ul class="divide-y divide-slate-200 dark:divide-slate-700">
+          <li v-for="(share, index) in task.pipeline.shares" :key="share.id" class="py-3 first:pt-0 last:pb-0">
+            <div class="flex flex-wrap items-center justify-between gap-2 text-xs"><span class="font-medium">STRM 批次 {{ index + 1 }}</span><span :class="share.status === 'success' ? 'text-emerald-700 dark:text-emerald-300' : share.error ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'">{{ shareTaskStatus(share.status) }} · 已写入 {{ share.written }}{{ share.total ? `/${share.total}` : '' }}</span></div>
+            <p v-if="share.error" class="mt-2 break-all text-xs leading-5 text-amber-700 dark:text-amber-300">{{ share.error }}</p>
+            <p v-if="share.note" class="mt-2 break-all text-xs leading-5 text-slate-500 dark:text-slate-400">{{ share.note }}</p>
+            <div v-if="share.shareUrl" class="mt-2 flex items-start gap-3 text-xs"><p class="min-w-0 flex-1 select-text break-all leading-5">{{ share.shareUrl }}</p><button class="path-copy shrink-0" @click="copy(share.shareUrl)">复制分享</button></div>
+            <p v-if="share.nextRetryAt" class="mt-2 text-xs text-slate-500 dark:text-slate-400">下次审核重试：{{ historyTime(share.nextRetryAt, true) }}</p>
+            <button v-if="share.canRetry" class="action mt-2" :disabled="!!retrying || resuming || !!blockedReason" :title="blockedReason" @click="$emit('retryShare', share.id)">{{ retrying === share.id ? '提交中…' : '重试 STRM' }}</button>
+            <p v-else-if="share.retryReason && ['failed', 'interrupted', 'cancelled', 'review', 'waiting_review'].includes(share.status)" class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ share.retryReason }}</p>
+          </li>
+        </ul>
+        <p v-if="task.pipeline.shares.some(share => share.canRetry)" class="text-xs text-slate-500 dark:text-slate-400">重试只处理 STRM，保留已下载和已整理的文件。</p>
+      </section>
       <section v-if="folders.length" aria-label="路径信息" class="detail-panel space-y-3">
         <h3 class="text-sm font-semibold">路径信息</h3>
         <div v-for="folder in folders" :key="folder.label"><div class="mb-1 flex items-center justify-between gap-3 text-xs"><span class="text-slate-500 dark:text-slate-400">{{ folder.label }}</span><button class="path-copy" :aria-label="`复制${folder.label}`" @click="copy(folder.path!)">复制路径</button></div><p class="select-text break-all text-xs leading-5">{{ folder.path }}</p></div>

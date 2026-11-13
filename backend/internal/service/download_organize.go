@@ -20,6 +20,7 @@ type ResourceDownload struct {
 	CleanupDirs   []string           `json:"cleanupDirs,omitempty"`
 	Subtitles     []DownloadSubtitle `json:"subtitles,omitempty"`
 	BatchID       string             `json:"batchId,omitempty"`
+	BatchSize     int                `json:"batchSize,omitempty"`
 	Hash          string             `json:"hash"`
 	ParentCID     string             `json:"parentCID"`
 	ParentPath    string             `json:"parentPath"`
@@ -130,7 +131,11 @@ func (s *DownloadOrganize) Start(id string) (OrganizeJob, error) {
 	job.Status, job.UpdatedAt = "queued", time.Now()
 	job.Message = "等待提交 115，整理所选文件后清理本次下载目录"
 	doc := o.doc
-	doc.Jobs = prependOrganizeJob(job, doc.Jobs)
+	protected, err := s.activeSharePipelines(doc.Jobs)
+	if err != nil {
+		return OrganizeJob{}, err
+	}
+	doc.Jobs = prependOrganizeJob(job, doc.Jobs, protected)
 	if job.Download.Share == nil {
 		doc.DownloadTarget = CloudDownloadConfig{AccountID: job.Config.AccountID, TargetCID: job.Config.TargetCID, TargetPath: job.Config.TargetPath}
 	}
