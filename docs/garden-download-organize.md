@@ -77,7 +77,7 @@
 
 详情资料同时具有国家代码 `JP` 和动画类型 `16` 时，资源的“115 整理”弹窗显示“查找字幕”。蜜柑、Garden、观影、蜗牛共用一个字幕选择弹窗。选择作品版本后，复用手动字幕匹配器按原始文件集号唯一对应视频；特典、多个候选和不明确编号需要手动指定。语言可以修正，最终命名随视频目标主名生成，如 `作品.S01E01.zh-CN.ass`。取消视频选择时不上传对应字幕，改目标季集时同步更新字幕名称。
 
-`internal/utils/subtitle` 只负责格式及命名规则，手动字幕导入同样复用。GitHub 目录与网络访问单独放在 `internal/client/subshare`：索引保存到 `DATA_DIR/subtitle-library/index.xml`，缓存 7 天；版本文件清单内存缓存 24 小时，至多 64 项。只有打开字幕选择时搜索、选择版本时查目录，正文在视频整理完成后按固定 Git 提交下载，并核对长度和 Git blob SHA。字幕正文不写入本地缓存或任务记录。每次最多 100 个、单文件 16 MiB、合计 64 MiB；支持 ASS、SSA、SRT、VTT、IDX、SUB，字体和压缩包不导入。IDX 必须携带同版本的配套 SUB，目标存在不完整旧字幕对时暂停核对，避免混配。
+`internal/utils/subtitle` 只负责格式及命名规则，手动字幕导入同样复用。GitHub 目录与网络访问单独放在 `internal/client/subshare`：作品索引、仓库提交号和已查询版本的文件清单首次成功获取后永久保存到 `DATA_DIR/subtitle-library/`（分别为 `index.xml`、`revision`、`<版本ID>.json`），重启后继续复用，不自动检查更新。文件清单内存最多保留 64 项，淘汰后从磁盘恢复；未查询过的版本首次选择时才请求 GitHub，获取失败或不完整的清单不缓存，损坏的缓存重新获取。正文在视频整理完成后仍从 GitHub 按固定 Git 提交下载，并核对长度和 Git blob SHA。字幕正文不写入本地缓存或任务记录。每次最多 100 个、单文件 16 MiB、合计 64 MiB；支持 ASS、SSA、SRT、VTT、IDX、SUB，字体和压缩包不导入。IDX 必须携带同版本的配套 SUB，目标存在不完整旧字幕对时暂停核对，避免混配。
 
 字幕设置可选配置 GitHub Token，提高公共仓库 API 的请求额度；不配置或清除后继续匿名访问。管理员通过 `GET/POST/DELETE /api/admin/subtitles/github/config` 读取状态、验证并保存或清除配置。Token 使用现有密钥存储加密到 `DATA_DIR/subtitle-github.enc`，接口只返回是否已配置，不回显凭据；验证失败保留旧配置。只有字幕库 GitHub API 请求携带 Token，原始字幕下载和其他服务不携带，禁用重定向转发。保存后立即生效并在重启后恢复，不新增字幕正文缓存或离线数据包。
 

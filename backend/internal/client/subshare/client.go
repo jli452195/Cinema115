@@ -13,9 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -48,25 +46,19 @@ type File struct {
 	SHA      string `json:"sha"`
 	Size     int64  `json:"size"`
 }
-type listing struct {
-	Files []File
-	At    time.Time
-}
 type Client struct {
 	HTTP               *http.Client
 	API, Raw, CacheDir string
 	mu                 sync.Mutex
 	versions           []Version
-	at                 time.Time
-	lists              map[string]listing
+	lists              map[string][]File
 	flight             singleflight.Group
 	revision           string
-	revisionAt         time.Time
 	token              string
 }
 
 func New(cacheDir string) *Client {
-	return &Client{HTTP: &http.Client{Transport: netproxy.Transport("github"), Timeout: 25 * time.Second}, API: "https://api.github.com/repos/foxofice/sub_share", Raw: "https://raw.githubusercontent.com/foxofice/sub_share/master", CacheDir: cacheDir, lists: make(map[string]listing)}
+	return &Client{HTTP: &http.Client{Transport: netproxy.Transport("github"), Timeout: 25 * time.Second}, API: "https://api.github.com/repos/foxofice/sub_share", Raw: "https://raw.githubusercontent.com/foxofice/sub_share/master", CacheDir: cacheDir, lists: make(map[string][]File)}
 }
 
 func (c *Client) get(ctx context.Context, target string, limit int64, raw bool) ([]byte, error) {
@@ -183,57 +175,35 @@ func parseIndex(body []byte) ([]Version, error) {
 }
 func (c *Client) index(ctx context.Context) ([]Version, error) {
 	c.mu.Lock()
-	cached, at := c.versions, c.at
+	cached := c.versions
 	c.mu.Unlock()
-	if len(cached) > 0 && time.Since(at) < 7*24*time.Hour {
+	if len(cached) > 0 {
 		return cached, nil
 	}
 	result := c.flight.DoChan("index", func() (any, error) {
-		filename := filepath.Join(c.CacheDir, "index.xml")
-		var body []byte
-		if c.CacheDir != "" {
-			if info, err := os.Stat(filename); err == nil && info.Size() <= 8<<20 && time.Since(info.ModTime()) < 7*24*time.Hour {
-				body, _ = os.ReadFile(filename)
-			}
+		c.mu.Lock()
+		cached := c.versions
+		c.mu.Unlock()
+		if len(cached) > 0 {
+			return cached, nil
 		}
+		body := c.readCache("index.xml", 8<<20)
 		rows, err := parseIndex(body)
 		if err != nil {
 			body, err = c.get(ctx, c.Raw+"/Subtitles%20DataBase/Files/db.xml", 8<<20, false)
 			if err != nil {
-				if len(cached) > 0 {
-					return cached, nil
-				}
 				return nil, err
 			}
 			rows, err = parseIndex(body)
 			if err != nil {
 				return nil, err
 			}
-			if c.CacheDir != "" {
-				if err = os.MkdirAll(c.CacheDir, 0700); err != nil {
-					return nil, err
-				}
-				tmp, e := os.CreateTemp(c.CacheDir, "index-*.tmp")
-				if e != nil {
-					return nil, e
-				}
-				name := tmp.Name()
-				defer os.Remove(name)
-				_, e = tmp.Write(body)
-				closeErr := tmp.Close()
-				if e != nil {
-					return nil, e
-				}
-				if closeErr != nil {
-					return nil, closeErr
-				}
-				if e = os.Rename(name, filename); e != nil {
-					return nil, e
-				}
+			if err = c.writeCache("index.xml", body); err != nil {
+				return nil, err
 			}
 		}
 		c.mu.Lock()
-		c.versions, c.at = rows, time.Now()
+		c.versions = rows
 		c.mu.Unlock()
 		return rows, nil
 	})
@@ -297,10 +267,16 @@ func (c *Client) Files(ctx context.Context, id string) ([]File, error) {
 	c.mu.Lock()
 	cached, ok := c.lists[id]
 	c.mu.Unlock()
-	if ok && time.Since(cached.At) < 24*time.Hour {
-		return append([]File(nil), cached.Files...), nil
+	if ok {
+		return append([]File(nil), cached...), nil
 	}
 	ch := c.flight.DoChan("files:"+id, func() (any, error) {
+		c.mu.Lock()
+		cached, ok := c.lists[id]
+		c.mu.Unlock()
+		if ok {
+			return cached, nil
+		}
 		v, err := c.version(ctx, id)
 		if err != nil {
 			return nil, err
@@ -308,6 +284,11 @@ func (c *Client) Files(ctx context.Context, id string) ([]File, error) {
 		revision, err := c.currentRevision(ctx)
 		if err != nil {
 			return nil, err
+		}
+		var saved []File
+		if json.Unmarshal(c.readCache(v.ID+".json", 4<<20), &saved) == nil && validListing(saved, v.directory, revision) {
+			c.rememberFiles(id, saved)
+			return saved, nil
 		}
 		body, err := c.get(ctx, c.API+"/contents/"+encodePath(v.directory)+"?ref="+revision, 4<<20, false)
 		if err != nil {
@@ -378,15 +359,14 @@ func (c *Client) Files(ctx context.Context, id string) ([]File, error) {
 			return nil, fmt.Errorf("该版本没有支持的字幕文件（支持 ASS / SSA / SRT / VTT / IDX / SUB）")
 		}
 		sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
-		c.mu.Lock()
-		if len(c.lists) >= 64 {
-			for key := range c.lists {
-				delete(c.lists, key)
-				break
-			}
+		encoded, err := json.Marshal(files)
+		if err != nil {
+			return nil, fmt.Errorf("编码字幕文件清单: %w", err)
 		}
-		c.lists[id] = listing{files, time.Now()}
-		c.mu.Unlock()
+		if err = c.writeCache(v.ID+".json", encoded); err != nil {
+			return nil, err
+		}
+		c.rememberFiles(id, files)
 		return files, nil
 	})
 	select {
@@ -423,12 +403,24 @@ func validSHA(value string) bool {
 }
 func (c *Client) currentRevision(ctx context.Context) (string, error) {
 	c.mu.Lock()
-	revision, at := c.revision, c.revisionAt
+	revision := c.revision
 	c.mu.Unlock()
-	if revision != "" && time.Since(at) < 24*time.Hour {
+	if revision != "" {
 		return revision, nil
 	}
 	ch := c.flight.DoChan("revision", func() (any, error) {
+		c.mu.Lock()
+		revision := c.revision
+		c.mu.Unlock()
+		if revision != "" {
+			return revision, nil
+		}
+		if revision = string(c.readCache("revision", 40)); validSHA(revision) {
+			c.mu.Lock()
+			c.revision = revision
+			c.mu.Unlock()
+			return revision, nil
+		}
 		body, err := c.get(ctx, c.API+"/git/ref/heads/master", 16<<10, false)
 		if err != nil {
 			return nil, err
@@ -441,8 +433,11 @@ func (c *Client) currentRevision(ctx context.Context) (string, error) {
 		if json.Unmarshal(body, &ref) != nil || !validSHA(ref.Object.SHA) {
 			return nil, fmt.Errorf("字幕仓库版本无效")
 		}
+		if err = c.writeCache("revision", []byte(ref.Object.SHA)); err != nil {
+			return nil, err
+		}
 		c.mu.Lock()
-		c.revision, c.revisionAt = ref.Object.SHA, time.Now()
+		c.revision = ref.Object.SHA
 		c.mu.Unlock()
 		return ref.Object.SHA, nil
 	})

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,8 +27,13 @@ func TestGitHubTokenErrors(t *testing.T) {
 				w.WriteHeader(tc.status)
 			}))
 			defer upstream.Close()
-			client := New("")
+			client := New(t.TempDir())
 			client.API = upstream.URL + "/api"
+			// 已缓存仓库版本也必须联网验证候选 Token。
+			client.revision = strings.Repeat("a", 40)
+			if err := client.writeCache("revision", []byte(client.revision)); err != nil {
+				t.Fatal(err)
+			}
 			if err := client.ValidateToken(context.Background(), "github_pat_test_only_1234567890"); !errors.Is(err, tc.want) {
 				t.Fatalf("错误类型不正确：%v", err)
 			}
