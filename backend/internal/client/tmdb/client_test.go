@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBrowseQueriesCacheAndNormalization(t *testing.T) {
@@ -80,5 +81,31 @@ func TestTMDBErrorsDoNotExposeKey(t *testing.T) {
 	cancel()
 	if _, err := c.Genres(ctx, "movie"); !errors.Is(err, context.Canceled) {
 		t.Fatal("取消未传递")
+	}
+}
+
+func TestTMDBClientTimeoutPreservesCategoryWithoutKey(t *testing.T) {
+	for _, headersSent := range []bool{false, true} {
+		t.Run(map[bool]string{false: "等待响应头", true: "读取响应体"}[headersSent], func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if headersSent {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush()
+				}
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			c := New("timeout-private-key")
+			c.base = server.URL
+			c.http.Timeout = 50 * time.Millisecond
+			_, err := c.Genres(context.Background(), "tv")
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("客户端超时丢失错误类别: %v", err)
+			}
+			if strings.Contains(err.Error(), "timeout-private-key") || strings.Contains(err.Error(), server.URL) {
+				t.Fatal("超时错误泄漏请求地址或密钥")
+			}
+		})
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -101,10 +102,7 @@ func (c *Client) getLimited(ctx context.Context, endpoint string, query url.Valu
 	req.Header.Set("Accept", "application/json")
 	response, err := c.http.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		return fmt.Errorf("无法连接 TMDB，请检查后端网络")
+		return requestError(ctx, err, "无法连接 TMDB，请检查后端网络")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
@@ -121,7 +119,7 @@ func (c *Client) getLimited(ctx context.Context, endpoint string, query url.Valu
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
 	if err != nil {
-		return fmt.Errorf("读取 TMDB 响应失败")
+		return requestError(ctx, err, "读取 TMDB 响应失败")
 	}
 	if int64(len(data)) > limit {
 		return fmt.Errorf("TMDB 响应超过大小限制")
@@ -151,6 +149,18 @@ func (c *Client) getLimited(ctx context.Context, endpoint string, query url.Valu
 	c.cache[cacheKey] = cachedResponse{data: data, expires: time.Now().Add(5 * time.Minute)}
 	c.mu.Unlock()
 	return nil
+}
+
+// 只保留超时、取消类别，避免上游错误中的请求地址泄漏密钥。
+func requestError(ctx context.Context, err error, message string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	var timeout net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+		return fmt.Errorf("TMDB 请求超时: %w", context.DeadlineExceeded)
+	}
+	return errors.New(message)
 }
 
 func (c *Client) Genres(ctx context.Context, kind string) ([]Genre, error) {

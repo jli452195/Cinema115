@@ -99,10 +99,20 @@ const resultSummary = computed(() => {
   return labels.filter(Boolean).join(' · ') || '全部条件 · 热门'
 })
 async function request(path: string, signal: AbortSignal) {
-  const response = await fetch(catalogAPI(`tmdb/${path}`), { signal, headers: { Authorization: `Bearer ${props.token}` } })
-  const data = await response.json().catch(() => null)
-  if (!response.ok || !data) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error ?? `查询失败（HTTP ${response.status}）`)
-  return data
+  // 总超时覆盖连接和响应体读取，导航取消仍由调用方单独识别。
+  const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(25000)])
+  try {
+    const response = await fetch(catalogAPI(`tmdb/${path}`), { signal: requestSignal, headers: { Authorization: `Bearer ${props.token}` } })
+    const data = await response.json().catch(reason => {
+      if (requestSignal.aborted) throw reason
+      return null
+    })
+    if (!response.ok || !data) throw new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error ?? `查询失败（HTTP ${response.status}）`)
+    return data
+  } catch (reason) {
+    if (!signal.aborted && requestSignal.aborted && requestSignal.reason?.name === 'TimeoutError') throw new Error('TMDB 查询超时，请重新加载')
+    throw reason
+  }
 }
 async function refreshGenres(targetKind: DashboardKind, force = false) {
   if (!force && cachedGenres(targetKind).fresh) return

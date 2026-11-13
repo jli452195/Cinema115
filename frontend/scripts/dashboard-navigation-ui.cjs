@@ -10,6 +10,34 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block', reducedMotion: 'reduce' })
     await context.addInitScript(() => localStorage.setItem('admin_token', 'mock-dashboard-navigation'))
+    await context.addInitScript(() => {
+      const timeout = AbortSignal.timeout.bind(AbortSignal), fetch = window.fetch.bind(window)
+      window.__dashboardNetworkFixture = { mode: 'normal', timeoutMs: 25000, started: 0, aborted: 0 }
+      AbortSignal.timeout = milliseconds => timeout(milliseconds === 25000 ? window.__dashboardNetworkFixture.timeoutMs : milliseconds)
+      window.fetch = (input, init) => {
+        const fixture = window.__dashboardNetworkFixture
+        const address = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (!new URL(address, location.href).pathname.endsWith('/tmdb/browse') || fixture.mode === 'normal') return fetch(input, init)
+        const signal = init?.signal
+        fixture.started++
+        // 模拟请求无响应，以及收到响应头后正文一直未结束，两者均需总超时收尾。
+        if (fixture.mode === 'body') {
+          const body = new ReadableStream({
+            start(controller) {
+              const abort = () => { fixture.aborted++; controller.error(signal.reason) }
+              if (signal.aborted) abort()
+              else signal.addEventListener('abort', abort, { once: true })
+            },
+          })
+          return Promise.resolve(new Response(body, { headers: { 'Content-Type': 'application/json' } }))
+        }
+        return new Promise((_resolve, reject) => {
+          const abort = () => { fixture.aborted++; reject(signal.reason) }
+          if (signal.aborted) abort()
+          else signal.addEventListener('abort', abort, { once: true })
+        })
+      }
+    })
     await context.route('**/api/**', async route => {
       const request = route.request(), url = new URL(request.url()), endpoint = url.pathname
       requests.push({ endpoint, search: url.search, method: request.method() })
@@ -123,6 +151,48 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await push('/media/organize/history'); await home().click(); await loaded()
     assert.equal(currentPath(), explicitPath)
     passed.push('显式列表地址按传入参数打开，并成为下一次首页的恢复目标')
+
+    const networkFixture = (mode, timeoutMs = 200) => page.evaluate(({ mode, timeoutMs }) => {
+      Object.assign(window.__dashboardNetworkFixture, { mode, timeoutMs, started: 0, aborted: 0 })
+    }, { mode, timeoutMs })
+    const timeoutMessage = page.getByRole('alert').getByText('TMDB 查询超时，请重新加载', { exact: true })
+    await page.goto(origin + '/tv?region=JP&year=2023')
+    await loaded()
+    await networkFixture('pending')
+    // 电影页面清空已展示的剧集结果，确保检查的是首次加载的骨架屏退出。
+    await push('/movie?region=JP&year=2023')
+    await timeoutMessage.waitFor()
+    assert.equal(await page.locator('.catalog-results').getAttribute('aria-busy'), 'false')
+    assert.equal(await page.getByLabel('正在加载影视', { exact: true }).count(), 0)
+    assert.equal(await page.evaluate(() => window.__dashboardNetworkFixture.aborted), 1)
+    await networkFixture('normal', 25000)
+    await page.getByRole('button', { name: '重新加载', exact: true }).click()
+    await loaded()
+    assert.equal(await page.getByRole('alert').count(), 0)
+    passed.push('无响应请求超时退出骨架屏，显示中文错误且重新加载成功')
+
+    const previousTitle = await page.locator('.catalog-media-grid h2').first().innerText()
+    await networkFixture('body')
+    await push('/movie?region=JP&year=2022')
+    await timeoutMessage.waitFor()
+    assert.equal(await page.locator('.catalog-results').getAttribute('aria-busy'), 'false')
+    assert.equal(await page.locator('.catalog-media-grid h2').first().innerText(), previousTitle)
+    assert.equal(await page.evaluate(() => window.__dashboardNetworkFixture.aborted), 1)
+    assert.ok((await page.getByRole('alert').innerText()).includes('当前保留上次结果'))
+    passed.push('响应头已返回但正文悬挂也会超时，并保留上次列表')
+
+    await networkFixture('pending', 2000)
+    await push('/movie?region=JP&year=2021')
+    await page.waitForFunction(() => window.__dashboardNetworkFixture.started === 1)
+    await page.evaluate(() => { window.__dashboardNetworkFixture.mode = 'normal' })
+    await push('/movie?region=JP&year=2020')
+    await loaded()
+    assert.equal(await page.evaluate(() => window.__dashboardNetworkFixture.aborted), 1)
+    await page.waitForTimeout(2100)
+    assert.equal(await page.getByRole('alert').count(), 0)
+    assert.equal(await page.locator('.catalog-results').getAttribute('aria-busy'), 'false')
+    passed.push('筛选切换取消旧请求，旧请求超时不会污染新结果')
+    await networkFixture('normal', 25000)
 
     await page.setViewportSize({ width: 390, height: 844 })
     const beforeDrawer = currentPath()
