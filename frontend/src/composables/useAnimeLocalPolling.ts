@@ -1,16 +1,14 @@
-import { onBeforeUnmount, onMounted } from 'vue'
+import { onBeforeUnmount, onMounted, watch } from 'vue'
 
-// Poll only our local API while visible. A single timeout avoids overlapping
-// reads, and the owner cancels its own in-flight read when hidden/unmounted.
-export function useAnimeLocalPolling(read: () => Promise<unknown>, stop: () => void, enabled = () => true) {
+// 仅在页面可见时轮询本地接口；请求结束后再计时，由调用方取消进行中的请求。
+export function useAnimeLocalPolling(read: () => Promise<unknown>, stop: () => void, enabled = () => true, interval = () => 30000) {
   let timer: ReturnType<typeof setTimeout> | undefined, disposed = false
   function cancel() { clearTimeout(timer); timer = undefined }
   function schedule() {
     cancel()
     if (!disposed && !document.hidden) timer = setTimeout(async () => {
-      if (enabled()) await read()
-      schedule()
-    }, 30000)
+      try { if (enabled()) await read() } finally { schedule() }
+    }, interval())
   }
   function visibility() {
     cancel()
@@ -18,6 +16,7 @@ export function useAnimeLocalPolling(read: () => Promise<unknown>, stop: () => v
     if (enabled()) void read().finally(schedule)
     else schedule()
   }
+  watch(interval, schedule)
   onMounted(() => { document.addEventListener('visibilitychange', visibility); schedule() })
   onBeforeUnmount(() => { disposed = true; cancel(); document.removeEventListener('visibilitychange', visibility) })
 }

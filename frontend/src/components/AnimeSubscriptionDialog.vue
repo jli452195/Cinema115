@@ -14,10 +14,12 @@ import AnimeDownloadJobs from './AnimeDownloadJobs.vue'
 import AnimeStorageSettingsDialog from './AnimeStorageSettingsDialog.vue'
 import { useAnimeSubscriptionEditor } from '../composables/useAnimeSubscriptionEditor'
 import { useAnimeSubscriptionActions } from '../composables/useAnimeSubscriptionActions'
+import { useAnimeLocalPolling } from '../composables/useAnimeLocalPolling'
+import { readSubscription } from '../composables/useAnimeSubscriptionBrowser'
 import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeOriginLabel, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import { sourceProgressDescription, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
-import type { AnimeSourceProgress as SourceProgress } from '../types/animeSubscription'
+import type { AnimeDownloadPage, AnimeSourceProgress as SourceProgress } from '../types/animeSubscription'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -109,6 +111,23 @@ function updateProgress(progress: Record<string, SourceProgress>) {
     if (progress[source.id]) source.progress = progress[source.id]
   }
 }
+let progressController: AbortController | undefined
+function stopProgress() { progressController?.abort(); progressController = undefined }
+function canRefreshProgress() { return !!local.value && tab.value !== 'jobs' && !locked.value && !actions.locked.value && !progressController }
+async function refreshProgress() {
+  if (document.hidden || !canRefreshProgress()) return
+  const subscription = local.value!, controller = new AbortController()
+  progressController = controller
+  try {
+    // 复用本地任务接口，只取一条记录；仅更新已保存来源的进度，保留编辑草稿。
+    const data = await readSubscription<AnimeDownloadPage>(`subscriptions/${encodeURIComponent(subscription.id)}/jobs?page=1&pageSize=1`, props.token, controller.signal)
+    if (!controller.signal.aborted && local.value === subscription && data.sourceProgress) updateProgress(data.sourceProgress)
+  } catch { /* 读取失败时保留上次进度，等待下一轮刷新。 */ }
+  finally { if (progressController === controller) progressController = undefined }
+}
+watch([local, tab, () => props.token], () => { stopProgress(); void refreshProgress() })
+useAnimeLocalPolling(refreshProgress, stopProgress, canRefreshProgress, () => 10000)
+onBeforeUnmount(stopProgress)
 </script>
 
 <template>
@@ -159,7 +178,7 @@ function updateProgress(progress: Record<string, SourceProgress>) {
           </AnimeNamingTarget>
 
           <AnimeSourceForm v-if="main" :source="main" :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(main)" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(main, $event)" @child-open="childOpen = $event">
-            <template #progress><AnimeSourceProgress v-if="local" :progress="sourceProgress[main.id]" :pending="dirty" /></template>
+            <template #progress><AnimeSourceProgress v-if="local" :progress="sourceProgress[main.id]" :pending="!main.id" /></template>
           </AnimeSourceForm>
           <section class="ac-storage"><IconFolder :size="18" aria-hidden="true" /><div><p><span>下载</span>{{ settings?.settings.downloadPath || '尚未配置' }}</p><p><span>整理</span>{{ settings?.settings.organizePath || '尚未配置' }}</p><small v-if="settingsError">{{ settingsError }}</small></div><button type="button" class="ae-button" aria-label="动漫存储设置" :disabled="locked || childOpen || !!previewBusy" @click="settingsOpen = true"><IconSettings :size="16" />设置</button></section>
         </div>
@@ -167,7 +186,7 @@ function updateProgress(progress: Record<string, SourceProgress>) {
           <div class="ac-backup-heading"><p class="ae-note">每个来源使用自己的编号映射，独立检查和下载。</p><button type="button" class="ae-button" :disabled="locked || !!previewBusy || sources.length >= 5" @click="addBackup"><IconPlus :size="16" />添加备用</button></div>
           <p v-if="!backups.length" class="ac-empty">暂无备用 RSS，可添加其他字幕组的版本。</p>
           <section v-for="source in backups" :key="source.ref" class="ac-backup">
-            <div class="ac-backup-row" @click="!childOpen && chooseBackup(source.ref)"><button type="button" class="ac-backup-toggle" :aria-expanded="activeRef === source.ref" :disabled="childOpen"><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }}<template v-if="animeOriginLabel(source)"> · {{ animeOriginLabel(source) }}</template><template v-if="source.itemId"> · 条目 {{ source.itemId }}</template> · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></button><AnimeSourceProgress v-if="local" :progress="sourceProgress[source.id]" :pending="dirty" /><AnimeProviderBrand v-if="source.groupId" :provider="source.provider" compact class="ae-source-brand" /><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" aria-hidden="true" /></div>
+            <div class="ac-backup-row" @click="!childOpen && chooseBackup(source.ref)"><button type="button" class="ac-backup-toggle" :aria-expanded="activeRef === source.ref" :disabled="childOpen"><strong>{{ source.groupName || '选择备用来源' }}</strong><small>{{ animeProviderName(source.provider) }}<template v-if="animeOriginLabel(source)"> · {{ animeOriginLabel(source) }}</template><template v-if="source.itemId"> · 条目 {{ source.itemId }}</template> · {{ source.runWhenEnabled ? '启用' : '停用' }}</small></button><AnimeSourceProgress v-if="local" :progress="sourceProgress[source.id]" :pending="!source.id" /><AnimeProviderBrand v-if="source.groupId" :provider="source.provider" compact class="ae-source-brand" /><span v-if="editor.naming.target.value" class="ac-map">偏移 {{ source.mappingOffset || '自定义' }}</span><IconChevronDown :size="16" :class="{ 'rotate-180': activeRef === source.ref }" aria-hidden="true" /></div>
             <AnimeSourceForm v-if="activeRef === source.ref" :source="source" embedded :naming-target="editor.naming.target.value" :chapter-title="subject.title" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @remove="editor.removeSource(source)" @open="editor.openSource" @sample="value => editor.readSample(value, true)" @cancel="editor.cancelSourceEdit" @apply="editor.applySource(source, $event)" @child-open="childOpen = $event" />
           </section>
         </div>

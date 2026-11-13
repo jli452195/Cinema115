@@ -15,6 +15,11 @@ const emit = defineEmits<{ changed: []; progress: [value: Record<string, AnimeSo
 const stateKey = `jobs:${props.id}`, saved = subscriptionState(stateKey)
 const page = ref(saved.page || 1), expanded = ref(saved.expanded), result = ref<AnimeDownloadPage>(), loading = ref(false), error = ref('')
 const pages = computed(() => Math.max(1, Math.ceil((result.value?.total || 0) / 20)))
+const hasActiveJobs = computed(() => result.value?.items.some(job => {
+  if (job.workflowState !== 'active' || job.blockCode || job.fileState === 'needs_review') return false
+  if (job.fileState === 'verified') return job.organizationPlanned && ['pending', 'working'].includes(job.organization?.state || 'pending')
+  return ['queued', 'submitting', 'accepted', 'downloading', 'completed'].includes(job.downloadState)
+}))
 let controller: AbortController | undefined, disposed = false, refreshing = false
 function save() { rememberSubscriptionState(stateKey, { top: 0, page: page.value, expanded: expanded.value }) }
 function lastResultAt(job: AnimeDownloadJob) { return Math.max(job.observedAt || 0, job.organization?.updatedAt || 0) }
@@ -36,9 +41,9 @@ async function load(force = false, silent = false, requestedPage = page.value) {
   finally { if (!disposed && controller === active) { loading.value = false; refreshing = false } }
 }
 function changed() { void load(true, true); emit('changed') }
-void load()
+void load(true)
 watch(() => props.version, () => void load(true, true))
-useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !props.locked)
+useAnimeLocalPolling(() => load(true, true), () => controller?.abort(), () => !refreshing && !props.locked, () => hasActiveJobs.value ? 5000 : 30000)
 onBeforeUnmount(() => { save(); disposed = true; controller?.abort() })
 </script>
 
