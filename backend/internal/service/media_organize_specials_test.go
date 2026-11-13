@@ -54,8 +54,13 @@ func TestMediaOrganizeDeclaredSpecialNumbering(t *testing.T) {
 			file := OrganizeFile{ShareFile: p115.ShareFile{Name: path.Base(tc.name)}, SourcePath: tc.name, MediaType: "video", Season: 1}
 			strict := file
 			organizeFileNumbering(&strict)
-			if strict.Episode != 0 {
-				t.Fatal("磁力整理的特殊内容确认规则发生变化", strict)
+			// 磁力入口已放行特别篇目录中的明确季零坐标，其余特殊描述仍需确认。
+			wantMagnetSeason, wantMagnetEpisode := 1, 0
+			if tc.name == "Specials/Show.S00E01.mkv" {
+				wantMagnetSeason, wantMagnetEpisode = 0, 1
+			}
+			if strict.Season != wantMagnetSeason || strict.Episode != wantMagnetEpisode || strict.EndEpisode != 0 {
+				t.Fatalf("磁力整理 got S%dE%d-%d; want S%dE%d-0", strict.Season, strict.Episode, strict.EndEpisode, wantMagnetSeason, wantMagnetEpisode)
 			}
 			mediaOrganizeFileNumbering(&file)
 			if file.filenameFacts == nil {
