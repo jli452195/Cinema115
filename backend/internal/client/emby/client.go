@@ -31,10 +31,11 @@ type Server struct {
 	Version string `json:"Version"`
 }
 type Library struct {
-	ID   string `json:"ItemId"`
-	GUID string `json:"Guid"`
-	Name string `json:"Name"`
-	Type string `json:"CollectionType"`
+	ID        string   `json:"ItemId"`
+	GUID      string   `json:"Guid"`
+	Name      string   `json:"Name"`
+	Type      string   `json:"CollectionType"`
+	Locations []string `json:"Locations,omitempty"`
 }
 type Stream struct {
 	Type                            string

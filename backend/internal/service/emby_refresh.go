@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -174,13 +175,10 @@ func (s *EmbyService) runMediaRefresh(ctx context.Context, window time.Duration)
 			for value := range set {
 				paths = append(paths, value)
 			}
-			for len(paths) > 0 {
-				count := min(len(paths), 200)
-				s.sendMediaRefresh(ctx, target, paths[:count], window)
-				paths = paths[count:]
-				if ctx.Err() != nil {
-					return
-				}
+			// 整个窗口一起匹配和去重，避免分块后对同一媒体库重复刷新。
+			s.sendMediaRefresh(ctx, target, paths, window)
+			if ctx.Err() != nil {
+				return
 			}
 		}
 	}
@@ -199,34 +197,127 @@ func embyRefreshWait(ctx context.Context, duration time.Duration) bool {
 
 func (s *EmbyService) sendMediaRefresh(ctx context.Context, target embyRefreshTarget, paths []string, retryDelay time.Duration) {
 	c := EmbyConfig{URL: target.URL, APIKey: target.APIKey}
-	logCtx := s.logContext(ctx, c, s.newLogTask(), "整理后通知")
+	logCtx := s.logContext(ctx, c, s.newLogTask(), "整理后刷新")
 	client := emby.New(c.URL, c.APIKey)
+	var libraries []emby.Library
+	// 读取当前服务器全部媒体库，不依赖本地索引或同步页的勾选范围。
+	err := s.retryMediaRefresh(ctx, target, retryDelay, func(requestCtx context.Context) error {
+		var err error
+		libraries, err = client.Libraries(requestCtx)
+		return err
+	})
+	if err != nil {
+		if s.mediaRefreshEnabled(ctx, target) {
+			logEmby(logCtx, "WARNING", "读取 Emby 媒体库失败，本批未提交刷新，整理结果不受影响："+embyLogError(err))
+		}
+		return
+	}
+	targets, unmatched := embyRefreshLibraryTargets(paths, libraries)
+	if len(unmatched) > 0 {
+		sort.Strings(unmatched)
+		logEmby(logCtx, "WARNING", fmt.Sprintf("%d 条文件路径未匹配到 Emby 媒体库，已跳过刷新；请检查路径替换及 Emby 媒体目录，例如：%q", len(unmatched), unmatched[0]))
+	}
+	ids := make([]string, 0, len(targets))
+	for id := range targets {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		library := targets[id]
+		err := s.retryMediaRefresh(ctx, target, retryDelay, func(requestCtx context.Context) error {
+			return client.RefreshLibrary(requestCtx, id)
+		})
+		if !s.mediaRefreshEnabled(ctx, target) {
+			return
+		}
+		if err != nil {
+			logEmby(logCtx, "WARNING", fmt.Sprintf("媒体库 %q（ID %s，%d 条文件路径）刷新请求失败，整理结果不受影响：%s", library.Name, id, library.Count, embyLogError(err)))
+			continue
+		}
+		logEmby(logCtx, "INFO", fmt.Sprintf("已向 Emby 提交媒体库 %q（ID %s）的刷新请求，合并 %d 条文件路径；入库仍需等待 Emby 扫描和刮削", library.Name, id, library.Count))
+	}
+}
+
+type embyRefreshLibrary struct {
+	Name  string
+	Count int
+}
+
+// 按目录边界选择最具体的媒体目录；多个库共用同一路径时分别刷新。
+func embyRefreshLibraryTargets(paths []string, libraries []emby.Library) (map[string]embyRefreshLibrary, []string) {
+	type directory struct{ path, id, name string }
+	directories := make([]directory, 0, len(libraries))
+	for _, library := range libraries {
+		if strings.TrimSpace(library.ID) == "" {
+			continue
+		}
+		for _, raw := range library.Locations {
+			value, err := embyRefreshPath(raw)
+			if err == nil {
+				directories = append(directories, directory{strings.TrimRight(value, "/"), library.ID, library.Name})
+			}
+		}
+	}
+	targets := make(map[string]embyRefreshLibrary)
+	unmatched := make([]string, 0)
+	matched := make(map[string]string, len(libraries))
+	for _, value := range paths {
+		longest := -1
+		clear(matched)
+		for _, dir := range directories {
+			if value != dir.path && !strings.HasPrefix(value, dir.path+"/") {
+				continue
+			}
+			if len(dir.path) > longest {
+				clear(matched)
+				longest = len(dir.path)
+			}
+			if len(dir.path) == longest {
+				matched[dir.id] = dir.name
+			}
+		}
+		if len(matched) == 0 {
+			unmatched = append(unmatched, value)
+		}
+		for id, name := range matched {
+			library := targets[id]
+			library.Name = name
+			library.Count++
+			targets[id] = library
+		}
+	}
+	return targets, unmatched
+}
+
+func (s *EmbyService) mediaRefreshEnabled(ctx context.Context, target embyRefreshTarget) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return ctx.Err() == nil && s.config.RefreshAfterOrganize && s.config.URL == target.URL && s.config.APIKey == target.APIKey
+}
+
+func (s *EmbyService) retryMediaRefresh(ctx context.Context, target embyRefreshTarget, retryDelay time.Duration, request func(context.Context) error) error {
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		// 关闭开关或更换连接后丢弃待发通知，绝不把旧路径改发到新目标。
-		s.mu.RLock()
-		enabled := s.config.RefreshAfterOrganize && s.config.URL == target.URL && s.config.APIKey == target.APIKey
-		s.mu.RUnlock()
-		if !enabled || ctx.Err() != nil {
-			return
+		if !s.mediaRefreshEnabled(ctx, target) {
+			return context.Canceled
 		}
 		requestCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		err = client.MediaUpdated(requestCtx, paths)
+		err = request(requestCtx)
 		cancel()
 		if err == nil {
-			logEmby(logCtx, "INFO", fmt.Sprintf("已向 Emby 提交 %d 条文件路径通知", len(paths)))
-			return
+			return nil
 		}
 		var httpErr *emby.HTTPError
 		if ctx.Err() != nil {
-			return
+			return ctx.Err()
 		}
 		if attempt == 1 || errors.As(err, &httpErr) && httpErr.StatusCode < 500 && httpErr.StatusCode != 429 {
 			break
 		}
 		if !embyRefreshWait(ctx, retryDelay) {
-			return
+			return ctx.Err()
 		}
 	}
-	logEmby(logCtx, "WARNING", fmt.Sprintf("%d 条 Emby 路径通知失败，整理结果不受影响：%s", len(paths), embyLogError(err)))
+	return err
 }

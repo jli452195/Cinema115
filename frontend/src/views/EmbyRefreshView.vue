@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
-import { IconDeviceFloppy, IconServer, IconSettings } from '@tabler/icons-vue'
+import { IconDeviceFloppy, IconInfoCircle, IconServer, IconSettings } from '@tabler/icons-vue'
 import { embyRequest, type EmbyConfig } from '../types/emby'
 
 const props = defineProps<{ token: string }>()
@@ -40,7 +40,7 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <ManagementLayout class="refresh-page" title="Emby 刷新" description="整理完成后自动通知 Emby，管理文件路径的对应关系。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
+  <ManagementLayout class="refresh-page" title="Emby 刷新" description="整理成功后按文件路径，自动刷新对应的 Emby 媒体库。" :parent="{ label: 'Emby', to: '/emby' }" @logout="$emit('logout')">
     <template #actions>
       <button type="button" class="refresh-button" :disabled="loading || saving || !dirty" @click="reset">撤销修改</button>
       <button type="submit" form="emby-refresh-form" class="refresh-button refresh-primary" :disabled="loading || saving || !dirty || !config?.configured"><IconDeviceFloppy :size="16" aria-hidden="true" />{{ saving ? '正在保存' : '保存设置' }}</button>
@@ -56,13 +56,23 @@ onBeforeUnmount(() => lifecycle.abort())
       </div>
       <fieldset :disabled="saving || !config.configured" class="refresh-fields">
         <legend class="sr-only">Emby 刷新设置</legend>
-        <SettingSwitch v-model="enabled" label="整理后通知 Emby" description="视频整理成功后自动合并通知，保存后生效。通知失败不影响整理结果。" />
+        <SettingSwitch v-model="enabled" label="整理后自动刷新 Emby" description="视频整理成功后合并等待 5 秒，同一媒体库只提交一次刷新。保存后生效。" />
         <div class="refresh-mapping">
           <label for="refresh-mappings" class="refresh-field-title">路径替换</label><span class="refresh-help ml-2 font-normal">可选</span>
           <textarea id="refresh-mappings" v-model="mappings" :disabled="!enabled" rows="3" maxlength="16384" spellcheck="false" class="refresh-path-input" placeholder="/已整理 => /媒体库" aria-describedby="mapping-help" />
-          <p id="mapping-help" class="refresh-help mt-2">每行一条“整理路径 =&gt; Emby 路径”，按顺序匹配目录前缀。两端路径一致可留空。</p>
+          <div id="mapping-help" class="refresh-help mt-2 space-y-1">
+            <p>每行一条“Cinema115 中的路径 =&gt; Emby 中的路径”。左边填整理目标目录，右边填 Emby 中同一目录的路径。</p>
+            <p>Docker 部署时，填写各自容器内的路径；直接安装时，填写各自程序能访问的路径。两端一致可留空。</p>
+          </div>
         </div>
       </fieldset>
+      <aside class="refresh-callout" aria-label="刷新说明">
+        <IconInfoCircle :size="18" class="refresh-callout-icon" aria-hidden="true" />
+        <div>
+          <p>自动匹配 Emby 全部媒体库中的对应目录，未勾选同步的库也可刷新。每次将扫描命中的整个媒体库。</p>
+          <p class="mt-2">请求提交后，仍需等待 Emby 扫描和刮削。路径未匹配或请求失败不影响整理结果，可在<RouterLink to="/logs?module=Emby&level=ALL" class="refresh-link refresh-inline-link">Emby 日志</RouterLink>查看原因。</p>
+        </div>
+      </aside>
       <p role="status" class="refresh-help refresh-feedback">{{ saving ? '正在保存…' : dirty ? '有未保存的修改，保存后生效' : notice || '当前配置已保存' }}</p>
     </form>
   </ManagementLayout>
@@ -78,6 +88,9 @@ onBeforeUnmount(() => lifecycle.abort())
 .refresh-path-input::placeholder { color: rgb(var(--content-secondary)); opacity: 1; }
 .refresh-path-input:disabled { cursor: not-allowed; opacity: .5; }
 .refresh-help { color: rgb(var(--content-secondary)); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.refresh-callout { display: flex; align-items: flex-start; gap: 10px; margin-top: 24px; padding: 12px 14px; border: 1px solid rgb(var(--line-default)); border-radius: 8px; background: rgb(var(--surface-page)); color: rgb(var(--content-secondary)); font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.refresh-callout-icon { flex-shrink: 0; margin-top: 2px; color: rgb(var(--action-link)); }
+.refresh-link.refresh-inline-link { display: inline; min-height: 0; margin: 0 4px; font-size: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .refresh-feedback { min-height: 22px; margin-top: 24px; }
 .refresh-link { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; min-height: 40px; color: rgb(var(--action-link)); font-size: 13px; }
 .refresh-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); font-size: 14px; font-weight: 500; }

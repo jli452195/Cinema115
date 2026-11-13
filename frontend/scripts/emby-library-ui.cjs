@@ -191,7 +191,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/emby')
     await page.locator('a[href="/emby/refresh"]').first().click()
     const refreshSave = page.getByRole('button', { name: '保存设置', exact: true })
-    const notify = page.getByRole('switch', { name: '整理后通知 Emby', exact: true })
+    const notify = page.getByRole('switch', { name: '整理后自动刷新 Emby', exact: true })
     const mappingInput = page.getByLabel('路径替换', { exact: true })
     await notify.waitFor()
     assert.equal(await mappingInput.isDisabled(), true)
