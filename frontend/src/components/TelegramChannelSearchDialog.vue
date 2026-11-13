@@ -63,7 +63,10 @@ async function search(more = false, refresh = false) {
 function linkID(item: TelegramChannelResource, link: TelegramChannelLink) { return `${item.id}/${link.url}` }
 function shareResource(item: TelegramChannelResource, link: TelegramChannelLink): ShareSTRMResource {
   const id = linkID(item, link)
-  return { id, identity: `tg-channel/${id}`, load: async () => [{ url: link.url }] }
+  const shares = item.links.filter(entry => entry.type === '115')
+  const size = link.metadata?.size || item.metadata?.size
+  const description = ['TG · ' + item.channel.title, shares.length > 1 ? '分享 ' + (shares.findIndex(entry => entry.url === link.url) + 1) : '', item.title || props.title, size && !item.title.includes(size) ? size : ''].filter(Boolean).join(' · ')
+  return { id, identity: `tg-channel/${id}`, description, load: async () => [{ url: link.url }] }
 }
 async function download(item: TelegramChannelResource, link: TelegramChannelLink) {
   const id = linkID(item, link)

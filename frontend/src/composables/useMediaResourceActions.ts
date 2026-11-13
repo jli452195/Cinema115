@@ -31,13 +31,16 @@ export function useMediaResourceActions(options: MediaResourceActionOptions, sig
   function shareResource(item: ResourceSearchItem, link: ResourceLink): ShareSTRMResource {
     const normalized = normalize115Share(link.url)
     const password = link.password?.trim() || ''
+    const shares = item.links.filter(canShareSTRM)
+    const title = link.workTitle?.trim() || item.title
     return {
-      id: `${item.id}\u0000${normalized}\u0000${password}`,
+      id: shareResourceID(item, link),
       identity: `${options.source}/${options.kind}/${options.tmdbId}/${item.id}/${normalized}/${password}`,
+      description: [options.source === 'woniu' ? '蜗牛' : '观影', shares.length > 1 ? '分享 ' + (shares.findIndex(entry => entry.url === link.url && entry.password === link.password) + 1) : '', title, link.size && !title.includes(link.size) ? link.size : ''].filter(Boolean).join(' · '),
       load: async () => [{ url: link.url, password }],
     }
   }
-  function shareResourceID(item: ResourceSearchItem, link: ResourceLink) { return shareResource(item, link).id }
+  function shareResourceID(item: ResourceSearchItem, link: ResourceLink) { return `${item.id}\u0000${normalize115Share(link.url)}\u0000${link.password?.trim() || ''}` }
   function canShareSTRM(link: ResourceLink) { return link.type === '115' && normalize115Share(link.url) !== '' }
   function restoreShareRuns(items: ResourceSearchItem[]) { void shareRuns.restore(items.flatMap(item => item.links.filter(canShareSTRM).map(link => shareResource(item, link)))) }
   function shareSTRM(item: ResourceSearchItem, link: ResourceLink) { void shareRuns.submit(shareResource(item, link)) }

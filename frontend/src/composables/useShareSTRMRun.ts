@@ -1,5 +1,4 @@
 import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useToast } from './useToast'
 import { normalize115Share } from '../utils/shareLink'
 import { cancelShareRun, newShareRunID, savedSTRMSettings, ShareRunError, submitShareRun, waitForShareRun, type ShareRun } from '../utils/shareGeneration'
@@ -12,16 +11,38 @@ export interface ShareSTRMLink {
 export interface ShareSTRMResource {
   id: string
   identity: string
+  description: string
   load: () => Promise<ShareSTRMLink[]>
 }
 
 export interface ShareSTRMStatus {
   message: string
   success: boolean
+  count?: number
 }
 
 const runStorageKey = 'cinema115.share-strm-runs.v2'
 type SavedRun = { key: string; id: string; time: number; taskIDs?: string[] }
+type TrackedRun = { promise: Promise<ShareRun>; latest?: ShareRun; listeners: Set<(run: ShareRun) => void> }
+const trackedRuns = new Map<string, TrackedRun>()
+
+function trackRun(token: string, id: string, progress: (run: ShareRun) => void) {
+  const key = JSON.stringify([token, id])
+  let tracked = trackedRuns.get(key)
+  if (!tracked) {
+    const entry: TrackedRun = { promise: undefined!, listeners: new Set() }
+    // 已提交任务的轮询独立于搜索弹窗；同一批次只保留一条请求链。
+    entry.promise = waitForShareRun(token, id, new AbortController().signal, run => {
+      entry.latest = run
+      for (const listener of entry.listeners) listener(run)
+    }).finally(() => { trackedRuns.delete(key) })
+    trackedRuns.set(key, entry)
+    tracked = entry
+  }
+  tracked.listeners.add(progress)
+  if (tracked.latest) progress(tracked.latest)
+  return tracked.promise.finally(() => { tracked.listeners.delete(progress) })
+}
 
 function savedRuns(): SavedRun[] {
   try {
@@ -42,9 +63,7 @@ async function identityHash(identity: string) {
     const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
     return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
   }
-  // Web Crypto is unavailable on some HTTP LAN origins. Keep the persisted
-  // key non-plaintext there too; multiple seeded FNV rounds provide a stable
-  // 64-character fingerprint for task association (not authentication).
+  // 部分 HTTP 局域网地址不支持 Web Crypto，用多轮 FNV 保留非明文的任务关联指纹。
   let output = ''
   for (let seed = 0; seed < 8; seed++) {
     let hash = (0x811c9dc5 ^ seed) >>> 0
@@ -75,12 +94,11 @@ function runMessage(run: ShareRun): ShareSTRMStatus {
   else if (run.status === 'failed') message = `新增 ${written} 个 STRM；${failures.join('；')}`
   else if (run.status === 'cancelled') message = `后台任务已停止，新增 ${written} 个 STRM；请在分享日志核对已转存目录。`
   else if (run.status === 'cancelling') message = '正在停止后台任务，等待保存处理结果…'
-  return { message, success: run.status === 'success' }
+  return { message, success: run.status === 'success', count: written }
 }
 
 export function useShareSTRMRun(token: string, signal: AbortSignal, options: { scope?: string; beforeLoad?: () => Promise<void> } = {}) {
-  const toast = useToast(), router = useRouter()
-  const logAction = { label: '查看日志', onClick: () => { void router.push('/115/share/logs') } }
+  const toast = useToast()
   const pending = ref<Record<string, boolean>>({})
   const preparing = ref(0)
   const busy = computed(() => Object.values(pending.value).some(Boolean))
@@ -92,21 +110,20 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
   let preparation: Promise<void> = Promise.resolve()
   const scope = options.scope ? `${options.scope}/${newShareRunID()}` : undefined
 
-  async function follow(resource: ShareSTRMResource, id: string, key: string, taskIDs?: string[], notify = false) {
+  async function follow(resource: ShareSTRMResource, id: string, key: string, taskIDs?: string[]) {
     pending.value[resource.id] = true; runIDs.value[resource.id] = id
     try {
-      const run = await waitForShareRun(token, id, signal, run => { statuses.value[resource.id] = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds }) })
+      const run = await trackRun(token, id, run => { statuses.value[resource.id] = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds }) })
       rememberRun(key)
-      if (notify && !signal.aborted) {
-        const status = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds })
-        toast[status.success ? 'success' : run.status === 'cancelled' ? 'warning' : 'error'](status.message, { title: status.success ? 'STRM 生成完成' : 'STRM 任务结束', action: logAction })
-      }
+      const status = runMessage({ ...run, selectedTaskIds: taskIDs?.length ? taskIDs : run.selectedTaskIds })
+      statuses.value[resource.id] = status
+      if (!status.success) throw Object.assign(new Error(run.status === 'cancelled' ? '已停止生成 STRM' : status.message), { name: run.status === 'cancelled' ? 'AbortError' : 'Error' })
+      return status
     } catch (error) {
-      if (!signal.aborted) {
-        if (error instanceof ShareRunError && error.status === 404) rememberRun(key)
-        statuses.value[resource.id] = { message: `暂时无法查询进度：${error instanceof Error ? error.message : '网络异常'}。后台任务不会因页面断开而取消，请查看分享日志或 Telegram 通知。`, success: false }
-        toast.warning(statuses.value[resource.id]!.message, { title: 'STRM 进度暂不可用', action: logAction })
-      }
+      if (error instanceof ShareRunError && error.status === 404) rememberRun(key)
+      const message = error instanceof Error ? error.message : '暂时无法获取 STRM 任务结果'
+      statuses.value[resource.id] = { message, success: false }
+      throw error
     } finally {
       delete pending.value[resource.id]; delete runIDs.value[resource.id]
     }
@@ -119,7 +136,7 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
       const key = await identityHash(resource.identity)
       if (signal.aborted || pending.value[resource.id]) continue
       const existing = savedRuns().find(entry => entry.key === key)
-      if (existing) void follow(resource, existing.id, key, existing.taskIDs)
+      if (existing) void follow(resource, existing.id, key, existing.taskIDs).catch(() => {})
     }
   }
 
@@ -137,7 +154,7 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
         signal.throwIfAborted()
         const key = await identityHash(resource.identity)
         const existing = savedRuns().find(entry => entry.key === key)
-        if (existing) { following = true; void follow(resource, existing.id, key, existing.taskIDs); return true }
+        if (existing) { following = true; return { completion: follow(resource, existing.id, key, existing.taskIDs) } }
         update('正在读取生成配置…')
         const settings = await savedSTRMSettings(token, signal)
         update('正在获取并校验 115 分享链接…')
@@ -157,16 +174,13 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
         submitting = true
         const run = await submitShareRun(token, id, [...unique.values()].map(link => ({ ...settings, mode: '', url: link.url, password: link.password, cid: '0' })), scope)
         rememberRun(key, run.id, run.selectedTaskIds)
-        if (!signal.aborted) {
-          statuses.value[resource.id] = runMessage(run)
-          following = true
-          void follow(resource, run.id, key, run.selectedTaskIds, true)
-        }
-        return true
+        statuses.value[resource.id] = runMessage(run)
+        following = true
+        return { completion: follow(resource, run.id, key, run.selectedTaskIds) }
       } catch (error) {
         // 关闭弹窗只取消尚未提交的准备；已经发出的提交仍需显示真实结果。
-        if (signal.aborted && !submitting) return false
-        const message = `${error instanceof Error ? error.message : '提交失败'}${submitting ? '；若未收到确认，请重新打开弹窗查询原任务或查看分享日志。' : ''}`
+        if (signal.aborted && !submitting) throw Object.assign(new Error('已取消准备 STRM'), { name: 'AbortError' })
+        const message = `${submitting ? '提交结果未确认：' : ''}${error instanceof Error ? error.message : '提交失败'}`
         if (!signal.aborted) update(message)
         throw new Error(message)
       } finally {
@@ -175,12 +189,13 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
       }
     }
     const submission = preparation.then(prepare, prepare)
-    toast.promise(submission, {
-      loading: '正在准备分享 STRM…',
-      success: (accepted: boolean) => accepted
-        ? { message: '已提交后台', description: '可关闭窗口，STRM 任务会继续执行。', action: logAction, duration: 3000 }
-        : { message: '已取消准备', type: 'info', description: '本次资源尚未提交后台。', duration: 3000 },
-      error: (error: unknown) => ({ message: 'STRM 提交失败', description: error instanceof Error ? error.message : '请稍后重试', action: logAction, duration: 5000 }),
+    toast.promise(submission.then(result => result.completion), {
+      loading: '正在生成 STRM…',
+      description: resource.description,
+      classes: { description: 'task-resource-summary' },
+      success: (status: ShareSTRMStatus) => `STRM 生成成功 · ${status.count ?? 0} 个文件`,
+      error: (error: unknown) => ({ message: error instanceof Error && error.name === 'AbortError' ? error.message : 'STRM 生成失败：' + (error instanceof Error ? error.message : '请稍后重试'), type: error instanceof Error && error.name === 'AbortError' ? 'info' : 'error' }),
+      richColors: true,
     })
     // 页面点击调用无需处理异常；Promise Toast 接收真实错误，准备队列继续执行。
     preparation = submission.then(() => {}, () => {})
@@ -194,7 +209,7 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
     try { await Promise.all(ids.map(id => cancelShareRun(token, id))) }
     catch (error) {
       for (const [resource, id] of Object.entries(runIDs.value)) if (ids.includes(id)) statuses.value[resource] = { message: error instanceof Error ? error.message : '停止任务失败', success: false }
-      toast.error(error instanceof Error ? error.message : '停止任务失败', { title: '停止 STRM 任务失败', action: logAction })
+      toast.error(error instanceof Error ? error.message : '停止任务失败', { title: '停止 STRM 任务失败' })
     } finally {
       stopping.value = false
     }

@@ -17,7 +17,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const source = { text: '测试资源', items: [{ id: 'fixture', kind: 'resource', title: '测试作品 (2022) 3.73G', size: '3.73G' }], links: [], remaining: 917, empty: false, allLoaded: true, cached: true }
     const target = { id: 'one', name: '动画', accountId: 'main', targetCID: '88', targetPath: '/资源/动画' }
     let resolveLinks, resolveTransfer, linkCalls = 0, writes = 0
-    let resolveSTRM, strmRequested, strmWrites = 0, runID = '', finished = false
+    let resolveSTRM, strmRequested, strmWrites = 0, runID = '', finished = false, failed = false
     await page.route('**/api/**', async route => {
       const endpoint = new URL(route.request().url()).pathname
       if (endpoint.endsWith('/telegram-user/config')) return route.fulfill({ json: { botConfigured: true, hasSession: true, bot: 'fixture_bot' } })
@@ -29,7 +29,8 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
           strmWrites++; finished = false; runID = route.request().postDataJSON().id
           await new Promise(resolve => { resolveSTRM = resolve; strmRequested() })
         }
-        return route.fulfill({ json: { id: runID, status: finished ? 'success' : 'queued', selectedTaskIds: [runID], items: [{ taskId: runID, status: finished ? 'success' : 'queued', result: finished ? { count: 2, directory: '/strm' } : undefined }] } })
+        const status = finished ? failed ? 'failed' : 'success' : 'queued'
+        return route.fulfill({ json: { id: runID, status, selectedTaskIds: [runID], items: [{ taskId: runID, status, error: finished && failed ? '模拟生成失败' : undefined, result: finished && !failed ? { count: 2, directory: '/strm' } : undefined }] } })
       }
       if (endpoint.endsWith('/telegram-user/select')) {
         linkCalls++
@@ -45,19 +46,20 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       throw new Error(`未模拟接口：${endpoint}`)
     })
     await page.route('**/transfer-layout-fixture', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html><body><div id="app"></div><script type="module">
-      import { createApp, h } from '${vueURL}';
+      import { createApp, h, ref } from '${vueURL}';
       import { createRouter, createMemoryHistory } from '${routerURL}';
       import BotSearchDialog from '/src/components/BotSearchDialog.vue';
       import GlobalToast from '/src/components/GlobalToast.vue';
       import '/src/style.css'; import '/src/styles/floatingSurface.css'; import '/src/styles/mediaSearchDialog.css';
       const router = createRouter({ history: createMemoryHistory(), routes: [{path:'/', component:{render:()=>null}}] });
-      createApp({render:()=>[h(BotSearchDialog,{token:'mock',kind:'tv',tmdbId:'1',title:'测试作品'}),h(GlobalToast)]}).use(router).mount('#app');
+      createApp({setup(){ const open = ref(true); return ()=>[open.value && h(BotSearchDialog,{token:'mock',kind:'tv',tmdbId:'1',title:'测试作品',onClose:()=>{open.value=false}}),h(GlobalToast)] }}).use(router).mount('#app');
       </script></body></html>` }))
     const measure = () => page.evaluate(() => {
       const box = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { y: r.y, h: r.height, w: r.width } }
       return { dialog: box('.bot-dialog'), card: box('.bot-resource'), button: box('.resource-action-button'), strm: box('[data-bot-action="strm"]'), scroll: document.querySelector('.bot-body').scrollTop }
     })
     for (const width of [1336, 390]) {
+      failed = width === 390
       await page.setViewportSize({ width, height: 800 })
       await page.goto(origin + '/transfer-layout-fixture')
       const transfer = page.locator('.resource-action-button')
@@ -92,26 +94,44 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       await page.locator('[data-bot-action="strm"]').click()
       const loadingToast = page.locator('[data-sonner-toast][data-type="loading"]')
       await loadingToast.waitFor()
+      const summary = await loadingToast.locator('[data-description]').innerText()
+      assert.equal(summary, 'Bot · 测试作品 (2022) 3.73G')
+      assert.equal(await loadingToast.locator('[data-description]').evaluate(element => getComputedStyle(element).webkitLineClamp), '2')
       const toastElement = await loadingToast.elementHandle()
       const strmLoading = await measure()
       await page.waitForFunction(() => document.querySelector('[data-bot-action="strm"]').textContent.includes('处理中'))
       await strmRequest
       assert.equal(typeof resolveSTRM, 'function')
       resolveSTRM()
-      const submittedToast = page.locator('[data-sonner-toast]').filter({ hasText: '已提交后台' })
-      await submittedToast.waitFor()
-      assert.ok(await submittedToast.evaluate((element, original) => element === original, toastElement), 'Promise Toast 应在原通知上更新')
-      await page.getByRole('button', { name: '停止批次' }).waitFor({ state: 'visible' })
+      await page.waitForFunction(() => !document.querySelector('[title="停止本窗口已提交的 STRM 批次"]').disabled)
+      assert.equal(await loadingToast.count(), 1, '后台接收后原通知仍应保持加载状态')
+      assert.equal(await page.getByText('已提交后台', { exact: true }).count(), 0)
+      assert.equal(await loadingToast.locator('[data-button]').count(), 0)
       const strmSubmitted = await measure()
-      finished = true
-      await page.waitForFunction(() => document.querySelector('[data-bot-action="strm"]').textContent.includes('已生成'))
-      for (const state of [strmLoading, strmSubmitted, await measure()]) {
+      for (const state of [strmLoading, strmSubmitted]) {
         for (const item of ['dialog', 'card', 'strm']) {
           assert.ok(Math.abs(state[item].y - strmBefore[item].y) <= 1, `${width}px ${item} 分享 STRM 时上下跳动`)
           assert.ok(Math.abs(state[item].h - strmBefore[item].h) <= 1, `${width}px ${item} 分享 STRM 时高度变化`)
         }
         assert.ok(Math.abs(state.strm.w - strmBefore.strm.w) <= 1, '分享 STRM 按钮随文案改变宽度')
         assert.equal(state.scroll, strmBefore.scroll)
+      }
+      if (failed) {
+        await page.getByRole('button', { name: '关闭资源搜索' }).click()
+        await page.locator('.bot-dialog').waitFor({ state: 'detached' })
+        await loadingToast.waitFor()
+      }
+      finished = true
+      const resultToast = page.locator('[data-sonner-toast]').filter({ hasText: failed ? '模拟生成失败' : 'STRM 生成成功' })
+      await resultToast.waitFor()
+      assert.equal(await resultToast.getAttribute('data-type'), failed ? 'error' : 'success')
+      assert.ok(await resultToast.evaluate((element, original) => element === original, toastElement), '任务结果应在原通知上更新')
+      assert.equal(await resultToast.locator('[data-button]').count(), 0)
+      assert.equal(await resultToast.locator('[data-description]').innerText(), summary)
+      if (!failed) {
+        await page.waitForFunction(() => document.querySelector('[data-bot-action="strm"]').textContent.includes('已生成'))
+        const after = await measure()
+        assert.deepEqual(after, strmBefore, '完成通知不应改变弹窗布局')
       }
     }
     assert.equal(linkCalls, 2)

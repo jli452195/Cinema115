@@ -143,6 +143,7 @@ function shareResource(item: (typeof resources.value)[number]): ShareSTRMResourc
   return {
     id: item.id,
     identity,
+    description: ['Bot', item.title || props.title, item.size && !item.title.includes(item.size) ? item.size : ''].filter(Boolean).join(' · '),
     load: async () => {
       return (await loadResourceLinks(item)).map(url => ({ url }))
     },

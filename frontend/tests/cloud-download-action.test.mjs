@@ -7,13 +7,14 @@ import path from 'node:path'
 import ts from 'typescript'
 
 const require = createRequire(import.meta.url)
+const sonner = await import('vue-sonner')
 const modules = new Map()
 function load(file) {
   if (modules.has(file)) return modules.get(file).exports
   const module = { exports: {} }
   modules.set(file, module)
   const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
-  new Function('require', 'module', 'exports', code)(id => id.startsWith('.') ? load(path.resolve(path.dirname(file), id + '.ts')) : require(id), module, module.exports)
+  new Function('require', 'module', 'exports', code)(id => id.startsWith('.') ? load(path.resolve(path.dirname(file), id + '.ts')) : id === 'vue-sonner' ? sonner : require(id), module, module.exports)
   return module.exports
 }
 const source = name => load(fileURLToPath(new URL(`../src/${name}.ts`, import.meta.url)))

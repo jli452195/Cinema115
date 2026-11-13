@@ -83,6 +83,9 @@ onBeforeUnmount(() => {
   left: auto;
   pointer-events: none;
 }
+:global(body:has(.workbench-header) .toast-host [data-sonner-toaster]) {
+  top: calc(var(--workbench-header-height) + 1px + 1rem);
+}
 .toast-host :deep([data-sonner-toast]) { width: 100%; padding-right: 44px; border-radius: 14px; pointer-events: none; overflow-wrap: anywhere; }
 .toast-host :deep([data-sonner-toast][data-visible='true']:not([data-removed='true'])) { pointer-events: auto; }
 .toast-host :deep([data-sonner-toast]:has([data-button])) { display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; }
@@ -93,6 +96,7 @@ onBeforeUnmount(() => {
 .toast-host :deep([data-content]) { min-width: 0; }
 .toast-host :deep([data-title]) { white-space: pre-wrap; }
 .toast-host :deep([data-description]) { max-height: 9rem; overflow-y: auto; white-space: pre-wrap; }
+.toast-host :deep(.task-resource-summary) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .toast-host :deep([data-sonner-toast] [data-button]) { grid-column: 2; justify-self: start; height: 32px; margin: 0; padding-inline: 12px; border-radius: 8px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
 .toast-host :deep([data-close-button]) { top: 8px; right: 8px; width: 28px; height: 28px; transform: none; }
 .toast-host :deep([data-sonner-toast]:focus-visible), .toast-host :deep(button:focus-visible) { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
