@@ -61,7 +61,7 @@
     "test:telegram-search-ui": "node scripts/telegram-channels-ui.cjs",
     "test:telegram-account-ui": "node scripts/telegram-account-ui.cjs",
     "test:telegram-bot-modules-ui": "node scripts/telegram-bot-modules-ui.cjs",
-    "test:toast": "node --test tests/toast.test.mjs",
+    "test:toast": "node --test tests/toast.test.mjs tests/task-toast.test.mjs",
     "test:toast-ui": "node scripts/toast-ui.cjs",
     "test:assrt-ui": "node scripts/download-organize-ui.cjs garden assrt",
     "dev": "vite",

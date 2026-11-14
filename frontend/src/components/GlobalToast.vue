@@ -103,6 +103,7 @@ onBeforeUnmount(() => {
   <Teleport :to="target">
     <div ref="host" class="toast-host" popover="manual">
       <Toaster position="top-right" :theme="theme" close-button close-button-position="top-right"
+        :swipe-directions="['left', 'right', 'top']"
         container-aria-label="全局通知" :visible-toasts="3" :gap="10" :offset="16" :mobile-offset="16"
         :toast-options="{ closeButtonAriaLabel: '关闭提示' }"
         @focus.capture="keepKeyboardFocus" @focusin="keepFocusPaused" @focusout="resumeAfterFocus" @mouseleave="keepFocusPaused" />
@@ -140,6 +141,8 @@ onBeforeUnmount(() => {
 .toast-host :deep([data-close-button]) { top: 8px; right: 8px; width: 28px; height: 28px; transform: none; }
 .toast-host :deep([data-sonner-toast]:focus-visible), .toast-host :deep(button:focus-visible) { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
 @media (max-width: 639px) {
+  .toast-host :deep([data-sonner-toast]) { padding-right: 48px; }
+  .toast-host :deep([data-close-button])::after { content: ''; position: absolute; inset: -8px; }
   .toast-host :deep([data-sonner-toast] [data-button]) { height: 44px; }
 }
 </style>

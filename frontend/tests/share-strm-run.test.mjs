@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
 import { pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
+import { taskToastFixture } from './helpers/task-toast.mjs'
 
 const require = createRequire(import.meta.url)
 const vueURL = pathToFileURL(require.resolve('vue/dist/vue.runtime.esm-bundler.js')).href
@@ -19,17 +20,11 @@ async function setup(options = {}) {
   globalThis.localStorage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) }
   let sequence = 0
   const submissions = [], followers = [], cancellations = [], notices = []
+  const fixture = taskToastFixture(notices)
   const toast = Object.fromEntries(['success', 'error', 'warning'].map(type => [type, (message, options) => notices.push({ type, message, options })]))
-  toast.promise = (promise, options) => {
-    const notice = { type: 'loading', message: options.loading, description: options.description, richColors: options.richColors }
-    notices.push(notice)
-    promise.then(value => {
-      const result = typeof options.success === 'function' ? options.success(value) : options.success
-      Object.assign(notice, { type: 'success', ...(typeof result === 'string' ? { message: result } : result) })
-    }, error => Object.assign(notice, { type: 'error', ...options.error(error) }))
-  }
   const mock = {
     toast,
+    createTaskToast: fixture.createTaskToast,
     ShareRunError: class extends Error {},
     newShareRunID: () => (++sequence).toString(16).padStart(32, '0'),
     savedSTRMSettings: async () => ({ outputDir: 'strm', baseUrl: 'http://nas', recursive: true }),
@@ -48,6 +43,7 @@ async function setup(options = {}) {
   globalThis.__shareRunTest = mock
   const mockURL = dataModule(`const mock = globalThis.__shareRunTest;
     export const useToast = () => mock.toast;
+    export const createTaskToast = mock.createTaskToast;
     export const ShareRunError = mock.ShareRunError;
     ${['cancelShareRun', 'newShareRunID', 'savedSTRMSettings', 'submitShareRun', 'waitForShareRun'].map(name => `export const ${name} = (...args) => mock.${name}(...args);`).join('\n')}
     // ${Math.random()}`)
@@ -55,7 +51,7 @@ async function setup(options = {}) {
   const source = await readFile(new URL('../src/composables/useShareSTRMRun.ts', import.meta.url), 'utf8')
   let compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
   compiled = compiled.replace("from 'vue'", `from '${vueURL}'`).replace("from '../utils/shareLink'", `from '${normalizeURL}'`).replace("from '../utils/shareGeneration'", `from '${mockURL}'`)
-    .replace("from './useToast'", `from '${mockURL}'`)
+    .replace("from './useToast'", `from '${mockURL}'`).replace("from './useTaskToast'", `from '${mockURL}'`)
   const { useShareSTRMRun } = await import(dataModule(compiled + `\n// ${Date.now()}-${Math.random()}`))
   const lifecycle = new AbortController()
   const runs = useShareSTRMRun('test', lifecycle.signal, { scope: 'bot/tv/test', ...options })
@@ -85,7 +81,7 @@ test('搜索未结束可先选择，取链串行，已提交任务不锁其他�
   assert.equal(env.runs.preparing.value, 0)
   assert.equal(env.runs.busy.value, true)
   assert.equal(env.submissions[0].scope, env.submissions[1].scope)
-  assert.deepEqual(env.notices.map(notice => notice.type), ['loading', 'loading'])
+  assert.deepEqual(env.notices.map(notice => notice.type), ['default', 'default'])
   env.lifecycle.abort(); await flush()
   assert.equal(env.cancellations.length, 0)
   assert.ok(env.followers.every(follower => !follower.signal.aborted), '关闭弹窗不停止任务跟踪')
@@ -111,9 +107,9 @@ test('合并批次按来源分别显示结果，不串用其他资源的失败',
   assert.equal(env.runs.busy.value, false)
   assert.deepEqual(env.notices.map(notice => notice.type), ['success', 'error'])
   assert.equal(env.notices[0].description, 'Bot · 测试作品 a · 1080P')
-  assert.equal(env.notices[1].description, 'Bot · 测试作品 b · 1080P')
+  assert.ok(env.notices[1].description.startsWith('Bot · 测试作品 b · 1080P'))
   assert.match(env.notices[0].message, /1 个文件/)
-  assert.match(env.notices[1].message, /来源二失败/)
+  assert.match(env.notices[1].description, /来源二失败/)
   env.lifecycle.abort()
 })
 
@@ -152,21 +148,26 @@ test('恢复同批多个资源时复用轮询，停止同批只请求一次', as
   newController.abort(); await flush()
 })
 
-test('同一条 Promise Toast 保留资源摘要，任务完成后显示文件数且无日志按钮', async () => {
+test('准备提示可关闭，后台接受后不复活，完成新提示保留资源摘要和文件数', async () => {
   const loading = deferred(), env = await setup()
   const pending = env.runs.submit(resource('a', () => loading.promise))
-  assert.equal(env.notices[0].type, 'loading')
+  assert.equal(env.notices[0].type, 'default')
+  const initialID = env.notices[0].id
+  env.notices[0].onDismiss()
   assert.equal(env.notices[0].description, 'Bot · 测试作品 a · 1080P')
   assert.equal(env.submissions.length, 0)
   loading.resolve([{ url: 'https://115cdn.com/s/a' }]); await pending
   assert.equal(env.notices.length, 1)
-  assert.equal(env.notices[0].type, 'loading')
+  assert.equal(env.notices[0].type, 'default')
+  assert.equal(env.notices[0].title, '正在获取资源', '隐藏后后台接受不应复活提示')
   assert.equal(env.runs.statuses.value.a.success, false)
   const run = { status: 'success', items: [{ taskId: env.submissions[0].id, status: 'success', result: { count: 2 } }] }
   env.followers[0].progress(run); env.followers[0].resolve(run); await flush()
   assert.equal(env.notices.length, 1)
   assert.equal(env.notices[0].message, 'STRM 生成成功 · 2 个文件')
   assert.equal(env.notices[0].type, 'success')
+  assert.notEqual(env.notices[0].id, initialID)
+  assert.equal(env.notices[0].duration, 6000)
   assert.equal(env.notices[0].richColors, true)
   assert.equal(env.notices[0].action, undefined)
   assert.equal(env.notices[0].description, 'Bot · 测试作品 a · 1080P')
@@ -179,26 +180,26 @@ test('配置和取链失败更新为错误通知，准备队列可继续提交�
   await env.runs.submit(resource('config'))
   await flush()
   assert.equal(env.notices[0].type, 'error')
-  assert.match(env.notices[0].message, /请先配置 STRM/)
-  assert.equal(env.notices[0].description, 'Bot · 测试作品 config · 1080P')
+  assert.match(env.notices[0].description, /请先配置 STRM/)
+  assert.ok(env.notices[0].description.startsWith('Bot · 测试作品 config · 1080P'))
   env.mock.savedSTRMSettings = async () => ({})
   await env.runs.submit(resource('link', async () => { throw new Error('取链失败') }))
   await flush()
   assert.equal(env.notices[1].type, 'error')
-  assert.match(env.notices[1].message, /取链失败/)
+  assert.match(env.notices[1].description, /取链失败/)
   await env.runs.submit(resource('ok'))
   assert.equal(env.submissions.length, 1)
-  assert.equal(env.notices[2].type, 'loading')
+  assert.equal(env.notices[2].type, 'default')
   env.lifecycle.abort(); await flush()
 })
 
-test('提交发出后关闭弹窗，原 Toast 继续跟踪并显示最终成功', async () => {
+test('提交发出后关闭弹窗仍继续跟踪，并显示最终成功', async () => {
   const response = deferred(), entered = deferred(), env = await setup()
   env.mock.submitShareRun = async () => { entered.resolve(); return response.promise }
   const pending = env.runs.submit(resource('a'))
   await entered.promise; env.lifecycle.abort()
   response.resolve({ id: 'e'.repeat(32), status: 'queued', items: [] }); await pending
-  assert.equal(env.notices[0].type, 'loading')
+  assert.equal(env.notices[0].type, 'default')
   assert.equal(env.followers.length, 1)
   assert.equal(env.followers[0].signal.aborted, false)
   env.followers[0].resolve({ status: 'success', items: [{ status: 'success', result: { count: 1 } }] }); await flush()
@@ -212,19 +213,19 @@ test('提交网络异常提示结果未确认，不误报提交成功', async ()
   await env.runs.submit(resource('a'))
   await flush()
   assert.equal(env.notices[0].type, 'error')
-  assert.match(env.notices[0].message, /提交结果未确认/)
+  assert.match(env.notices[0].description, /提交结果未确认/)
   assert.equal(env.runs.pending.value.a, undefined)
   env.lifecycle.abort(); await flush()
   assert.equal(env.notices.length, 1)
 })
 
-test('轮询异常更新原 Toast，恢复已完成任务不重复通知', async () => {
+test('轮询异常显示结果提示，恢复已完成任务不重复通知', async () => {
   const env = await setup()
   await env.runs.submit(resource('a'))
   env.followers[0].reject(new Error('网络中断')); await flush()
   assert.equal(env.notices.length, 1)
   assert.equal(env.notices[0].type, 'error')
-  assert.match(env.notices[0].message, /网络中断/)
+  assert.match(env.notices[0].description, /网络中断/)
   await env.runs.restore([resource('a')])
   const run = { status: 'success', items: [{ taskId: env.submissions[0].id, status: 'success', result: { count: 1 } }] }
   env.followers[1].progress(run); env.followers[1].resolve(run); await flush()

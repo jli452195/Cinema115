@@ -65,13 +65,16 @@ const failedRefresh = process.argv.includes('--failed-refresh')
     })
     const toast = page.locator('[data-sonner-toast]')
     await toast.getByText('正在下载', { exact: true }).waitFor()
-    const original = await toast.elementHandle()
-    for (const [next, label] of [['organizing', '正在整理'], ['generating', '正在生成 STRM'], ['review', '分享等待审核'], ['success', '任务完成']]) {
+    await toast.getByRole('button', { name: '关闭提示' }).click()
+    await toast.waitFor({ state: 'detached' })
+    for (const next of ['organizing', 'generating', 'review']) {
       stage = next
-      await toast.getByText(label, { exact: true }).waitFor()
-      assert.equal(await toast.count(), 1)
-      assert.equal(await original.evaluate(el => el.isConnected), true, 'all stages update the same toast element')
+      await page.waitForTimeout(2800)
+      assert.equal(await toast.count(), 0, '关闭后非终态轮询不能重新弹出提示')
     }
+    stage = 'success'
+    await toast.getByText('下载整理并生成 STRM 完成', { exact: true }).waitFor()
+    assert.equal(await toast.count(), 1)
     await page.mouse.move(0, 0)
     await toast.waitFor({ state: 'detached', timeout: 12000 })
 
@@ -92,11 +95,11 @@ const failedRefresh = process.argv.includes('--failed-refresh')
     await shares.getByRole('button', { name: '重试 STRM', exact: true }).click()
     if (failedRefresh) {
       await details.getByText('重试结果暂未确认，请刷新记录核对；不会自动重复提交。', { exact: true }).waitFor()
-      assert.equal(await toast.getByText('任务完成', { exact: true }).count(), 0, 'failed refresh cannot confirm a lost retry response')
+      assert.equal(await toast.getByText('下载整理并生成 STRM 完成', { exact: true }).count(), 0, 'failed refresh cannot confirm a lost retry response')
     } else {
       await shares.getByRole('button', { name: '重试 STRM', exact: true }).waitFor({ state: 'detached' })
       await shares.getByText('已完成 · 已写入 1/1', { exact: true }).first().waitFor()
-      await toast.getByText('任务完成', { exact: true }).waitFor()
+      await toast.getByText('下载整理并生成 STRM 完成', { exact: true }).waitFor()
     }
     assert.equal(await details.isVisible(), true, 'refresh preserves the open batch details')
     assert.deepEqual(writes, [{ endpoint: '/api/admin/p115/share/tasks/retry', body: { ids: ['share-2'] } }], 'retry only submits the failed STRM stage')
@@ -124,6 +127,6 @@ const failedRefresh = process.argv.includes('--failed-refresh')
       assert.equal(writes.length, 2, 'cleanup resumes the original job without submitting another download')
     }
     assert.deepEqual(errors, [])
-    console.log(JSON.stringify({ lostRetry, failedRefresh, passed: ['one real Sonner element updates through download, organize, STRM, review and success, then auto-dismisses', 'one batch card for two resources with linked STRM results', 'light desktop and dark 320px details fit', 'retry only the failed STRM stage; details stay open; no duplicate download or organize request', ...(!failedRefresh ? ['successful resources stay summarized; merged cleanup resumes one original job; external subtitle details hide internal attachment IDs'] : [])], errors }, null, 2))
+    console.log(JSON.stringify({ lostRetry, failedRefresh, passed: ['dismissed progress stays hidden through organize, STRM and review; completion shows once and auto-dismisses', 'one batch card for two resources with linked STRM results', 'light desktop and dark 320px details fit', 'retry only the failed STRM stage; details stay open; no duplicate download or organize request', ...(!failedRefresh ? ['successful resources stay summarized; merged cleanup resumes one original job; external subtitle details hide internal attachment IDs'] : [])], errors }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

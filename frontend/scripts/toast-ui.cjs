@@ -221,6 +221,38 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await toasts.waitFor({ state: 'detached' })
     assert.deepEqual(errors, [])
     passed.push('原生滑动关闭且浏览器无异常')
+
+    // 使用真实任务提示控制器，所有提示均为本地演示，不提交业务任务。
+    await page.evaluate(async () => { window.createTaskToast = (await import('/src/composables/useTaskToast.ts')).createTaskToast })
+    for (const direction of ['left', 'right', 'top']) {
+      await page.evaluate(() => { window.taskToastFixture = window.createTaskToast('正在整理', '任务提示交互测试') })
+      await toasts.waitFor()
+      assert.equal(await toasts.getAttribute('data-type'), 'default')
+      assert.equal(await toasts.getByRole('button', { name: '关闭提示' }).count(), 1)
+      await page.waitForTimeout(400)
+      const box = await toasts.boundingBox()
+      const x = box.x + box.width / 2, y = box.y + box.height / 2
+      await page.mouse.move(x, y); await page.mouse.down()
+      await page.mouse.move(x + (direction === 'left' ? -150 : direction === 'right' ? 150 : 0), y - (direction === 'top' ? 100 : 0), { steps: 10 })
+      await page.mouse.up()
+      await toasts.waitFor({ state: 'detached' })
+      await page.evaluate(() => window.taskToastFixture.update('分享等待审核'))
+      await page.waitForTimeout(100)
+      assert.equal(await toasts.count(), 0)
+    }
+    await page.mouse.move(0, 700)
+    await page.evaluate(() => { window.taskToastFixture = window.createTaskToast('正在生成 STRM', '自动收起测试') })
+    await toasts.waitFor()
+    await toasts.waitFor({ state: 'detached', timeout: 7500 })
+    await page.evaluate(() => window.taskToastFixture.update('分享等待审核'))
+    assert.equal(await toasts.count(), 0)
+    await page.evaluate(() => window.taskToastFixture.finish('success', '生成完成'))
+    await toasts.waitFor()
+    await page.waitForTimeout(5000)
+    assert.equal(await toasts.getAttribute('data-removed'), 'false', '结果通知获得完整六秒阅读时间')
+    await toasts.waitFor({ state: 'detached' })
+    passed.push('任务提示支持左右与向上划走，五秒收起后不复活，终态完整展示六秒')
+    assert.deepEqual(errors, [])
     console.log(JSON.stringify({ passed, errors }, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

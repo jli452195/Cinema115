@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
+import { taskToastFixture } from './helpers/task-toast.mjs'
 
 const moduleURL = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -9,19 +10,21 @@ const pipeline = (id, status, finished = false) => ({ id, status, finished, jobI
 
 async function setup() {
   const state = { calls: [], notices: [], timers: new Map(), next: 0, response: [], request: undefined }
+  const fixture = taskToastFixture(state.notices)
+  state.createTaskToast = fixture.createTaskToast
   globalThis.__downloadPipelineTest = state
   const mocks = moduleURL(`const state = globalThis.__downloadPipelineTest;
     export const fetchDownloadPipelines = async (token, ids) => {
       state.calls.push({ token, ids });
       return state.request ? state.request(token, ids) : state.response;
     };
-    export const toast = Object.fromEntries(['loading', 'success', 'warning', 'error'].map(type => [type, (title, options) => state.notices.push({ type, title, ...options })]));
+    export const createTaskToast = state.createTaskToast;
     export const setTimeout = callback => { const id = ++state.next; state.timers.set(id, callback); return id; };
     export const clearTimeout = id => state.timers.delete(id);
     // ${Math.random()}`)
   let source = ts.transpileModule(await readFile(new URL('../src/composables/useDownloadPipelineToast.ts', import.meta.url), 'utf8'), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
-  }).outputText.replace("from 'vue-sonner'", `from '${mocks}'`).replace("from '../lib/download-pipeline'", `from '${mocks}'`)
+  }).outputText.replace("from './useTaskToast'", `from '${mocks}'`).replace("from '../lib/download-pipeline'", `from '${mocks}'`)
   source = `import { setTimeout, clearTimeout } from '${mocks}';\n${source}`
   const { trackDownloadPipeline } = await import(moduleURL(source))
   const tick = async () => {
@@ -29,37 +32,40 @@ async function setup() {
     assert.ok(callback, '存在下一次聚合轮询')
     state.timers.delete(id); callback(); await flush()
   }
-  return { state, track: trackDownloadPipeline, tick }
+  return { state, fixture, track: trackDownloadPipeline, tick }
 }
 
-test('同一通知跨下载、整理、STRM，交接后不会提前成功，审核后继续追踪', async () => {
+test('下载、整理、STRM 交接不提前成功，收起后审核静默且完成仍通知', async () => {
   const { state, track, tick } = await setup()
   state.response = [pipeline('batch', 'downloading')]
   track('token', 'batch', '测试动画 · 2 项资源')
   await flush()
+  const progress = state.notices[0]
+  progress.onDismiss()
   for (const status of ['organizing', 'generating', 'review', 'generating']) {
     state.response = [pipeline('batch', status)]
     await tick()
     assert.ok(!state.notices.some(notice => notice.type === 'success'))
   }
-  assert.ok(state.notices.some(notice => notice.type === 'warning' && notice.title === '分享等待审核'))
+  assert.equal(state.notices.length, 1)
+  assert.equal(state.notices[0].title, '正在下载', '收起后的审核和其他阶段不能重新弹出')
   state.response = [pipeline('batch', 'success', true)]
   await tick()
   assert.equal(state.notices.at(-1).type, 'success')
-  assert.equal(new Set(state.notices.map(notice => notice.id)).size, 1)
-  assert.ok(state.notices.every(notice => Number.isFinite(notice.duration)), 'loading 自身暂停计时，避免完成通知继承无限剩余时长')
+  assert.notEqual(state.notices[0].id, progress.id)
+  assert.equal(state.notices[0].duration, 6000)
   assert.ok(state.notices.every(notice => notice.description.includes('测试动画')))
   assert.equal(state.timers.size, 0)
 })
 
 test('同时提交批次合并查询，重复跟踪不重复通知或轮询', async () => {
-  const { state, track, tick } = await setup()
+  const { state, fixture, track, tick } = await setup()
   state.response = [pipeline('a', 'downloading'), pipeline('b', 'generating')]
   track('token', 'a', 'A'); track('token', 'a', 'A'); track('token', 'b', 'B')
   await flush()
   await tick()
   assert.deepEqual(state.calls.at(-1).ids, ['a', 'b'])
-  assert.equal(state.notices.filter(notice => notice.title === '正在更新任务进度').length, 2)
+  assert.equal(fixture.history.filter(notice => notice.title === '已加入后台下载整理').length, 2)
   assert.equal(state.timers.size, 1)
   state.response = [pipeline('a', 'partial', true), pipeline('b', 'interrupted', true)]
   await tick()

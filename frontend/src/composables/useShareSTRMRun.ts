@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import { createTaskToast } from './useTaskToast'
 import { useToast } from './useToast'
 import { normalize115Share } from '../utils/shareLink'
 import { cancelShareRun, newShareRunID, savedSTRMSettings, ShareRunError, submitShareRun, waitForShareRun, type ShareRun } from '../utils/shareGeneration'
@@ -144,6 +145,8 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
     if (signal.aborted || pending.value[resource.id] || statuses.value[resource.id]?.success) return
     pending.value[resource.id] = true
     preparing.value++
+    // 尚未提交后端前仅提示正在获取资源，不提前宣称后台执行
+    const taskToast = createTaskToast('正在获取资源', resource.description)
     const update = (message: string, success = false) => { statuses.value[resource.id] = { message, success } }
     update('已选择，等待搜索或前面的资源取链完成…')
     const prepare = async () => {
@@ -154,7 +157,11 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
         signal.throwIfAborted()
         const key = await identityHash(resource.identity)
         const existing = savedRuns().find(entry => entry.key === key)
-        if (existing) { following = true; return { completion: follow(resource, existing.id, key, existing.taskIDs) } }
+        if (existing) {
+          following = true
+          taskToast.update('已加入后台生成 STRM')
+          return { completion: follow(resource, existing.id, key, existing.taskIDs) }
+        }
         update('正在读取生成配置…')
         const settings = await savedSTRMSettings(token, signal)
         update('正在获取并校验 115 分享链接…')
@@ -176,6 +183,8 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
         rememberRun(key, run.id, run.selectedTaskIds)
         statuses.value[resource.id] = runMessage(run)
         following = true
+        // 后端接受任务后更新标题（若用户已关闭或 5s 自动收起则静默）
+        taskToast.update('已加入后台生成 STRM')
         return { completion: follow(resource, run.id, key, run.selectedTaskIds) }
       } catch (error) {
         // 关闭弹窗只取消尚未提交的准备；已经发出的提交仍需显示真实结果。
@@ -189,15 +198,20 @@ export function useShareSTRMRun(token: string, signal: AbortSignal, options: { s
       }
     }
     const submission = preparation.then(prepare, prepare)
-    toast.promise(submission.then(result => result.completion), {
-      loading: '正在生成 STRM…',
-      description: resource.description,
-      classes: { description: 'task-resource-summary' },
-      success: (status: ShareSTRMStatus) => `STRM 生成成功 · ${status.count ?? 0} 个文件`,
-      error: (error: unknown) => ({ message: error instanceof Error && error.name === 'AbortError' ? error.message : 'STRM 生成失败：' + (error instanceof Error ? error.message : '请稍后重试'), type: error instanceof Error && error.name === 'AbortError' ? 'info' : 'error' }),
-      richColors: true,
-    })
-    // 页面点击调用无需处理异常；Promise Toast 接收真实错误，准备队列继续执行。
+    void submission.then(result => result.completion).then(
+      (status: ShareSTRMStatus) => {
+        taskToast.finish('success', `STRM 生成成功 · ${status.count ?? 0} 个文件`)
+      },
+      (error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') {
+          taskToast.finish('info', error.message)
+          return
+        }
+        const detail = error instanceof Error ? error.message : '请在分享日志中核对结果'
+        taskToast.finish('error', 'STRM 生成失败', detail)
+      },
+    )
+    // 页面点击调用无需处理异常；结果通知接收真实错误，准备队列继续执行。
     preparation = submission.then(() => {}, () => {})
     await preparation
   }
