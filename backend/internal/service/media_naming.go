@@ -7,7 +7,10 @@ import (
 	"time"
 
 	"strm115/backend/internal/client/tmdb"
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
+	"strm115/backend/internal/releaseparse"
 )
 
 type NamingTemplates interface {
@@ -47,13 +50,15 @@ type MediaNamingPreview struct {
 }
 
 type preparedMediaNaming struct {
-	snapshot naming.Snapshot
-	detail   *tmdb.Detail
-	renderer *naming.Renderer
-	english  string
+	recognition recognition.Snapshot
+	snapshot    naming.Snapshot
+	detail      *tmdb.Detail
+	renderer    *naming.Renderer
+	english     string
 }
 
 func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected *int64) (preparedMediaNaming, error) {
+	rules := namingRecognition(ctx)
 	if (kind != "movie" && kind != "tv") || id < 1 {
 		return preparedMediaNaming{}, ErrOrganizeInput
 	}
@@ -85,7 +90,7 @@ func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected 
 	if detail == nil || detail.ID != id || detail.Kind != kind || detail.Title == "" || snapshot.Template.Kind != naming.Kind(kind) {
 		return preparedMediaNaming{}, fmt.Errorf("命名模板或作品信息无效")
 	}
-	p := preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer}
+	p := preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer, recognition: rules}
 	p.english, err = optionalNamingEnglish(ctx, s.Metadata, snapshot.Template, kind, id)
 	if err != nil {
 		return preparedMediaNaming{}, err
@@ -127,7 +132,11 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 	}
 	values := make(map[naming.Field]string, len(file.NamingValues)+5)
 	if file.NamingValues == nil {
-		values = mediaFileValues(file.Name, DownloadFileSpec{})
+		var err error
+		values, err = mediafacts.ValuesWithRecognition(file.Name, releaseparse.Spec{}, p.recognition)
+		if err != nil {
+			return naming.Result{}, err
+		}
 	}
 	for field, value := range file.NamingValues {
 		values[field] = value

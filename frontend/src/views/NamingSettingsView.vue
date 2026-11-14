@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from 'vue-router'
 import { IconRefresh, IconRestore, IconDeviceFloppy } from '@tabler/icons-vue'
 import NamingTemplateEditor from '../components/NamingTemplateEditor.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
@@ -140,6 +140,7 @@ onBeforeUnmount(() => { lifecycle.abort(); previewController.abort(); clearTimeo
       </template>
       <div class="ns-feedback" role="status" aria-live="polite"><p v-if="error">{{ error }}</p><p v-else-if="notice">{{ notice }}</p><p v-else-if="settings">{{ dirty(kind) ? '当前模板有未保存的修改' : '当前模板已保存' }}</p><div class="ns-feedback-actions"><button v-if="pending" type="button" class="ns-button" :disabled="saving" @click="confirmSave">确认保存结果</button><button v-else-if="!loading" type="button" class="ns-reload" @click="reload"><IconRefresh :size="13" aria-hidden="true" />重新读取{{ settings ? '当前模板' : '设置' }}</button></div></div>
       <p class="ns-stage">自动整理、下载整理和动漫订阅共用已保存的模板；已创建的任务保持原命名。</p>
+      <p class="ns-stage">普通整理与搜索下载整理的字幕组、平台可在 <RouterLink :to="{ name: 'recognition-settings' }" class="ns-reload">识别词表</RouterLink> 中维护；RSS 沿用来源字幕组。</p>
     </div>
     <P115ActionDialog v-if="dialog" :title="dialog === 'leave' ? '放弃未保存的模板修改？' : dialog === 'reload' ? `重新读取${kindLabel}模板？` : `恢复${kindLabel}默认模板？`" @close="decide(false)"><p>{{ dialog === 'leave' ? '电影或剧集模板仍有未保存的修改，离开后将丢弃这些修改。' : dialog === 'reload' ? '当前类型的未保存修改会被替换，另一类型的编辑内容将保留。' : '仅替换当前类型的编辑内容，保存后才会更新服务端模板。' }}</p><template #footer><button type="button" class="ns-button" @click="decide(false)">继续编辑</button><button type="button" class="ns-button ns-save" @click="decide(true)">{{ dialog === 'leave' ? '放弃修改并离开' : dialog === 'reload' ? '重新读取' : '恢复默认' }}</button></template></P115ActionDialog>
 </template>

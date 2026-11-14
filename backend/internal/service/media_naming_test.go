@@ -14,6 +14,7 @@ import (
 	"strm115/backend/internal/client/tmdb"
 
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 	"strm115/backend/internal/releaseparse"
 	"strm115/backend/internal/utils/torrentmeta"
 )
@@ -76,7 +77,8 @@ func TestMediaNamingFileFacts(t *testing.T) {
 		{"Show.bilibili.WEB-DL.mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEB-DL"}},
 		{"Show.[BiLiBiLi][BILIBILI].mkv", map[naming.Field]string{naming.Platform: "BILIBILI"}},
 		{"Show.NotBILIBILI.BILIBILIPlus.BILIBILI2.mkv", map[naming.Field]string{naming.Platform: ""}},
-		{"Show.BILIBILI.NF.mkv", map[naming.Field]string{naming.Platform: ""}},
+		{"Show.BILIBILI.NF.WEB-DL.mkv", map[naming.Field]string{naming.Platform: ""}},
+		{"Show.IQ.WEB-DL.mkv", map[naming.Field]string{naming.Platform: "IQ"}},
 		{"Show.Netflix.NF.mkv", map[naming.Field]string{naming.Platform: "NF"}},
 		{"Show.1080p.720p.H264.HEVC.SDR.HDR10.AAC.FLAC.mkv", map[naming.Field]string{naming.Resolution: "", naming.VideoCodec: "", naming.DynamicRange: "", naming.AudioCodec: ""}},
 		{"Simply.Unknown.mkv", map[naming.Field]string{naming.Resolution: "", naming.VideoCodec: "", naming.BitDepth: "", naming.DynamicRange: "", naming.ReleaseGroup: ""}},
@@ -150,7 +152,9 @@ func TestMediaNamingDirectorySubtitleScope(t *testing.T) {
 			if tc.peer {
 				files = append(files, OrganizeFile{ShareFile: shareFile("two", "Other.mkv"), ParentID: "parent", MediaType: "video"})
 			}
-			mediaDirectorySubtitleValues(files)
+			if err := mediaDirectorySubtitleValues(files, recognition.Current()); err != nil {
+				t.Fatal(err)
+			}
 			got := files[0].NamingValues
 			if got[naming.Languages] != tc.languages || got[naming.SubtitleMode] != tc.mode {
 				t.Fatalf("directory fallback = %+v, want %q / %q", got, tc.languages, tc.mode)
@@ -450,9 +454,9 @@ func TestDownloadNamingBatchSnapshotAndStaleRevision(t *testing.T) {
 	}
 }
 
-func TestDownloadNamingKnownSourceGroupFillsMissingFileFacts(t *testing.T) {
+func TestDownloadNamingIgnoresSourceGroupAndKeepsFileFacts(t *testing.T) {
 	s, _, _, _, transport, input := gardenFixture(t)
-	transport.names = []string{"show/Show [01].mkv", "show/[文件字幕组] Show [02].mkv"}
+	transport.names = []string{"show/Show [01].mkv", "show/[樱花字幕组] Show [02].mkv"}
 	input.Fansub = "ANi"
 	files, err := s.Files(context.Background(), input.DownloadResourceInput)
 	if err != nil {
@@ -462,13 +466,13 @@ func TestDownloadNamingKnownSourceGroupFillsMissingFileFacts(t *testing.T) {
 	for _, file := range files.Files {
 		groups[file.Name] = file.NamingValues[naming.ReleaseGroup]
 	}
-	if groups["Show [01].mkv"] != "ANi" || groups["[文件字幕组] Show [02].mkv"] != "文件字幕组" {
-		t.Fatal("source group replaced per-file facts or was lost", groups)
+	if groups["Show [01].mkv"] != "" || groups["[樱花字幕组] Show [02].mkv"] != "樱花字幕组" {
+		t.Fatal("来源标签不得补进文件制作组，明确文件标签应保留", groups)
 	}
 	input.ManifestID = files.ManifestID
 	input.Files = []OrganizeSelection{{ID: "show/Show [01].mkv", Season: 1, Episode: 13}}
 	plan, err := s.Preview(context.Background(), input)
-	if err != nil || !strings.Contains(plan.Items[0].Name, "-ANi.mkv") || len(transport.paths) != 1 {
-		t.Fatal("final plan lost source group or refetched manifest", plan, err, transport.paths)
+	if err != nil || strings.Contains(plan.Items[0].Name, "ANi") || len(transport.paths) != 1 {
+		t.Fatal("最终计划混入来源标签或重复读取清单", plan, err, transport.paths)
 	}
 }

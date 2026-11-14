@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"strm115/backend/internal/mediafacts"
+	"strm115/backend/internal/recognition"
 	"strm115/backend/internal/storage"
 )
 
@@ -71,6 +72,7 @@ func mediaPersistentRun(run MediaOrganizeRun) MediaOrganizeRun {
 	}
 	if len(unfinished) == 0 && !mediaRunActive(run.Status) {
 		stored.Classification = ClassificationSnapshot{}
+		stored.Recognition = recognition.Snapshot{}
 		if stored.RetryBatchID == "" {
 			stored.TaskFileID, stored.TaskFileIDs = "", nil
 		}

@@ -59,7 +59,7 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 		f.Season, _ = strconv.Atoi(m[1])
 	}
 	parsed.Spec.Languages = resourceSearchSpec(in.Title).Languages
-	return DownloadFiles{Hash: hash, Files: []OrganizeFile{f}, Subtitles: []OrganizeSubtitle{}, Specs: map[string]DownloadFileSpec{f.ID: {Spec: parsed.Spec, Fansub: downloadFansub(in.Title)}}}, nil
+	return DownloadFiles{Hash: hash, Files: []OrganizeFile{f}, Subtitles: []OrganizeSubtitle{}, Specs: map[string]DownloadFileSpec{f.ID: {Spec: parsed.Spec}}}, nil
 }
 
 func downloadTargetKey(item OrganizeItem) string {

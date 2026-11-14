@@ -1,0 +1,15 @@
+# 平台别名按需映射为统一缩写。
+NF ~= NF|Netflix|奈飞|網飛|网飞
+IQ ~= IQ|iQIYI|爱奇艺|愛奇藝
+AMZN ~= AMZN|Amazon(?:[ .-]?Prime)?
+DSNP ~= DSNP|Disney\+|DisneyPlus
+ATVP ~= ATVP|Apple[ .-]?TV\+
+HMAX ~= HMAX|HBO[ .-]?Max
+BILIBILI ~= BILIBILI|B-Global|BG|哔哩哔哩|嗶哩嗶哩
+CR ~= CR|Crunchyroll
+YOUKU ~= YOUKU|优酷|優酷
+WETV ~= WETV|Tencent|腾讯视频|騰訊視頻
+MGTV ~= MGTV|芒果TV
+HULU
+BAHA ~= BAHA|巴哈姆特
+ABEMA ~= ABEMA|ABMA|AbemaTV

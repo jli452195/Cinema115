@@ -7,6 +7,10 @@ import (
 	"path"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/mediafacts"
+	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 )
 
 // Prepared manifests retain verified file identities while a user edits a large
@@ -42,6 +46,7 @@ func newDownloadPending(job OrganizeJob, account P115Account) *downloadPending {
 }
 
 func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) (DownloadFiles, error) {
+	rules := namingRecognition(ctx)
 	if len(in.Title)+len(in.Fansub)+len(in.Magnet)+len(in.TorrentURL)+len(in.Source)+len(in.Provider)+len(in.ProviderID) > 16<<10 {
 		return DownloadFiles{}, ErrOrganizeInput
 	}
@@ -49,7 +54,9 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 	if err != nil || len(out.Files) == 0 {
 		return out, err
 	}
-	prepareDownloadNaming(&out, in)
+	if err := prepareDownloadNaming(&out, in, rules); err != nil {
+		return DownloadFiles{}, err
+	}
 	body, err := json.Marshal(out)
 	if err != nil {
 		return DownloadFiles{}, fmt.Errorf("缓存资源清单: %w", err)
@@ -86,16 +93,24 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 	return out, nil
 }
 
-// Keep naming facts identical with or without an already-confirmed manifest.
-func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput) {
+// 清单有无缓存均使用同一份词表，只从文件名或明确对应单视频的原始发布标题识别。
+func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules recognition.Snapshot) error {
 	for i := range out.Files {
 		spec := out.Specs[out.Files[i].ID]
-		if spec.Fansub == "" {
-			spec.Fansub = strings.TrimSpace(in.Fansub)
+		values, err := mediafacts.ValuesWithRecognition(out.Files[i].Name, spec.Spec, rules)
+		if err != nil {
+			return fmt.Errorf("%s：%w", out.Files[i].Name, err)
 		}
-		out.Files[i].NamingValues = mediaFileValues(out.Files[i].Name, spec)
+		out.Files[i].NamingValues = values
+		spec.Fansub = values[naming.ReleaseGroup]
+		if out.Specs == nil {
+			out.Specs = make(map[string]DownloadFileSpec, len(out.Files))
+		}
+		out.Specs[out.Files[i].ID] = spec
 	}
-	mediaDirectorySubtitleValues(out.Files)
+	if err := mediaDirectorySubtitleValues(out.Files, rules); err != nil {
+		return err
+	}
 	// A single video's post title can fill missing cosmetic tags. For a pack,
 	// only each file's metadata applies; the pack title cannot describe all rows.
 	if len(out.Files) == 1 && !out.Files[0].TitleOnly && in.Title != "" {
@@ -107,26 +122,35 @@ func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput) {
 		if len(spec.Languages) == 0 {
 			spec.Languages = title.Languages
 		}
-		if spec.Fansub == "" {
-			spec.Fansub = downloadFansub(in.Title)
+		values, err := mediafacts.ValuesWithRecognition(out.Files[0].Name, spec.Spec, rules)
+		if err != nil {
+			return err
 		}
-		if out.Specs == nil {
-			out.Specs = make(map[string]DownloadFileSpec, 1)
+		// 保留原有规格继承范围，发布标题只额外补充缺失的组名和平台。
+		if values[naming.ReleaseGroup] == "" || values[naming.Platform] == "" {
+			titleValues, err := mediafacts.ValuesWithRecognition(in.Title, spec.Spec, rules)
+			if err != nil {
+				return fmt.Errorf("识别单视频发布标题: %w", err)
+			}
+			values[naming.ReleaseGroup], values[naming.Platform] = titleValues[naming.ReleaseGroup], titleValues[naming.Platform]
 		}
-		out.Specs[out.Files[0].ID] = spec
-		for field, value := range mediaFileValues(out.Files[0].Name, spec) {
+		for field, value := range values {
 			if out.Files[0].NamingValues[field] == "" {
 				out.Files[0].NamingValues[field] = value
 			}
 		}
+		spec.Fansub = out.Files[0].NamingValues[naming.ReleaseGroup]
+		out.Specs[out.Files[0].ID] = spec
 	}
+	return nil
 }
 
 func (s *DownloadOrganize) manifest(ctx context.Context, in DownloadOrganizeInput) (DownloadFiles, error) {
 	if in.ManifestID == "" {
+		rules := namingRecognition(ctx)
 		out, err := s.resourceFiles(ctx, in.DownloadResourceInput)
 		if err == nil {
-			prepareDownloadNaming(&out, in.DownloadResourceInput)
+			err = prepareDownloadNaming(&out, in.DownloadResourceInput, rules)
 		}
 		return out, err
 	}
@@ -150,6 +174,7 @@ func (s *DownloadOrganize) manifest(ctx context.Context, in DownloadOrganizeInpu
 // collisions are checked once. Namespace identities, then restore original
 // torrent paths when splitting into the existing per-magnet worker jobs.
 func (s *DownloadOrganize) previewResources(ctx context.Context, common DownloadOrganizeInput, resources []DownloadOrganizeInput) ([]OrganizeJob, error) {
+	ctx = pinNamingRecognition(ctx, namingRecognition(ctx))
 	if len(resources) < 1 || len(resources) > 100 {
 		return nil, ErrOrganizeInput
 	}

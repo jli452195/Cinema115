@@ -93,14 +93,14 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 				t.Fatal("title-only preview/worker fetched a remote manifest")
 				return DownloadFiles{}, nil
 			})
-			in.DownloadResourceInput = titleResource(source, "[字幕组] Show [12 END][1080P][简体][MP4]")
+			in.DownloadResourceInput = titleResource(source, "[LoliHouse] Show [12 END][1080P][简体][MP4]")
 			files, err := s.Files(context.Background(), in.DownloadResourceInput)
 			if err != nil {
 				t.Fatal(err)
 			}
 			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32}}
 			plan, err := s.Preview(context.Background(), in)
-			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[简体]-字幕组" {
+			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[简体]-LoliHouse" {
 				t.Fatal("title-only plan guessed an extension or discarded mapping", plan, err)
 			}
 			job, err := s.Start(plan.ID)

@@ -72,6 +72,7 @@ export const router = createRouter({
       { path: 'history', name: 'media-organize-history', component: () => import('./views/MediaOrganizeHistoryView.vue') },
       { path: 'naming', name: 'naming-settings', component: () => import('./views/NamingSettingsView.vue') },
       { path: 'classification', name: 'classification-settings', component: () => import('./views/ClassificationSettingsView.vue') },
+      { path: 'recognition', name: 'recognition-settings', component: () => import('./views/RecognitionSettingsView.vue') },
     ] },
     { path: '/', name: 'home', component: DashboardView, props: { kind: 'tv' }, meta: { defaultSidebarCollapsed: true } },
     { path: '/tv', name: 'tv', component: DashboardView, props: { kind: 'tv' }, meta: { defaultSidebarCollapsed: true } },

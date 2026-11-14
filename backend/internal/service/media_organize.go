@@ -13,6 +13,7 @@ import (
 
 	"strm115/backend/internal/mediacategory"
 	"strm115/backend/internal/mediafacts"
+	"strm115/backend/internal/recognition"
 )
 
 var ErrMediaOrganizeInput = errors.New("整理参数无效")
@@ -82,6 +83,7 @@ type MediaOrganizeGroup struct {
 }
 
 type MediaOrganizeRun struct {
+	Recognition        recognition.Snapshot   `json:"recognition"`
 	ID                 string                 `json:"id"`
 	Trigger            string                 `json:"trigger,omitempty"`
 	Rule               MediaOrganizeRule      `json:"rule"`
@@ -103,6 +105,25 @@ type MediaOrganizeRun struct {
 	recognitionEvents  []mediaRecognitionLogEvent
 	refreshPaths       []string
 	scanScopes         []mediaScanScope
+}
+
+// prepareRecognition 恢复已固定的词表，不用后续保存的新规则替换历史任务。
+func (r *MediaOrganizeRun) prepareRecognition() error {
+	if r.Recognition.Revision == "" {
+		if r.Recognition.Groups != "" || r.Recognition.Platforms != "" {
+			return fmt.Errorf("%w：批次识别词表快照缺少版本", ErrMediaOrganizeInput)
+		}
+		r.Recognition.Revision = recognition.Revision("", "")
+	}
+	compiled, err := recognition.Compile(r.Recognition.Groups, r.Recognition.Platforms)
+	if err != nil {
+		return fmt.Errorf("编译批次识别词表: %w", err)
+	}
+	if compiled.Revision != r.Recognition.Revision {
+		return fmt.Errorf("%w：批次识别词表快照无效", ErrMediaOrganizeInput)
+	}
+	r.Recognition = compiled
+	return nil
 }
 
 // Restore only this batch's rules, never the current global configuration.
@@ -479,7 +500,7 @@ func (s *MediaOrganizer) queueTriggeredScanLocked(rule MediaOrganizeRule, trigge
 		return MediaOrganizeRun{}, err
 	}
 	now := s.localMonitorSettings().now()
-	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, RecognitionVersion: MediaRecognitionPolicyVersion, Status: "queued", CreatedAt: now, UpdatedAt: now, Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
+	r := MediaOrganizeRun{ID: id, Trigger: trigger, Rule: rule, Classification: classification, Recognition: recognition.Current(), RecognitionVersion: MediaRecognitionPolicyVersion, Status: "queued", CreatedAt: now, UpdatedAt: now, Groups: []MediaOrganizeGroup{}, Entries: []MediaOrganizeEntry{}}
 	r.scanScopes = slices.Clone(scopes)
 	if err := r.prepareClassification(); err != nil {
 		return MediaOrganizeRun{}, err

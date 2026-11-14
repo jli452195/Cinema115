@@ -2,13 +2,33 @@
 package mediafacts
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
 
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 	"strm115/backend/internal/releaseparse"
 )
+
+// ValuesWithRecognition 用固定词表识别普通整理的发布组和平台；RSS 继续使用原有 Values 接口。
+func ValuesWithRecognition(name string, hint releaseparse.Spec, snapshot recognition.Snapshot) (map[naming.Field]string, error) {
+	values := Values(name, hint, "")
+	delete(values, naming.Platform)
+	result, err := snapshot.Recognize(name)
+	if err != nil {
+		return nil, fmt.Errorf("识别文件发布信息: %w", err)
+	}
+	if len(result.Conflicts) > 0 {
+		return nil, fmt.Errorf("文件发布信息命中冲突的词表映射，请在识别词表中测试并修正规则")
+	}
+	values[naming.ReleaseGroup] = strings.Join(result.ReleaseGroups, "&")
+	if len(result.Platforms) == 1 {
+		values[naming.Platform] = result.Platforms[0]
+	}
+	return values, nil
+}
 
 var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
 var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "")

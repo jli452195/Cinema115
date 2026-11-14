@@ -38,7 +38,7 @@ func TestMediaNamingLongOriginalTitleFallsBack(t *testing.T) {
 		t.Fatalf("命名预览失败：%+v, %v", preview, err)
 	}
 	result := preview.Items[0].Result
-	if preview.Items[0].Error != "" || len(result.Name) != 107 || result.Name != "被放逐的作弊赋予魔术师享受随心所欲的第二人生。.S01E06.1080p.WEB-DL.H264.AAC.2.0.strm" {
+	if preview.Items[0].Error != "" || len(result.Name) != 110 || result.Name != "被放逐的作弊赋予魔术师享受随心所欲的第二人生。.S01E06.1080p.WEB-DL.CR.H264.AAC.2.0.strm" {
 		t.Fatalf("超长原语种名称应自动回退为作品名称：%+v", preview.Items[0])
 	}
 	if templates.record.Template.Filename[0].Field != naming.OriginalTitle {
@@ -48,7 +48,7 @@ func TestMediaNamingLongOriginalTitleFallsBack(t *testing.T) {
 	// 正常长度仍使用原语种名称。
 	s.Metadata = &mediaNamingMetadata{}
 	preview, err = s.Preview(context.Background(), input)
-	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil || preview.Items[0].Result.Name != "Original.S01E06.1080p.WEB-DL.H264.AAC.2.0.strm" {
+	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil || preview.Items[0].Result.Name != "Original.S01E06.1080p.WEB-DL.CR.H264.AAC.2.0.strm" {
 		t.Fatalf("正常长度不应触发降级：%+v, %v", preview, err)
 	}
 }

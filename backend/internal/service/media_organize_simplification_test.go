@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 func TestMediaHistorySnapshotExcludesRuntimePermissions(t *testing.T) {
 	run := mediaRecordFixture("permissions", "partial", 1)
+	run.Recognition = recognitionTestSnapshot(t, "LoliHouse", "NF")
 	run.Entries[0].Status, run.Entries[0].Result.Status = "error", "error"
 	row, err := mediaRunRow(run)
 	if err != nil {
@@ -26,10 +28,14 @@ func TestMediaHistorySnapshotExcludesRuntimePermissions(t *testing.T) {
 			t.Fatal("实时权限不应持久化", field, row.Tasks[0].Record)
 		}
 	}
-	for _, field := range []string{`"readyCount"`, `"failureCount"`, `"recognition"`} {
+	for _, field := range []string{`"readyCount"`, `"failureCount"`} {
 		if strings.Contains(row.Record, field) {
 			t.Fatal("批次仍保存冗余字段", field)
 		}
+	}
+	var stored MediaOrganizeRun
+	if err := json.Unmarshal([]byte(row.Record), &stored); err != nil || stored.Recognition.Revision != run.Recognition.Revision {
+		t.Fatal("失败任务应保存固定词表以供重试", stored.Recognition, err)
 	}
 }
 

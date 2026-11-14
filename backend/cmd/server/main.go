@@ -92,6 +92,10 @@ func main() {
 	if classificationErr != nil {
 		log.Printf("分类规则未加载，可从管理端修正后重新加载: %v", classificationErr)
 	}
+	recognitionSettings, recognitionErr := service.OpenRecognitionSettings(initCtx, filepath.Join(dataDir, "recognition"))
+	if recognitionErr != nil {
+		log.Printf("识别词表未加载，可从管理端修正后重新加载: %v", recognitionErr)
+	}
 	accounts, err := service.OpenP115AccountsSQLite(initCtx, database, dataDir, secret)
 	if err != nil {
 		initCancel()
@@ -151,6 +155,7 @@ func main() {
 	httpapi.RegisterNamingTemplates(admin, database)
 	httpapi.RegisterDetailSearchSettings(admin, database)
 	httpapi.RegisterMediaClassification(admin, classification)
+	httpapi.RegisterRecognition(admin, recognitionSettings)
 	catalog := r.Group("/api/catalog")
 	catalog.Use(httpapi.PortalAuthenticated(auth))
 	tmdbService := service.NewTMDBService(tmdb.New(os.Getenv("TMDB_API_KEY")), database)

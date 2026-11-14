@@ -1,0 +1,13 @@
+import type { RecognitionDiagnostic } from '../types/recognition'
+
+export async function recognitionRequest<T>(token: string, path = '', init: RequestInit = {}): Promise<T> {
+  const response = await fetch(`/api/admin/recognition${path}`, {
+    ...init, cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok) throw Object.assign(new Error(response.status === 401 ? '登录已过期，请重新登录' : data?.error || `请求失败（HTTP ${response.status}）`), {
+    status: response.status, diagnostic: data?.diagnostic as RecognitionDiagnostic | undefined,
+  })
+  if (!data) throw new Error('接口未返回有效数据，请重试')
+  return data as T
+}

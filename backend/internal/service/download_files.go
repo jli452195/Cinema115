@@ -155,7 +155,7 @@ func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles
 		f := OrganizeFile{ShareFile: p115.ShareFile{ID: file.Path, Name: path.Base(file.Path), Size: file.Size}, ParentID: path.Dir(file.Path), SourcePath: "/" + file.Path, MediaType: kind, Season: 1}
 		if kind == "video" {
 			organizeFileNumbering(&f)
-			out.Specs[f.ID] = DownloadFileSpec{Spec: resourceSpecification(f.Name), Fansub: downloadFansub(f.Name)}
+			out.Specs[f.ID] = DownloadFileSpec{Spec: resourceSpecification(f.Name)}
 			out.Files = append(out.Files, f)
 		}
 		media = append(media, f)
@@ -167,16 +167,6 @@ func organizeResourceFiles(hash string, files []torrentmeta.File) (DownloadFiles
 		out.Reason = "清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）"
 	}
 	return out, nil
-}
-
-func downloadFansub(title string) string {
-	_, tags := resourceTitleTags(title)
-	for _, tag := range tags {
-		if strings.Contains(tag, "字幕组") || strings.Contains(tag, "字幕組") || strings.Contains(tag, "字幕社") {
-			return tag
-		}
-	}
-	return ""
 }
 
 var resourceNumbers = regexp.MustCompile(`[0-9]+|[^0-9]+`)

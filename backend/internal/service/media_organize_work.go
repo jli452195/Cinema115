@@ -16,6 +16,10 @@ import (
 )
 
 func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, action string) (processErr error) {
+	if err := run.prepareRecognition(); err != nil {
+		return err
+	}
+	ctx = pinNamingRecognition(ctx, run.Recognition)
 	if run.RecognitionVersion == "" {
 		run.RecognitionVersion = MediaRecognitionPolicyVersion
 	}
@@ -30,6 +34,7 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 		return err
 	}
 	defer files.close()
+	files.recognition = run.Recognition
 	files.scanProgress = func(count int, name string) { s.publishMediaProgress(run, "scanning", name, count, 0) }
 	if action == "auto" {
 		defer func() {
@@ -117,6 +122,11 @@ func (s *MediaOrganizer) process(ctx context.Context, run *MediaOrganizeRun, act
 }
 
 func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	if err := run.prepareRecognition(); err != nil {
+		return err
+	}
+	ctx = pinNamingRecognition(ctx, run.Recognition)
+	files.recognition = run.Recognition
 	var err error
 	run.Status = "scanning"
 	s.publishMediaProgress(run, "scanning", "", 0, 0)
@@ -268,6 +278,7 @@ func (s *MediaOrganizer) recognize(ctx context.Context, run *MediaOrganizeRun, g
 }
 
 func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) error {
+	ctx = pinNamingRecognition(ctx, run.Recognition)
 	s.publishMediaProgress(run, "planning", "", 0, 0)
 	prepared := make(map[string]preparedMediaNaming)
 	if files.naming != nil {

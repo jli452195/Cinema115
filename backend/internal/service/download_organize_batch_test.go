@@ -118,6 +118,7 @@ func TestDownloadBatchRejectsCrossResourceConflictsAndAllowsVersions(t *testing.
 		t.Fatal("conflicting batch caused side effects", err)
 	}
 	input.Resources[1].Fansub = "OtherGroup"
+	input.Resources[1].Title = "[LoliHouse] Show"
 	input.Resources[1].ManifestID = ""
 	preview, err = s.PreviewBatch(context.Background(), input)
 	if err != nil {
@@ -128,6 +129,7 @@ func TestDownloadBatchRejectsCrossResourceConflictsAndAllowsVersions(t *testing.
 	}
 	// A later batch cannot reserve a target already held by queued work.
 	input.Resources[1].Fansub = ""
+	input.Resources[1].Title = ""
 	input.Resources = input.Resources[1:]
 	input.Resources[0].DownloadResourceInput.Magnet = fmt.Sprintf("magnet:?xt=urn:btih:%040x", 3)
 	files, err := s.Files(context.Background(), input.Resources[0].DownloadResourceInput)
@@ -298,17 +300,17 @@ func TestDownloadBatchExecutionSlotsAndBackoff(t *testing.T) {
 
 func TestDownloadBatchSpecsUseEachFileAndSingleTitleTagsAsFallback(t *testing.T) {
 	s, _, _, _, _, _ := gardenFixture(t)
-	names := []torrentmeta.File{{Path: "[星光字幕组] Show [01][720p][繁體].mkv", Size: 10}}
+	names := []torrentmeta.File{{Path: "[星空字幕组] Show [01][720p][繁體].mkv", Size: 10}}
 	s.Resources = downloadReaderFunc(func(_ context.Context, _ DownloadResourceInput) (DownloadFiles, error) {
 		return organizeResourceFiles(gardenTestHash, names)
 	})
-	in := DownloadResourceInput{Title: "[其他字幕组] Show [1080p][简体]"}
+	in := DownloadResourceInput{Title: "[北宇治字幕组] Show [1080p][简体]"}
 	files, err := s.Files(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec := files.Specs[files.Files[0].ID]
-	if spec.Resolution != "720p" || spec.Fansub != "星光字幕组" || strings.Join(spec.Languages, ",") != "zh-Hant" {
+	if spec.Resolution != "720p" || spec.Fansub != "星空字幕组" || strings.Join(spec.Languages, ",") != "zh-Hant" {
 		t.Fatal("title overrode the actual file", spec)
 	}
 	names = []torrentmeta.File{{Path: "Show [01].mkv", Size: 10}}
@@ -317,7 +319,7 @@ func TestDownloadBatchSpecsUseEachFileAndSingleTitleTagsAsFallback(t *testing.T)
 		t.Fatal(err)
 	}
 	spec = files.Specs[files.Files[0].ID]
-	if spec.Resolution != "1080p" || spec.Fansub != "其他字幕组" || strings.Join(spec.Languages, ",") != "zh-Hans" {
+	if spec.Resolution != "1080p" || spec.Fansub != "北宇治字幕组" || strings.Join(spec.Languages, ",") != "zh-Hans" {
 		t.Fatal("single file did not inherit missing title tags", spec)
 	}
 	names = append(names, torrentmeta.File{Path: "Show [02].mkv", Size: 10})

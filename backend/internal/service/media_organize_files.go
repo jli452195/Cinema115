@@ -14,6 +14,8 @@ import (
 
 	"strm115/backend/internal/client/clouddrive2"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/mediafacts"
+	"strm115/backend/internal/recognition"
 )
 
 type mediaOrganizeDrive interface {
@@ -60,6 +62,7 @@ func mediaVisitScanDirectory(visited map[string]bool, id, location string, depth
 }
 
 type mediaOrganizeFiles struct {
+	recognition          recognition.Snapshot
 	rule                 MediaOrganizeRule
 	drive                OrganizeDrive
 	cookie               string
@@ -217,6 +220,10 @@ func mediaFileType(name string) string {
 }
 
 func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, error) {
+	if f.recognition.Revision == "" {
+		f.recognition = namingRecognition(ctx)
+	}
+	var factsErr error
 	out := make([]MediaOrganizeEntry, 0, 128)
 	appendFile := func(file p115.ShareFile, parent, relative string, modified int64) {
 		cd2ID := f.cd2Snapshots[file.ID].ID
@@ -230,7 +237,11 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		}
 		item := OrganizeFile{ShareFile: file, ParentID: parent, SourcePath: relative, MediaType: typeName, Season: 1}
 		mediaOrganizeFileNumbering(&item)
-		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
+		values, err := mediafacts.ValuesWithRecognition(file.Name, DownloadFileSpec{}.Spec, f.recognition)
+		if err != nil && factsErr == nil {
+			factsErr = fmt.Errorf("%s：%w", file.Name, err)
+		}
+		item.NamingValues = values
 		out = append(out, MediaOrganizeEntry{File: item, Modified: modified, LocalIdentity: f.localSnapshotKeys[file.ID], Status: "pending", CD2FileID: cd2ID, CD2Hashes: cd2Hashes})
 		if f.scanProgress != nil {
 			f.scanProgress(len(out), file.Name)
@@ -240,6 +251,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		pending, err := f.scanCD2(ctx, appendFile)
 		if err != nil {
 			return nil, err
+		}
+		if factsErr != nil {
+			return nil, factsErr
 		}
 		return f.holdLocalCompanions(out, pending), nil
 	}
@@ -469,6 +483,9 @@ func (f *mediaOrganizeFiles) scan(ctx context.Context) ([]MediaOrganizeEntry, er
 		if f.shallow115 {
 			out = f.holdLocalCompanions(out, f.localPending)
 		}
+	}
+	if factsErr != nil {
+		return nil, factsErr
 	}
 	return out, nil
 }

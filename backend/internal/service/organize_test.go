@@ -9,6 +9,7 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 )
 
 type organizeFakeDrive struct {
@@ -210,7 +211,9 @@ func organizeTestFiles(files []p115.ShareFile, parent, prefix string) []Organize
 		item.NamingValues = mediaFileValues(file.Name, DownloadFileSpec{})
 		out = append(out, item)
 	}
-	mediaDirectorySubtitleValues(out)
+	if err := mediaDirectorySubtitleValues(out, recognition.Current()); err != nil {
+		panic(err)
+	}
 	return out
 }
 

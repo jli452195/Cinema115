@@ -72,10 +72,11 @@ func TestMediaPersistenceKeepsActiveRoundFrozenContext(t *testing.T) {
 			run := mediaRecordFixture("active-round", status, 1)
 			run.Trigger, run.RecognitionVersion = "manual", "pinned-policy"
 			run.Classification = ClassificationSnapshot{YAML: "固定分类规则", Revision: "pinned-revision"}
+			run.Recognition = recognitionTestSnapshot(t, "LoliHouse", "NF")
 			for _, entries := range [][]MediaOrganizeEntry{nil, run.Entries} {
 				run.Entries = entries
 				stored := mediaPersistentRun(run)
-				if stored.Status != status || stored.Trigger != run.Trigger || stored.RecognitionVersion != run.RecognitionVersion || stored.Classification.YAML != run.Classification.YAML || stored.Classification.Revision != run.Classification.Revision {
+				if stored.Status != status || stored.Trigger != run.Trigger || stored.RecognitionVersion != run.RecognitionVersion || stored.Classification.YAML != run.Classification.YAML || stored.Classification.Revision != run.Classification.Revision || stored.Recognition.Revision != run.Recognition.Revision {
 					t.Fatal("扫描或清理尚未结束时，即使没有未完成主文件也必须保留本轮冻结与队列上下文", stored)
 				}
 			}
@@ -86,6 +87,7 @@ func TestMediaPersistenceKeepsActiveRoundFrozenContext(t *testing.T) {
 func TestMediaPersistenceSuccessRetainsHistoryAndMapping(t *testing.T) {
 	s, db, dir := newMediaSQLiteTest(t)
 	run := mediaRecordFixture("successful", "completed", 1)
+	run.Recognition = recognitionTestSnapshot(t, "LoliHouse", "NF")
 	run.Entries[0].Relative = run.Entries[0].File.Name
 	run.Entries[0].Result.Action = "duplicate"
 	row, err := mediaRunRow(run)
@@ -113,6 +115,9 @@ func TestMediaPersistenceSuccessRetainsHistoryAndMapping(t *testing.T) {
 	index, err := reopened.Snapshot(run.ID)
 	if err != nil || len(index.Entries) != 1 || !index.Entries[0].Reference || index.Entries[0].Relative != run.Entries[0].Relative || index.Entries[0].Target != run.Entries[0].Target || index.Entries[0].Result == nil || index.Entries[0].Result.Action != "duplicate" {
 		t.Fatal("晚到附件所需的已核实目标映射和去重语义不能丢失", index, err)
+	}
+	if index.Recognition.Revision != "" || index.Recognition.Groups != "" || index.Recognition.Platforms != "" {
+		t.Fatal("成功历史不应继续携带整份识别词表", index.Recognition)
 	}
 }
 

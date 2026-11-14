@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
 )
 
@@ -103,6 +104,9 @@ func mediaPrepareRetry(run *MediaOrganizeRun, input MediaOrganizeCorrection) err
 	if err := run.prepareClassification(); err != nil {
 		return err
 	}
+	if err := run.prepareRecognition(); err != nil {
+		return err
+	}
 	// 附件按当前文件事实重新判断，不重放上次尝试的回收选择。
 	for j := range run.Entries {
 		if mediaInTask(run.Entries[j], input.FileID) {
@@ -116,7 +120,10 @@ func mediaPrepareRetry(run *MediaOrganizeRun, input MediaOrganizeCorrection) err
 		}
 		// 重试时补齐旧记录缺失的分辨率，保留已有命名标签及目录继承信息。
 		if video.P115Move == nil && video.File.NamingValues[naming.Resolution] == "" {
-			values := mediaFileValues(video.File.Name, DownloadFileSpec{})
+			values, err := mediafacts.ValuesWithRecognition(video.File.Name, DownloadFileSpec{}.Spec, run.Recognition)
+			if err != nil {
+				return fmt.Errorf("补齐重试文件信息: %w", err)
+			}
 			if resolution := values[naming.Resolution]; resolution != "" {
 				if video.File.NamingValues == nil {
 					video.File.NamingValues = values
