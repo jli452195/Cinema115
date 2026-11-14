@@ -19,9 +19,13 @@ features:
     link: /guide/installation
     linkText: 查看部署步骤
   - title: 115 账号配置
-    details: 了解主账号、小号和个人网盘的用途，按需要完成配置。
+    details: 先登录主账号，再按用途配置转存目录或生成 STRM；了解小号与个人网盘的区别。
     link: /guide/accounts
     linkText: 配置网盘账号
+  - title: 115 转存与 STRM
+    details: 按图配置接收目录、转存搜索资源，从分享链接或主网盘目录生成本地 STRM。
+    link: /guide/p115-transfer
+    linkText: 选择功能与查看步骤
   - title: 动漫订阅
     details: 从资源站点选择番剧和字幕组，自动下载到 115 并重命名整理。
     link: /anime/

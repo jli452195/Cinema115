@@ -117,6 +117,8 @@ Compose 默认使用 host 网络；修改 `HTTP_PORT` 后使用对应端口。�
 | --- | --- |
 | [开始使用](https://jli452195.github.io/Cinema115/guide/) | 安装、首次登录与功能配置顺序。 |
 | [115 账号配置](https://jli452195.github.io/Cinema115/guide/accounts) | 主账号、小号与用户个人网盘的用途。 |
+| [115 转存与功能速选](https://jli452195.github.io/Cinema115/guide/p115-transfer) | 配置接收目录、转存搜索资源，区分分享转存、云下载与整理。 |
+| [115 STRM 媒体库入门](https://jli452195.github.io/Cinema115/guide/p115-strm) | 分享直接生成、转存再分享、网盘目录映射，以及结果与进度追踪。 |
 | [资源搜索与下载整理](https://jli452195.github.io/Cinema115/resources/) | 搜索种子、选择正片、应用偏移与连续编号、配字幕和追踪任务。 |
 | [实战：妹妹公主两季 BDRip](https://jli452195.github.io/Cinema115/resources/sister-princess.html) | 按图完成两季暂存、第一季 26 份字幕、第二季 13 份字幕及最终清单核对。 |
 | [动漫订阅](https://jli452195.github.io/Cinema115/anime/) | 选择来源、字幕组、集号映射、整理与归档。 |
