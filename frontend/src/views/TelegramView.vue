@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconHandMove, IconInfoCircle, IconPlus, IconPuzzle, IconRefresh } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import TelegramBotEditor from '../components/TelegramBotEditor.vue'
 import TelegramBotCard from '../components/TelegramBotCard.vue'
 import TelegramModuleCard from '../components/TelegramModuleCard.vue'
+import SortableList from '../components/SortableList.vue'
 import FloatingDialog from '../components/AnimeFloatingDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import { useToast } from '../composables/useToast'
+import { portalUser } from '../composables/usePortalAuth'
 import type { TelegramBotConfig, TelegramBotIdentity, TelegramBotModule } from '../types/telegramBots'
 
 const props = defineProps<{ token: string }>()
@@ -19,18 +21,62 @@ const loading = ref(true), refreshing = ref(false), adding = ref(false), deletin
 const editingBot = ref<TelegramBotConfig>(), deletingBot = ref<TelegramBotConfig>()
 const busyModules = ref(new Set<string>()), testingBots = ref(new Set<string>())
 const draggingModuleId = ref(''), readError = ref('')
-const poolDropTarget = ref(false)
-const poolContent = ref<HTMLElement>()
-let poolScrollFrame: number | undefined, poolScrollSpeed = 0
+// 存储按浏览器来源隔离；管理员编号来自已验证的登录状态，不保存凭据。
+const orderKey = portalUser.value?.id ? 'cinema115:telegram-module-order:' + portalUser.value.id : ''
+const moduleOrder = ref<Record<string, string[]>>({})
+try {
+  const saved: unknown = JSON.parse(orderKey ? localStorage.getItem(orderKey) || '{}' : '{}')
+  if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+    moduleOrder.value = Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string[]] => Array.isArray(entry[1]) && entry[1].every(id => typeof id === 'string')))
+  }
+} catch { /* 本地排序不可用时采用服务端默认顺序。 */ }
+const droppedLists = new Map<string, TelegramBotModule[]>()
 const lifecycle = new AbortController()
 let timer: number | undefined, sequence = 0
 const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
 
-const unassigned = computed(() => modules.value.filter(module => !module.assignedBotId))
+const unassigned = computed(() => moduleByBot(''))
+const assignmentBusy = computed(() => adding.value || deleting.value || busyModules.value.size > 0)
 const onlineCount = computed(() => bots.value.filter(bot => bot.connected).length)
 const assignedCount = computed(() => modules.value.filter(module => !!module.assignedBotId).length)
 const deletingModules = computed(() => modules.value.filter(module => module.assignedBotId === deletingBot.value?.id))
-function moduleByBot(botID: string) { return modules.value.filter(module => module.assignedBotId === botID) }
+function moduleByBot(botID: string) {
+  const items = modules.value.filter(module => module.assignedBotId === botID)
+  const positions = new Map((moduleOrder.value[botID] || []).map((id, index) => [id, index]))
+  return items.sort((a, b) => (positions.get(a.id) ?? positions.size) - (positions.get(b.id) ?? positions.size))
+}
+function saveOrder() {
+  moduleOrder.value = Object.fromEntries(['', ...bots.value.map(bot => bot.id)].map(id => [id, moduleByBot(id).map(module => module.id)]))
+  try { if (orderKey) localStorage.setItem(orderKey, JSON.stringify(moduleOrder.value)) } catch { /* 存储受限时仍允许本次页面排序。 */ }
+}
+function startDrag(module: TelegramBotModule) {
+  droppedLists.clear()
+  draggingModuleId.value = module.id
+  ++sequence; refreshing.value = false
+}
+function stageList(botId: string, items: TelegramBotModule[]) { droppedLists.set(botId, items) }
+function endDrag() {
+  const id = draggingModuleId.value
+  draggingModuleId.value = ''
+  const module = modules.value.find(item => item.id === id)
+  const before = moduleOrder.value
+  const target = [...droppedLists].find(([, items]) => items.some(item => item.id === id))
+  if (module && target) {
+    moduleOrder.value = { ...before, ...Object.fromEntries([...droppedLists].map(([botId, items]) => [botId, items.map(item => item.id)])) }
+    if (target[0] !== module.assignedBotId) void updateModule(module, target[0], before)
+    else saveOrder()
+  }
+  droppedLists.clear()
+}
+function moveModule(module: TelegramBotModule, direction: 'up' | 'down') {
+  if (assignmentBusy.value || draggingModuleId.value) return
+  const items = moduleByBot(module.assignedBotId), from = items.findIndex(item => item.id === module.id)
+  const to = from + (direction === 'up' ? -1 : 1)
+  if (from < 0 || to < 0 || to >= items.length) return
+  items.splice(to, 0, items.splice(from, 1)[0]!)
+  moduleOrder.value = { ...moduleOrder.value, [module.assignedBotId]: items.map(item => item.id) }
+  saveOrder()
+}
 function message(reason: unknown) { return reason instanceof Error ? reason.message : '操作失败，请重试' }
 
 async function refresh(notify = false) {
@@ -41,8 +87,9 @@ async function refresh(notify = false) {
       telegramRequest<{ bots: TelegramBotConfig[] }>(props.token, 'bots', { signal: signal() }),
       telegramRequest<{ modules: TelegramBotModule[] }>(props.token, 'modules', { signal: signal() }),
     ])
-    if (current !== sequence || lifecycle.signal.aborted) return
+    if (current !== sequence || lifecycle.signal.aborted || draggingModuleId.value) return
     bots.value = botData.bots; modules.value = moduleData.modules; readError.value = ''
+    saveOrder()
     if (notify) toast.success('Bot 状态与功能分配已刷新')
   } catch (reason) {
     if (current !== sequence || lifecycle.signal.aborted) return
@@ -58,83 +105,39 @@ function setBusy(target: typeof busyModules, id: string, busy: boolean) {
   target.value = next
 }
 
-async function updateModule(module: TelegramBotModule, botId: string) {
-  if (busyModules.value.has(module.id) || deleting.value) return
+async function updateModule(module: TelegramBotModule, botId: string, previousOrder = moduleOrder.value) {
+  if (assignmentBusy.value) return
   const previousBotId = module.assignedBotId
   if (previousBotId === botId) return
   const previousBotName = bots.value.find(bot => bot.id === previousBotId)?.name || '原 Bot'
   setBusy(busyModules, module.id, true)
   draggingModuleId.value = ''
-  poolDropTarget.value = false
+  ++sequence; refreshing.value = false
+  // 仅显示分配结果，服务端仍通过 expectedBotId 校验原归属；失败恢复已知状态。
+  modules.value = modules.value.map(item => item.id === module.id ? { ...item, assignedBotId: botId } : item)
   try {
-    await telegramRequest(props.token, 'modules/' + encodeURIComponent(module.id), { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() })
+    const result = await telegramRequest<{ modules: TelegramBotModule[] }>(props.token, 'modules/' + encodeURIComponent(module.id), { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() })
     if (lifecycle.signal.aborted) return
+    modules.value = result.modules
+    saveOrder()
     await refresh()
+    if (lifecycle.signal.aborted) return
     const botName = bots.value.find(bot => bot.id === botId)?.name || 'Bot'
     if (!botId) toast.success(module.name + '已退回待分配功能池', { title: '已解除分配' })
     else if (previousBotId) toast.info(module.name + '已从' + previousBotName + '转移给' + botName, { title: '功能已转移' })
     else toast.success(module.name + '已分配给' + botName, { title: '分配成功' })
   } catch (reason) {
-    if (!lifecycle.signal.aborted) { await refresh(); toast.error(message(reason), { title: '操作未完成' }) }
+    if (!lifecycle.signal.aborted) {
+      modules.value = modules.value.map(item => item.id === module.id ? module : item)
+      moduleOrder.value = previousOrder
+      await refresh()
+      if (lifecycle.signal.aborted) return
+      toast.error(message(reason), { title: '操作未完成' })
+    }
   } finally { setBusy(busyModules, module.id, false) }
 }
 function assign(module: TelegramBotModule, botId: string) { void updateModule(module, botId) }
-function dropModule(moduleId: string, botId: string) {
-  draggingModuleId.value = ''
-  poolDropTarget.value = false
-  const module = modules.value.find(item => item.id === moduleId)
-  const bot = bots.value.find(item => item.id === botId)
-  if (!module) { toast.warning('功能不存在，请刷新后重试'); return }
-  if (!bot) { toast.warning('目标 Bot 不存在，请刷新后重试'); return }
-  assign(module, botId)
-}
 function unassignModule(module: TelegramBotModule) { void updateModule(module, '') }
-
-function stopPoolScroll() {
-  if (poolScrollFrame !== undefined) window.cancelAnimationFrame(poolScrollFrame)
-  poolScrollFrame = undefined
-  poolScrollSpeed = 0
-}
-function scrollPool() {
-  poolScrollFrame = undefined
-  const list = poolContent.value
-  if (!list || !draggingModuleId.value || deleting.value || !window.matchMedia('(min-width: 1280px)').matches) { stopPoolScroll(); return }
-  const previous = list.scrollTop
-  list.scrollTop += poolScrollSpeed
-  if (list.scrollTop !== previous) poolScrollFrame = window.requestAnimationFrame(scrollPool)
-  else stopPoolScroll()
-}
-function updatePoolScroll(event: DragEvent) {
-  const list = poolContent.value
-  if (!list || !window.matchMedia('(min-width: 1280px)').matches || list.scrollHeight <= list.clientHeight) { stopPoolScroll(); return }
-  const bounds = list.getBoundingClientRect(), edge = Math.min(56, bounds.height / 3)
-  const y = event.clientY - bounds.top
-  if (y < 0 || y > bounds.height) { stopPoolScroll(); return }
-  poolScrollSpeed = y < edge ? -12 * (1 - y / edge) : y > bounds.height - edge ? 12 * (1 - (bounds.height - y) / edge) : 0
-  if (!poolScrollSpeed) { stopPoolScroll(); return }
-  if (poolScrollFrame === undefined) poolScrollFrame = window.requestAnimationFrame(scrollPool)
-}
-watch(draggingModuleId, id => { if (!id) stopPoolScroll() })
-
-function poolDragOver(event: DragEvent) {
-  if (!draggingModuleId.value || !event.dataTransfer?.types.includes('application/x-cinema115-telegram-module') || deleting.value) return
-  event.preventDefault()
-  event.dataTransfer.dropEffect = 'move'
-  poolDropTarget.value = true
-  updatePoolScroll(event)
-}
-function poolDragLeave(event: DragEvent) {
-  if (!(event.currentTarget as HTMLElement).contains(event.relatedTarget as Node | null)) { poolDropTarget.value = false; stopPoolScroll() }
-}
-function dropToPool(event: DragEvent) {
-  event.preventDefault()
-  stopPoolScroll()
-  const moduleId = event.dataTransfer?.getData('application/x-cinema115-telegram-module') || draggingModuleId.value
-  poolDropTarget.value = false
-  const module = modules.value.find(item => item.id === moduleId)
-  if (module?.assignedBotId) unassignModule(module)
-  else draggingModuleId.value = ''
-}
 
 async function testBot(bot: TelegramBotConfig) {
   if (testingBots.value.has(bot.id) || !bot.configured || deleting.value) return
@@ -149,7 +152,7 @@ async function testBot(bot: TelegramBotConfig) {
 }
 
 async function add() {
-  if (adding.value || deleting.value || bots.value.length >= 20) return
+  if (adding.value || assignmentBusy.value || draggingModuleId.value || bots.value.length >= 20) return
   adding.value = true
   try {
     const result = await telegramRequest<{ id: string }>(props.token, 'bots', { method: 'POST', body: JSON.stringify({ name: 'Bot ' + (bots.value.length + 1) }), signal: signal() })
@@ -183,7 +186,7 @@ onMounted(async () => {
   }
   if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 8000)
 })
-onBeforeUnmount(() => { lifecycle.abort(); stopPoolScroll(); if (timer) window.clearTimeout(timer) })
+onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer) })
 </script>
 
 <template>
@@ -195,8 +198,8 @@ onBeforeUnmount(() => { lifecycle.abort(); stopPoolScroll(); if (timer) window.c
         <span class="flex items-center gap-2 rounded-xl border border-blue-200/70 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300">功能已分配<strong class="tabular-nums">{{ assignedCount }} / {{ modules.length }}</strong></span>
       </div>
       <div class="ml-auto flex items-center gap-2">
-        <button type="button" :disabled="loading || refreshing" class="bot-action grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="刷新 Bot 与功能" title="刷新" @click="refresh(true)"><IconRefresh :size="16" :class="{ 'motion-safe:animate-spin': refreshing }" aria-hidden="true" /></button>
-        <button type="button" :disabled="loading || adding || deleting || bots.length >= 20" class="bot-action inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-medium text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-40" @click="add"><IconPlus :size="16" aria-hidden="true" />{{ adding ? '添加中' : '新增 Bot' }}</button>
+        <button type="button" :disabled="loading || refreshing || assignmentBusy || !!draggingModuleId" class="bot-action grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="刷新 Bot 与功能" title="刷新" @click="refresh(true)"><IconRefresh :size="16" :class="{ 'motion-safe:animate-spin': refreshing }" aria-hidden="true" /></button>
+        <button type="button" :disabled="loading || adding || assignmentBusy || !!draggingModuleId || bots.length >= 20" class="bot-action inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-medium text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-40" @click="add"><IconPlus :size="16" aria-hidden="true" />{{ adding ? '添加中' : '新增 Bot' }}</button>
       </div>
     </section>
     <p v-if="loading" role="status" class="py-8 text-sm text-slate-500 dark:text-slate-400">正在读取 Bot 和功能配置…</p>
@@ -204,20 +207,20 @@ onBeforeUnmount(() => { lifecycle.abort(); stopPoolScroll(); if (timer) window.c
       <section aria-labelledby="bot-list-title" class="bot-primary min-w-0">
         <header class="mb-3 flex items-center justify-between gap-3"><div><h2 id="bot-list-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Bot 配置</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot；Bot 启用后运行已分配功能。</p></div><span class="rounded-full bg-slate-100 px-2 py-1 text-xs tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">{{ bots.length }} / 20</span></header>
         <TransitionGroup v-if="bots.length" name="bot-list" tag="div" class="bot-grid relative grid min-w-0 items-start gap-4">
-          <TelegramBotCard v-for="bot in bots" :key="bot.id" :bot="bot" :modules="moduleByBot(bot.id)" :busy-module-ids="busyModules" :dragging-module-id="draggingModuleId" :testing="testingBots.has(bot.id)" :disabled="deleting" @edit="editingBot = $event" @remove="deletingBot = $event" @test="testBot" @drop-module="dropModule" @unassign-module="unassignModule" @drag-start="draggingModuleId = $event" @drag-end="draggingModuleId = ''" />
+          <TelegramBotCard v-for="bot in bots" :key="bot.id" :bot="bot" :modules="moduleByBot(bot.id)" :busy-module-ids="busyModules" :testing="testingBots.has(bot.id)" :disabled="assignmentBusy" @edit="editingBot = $event" @remove="deletingBot = $event" @test="testBot" @unassign-module="unassignModule" @start="startDrag" @end="endDrag" @update-modules="stageList(bot.id, $event)" @move="moveModule" />
         </TransitionGroup>
         <div v-else class="rounded-2xl border border-dashed border-slate-300 px-4 py-12 text-center dark:border-slate-700"><p class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ readError ? '暂时无法读取 Bot 配置' : '还没有 Bot 配置' }}</p><p class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ readError || '新增 Bot 后填写 Token，再分配实际功能。' }}</p><button v-if="readError" type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white" :disabled="refreshing" @click="refresh(true)">重新读取</button><button v-else type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-40" :disabled="adding" @click="add">新增 Bot</button></div>
       </section>
-      <aside aria-labelledby="pending-modules-title" class="module-pool-panel min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900" :class="{ 'is-pool-drop-target': poolDropTarget && !!draggingModuleId }" @dragover="poolDragOver" @dragleave="poolDragLeave" @drop="dropToPool">
+      <aside aria-labelledby="pending-modules-title" class="module-pool-panel min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
         <header class="flex items-center gap-3 px-4 pb-3 pt-4"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconPuzzle :size="19" aria-hidden="true" /></span><div class="min-w-0 flex-1"><h2 id="pending-modules-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">待分配功能</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot</p></div><span class="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs tabular-nums text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300">{{ unassigned.length }} 项</span></header>
-        <p class="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:bg-slate-950/50 dark:text-slate-400"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />拖入 Bot 或点击“选择 Bot”分配。解除分配后才会返回此处。</p>
-        <div ref="poolContent" role="region" aria-label="待分配功能列表" tabindex="0" class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 dark:border-slate-800 dark:bg-zinc-900">
-          <div class="relative space-y-3">
-            <TelegramModuleCard v-for="module in unassigned" :key="module.id" :module="module" :bots="bots" placement="pool" :busy="deleting || busyModules.has(module.id)" @assign="assign" @drag-start="draggingModuleId = $event" @drag-end="draggingModuleId = ''" />
-          </div>
-          <div v-if="!unassigned.length" class="grid justify-items-center gap-2 px-3 py-8 text-center"><IconPuzzle :size="24" class="text-slate-300 dark:text-slate-600" aria-hidden="true" /><p class="text-xs leading-5 text-slate-500 dark:text-slate-400">所有功能均已分配<br />解除分配后会回到这里</p></div>
+        <p class="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:bg-slate-950/50"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />拖动卡片排序或移入 Bot，也可直接选择 Bot 分配。</p>
+        <div role="region" aria-label="待分配功能列表" tabindex="0" class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 dark:border-slate-800 dark:bg-zinc-900">
+          <SortableList class="bot-module-list" :model-value="unassigned" :item-key="item => item.id" group="telegram-modules" :pull="true" :put="true" direction="vertical" item-class="w-full" handle=".telegram-module-card" filter="button:not([data-drag-handle]), a, input, select, textarea, label, [role=combobox]" :disabled="assignmentBusy" @update:model-value="stageList('', $event)" @start="startDrag" @end="endDrag">
+            <template #item="{ item }"><TelegramModuleCard :module="item" :bots="bots" placement="pool" :busy="assignmentBusy || adding" @assign="assign" @create-bot="add" @move="moveModule" /></template>
+            <template #empty><div class="grid w-full justify-items-center gap-2 px-3 py-6 text-center"><IconPuzzle :size="24" class="text-slate-300 dark:text-slate-600" aria-hidden="true" /><p class="text-xs leading-5 text-slate-500 dark:text-slate-400">所有功能均已分配<br />拖回此处可解除分配</p></div></template>
+          </SortableList>
         </div>
-        <footer class="flex items-center gap-2 px-4 py-3 text-[11px] text-slate-500 dark:text-slate-400"><IconHandMove :size="14" aria-hidden="true" /><span>支持拖拽或点选分配</span><span class="ml-auto tabular-nums">共 {{ modules.length }} 项功能</span></footer>
+        <footer class="flex items-center gap-2 px-4 py-3 text-[11px] text-slate-500 dark:text-slate-400"><IconHandMove :size="14" aria-hidden="true" /><span>排序仅保存在当前浏览器</span><span class="ml-auto tabular-nums">共 {{ modules.length }} 项功能</span></footer>
       </aside>
     </div>
     <FloatingDialog v-if="editingBot" title="编辑 Bot 配置" close-label="关闭 Bot 配置" size="config" @close="editingBot = undefined"><TelegramBotEditor :key="editingBot.id" :bot="editingBot" :token="token" embedded @changed="edited" /></FloatingDialog>
@@ -234,10 +237,8 @@ onBeforeUnmount(() => { lifecycle.abort(); stopPoolScroll(); if (timer) window.c
 .bot-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .module-pool-panel { display: flex; flex-direction: column; border-color: #e4e4e7; box-shadow: 0 2px 15px rgb(0 0 0 / .04), 0 0 1px rgb(0 0 0 / .1); }
 .module-pool-content { min-height: 0; }
-.module-pool-panel.is-pool-drop-target .module-pool-content { background: rgb(59 130 246 / .06); }
-.module-pool-panel.is-pool-drop-target { border-color: rgb(59 130 246); box-shadow: 0 0 0 3px rgb(59 130 246 / .14), 0 8px 24px rgb(37 99 235 / .08); }
+.bot-module-list { flex-direction: column; align-items: stretch; gap: 12px; min-height: 116px; }
 :global(.dark) .module-pool-panel { border-color: rgb(255 255 255 / .08); background: #18181b; }
-:global(.dark) .module-pool-panel.is-pool-drop-target { border-color: rgb(96 165 250); }
 @container (min-width: 760px) { .bot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1280px) {
   .bot-workspace { grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr); }

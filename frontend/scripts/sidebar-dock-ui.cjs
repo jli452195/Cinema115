@@ -135,7 +135,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   assert.equal(await links().nth(1).evaluate(el => el === document.activeElement), true)
   await page.getByRole('tooltip', { name: await links().nth(1).getAttribute('aria-label'), exact: true }).waitFor()
   for (const box of await boxes()) close(box.height, 44)
-  await page.keyboard.press('Enter'); await page.waitForURL('**/follows/manage')
+  await page.keyboard.press('Enter'); await page.waitForURL('**/follows/manage?status=pending')
   await expanded()
   assert.equal(await sidebar().locator('.management-brand-toggle, .management-collapse-control').count(), 0)
   assert.equal(await nav().locator('a > span:visible').count(), 10)

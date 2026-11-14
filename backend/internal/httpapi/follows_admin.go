@@ -28,6 +28,16 @@ func RegisterFollowAdmin(admin *gin.RouterGroup, s *service.FollowService) {
 			c.JSON(400, gin.H{"error": "筛选条件无效"})
 			return
 		}
+		if c.Query("countsOnly") == "1" {
+			// 导航角标使用全站统计，不读取作品详情，也不受列表筛选影响。
+			counts, err := s.Store.FollowCounts(c.Request.Context(), "", "", "")
+			if err != nil {
+				followError(c, err)
+				return
+			}
+			c.JSON(200, gin.H{"counts": counts})
+			return
+		}
 		items, more, err := s.AdminList(c.Request.Context(), kind, status, query, offset)
 		if err != nil {
 			followError(c, err)

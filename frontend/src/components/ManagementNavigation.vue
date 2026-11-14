@@ -8,10 +8,27 @@ import { managementNavigationScroll } from '../composables/useManagementSidebar'
 import { useVerticalDock } from '../composables/useVerticalDock'
 import { useNavigationMotion } from '../composables/useNavigationMotion'
 import NavigationIcon from './NavigationIcon.vue'
+import { followPendingCount } from '../composables/useFollowPendingCount'
 
 defineOptions({ inheritAttrs: false })
 const props = defineProps<{ mobile?: boolean; collapsed?: boolean }>()
 const route = useRoute(), navigation = ref<HTMLElement>()
+
+function getFollowCount(link: { to: string }): number {
+  if (link.to !== '/follows/manage') return 0
+  const count = followPendingCount.value
+  return typeof count === 'number' && count > 0 ? Math.floor(count) : 0
+}
+
+function getFollowBadgeText(link: { to: string }): string {
+  const count = getFollowCount(link)
+  return count > 99 ? '99+' : String(count)
+}
+
+function getNavLabel(link: { label: string; to: string }): string {
+  const count = getFollowCount(link)
+  return count > 0 ? `${link.label}（${count} 项待处理）` : link.label
+}
 const groups = computed(() => [
   { label: '个人', links: [
     ...(!isPortalAdmin.value ? [{ label: '我的播放', to: '/account/playback', icon: 'playback' as const }] : []),
@@ -73,6 +90,9 @@ async function restoreScroll() {
   else if (item.bottom > bounds.bottom) element.scrollTop += item.bottom - bounds.bottom
 }
 watch(() => route.path, () => { resetDock(); hideTooltip(); void restoreScroll() })
+watch(followPendingCount, () => {
+  if (tooltipAnchor?.isConnected) positionTooltip(tooltipAnchor, tooltipAnchor.getAttribute('aria-label') || '')
+}, { flush: 'post' })
 onMounted(() => {
   void restoreScroll()
   window.addEventListener('resize', hideTooltip)
@@ -96,8 +116,9 @@ onBeforeUnmount(() => {
       <div v-for="link in group.links" :key="link.to" class="management-nav-item" :data-section="link.to">
         <div class="management-nav-row ambient-glow" :class="{ 'is-section-active': currentCategory?.to === link.to }">
           <span class="management-nav-marker" aria-hidden="true" />
-          <RouterLink :to="link.to" class="management-nav-link" :aria-label="link.label" :aria-describedby="tooltip?.label === link.label ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, link.label)" @mouseleave="hideTooltip" @focus="showTooltip($event, link.label)" @blur="hideTooltip" @click="hideTooltip">
+          <RouterLink :to="link.to === '/follows/manage' ? '/follows/manage?status=pending' : link.to" class="management-nav-link" :aria-label="getNavLabel(link)" :aria-describedby="tooltip?.label === getNavLabel(link) ? tooltipID : undefined" :aria-current="route.path === link.to ? 'page' : currentCategory?.to === link.to ? 'location' : undefined" @mouseenter="showTooltip($event, getNavLabel(link))" @mouseleave="hideTooltip" @focus="showTooltip($event, getNavLabel(link))" @blur="hideTooltip" @click="hideTooltip">
             <NavigationIcon :name="link.icon" :stroke="isDockMode && currentCategory?.to === link.to ? 2.25 : 1.75" /><span>{{ link.label }}</span>
+            <div v-if="getFollowCount(link) > 0" data-follow-pending-badge :class="isDockMode ? 'nav-badge' : 'nav-pill'" aria-hidden="true">{{ getFollowBadgeText(link) }}</div>
           </RouterLink>
         </div>
       </div>
@@ -207,5 +228,74 @@ onBeforeUnmount(() => {
   .management-tooltip-enter-active, .management-tooltip-leave-active { transition: none; }
   .management-navigation:not(.is-mobile) .management-nav-label, .management-navigation:not(.is-mobile) .management-nav-link > span, .management-nav-marker, .management-nav-link > svg { transition: none; }
   .management-navigation:not(.is-mobile) .management-nav-row, .management-navigation:not(.is-mobile) .management-nav-link > svg { transition: none; }
+}
+.management-nav-link {
+  position: relative;
+}
+
+.nav-pill {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 22px;
+  padding: 0 6.5px;
+  border-radius: 9999px;
+  border: 1px solid rgb(37 99 235 / 0.22);
+  background: rgb(37 99 235 / 0.1);
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.dark .nav-pill {
+  border-color: rgb(96 165 250 / 0.28);
+  background: rgb(59 130 246 / 0.16);
+  color: #93c5fd;
+}
+
+.management-nav-row.is-section-active .nav-pill {
+  border-color: transparent;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.dark .management-nav-row.is-section-active .nav-pill {
+  border-color: transparent;
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.nav-badge {
+  position: absolute;
+  top: calc(50% - var(--dock-icon-size, 19px) * 0.5 - 5px);
+  right: calc(100% - var(--dock-icon-size, 19px) * 1.6578947368 - 7px);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 3.5px;
+  border-radius: 9999px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 0 0 2px var(--management-nav-surface, #f6f8fb);
+  pointer-events: none;
+}
+
+.dark .nav-badge {
+  background: #3b82f6;
+  box-shadow: 0 0 0 2px var(--management-nav-surface, #111827);
 }
 </style>

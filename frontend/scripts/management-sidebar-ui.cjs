@@ -41,7 +41,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const nav = () => page.getByRole('navigation', { name: '功能导航', exact: true })
   const drawer = () => page.getByRole('dialog', { name: '功能导航', exact: true })
   const open = () => page.getByRole('button', { name: '打开功能导航', exact: true })
-  const link = to => nav().locator(`a[href="${to}"]`)
+  const link = to => nav().locator(`[data-section="${to}"] a`)
   const settleNavigation = async collapsed => page.waitForFunction(collapsed => {
    const navigation = document.querySelector('#management-desktop-navigation')
    return navigation && navigation.classList.contains('is-collapsed') === collapsed

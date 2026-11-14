@@ -9,6 +9,8 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import type { Follow } from '../types/follows'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
+import { useToast } from '../composables/useToast'
+import { refreshFollowPendingCount } from '../composables/useFollowPendingCount'
 
 interface AdminFollow extends Follow { subscriberCount: number; createdAt: string; updatedAt: string; revision: number }
 const props = defineProps<{ token: string }>()
@@ -18,7 +20,8 @@ const items = ref<AdminFollow[]>([])
 const kind = ref(''), status = ref(''), query = ref('')
 const counts = ref<Record<string, number>>({})
 const offset = ref(0), hasMore = ref(false), loading = ref(false), busy = ref(false)
-const error = ref(''), notice = ref('')
+const error = ref('')
+const toast = useToast()
 const settingsOpen = ref(false), baseUrl = ref(''), notificationsConfigured = ref(false)
 const autoEnabled = ref(false)
 const telegramEnabled = ref(false), botId = ref('')
@@ -55,24 +58,28 @@ async function load() {
 function filter(nextOffset = 0) {
   return router.push({ path: '/follows/manage', query: { ...(kind.value ? { kind: kind.value } : {}), ...(status.value ? { status: status.value } : {}), ...(query.value.trim() ? { q: query.value.trim() } : {}), ...(nextOffset ? { offset: String(nextOffset) } : {}) } })
 }
-function edit(item: AdminFollow) { editing.value = item; editStatus.value = ['processing', 'closed'].includes(item.status) ? item.status : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = ''; notice.value = '' }
+function edit(item: AdminFollow) { editing.value = item; editStatus.value = ['processing', 'closed'].includes(item.status) ? item.status : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = '' }
 async function save() {
   const item = editing.value
   if (!item || busy.value) return
-  busy.value = true; error.value = ''; editError.value = ''; notice.value = ''
+  busy.value = true; error.value = ''; editError.value = ''
   try {
     const savedStatus = editStatus.value
     await request(`/${item.kind}/${item.tmdbId}`, { status: editStatus.value, note: editNote.value, revision: item.revision })
     if (lifecycle.signal.aborted) return
-    editing.value = undefined; notice.value = savedStatus === 'closed' ? '已关闭资源搜索，并通知当前订阅用户。' : '处理状态与说明已保存，订阅用户可以查看。'; await load()
+    editing.value = undefined
+    void refreshFollowPendingCount(true)
+    toast.success(savedStatus === 'closed' ? '已关闭资源搜索，并通知当前订阅用户。' : '处理状态与说明已保存，订阅用户可以查看。', { title: item.title })
+    await load()
   } catch (e) { if (!lifecycle.signal.aborted) editError.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = false }
 }
 async function saveSettings() {
   if (busy.value) return
-  busy.value = true; error.value = ''; notice.value = ''
+  busy.value = true; error.value = ''
   try {
-    await request('/settings', { baseUrl: baseUrl.value, autoEnabled: autoEnabled.value, telegramEnabled: telegramEnabled.value, botId: botId.value }); notice.value = '追更设置已保存。'
+    await request('/settings', { baseUrl: baseUrl.value, autoEnabled: autoEnabled.value, telegramEnabled: telegramEnabled.value, botId: botId.value })
+    if (!lifecycle.signal.aborted) toast.success('追更设置已保存。')
   }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = false }
@@ -114,7 +121,6 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
     </FollowDialog>
     <div class="space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-      <p v-if="notice" role="status" class="rounded-xl bg-emerald-50 p-4 text-sm text-emerald-700">{{ notice }}</p>
       <section v-if="settingsOpen" class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
         <p class="text-sm" :class="notificationsConfigured ? 'text-emerald-700' : 'text-amber-700'">{{ notificationsConfigured ? '追更通知 Bot 可用' : telegramEnabled ? '追更通知 Bot 未就绪' : '追更通知未启用' }}<RouterLink to="/telegram/bot" class="ml-3 text-blue-600">管理 Bot 功能</RouterLink></p>
         <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">使用 Bot 配置中的独立通知聊天 ID。同一影视在仍有人追更时仅发送一次申请通知；发送失败会自动重试。</p>

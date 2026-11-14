@@ -23,6 +23,7 @@ const props = withDefaults(defineProps<{
   clone?: (item: T) => T
   itemClass?: string
   handle?: string
+  filter?: string
   direction?: 'horizontal' | 'vertical'
 }>(), { group: '', pull: false, put: false, sort: true, handle: '[data-drag-handle]' })
 const emit = defineEmits<{
@@ -68,7 +69,7 @@ useDraggable(root, list, computed<UseDraggableOptions<T>>(() => ({
   sort: props.sort,
   disabled: props.disabled,
   draggable: '[data-sortable-item]',
-  filter: '[data-drag-disabled="true"]',
+  filter: ['[data-drag-disabled="true"]', props.filter].filter(Boolean).join(', '),
   preventOnFilter: false,
   handle: props.handle,
   direction: props.direction,

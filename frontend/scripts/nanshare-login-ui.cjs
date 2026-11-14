@@ -1,4 +1,4 @@
-// Mock endpoints only: never log in to NanShare or submit remote jobs.
+// 仅使用模拟接口，不登录真实 NanShare 或提交远程任务。
 const path = require('node:path')
 const os = require('node:os')
 const assert = require('node:assert/strict')
@@ -7,7 +7,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } })
+    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' })
     await context.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
     const page = await context.newPage()
     const errors = [], logins = [], searches = []
@@ -77,7 +77,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await page.getByRole('heading', { name: '测试 RE0 搜索' }).count(), 0)
     role = 'user'
     await page.reload()
-    await page.waitForURL(base + '/')
+    await page.waitForURL(url => /^\/(movie|tv)$/.test(url.pathname))
     assert.deepEqual(errors, [])
     console.log('NanShare UI passed: password-only login, automatic-login status, secret clearing, search, expiry, clear, mobile, access control')
   } finally { await browser.close() }

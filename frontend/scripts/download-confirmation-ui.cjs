@@ -109,12 +109,35 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await confirmed.locator('.confirmed-group').count(), 1)
     await confirmed.getByText(/外部字幕 1 个/).waitFor()
     const artifact = path.join(os.tmpdir(), 'cinema115-confirmation-ui'); await fs.mkdir(artifact, { recursive: true })
-    for (const [width, theme] of [[1440, 'light'], [390, 'light'], [320, 'dark']]) {
+    for (const [width, theme] of [[1440, 'light'], [455, 'light'], [390, 'light'], [320, 'dark']]) {
       await page.setViewportSize({ width, height: 900 }); await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
       assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       const footer = await dialog.locator('.anime-floating-footer').boundingBox()
       assert.ok(footer.y >= 0 && footer.y + footer.height <= 900)
-      await page.screenshot({ path: path.join(artifact, `confirmation-${width}-${theme}.png`) })
+      const group = confirmed.locator('.confirmed-group').first()
+      await group.locator('summary').press('Space')
+      const layout = await group.evaluate(el => {
+        const group = el.getBoundingClientRect(), list = el.querySelector('ul').getBoundingClientRect()
+        return { group: group.width, list: list.width, left: list.left - group.left, right: group.right - list.right }
+      })
+      assert.ok(layout.list >= layout.group - 24, `展开清单应使用整行宽度：${JSON.stringify(layout)}`)
+      assert.ok(layout.left >= 0 && layout.right >= -1)
+      assert.ok(await group.locator('.confirmed-summary-main strong').evaluate(el => el.getBoundingClientRect().height <= 24), '季名不能被操作按钮挤成逐字竖排')
+      await group.getByRole('button', { name: '查找第 2 季字幕', exact: true }).click()
+      await picker.waitFor()
+      assert.equal(await group.locator('details').evaluate(el => el.open), true, '操作按钮不能切换分组展开状态')
+      await page.keyboard.press('Escape')
+      await picker.waitFor({ state: 'detached' })
+      for (const key of ['Enter', 'Space']) {
+        await group.getByRole('button', { name: '查找第 2 季字幕', exact: true }).focus()
+        await page.keyboard.press(key)
+        await picker.waitFor()
+        assert.equal(await group.locator('details').evaluate(el => el.open), true, '键盘操作按钮不能折叠分组')
+        await page.keyboard.press('Escape')
+        await picker.waitFor({ state: 'detached' })
+      }
+      await page.screenshot({ path: path.join(artifact, `confirmation-${width}-${theme}.png`), animations: 'disabled' })
+      await group.locator('summary').press('Space')
     }
     await start().click()
     await dialog.getByRole('button', { name: '确认任务状态', exact: true }).waitFor()

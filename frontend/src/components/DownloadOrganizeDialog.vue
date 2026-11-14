@@ -300,9 +300,34 @@ onBeforeUnmount(() => lifecycle.abort())
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
       <div class="organize-config">
-        <div class="directory-bar"><IconFolder :size="17" class="shrink-0" aria-hidden="true" /><div><p><span>整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p></div><button type="button" class="secondary" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button></div>
-        <div class="naming-summary"><RouterLink :to="{ name: 'naming-settings', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink><span role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value || (namingPreview.value.value ? `版本 ${namingPreview.value.value.naming.revision}` : '等待命名预览') }}</span><button type="button" class="secondary tool-action" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh"><IconRefresh :size="15" aria-hidden="true" />刷新命名</button></div>
-        <p v-if="sharedDirectory" class="scope-note break-all">公共子目录：{{ sharedDirectory }}</p>
+        <div class="directory-bar">
+          <IconFolder :size="16" class="shrink-0 text-slate-400 dark:text-slate-500" aria-hidden="true" />
+          <div class="directory-info">
+            <p><span class="directory-label">整理到</span><strong :title="targetPath">{{ targetPath || '请选择整理目录' }}</strong></p>
+            <p v-if="sharedDirectory" class="scope-note" :title="`公共子目录：${sharedDirectory}`">公共子目录：{{ sharedDirectory }}</p>
+          </div>
+          <div class="directory-actions">
+            <button type="button" class="secondary directory-pick" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button>
+          </div>
+        </div>
+        <details class="naming-details" :class="{ 'has-issue': Boolean(namingPreview.error.value) }">
+          <summary>
+            <IconChevronDown :size="14" class="shrink-0 transition-transform" aria-hidden="true" />
+            <span>命名设置</span>
+            <span v-if="namingPreview.error.value" class="naming-state is-error" role="status">命名异常</span>
+            <span v-else-if="namingPreview.pending.value" class="naming-state" role="status">更新中…</span>
+            <span v-else-if="namingPreview.value.value" class="naming-state">版本 {{ namingPreview.value.value.naming.revision }}</span>
+          </summary>
+          <div class="naming-panel">
+            <div class="naming-summary">
+              <RouterLink :to="{ name: 'naming-settings', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink>
+              <span v-if="namingPreview.pending.value || namingPreview.error.value" role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value }}</span>
+              <button type="button" class="secondary tool-action" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh"><IconRefresh :size="15" aria-hidden="true" />刷新命名</button>
+            </div>
+            <p v-if="targetPath" class="scope-note break-all">整理目录：{{ targetPath }}</p>
+            <p v-if="sharedDirectory" class="scope-note break-all">公共子目录：{{ sharedDirectory }}</p>
+          </div>
+        </details>
       </div>
       <template v-if="batch">
         <div class="resource-progress"><span role="status">已解析 {{ readyCount }} / {{ active.length }} 项资源<span v-if="unresolved.length && !parsing">，{{ unresolved.length }} 项待处理</span></span><button v-if="parsing" class="secondary" @click="preparation.pause">停止解析</button><button v-else-if="states.some(state => state.status === 'waiting')" class="secondary" :disabled="editDisabled" @click="preparation.parse">继续解析</button></div>
@@ -319,21 +344,46 @@ onBeforeUnmount(() => lifecycle.abort())
       <section v-if="staged.length || selectedExternal.length" class="confirmation-zone" aria-label="已暂存的整理文件">
         <header v-if="staged.length" class="confirmation-heading"><strong>已暂存 {{ staged.length }} 个视频</strong><span>与当前勾选一起整理</span></header>
         <div v-for="group in stagedGroups" :key="group.number" class="confirmed-group">
-          <details><summary><IconChevronDown :size="14" aria-hidden="true" /><strong>{{ group.label }}</strong><span>{{ group.rows.length }} 个视频</span><span v-if="kind === 'tv'" class="confirmed-range" :title="group.range">集号 {{ group.range }}</span></summary><ul><li v-for="row in group.rows" :key="row.id"><p :title="row.sourcePath">{{ row.name }}</p><p class="confirmed-target">整理后：{{ targetNames[row.id] }}</p><p v-if="rowProblems[row.id]" role="alert" class="error">{{ rowProblems[row.id] }}</p><p v-for="sub in subtitlesByVideo[row.id] || []" :key="sub.file.id" class="confirmed-target">字幕：{{ subtitleName(sub) }}</p><p v-for="sub in allExternal.filter(sub => sub.videoId === row.id)" :key="'localId' in sub ? sub.localId : sub.path" class="confirmed-target">外部字幕：{{ externalName(sub) }}</p></li></ul></details>
-          <div class="confirmed-actions"><button type="button" class="secondary shadow-sm" :disabled="editDisabled" :aria-label="`查找${group.label}字幕`" @click="openSubtitles(group.number)"><IconSubtitles :size="15" aria-hidden="true" />查找字幕</button><button type="button" class="secondary shadow-sm" :disabled="editDisabled" :aria-label="`退回编辑${group.label}`" @click="returnToEditing(group.rows)"><IconArrowBackUp :size="15" aria-hidden="true" />退回编辑</button></div>
+          <details>
+            <summary>
+              <span class="confirmed-summary-main">
+                <IconChevronDown :size="14" class="confirmed-chevron" aria-hidden="true" />
+                <strong>{{ group.label }}</strong>
+                <span>{{ group.rows.length }} 个视频</span>
+                <span v-if="kind === 'tv'" class="confirmed-range" :title="group.range">集号 {{ group.range }}</span>
+              </span>
+              <span class="confirmed-actions" @click.stop @keydown.space.stop @keydown.enter.stop>
+                <button type="button" class="secondary shadow-sm" :disabled="editDisabled" :aria-label="`查找${group.label}字幕`" @click="openSubtitles(group.number)"><IconSubtitles :size="15" aria-hidden="true" />查找字幕</button>
+                <button type="button" class="secondary shadow-sm" :disabled="editDisabled" :aria-label="`退回编辑${group.label}`" @click="returnToEditing(group.rows)"><IconArrowBackUp :size="15" aria-hidden="true" />退回编辑</button>
+              </span>
+            </summary>
+            <ul>
+              <li v-for="row in group.rows" :key="row.id">
+                <p :title="row.sourcePath">{{ row.name }}</p>
+                <p class="confirmed-target">整理后：{{ targetNames[row.id] }}</p>
+                <p v-if="rowProblems[row.id]" role="alert" class="error">{{ rowProblems[row.id] }}</p>
+                <p v-for="sub in subtitlesByVideo[row.id] || []" :key="sub.file.id" class="confirmed-target">字幕：{{ subtitleName(sub) }}</p>
+                <p v-for="sub in allExternal.filter(sub => sub.videoId === row.id)" :key="'localId' in sub ? sub.localId : sub.path" class="confirmed-target">外部字幕：{{ externalName(sub) }}</p>
+              </li>
+            </ul>
+          </details>
         </div>
         <p v-if="selectedExternal.length" class="confirmation-subtitles">外部字幕 {{ selectedExternal.length }} 个<span v-if="localSubtitleCount"> · 本地 {{ localSubtitleCount }} 个</span><span v-if="assrtSubtitleCount"> · 射手网 {{ assrtSubtitleCount }} 个</span></p>
       </section>
       <p v-if="externalIssue" role="alert" class="error">{{ externalIssue }}</p>
       <div ref="numberingAnchor" aria-hidden="true" class="pointer-events-none h-px !-mb-px"></div>
       <div ref="numberingBar" class="numbering-bar !mt-0" :class="{ 'is-stuck': numberingStuck }">
-      <div v-if="kind === 'tv'" class="batch-editor"><button type="button" class="batch-toggle" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">批量编号 <IconChevronDown :size="14" aria-hidden="true" :class="{ 'rotate-180': batchOpen }" /></button><div v-show="batchOpen" class="mapping-bar">
-        <label>目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" density="compact" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
-        <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
-        <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
-        <button type="button" class="secondary" :aria-label="`应用偏移（${editing.length} 项）`" :disabled="editDisabled || !editing.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ editing.length }} 项）</span></span></button>
-        <button type="button" class="secondary" title="从目标集开始，按所选顺序连续编号；连集文件保留跨度" :disabled="editDisabled || !editing.length" @click="mapFiles(true)">连续编号</button>
-        <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
+      <div v-if="kind === 'tv'" class="batch-editor"><button type="button" class="batch-toggle" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">调整季集 <IconChevronDown :size="15" aria-hidden="true" class="transition-transform" :class="{ 'rotate-180': batchOpen }" /></button><div v-show="batchOpen" class="mapping-bar">
+        <label class="mapping-season">目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" density="compact" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
+        <div class="mapping-range">
+          <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
+          <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
+        </div>
+        <div class="mapping-actions">
+          <button type="button" class="secondary mapping-apply" :aria-label="`应用偏移（${editing.length} 项）`" :disabled="editDisabled || !editing.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ editing.length }} 项）</span></span></button>
+          <button type="button" class="secondary" title="从目标集开始，按所选顺序连续编号；连集文件保留跨度" :disabled="editDisabled || !editing.length" @click="mapFiles(true)">连续编号</button>
+          <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
+        </div>
       </div></div>
       <button type="button" class="secondary stage-action" :disabled="editDisabled || parsing || !editing.length || !namingPreview.ready.value" title="可选：暂存当前映射后，继续处理其他季" @click="stageFiles">暂存这 {{ editing.length }} 项</button>
       </div>
@@ -394,15 +444,43 @@ onBeforeUnmount(() => lifecycle.abort())
 :global(.download-organize-dialog .anime-floating-toolbar h2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; font-weight: 600; line-height: 24px; color: var(--floating-surface-text); }
 :global(.download-organize-dialog .anime-floating-toolbar>button) { flex-shrink: 0; }
 .download-organize { @apply min-w-0 space-y-3 pt-1.5 text-slate-700 dark:text-slate-200; }
-.organize-config { @apply flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 dark:border-slate-700 dark:bg-slate-800; }
-.organize-config>.scope-note { @apply w-full; }
-.naming-summary { @apply flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.naming-summary a { @apply text-blue-600 dark:text-blue-400; }
-.resource-title { @apply truncate text-xs leading-5 text-slate-500 dark:text-slate-400; }
+.resource-title { @apply truncate text-xs leading-5 text-slate-400 dark:text-slate-500; }
+.organize-config { @apply flex flex-col gap-1.5 border-b border-slate-200/80 pb-2.5 dark:border-slate-800; }
+.directory-bar { @apply flex min-w-0 items-center justify-between gap-2; }
+.directory-info { @apply min-w-0 flex-1 text-xs; }
+.directory-info p:first-child { @apply flex min-w-0 items-center gap-x-1.5; }
+.directory-label { @apply shrink-0 text-slate-500 dark:text-slate-400; }
+.directory-info strong { @apply truncate font-medium text-slate-800 dark:text-slate-100; }
+.directory-info .scope-note { @apply truncate leading-4; }
+.directory-actions { @apply flex shrink-0 items-center gap-1.5; }
+.directory-pick { height: 36px; padding: 6px 10px; font-size: 13px; }
+.naming-details { @apply text-xs text-slate-500 dark:text-slate-400; }
+.naming-details summary { @apply inline-flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-slate-500 transition-colors hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200; }
+.naming-details summary::-webkit-details-marker { display: none; }
+.naming-details[open] > summary > svg { transform: rotate(180deg); }
+.naming-details.has-issue summary { @apply text-red-600 dark:text-red-400; }
+.naming-state { @apply text-slate-400 dark:text-slate-500; }
+.naming-state.is-error { @apply font-medium text-red-600 dark:text-red-400; }
+.naming-panel { @apply mt-1.5 space-y-1 rounded-md border border-slate-200/80 bg-slate-50/70 px-2.5 py-1.5 dark:border-slate-800 dark:bg-slate-900/50; }
+.naming-summary { @apply flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }
+.naming-summary a { @apply font-medium text-blue-600 hover:underline dark:text-blue-400; }
 .organize-workbench { @apply min-w-0 space-y-2; }
-.workbench-heading { @apply flex flex-wrap items-center gap-x-4 gap-y-2 pt-1; }.workbench-title { @apply flex flex-wrap items-baseline gap-x-2 gap-y-1; }.workbench-title h3 { @apply text-sm font-semibold text-slate-800 dark:text-slate-100; }.workbench-title>span { @apply text-xs text-slate-500 dark:text-slate-400; }.workbench-actions { @apply flex flex-wrap items-center gap-1.5; }
+.workbench-heading { @apply flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-1; }.workbench-title { @apply flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5; }.workbench-title h3 { @apply text-sm font-semibold text-slate-800 dark:text-slate-100; }.workbench-title>span { @apply text-xs text-slate-500 dark:text-slate-400; }.workbench-actions { @apply ml-auto flex shrink-0 flex-wrap items-center gap-1.5; }
 .confirmation-zone { @apply border-y border-slate-200 py-1.5 dark:border-slate-700; }
 .confirmation-heading { @apply flex flex-wrap items-center gap-x-2 text-xs leading-5; }.confirmation-heading strong { @apply font-medium text-slate-700 dark:text-slate-200; }.confirmation-heading>span,.confirmation-subtitles { @apply text-xs leading-5 text-slate-500 dark:text-slate-400; }
-.confirmed-group { @apply flex items-start gap-x-3 gap-y-0.5; }.confirmed-group details { @apply min-w-0; }.confirmed-group details[open] { @apply flex-1; }.confirmed-group summary { @apply flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-1 py-1 text-xs text-slate-500 dark:text-slate-400; min-height: var(--ae-control-height); }.confirmed-group summary::-webkit-details-marker { display: none; }.confirmed-group summary strong { @apply font-medium text-slate-800 dark:text-slate-100; }.confirmed-group details[open]>summary>svg { transform: rotate(180deg); }.confirmed-range { @apply max-w-52 truncate; }.confirmed-group ul { @apply mb-2 space-y-2 border-t border-slate-200 pt-2 dark:border-slate-700; }.confirmed-group li { @apply break-all text-xs leading-5 text-slate-700 dark:text-slate-200; }.confirmed-target { @apply text-slate-500 dark:text-slate-400; }.confirmed-actions { @apply flex shrink-0 gap-2; }
+.confirmed-group { @apply min-w-0 border-b border-slate-100 py-1.5 last:border-b-0 dark:border-slate-800/80; }
+.confirmed-group details { @apply block w-full min-w-0; }
+.confirmed-group summary { @apply flex w-full cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1.5 py-0.5 text-xs text-slate-500 dark:text-slate-400; min-height: var(--ae-control-height); }
+.confirmed-group summary::-webkit-details-marker { display: none; }
+.confirmed-summary-main { @apply flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5; flex: 1 1 12rem; }
+.confirmed-summary-main strong { @apply font-medium text-slate-800 dark:text-slate-100; }
+.confirmed-chevron { @apply shrink-0 transition-transform; }
+.confirmed-group details[open] .confirmed-chevron { transform: rotate(180deg); }
+.confirmed-range { @apply max-w-52 truncate; }
+.confirmed-actions { @apply ml-auto flex shrink-0 items-center gap-2; }
+.confirmed-group ul { @apply mt-1.5 w-full space-y-2 border-t border-slate-200/80 pt-2 dark:border-slate-700/80; }
+.confirmed-group li { @apply break-all text-xs leading-5 text-slate-700 dark:text-slate-200; }
+.confirmed-target { @apply text-slate-500 dark:text-slate-400; }
 .reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400; }.reference strong { @apply text-slate-800 dark:text-slate-100; }
 .scope-note { @apply text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .locate-problem { @apply ml-2 rounded px-1 py-1 text-xs font-medium text-red-600 underline decoration-red-300 underline-offset-2 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:text-red-400 dark:hover:bg-red-950/40; }
@@ -411,34 +489,47 @@ onBeforeUnmount(() => lifecycle.abort())
 .subtitle-details { @apply mt-1 min-w-0 text-xs leading-5 text-slate-500 dark:text-slate-400; }
 .subtitle-details summary { @apply flex cursor-pointer list-none items-center gap-1 py-1; }.subtitle-details summary::-webkit-details-marker { display: none; }.subtitle-details[open]>summary>svg { transform: rotate(180deg); }
 .subtitle-file { @apply mb-2 min-w-0 break-all pl-2; }.subtitle-target { @apply text-slate-700 dark:text-slate-200; }
-.directory-bar { @apply flex min-w-0 max-w-full items-center gap-2; }.directory-bar>div { @apply min-w-0 text-xs; }.directory-bar p { @apply flex min-w-0 items-center gap-x-2; }.directory-bar p>span { @apply shrink-0 text-slate-500 dark:text-slate-400; }.directory-bar strong { @apply truncate font-medium text-slate-800 dark:text-slate-100; }
-.mapping-bar { @apply flex flex-wrap items-center gap-2 text-xs; }.mapping-bar label { @apply flex items-center gap-1; }.mapping-bar input { @apply w-16 rounded-lg border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }.season-select { @apply w-40; }
+.mapping-bar { @apply flex flex-wrap items-center gap-2 text-xs; }.mapping-bar label { @apply flex items-center gap-1.5 whitespace-nowrap; }.mapping-range,.mapping-actions { display: contents; }.mapping-bar input { @apply w-16 rounded-lg border border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }.season-select { @apply w-40; }
 .numbering-bar { @apply sticky top-0 z-10 -mx-[22px] flex items-start gap-2 px-[22px] py-2; background: transparent; }
 .numbering-bar.is-stuck { background: color-mix(in srgb, var(--floating-surface-container) 95%, var(--floating-surface-text)); box-shadow: 0 1px 0 rgb(148 163 184 / .16); }
-.batch-editor { @apply flex min-w-0 flex-1 flex-wrap items-start gap-x-3 gap-y-1; }.batch-toggle { @apply flex shrink-0 items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-300; min-height: var(--ae-control-height); }.stage-action { @apply ml-auto; }
+.batch-editor { @apply flex min-w-0 flex-1 flex-wrap items-start gap-x-3 gap-y-2; }
+.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300/80 bg-slate-100/90 px-3 text-sm font-medium text-slate-800 transition-colors hover:border-slate-400 hover:bg-slate-200/70 dark:border-slate-600/80 dark:bg-slate-800/90 dark:text-slate-100 dark:hover:border-slate-500 dark:hover:bg-slate-700/80; min-height: var(--ae-control-height); }
+.batch-toggle[aria-expanded='true'] { @apply border-blue-300/90 bg-blue-50/80 text-blue-700 dark:border-blue-500/40 dark:bg-blue-950/40 dark:text-blue-300; }
+.stage-action { @apply ml-auto; }
 .secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-slate-300/70 bg-white font-medium text-slate-700 transition-colors enabled:hover:border-slate-400 enabled:hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600/70 dark:bg-slate-900 dark:text-slate-200 dark:enabled:hover:border-slate-500 dark:enabled:hover:bg-slate-800; height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
+.secondary.mapping-apply { @apply border-blue-300 bg-blue-50 text-blue-700 enabled:hover:border-blue-400 enabled:hover:bg-blue-100 dark:border-blue-500/40 dark:bg-blue-950/50 dark:text-blue-300 dark:enabled:hover:border-blue-400/60 dark:enabled:hover:bg-blue-900/50; }
 .secondary.tool-action { @apply border-transparent bg-transparent text-slate-600 enabled:hover:border-transparent enabled:hover:bg-slate-200/60 enabled:hover:text-blue-600 dark:border-transparent dark:bg-transparent dark:text-slate-300 dark:enabled:hover:border-transparent dark:enabled:hover:bg-slate-700/60 dark:enabled:hover:text-blue-400; }
 .primary { @apply w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 sm:w-auto; }
 .submit-bar { @apply flex flex-wrap items-center justify-between gap-3 text-xs; }
 .submit-actions { @apply flex flex-wrap items-center gap-2; }.submit-actions>button { min-height: 44px; }.secondary.share-action { @apply h-auto px-4 py-2.5 text-sm; }.share-config-note { @apply mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400; }.share-config-note a,.share-config-note button { @apply text-blue-600 dark:text-blue-400; }.share-config-note button { @apply ml-2 disabled:opacity-40; }
 .notice { @apply text-xs leading-6 text-slate-600 dark:text-slate-300; }.error { @apply break-all text-sm leading-6 text-red-600 dark:text-red-400; }.error a { @apply text-sm text-blue-600 underline dark:text-blue-400; }
+@media (max-width: 639px), (pointer: coarse) {
+  .mapping-bar .season-select :deep(.select-menu-control.select-menu-compact) { min-height: 36px; height: 36px; padding: 6px 10px; font-size: 13px; }
+}
 @media (max-width: 639px) {
-  .submit-actions { width: 100%; }.submit-actions > button { width: 100%; }.submit-bar > span { width: 100%; }
-  .download-organize { padding-top: 8px; }
-  .organize-config { column-gap: 12px; }
-  .workbench-title { width: 100%; }
-  .numbering-bar { margin-inline: -18px; padding-inline: 18px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .download-organize { --ae-control-height: 36px; --ae-control-padding: 6px 10px; --ae-control-font: 13px; padding-top: 8px; }
+  .download-organize :deep(.compact-selection .input), .mapping-bar input { font-size: 16px; }
+  .submit-bar > span { width: 100%; }
+  .submit-actions { width: 100%; }
+  .submit-actions > button { width: auto; flex: 1 1 max-content; min-width: 0; max-width: 100%; min-height: 44px; padding-inline: 12px; font-size: 14px; white-space: normal; text-align: center; }
+  .submit-actions > .primary { flex-grow: 2; }
+  .numbering-bar { margin-inline: -18px; padding-inline: 18px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
   .batch-editor { display: contents; }
-  .batch-toggle { min-height: 36px; grid-column: 1; grid-row: 1; }
-  .stage-action { grid-column: 2; grid-row: 1; }
-  .mapping-bar { --ae-control-height: 36px; --ae-control-padding: 6px 8px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-column: 1 / -1; grid-row: 2; }
-  .mapping-bar label { min-width: 0; white-space: nowrap; }
-  .mapping-bar label:first-child { grid-column: 1 / -1; }
-  .mapping-bar input { min-width: 0; width: 0; flex: 1; }
-  .mapping-bar .season-select { width: auto; flex: 1; }
-  .mapping-bar > span { display: none; }
-  .confirmed-group { flex-wrap: wrap; }
-  .confirmed-group details { width: 100%; flex-basis: 100%; }
-  .confirmed-actions { margin-left: 16px; }
+  .batch-toggle { min-height: 36px; grid-column: 1; grid-row: 1; justify-self: start; }
+  .stage-action { grid-column: 2; grid-row: 1; justify-self: end; }
+  .mapping-bar { @apply border border-slate-300/75 bg-slate-100/85 dark:border-slate-700/80 dark:bg-slate-800/75; grid-column: 1 / -1; grid-row: 2; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; border-radius: 10px; }
+  .mapping-season { width: 100%; }
+  .mapping-bar .season-select, .mapping-season input { width: auto; min-width: 0; flex: 1; }
+  .mapping-range { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .mapping-range label { min-width: 0; flex: 1; }
+  .mapping-range input { min-width: 0; width: 0; flex: 1; padding-inline: 6px; text-align: center; }
+  .mapping-range > span { @apply text-slate-500 dark:text-slate-400; flex-shrink: 0; }
+  .mapping-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+  .mapping-actions > button { flex: 1 1 max-content; min-width: 0; }
+  .mapping-actions > button:last-child:nth-child(3) { flex-grow: 0; }
+}
+@media (max-width: 359px) {
+  .mapping-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .mapping-range > span { display: none; }
 }
 </style>

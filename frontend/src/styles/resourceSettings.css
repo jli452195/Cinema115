@@ -1,0 +1,81 @@
+/* 资源配置模块局部样式：仅在 .resource-settings 根下生效，不污染 SelectMenu / SortableList 内部结构 */
+.resource-settings.resource-settings { width: 100%; max-width: 1600px; margin-inline: auto; }
+.resource-settings .settings-stack { display: flex; flex-direction: column; gap: 16px; }
+/* 卡片容器：对齐 Telegram 用户页 20px 圆角与轻边框层级 */
+.resource-settings .settings-card { min-width: 0; border-radius: 20px; border: 1px solid rgb(var(--color-slate-200) / 0.9); background: #ffffff; padding: 22px 24px; box-shadow: 0 1px 3px rgb(var(--color-slate-900) / 0.04), 0 1px 2px rgb(var(--color-slate-900) / 0.02); }
+.dark .resource-settings .settings-card { border-color: rgb(var(--color-slate-700) / 0.85); background: rgb(var(--color-slate-900)); box-shadow: 0 1px 3px rgb(0 0 0 / 0.22), inset 0 1px rgb(255 255 255 / 0.02); }
+/* 卡片头部与状态标签组 */
+.resource-settings .settings-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.resource-settings .settings-title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.5; color: rgb(var(--color-slate-900)); }
+.dark .resource-settings .settings-title { color: rgb(var(--color-slate-100)); }
+.resource-settings .settings-status-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.resource-settings .settings-desc { margin-top: 8px; font-size: 14px; line-height: 1.6; color: rgb(var(--color-slate-500)); }
+.dark .resource-settings .settings-desc { color: rgb(var(--color-slate-400)); }
+/* 表单字段布局：桌面双列、手机单列 */
+.resource-settings .settings-fields { margin-top: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; min-width: 0; border: 0; padding: 0; }
+.resource-settings .settings-field-full { grid-column: 1 / -1; }
+.resource-settings .settings-label { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; color: rgb(var(--color-slate-700)); }
+.dark .resource-settings .settings-label { color: rgb(var(--color-slate-300)); }
+/* 输入框：触控 44px 高度、16px 字号防移动端自动缩放 */
+.resource-settings .settings-input { width: 100%; min-width: 0; height: 44px; border-radius: 10px; border: 1px solid rgb(var(--color-slate-200)); background: rgb(var(--color-slate-50)); padding: 0 12px; font-size: 16px; line-height: 1.4; color: rgb(var(--color-slate-900)); outline: none; transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease; }
+.resource-settings .settings-input:focus { border-color: rgb(59 130 246); background: #ffffff; box-shadow: 0 0 0 3px rgb(59 130 246 / 0.14); }
+.resource-settings .settings-input:disabled { opacity: 0.6; cursor: not-allowed; }
+.dark .resource-settings .settings-input { border-color: rgb(var(--color-slate-700)); background: rgb(var(--color-slate-950)); color: rgb(var(--color-slate-100)); }
+.dark .resource-settings .settings-input:focus { border-color: rgb(96 165 250); background: rgb(var(--color-slate-900)); box-shadow: 0 0 0 3px rgb(96 165 250 / 0.18); }
+/* 单行输入 + 按钮组合 */
+.resource-settings .settings-inline-row { margin-top: 8px; display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+.resource-settings .settings-inline-row .settings-input { flex: 1 1 240px; }
+/* 按钮体系：44px 触控高度 */
+.resource-settings .settings-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 0 16px; border-radius: 10px; border: 1px solid transparent; font-size: 14px; font-weight: 500; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, opacity 0.15s ease; }
+.resource-settings .settings-button:disabled { opacity: 0.42; cursor: not-allowed; }
+.resource-settings .settings-button:focus-visible { outline: 2px solid rgb(59 130 246); outline-offset: 2px; }
+.resource-settings .settings-button-primary { background: rgb(37 99 235); color: #ffffff; }
+.resource-settings .settings-button-primary:not(:disabled):hover { background: rgb(29 78 216); }
+.resource-settings .settings-button-secondary { border-color: rgb(var(--color-slate-200)); background: rgb(var(--color-slate-50)); color: rgb(var(--color-slate-700)); }
+.resource-settings .settings-button-secondary:not(:disabled):hover { background: rgb(var(--color-slate-100)); }
+.dark .resource-settings .settings-button-secondary { border-color: rgb(var(--color-slate-700)); background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-200)); }
+.dark .resource-settings .settings-button-secondary:not(:disabled):hover { background: rgb(var(--color-slate-700) / 0.8); }
+.resource-settings .settings-button-danger { padding-inline: 10px; border-color: transparent; background: transparent; color: rgb(220 38 38 / .85); }
+.resource-settings .settings-button-danger:not(:disabled):hover { background: rgb(254 242 242); color: rgb(220 38 38); }
+.dark .resource-settings .settings-button-danger { border-color: transparent; background: transparent; color: rgb(248 113 113 / .85); }
+.dark .resource-settings .settings-button-danger:not(:disabled):hover { background: rgb(127 29 29 / .25); color: rgb(248 113 113); }
+.resource-settings .settings-button-danger-solid { background: rgb(220 38 38); color: #ffffff; }
+.resource-settings .settings-button-danger-solid:not(:disabled):hover { background: rgb(185 28 28); }
+/* 卡内底部主提交栏 */
+.resource-settings .settings-actions { margin-top: 20px; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+/* 危险清除分隔行：避免与主提交并排误触 */
+.resource-settings .settings-clear-row { margin-top: 20px; padding-top: 16px; border-top: 1px solid rgb(var(--color-slate-100)); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.dark .resource-settings .settings-clear-row { border-top-color: rgb(var(--color-slate-800)); }
+.resource-settings .settings-clear-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* 说明文案与外链 */
+.resource-settings .settings-hint { margin-top: 12px; font-size: 12px; line-height: 1.6; color: rgb(var(--color-slate-500)); }
+.resource-settings .settings-label .settings-hint,
+.resource-settings .settings-clear-row .settings-hint { margin-top: 0; }
+.dark .resource-settings .settings-hint { color: rgb(var(--color-slate-400)); }
+.resource-settings .settings-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.resource-settings .settings-link { font-size: 13px; font-weight: 500; color: rgb(37 99 235); text-decoration: none; }
+.resource-settings .settings-link:hover { text-decoration: underline; }
+.dark .resource-settings .settings-link { color: rgb(96 165 250); }
+/* 本地常驻反馈提示块 */
+.resource-settings .settings-feedback { border-radius: 12px; border: 1px solid transparent; padding: 12px 14px; font-size: 13px; line-height: 1.6; }
+.resource-settings .settings-feedback-error { border-color: rgb(254 202 202); background: rgb(254 242 242); color: rgb(185 28 28); }
+.dark .resource-settings .settings-feedback-error { border-color: rgb(127 29 29 / 0.8); background: rgb(69 10 10 / 0.35); color: rgb(252 165 165); }
+.resource-settings .settings-feedback-warning { border-color: rgb(253 230 138); background: rgb(255 251 235); color: rgb(180 83 9); }
+.dark .resource-settings .settings-feedback-warning { border-color: rgb(146 64 14 / 0.7); background: rgb(69 26 3 / 0.35); color: rgb(252 211 77); }
+.resource-settings .settings-feedback-success { border-color: rgb(167 243 208); background: rgb(236 253 245); color: rgb(4 120 87); }
+.dark .resource-settings .settings-feedback-success { border-color: rgb(6 95 70 / 0.7); background: rgb(6 78 59 / 0.3); color: rgb(110 231 183); }
+/* 状态胶囊 */
+.resource-settings .settings-status { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 3px 10px; font-size: 12px; font-weight: 500; line-height: 1.4; }
+.resource-settings .settings-status-neutral { background: rgb(var(--color-slate-100)); color: rgb(var(--color-slate-600)); }
+.dark .resource-settings .settings-status-neutral { background: rgb(var(--color-slate-800)); color: rgb(var(--color-slate-300)); }
+.resource-settings .settings-status-success { background: rgb(236 253 245); color: rgb(4 120 87); }
+.dark .resource-settings .settings-status-success { background: rgb(6 78 59 / 0.45); color: rgb(110 231 183); }
+.resource-settings .settings-status-info { background: rgb(239 246 255); color: rgb(29 78 216); }
+.dark .resource-settings .settings-status-info { background: rgb(30 58 138 / 0.45); color: rgb(147 197 253); }
+@media (max-width: 1023px) {
+  .resource-settings.resource-settings { max-width: 1280px; }
+}
+@media (max-width: 639px) {
+  .resource-settings .settings-card { padding: 18px; }
+  .resource-settings .settings-fields { grid-template-columns: minmax(0, 1fr); }
+}

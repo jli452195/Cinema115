@@ -75,6 +75,46 @@ func TestFollowAdminCaughtUpClassification(t *testing.T) {
 	}
 }
 
+func TestFollowAdminCountsOnly(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, entry := range []struct {
+		user string
+		kind string
+		id   int
+	}{{"alice", "tv", 100}, {"bob", "tv", 100}, {"alice", "movie", 200}} {
+		if err := db.Subscribe(ctx, entry.user, model.Follow{Kind: entry.kind, TMDBID: entry.id, Title: "统计作品"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := gin.New()
+	// 不提供元数据和媒体库客户端，数量查询只依赖本地统计。
+	RegisterFollowAdmin(r.Group("/api/admin"), &service.FollowService{Store: db})
+	for _, query := range []string{"countsOnly=1", "countsOnly=1&kind=movie&q=不存在&status=closed"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/follows?"+query, nil))
+		var response struct {
+			Counts map[string]int  `json:"counts"`
+			Items  json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if w.Code != 200 || response.Counts["pending"] != 2 || len(response.Items) != 0 {
+			t.Fatalf("数量应按作品合并且不受筛选影响: %d %s", w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/follows?countsOnly=1&kind=invalid", nil))
+	if w.Code != 400 {
+		t.Fatalf("数量接口仍须校验参数: %d", w.Code)
+	}
+}
+
 type followSettingsAccountFixture struct{}
 
 func (followSettingsAccountFixture) ValidateSelection(id string) error {
@@ -145,6 +185,7 @@ func TestFollowAdminPermissionsAndUserVisibleNote(t *testing.T) {
 			want = 403
 		}
 		call("GET", "/api/admin/follows", token, nil, want)
+		call("GET", "/api/admin/follows?countsOnly=1", token, nil, want)
 		call("GET", "/api/admin/follows/settings", token, nil, want)
 		call("POST", "/api/admin/follows/tv/100", token, map[string]any{"status": "processing", "revision": 2}, want)
 	}

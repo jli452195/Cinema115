@@ -221,9 +221,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       const numberingHeight = (await editor.locator('.numbering-bar').boundingBox()).height
       if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-mobile.png`) })
       assert.ok(numberingHeight <= 220, `expanded mobile numbering must leave room for the file list (${numberingHeight}px)`)
-      await editor.getByRole('button', { name: '批量编号', exact: true }).click()
+      await editor.getByRole('button', { name: '调整季集', exact: true }).click()
       await assertStickyNumbering()
-      await editor.getByRole('button', { name: '批量编号', exact: true }).click()
+      await editor.getByRole('button', { name: '调整季集', exact: true }).click()
       await assertStickyNumbering()
       if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
       assert.equal(await editor.locator('.confirmed-group').count(), 0)

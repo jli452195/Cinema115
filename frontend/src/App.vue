@@ -4,6 +4,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
 import GlobalToast from './components/GlobalToast.vue'
+import { useFollowPendingCountSync } from './composables/useFollowPendingCount'
 import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
@@ -11,6 +12,7 @@ import { networkConnectionTest, closeNetworkConnectionTest } from './composables
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
+useFollowPendingCountSync()
 const router = useRouter()
 const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
 watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
