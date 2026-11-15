@@ -460,30 +460,7 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 	}
 	mediaOrganizeAttachments(run, results)
 	mediaPlanAttachmentChoices(run)
-	duplicates := make(map[string][]int)
-	for i, e := range run.Entries {
-		if e.Status != "ready" || e.P115Move != nil || e.AttachmentKeep != nil {
-			continue
-		}
-		key := strings.ToLower(e.Relative)
-		duplicates[key] = append(duplicates[key], i)
-	}
-	for _, indices := range duplicates {
-		if len(indices) > 1 && !((run.Rule.Storage == "cd2" || run.Rule.Storage == "115") && run.Rule.DeleteDuplicates) {
-			names := make([]string, 0, min(len(indices), 4))
-			for _, index := range indices[:min(len(indices), 4)] {
-				names = append(names, run.Entries[index].File.Name)
-			}
-			for _, i := range indices {
-				if !mediaInRunTask(run, run.Entries[i]) {
-					continue
-				}
-				run.Entries[i].Status = "conflict"
-				run.Entries[i].ResultCode = "BATCH_TARGET_CONFLICT"
-				run.Entries[i].Message = fmt.Sprintf("本批次 %d 个输入生成相同目标 %s：%s，请检查命名或作品季集", len(indices), run.Entries[i].Target, strings.Join(names, "、"))
-			}
-		}
-	}
+	// 同目标输入交给执行阶段依次尝试，由实际写入检查决定冲突，不提前全部拦截。
 	for i := range run.Entries {
 		e := &run.Entries[i]
 		if e.Status != "ready" || e.P115Move != nil || e.AttachmentKeep != nil || !mediaInRunTask(run, *e) {

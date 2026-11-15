@@ -88,6 +88,7 @@ func (s *MediaOrganizer) executeMediaEntry(ctx context.Context, files *mediaOrga
 		e.Status = "error"
 		if errors.Is(err, errMediaTargetExists) {
 			e.Status = "conflict"
+			e.ResultCode = "TARGET_EXISTS"
 		}
 		e.Message = organizePublicError(err, files.cookie)
 	} else {
