@@ -18,13 +18,22 @@ func TestRelayMissingSelectionsDoNotInvalidateLogin(t *testing.T) {
 			client.relayPeers = relaySettings{OwnerID: owner}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
-			err := client.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil })
+			var reportedOwner int64
+			err := client.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil }, func(owner int64, warning string) {
+				reportedOwner = owner
+				if warning != "" {
+					t.Error("missing selections produced a history warning")
+				}
+			})
 			var detail *OperationError
 			if !errors.As(err, &detail) || detail.Code != "selection_required" || errors.Is(err, ErrLogin) {
 				t.Fatalf("missing selections reported as authentication failure: %v", err)
 			}
 			if !client.View().Authorized || client.RelayConnected() {
 				t.Fatal("missing selections changed account authorization or started listening")
+			}
+			if reportedOwner != 42 {
+				t.Fatal("verified account change was hidden by missing channel selections")
 			}
 		})
 	}
@@ -36,7 +45,7 @@ func TestRelayUnauthorizedStillRequiresLogin(t *testing.T) {
 	transport.user.Store(0)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	err := client.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil })
+	err := client.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil }, nil)
 	if !errors.Is(err, ErrLogin) || client.View().Authorized || client.RelayConnected() {
 		t.Fatalf("unauthorized relay was not stopped: %v", err)
 	}

@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
     <button v-if="portalAuthError" class="text-blue-600" @click="ensurePortalSession(true)">重新验证</button>
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>
   </main>
-  <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
+  <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop, 'is-search-workspace': route.name === 'search' }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
     <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" />
     <RouterView v-slot="{ Component }">
       <component :is="Component" v-bind="viewProps" @logout="logout" />
@@ -101,6 +101,9 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .portal-workspace { --management-sidebar-motion: 300ms cubic-bezier(0.2, 0, 0, 1); min-width: 0; }
+/* 搜索背景覆盖侧栏下方，透明侧栏与内容区共用同一层底色。 */
+.is-search-workspace { background-color: #f8fafc; background-image: radial-gradient(circle at 50% 0%, rgb(148 163 184 / .14), transparent 55%); }
+.dark .is-search-workspace { background-color: #090d16; background-image: radial-gradient(circle at 50% 0%, rgb(51 65 85 / .25), transparent 60%); }
 .has-navigation-sidebar { padding-left: var(--management-sidebar-width); }
 @media (prefers-reduced-motion: reduce) { .portal-workspace { --management-sidebar-motion: 0s linear; } }
 </style>

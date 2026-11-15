@@ -24,6 +24,6 @@ export type TelegramRelayInput = TelegramRelayRule & { sourceSelectionToken?: st
 export interface TelegramRelaySettings {
   rules: TelegramRelayRule[]
   peers: TelegramRelayPeer[]
-  status: { connected: boolean; error?: string }
+  status: { connected: boolean; error?: string; warning?: string }
   account: { hasSession: boolean; name: string; username?: string; avatarId?: string }
 }

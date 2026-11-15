@@ -288,7 +288,7 @@ func TestRelaySharedConnectionDoesNotHoldGateAndLogoutJoins(t *testing.T) {
 				close(ready)
 			}
 			return nil
-		})
+		}, nil)
 	}()
 	select {
 	case <-ready:
@@ -353,7 +353,7 @@ func TestRelayDifferencePersistsCardsBeforePtsAndRetriesFailedDelivery(t *testin
 					}
 					store.states["card"] = "durable"
 					return nil
-				})
+				}, nil)
 			}()
 			if !fail {
 				deadline := time.After(time.Second)
@@ -547,7 +547,12 @@ func TestRelaySourceSnapshotAcceptedBeforeGapCheckpoint(t *testing.T) {
 	store := seedRelay(c)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	f.difference = func(*tg.UpdatesGetChannelDifferenceRequest) (tg.UpdatesChannelDifferenceClass, error) {
+	var requests atomic.Int32
+	f.difference = func(request *tg.UpdatesGetChannelDifferenceRequest) (tg.UpdatesChannelDifferenceClass, error) {
+		requests.Add(1)
+		if request.Pts != 20 {
+			return nil, errors.New("wrong snapshot starting point")
+		}
 		dialog := &tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 100}}
 		dialog.SetPts(900)
 		messages := make([]tg.MessageClass, 0, 3)
@@ -557,6 +562,7 @@ func TestRelaySourceSnapshotAcceptedBeforeGapCheckpoint(t *testing.T) {
 		return &tg.UpdatesChannelDifferenceTooLong{Dialog: dialog, Messages: messages}, nil
 	}
 	done := make(chan error, 1)
+	warnings := make(chan string, 1)
 	var messageIDs []int
 	go func() {
 		done <- c.RunRelay(ctx, store, func(ctx context.Context, owner int64, message *tg.Message) error {
@@ -571,23 +577,140 @@ func TestRelaySourceSnapshotAcceptedBeforeGapCheckpoint(t *testing.T) {
 			}
 			store.states["snapshot"] = "saved"
 			return nil
+		}, func(owner int64, message string) {
+			if owner != 42 {
+				t.Error("gap warning lost its owner")
+			}
+			if message != "" {
+				warnings <- message
+			}
 		})
 	}()
 	select {
-	case err := <-done:
-		var detail *OperationError
-		if !errors.As(err, &detail) || detail.Code != "update_gap" {
-			t.Fatal("missing gap warning", err)
+	case warning := <-warnings:
+		if !strings.Contains(warning, "更早的消息可能缺失") {
+			t.Fatal("missing history gap warning", warning)
 		}
+	case err := <-done:
+		t.Fatal("recovered snapshot stopped the listener", err)
 	case <-time.After(time.Second):
 		t.Fatal("gap was not reported")
 	}
+	searchEventually(t, c.RelayConnected)
+	if err := c.Check(context.Background()); err != nil {
+		t.Fatal("recovered connection cannot serve normal requests", err)
+	}
+	if err := c.RelaySend(context.Background(), 42, "user:300", RelayPayload{Text: "after recovery"}, 123); err != nil {
+		t.Fatal("recovered connection cannot deliver queued cards", err)
+	}
+	if f.starts.Load() != 1 || requests.Load() != 1 {
+		t.Fatal("snapshot recovery reopened the connection or reloaded the same gap")
+	}
+	select {
+	case err := <-done:
+		t.Fatal("gap recovery ended the live listener", err)
+	default:
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("recovered listener did not stop on cancellation")
+	}
 	store.mu.Lock()
-	defer store.mu.Unlock()
 	if store.states["channel:100"] != "900" || store.states["snapshot"] != "saved" {
+		store.mu.Unlock()
 		t.Fatal("gap recovery advanced without latest available messages", store.states)
 	}
+	store.mu.Unlock()
 	if !slices.Equal(messageIDs, []int{897, 898, 899}) {
 		t.Fatal("snapshot messages were forwarded out of chronological order", messageIDs)
+	}
+	// 后续真正重连也必须使用已恢复的游标，不能再次从旧缺口拉取。
+	restored := make(chan int, 1)
+	f.difference = func(request *tg.UpdatesGetChannelDifferenceRequest) (tg.UpdatesChannelDifferenceClass, error) {
+		restored <- request.Pts
+		return &tg.UpdatesChannelDifferenceEmpty{Pts: 900, Final: true}, nil
+	}
+	nextCtx, nextCancel := context.WithCancel(context.Background())
+	defer nextCancel()
+	go func() {
+		done <- c.RunRelay(nextCtx, store, func(context.Context, int64, *tg.Message) error { return nil }, nil)
+	}()
+	select {
+	case pts := <-restored:
+		if pts != 900 {
+			t.Fatal("reconnection reused old gap cursor", pts)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reconnection did not restore the recovered cursor")
+	}
+	nextCancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("reconnected listener did not stop")
+	}
+}
+
+func TestRelaySnapshotFailuresKeepOldCheckpoint(t *testing.T) {
+	for _, mode := range []string{"message", "checkpoint", "missing_pts", "regressed_pts", "wrong_channel"} {
+		t.Run(mode, func(t *testing.T) {
+			c, f := relayClient(t)
+			store := seedRelay(c)
+			store.states["channel:100"] = "20"
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			rejected := errors.New("snapshot storage unavailable")
+			var handled, warned atomic.Bool
+			f.difference = func(*tg.UpdatesGetChannelDifferenceRequest) (tg.UpdatesChannelDifferenceClass, error) {
+				dialog := &tg.Dialog{Peer: &tg.PeerChannel{ChannelID: 100}}
+				if mode != "missing_pts" {
+					dialog.SetPts(900)
+				}
+				if mode == "regressed_pts" {
+					dialog.SetPts(10)
+				}
+				if mode == "wrong_channel" {
+					dialog.Peer = &tg.PeerChannel{ChannelID: 999}
+				}
+				return &tg.UpdatesChannelDifferenceTooLong{Dialog: dialog, Messages: []tg.MessageClass{&tg.Message{ID: 899, PeerID: &tg.PeerChannel{ChannelID: 100}}}}, nil
+			}
+			err := c.RunRelay(ctx, store, func(_ context.Context, _ int64, message *tg.Message) error {
+				if message == nil {
+					return nil
+				}
+				handled.Store(true)
+				if mode == "message" {
+					return rejected
+				}
+				if mode == "checkpoint" {
+					store.mu.Lock()
+					store.err = rejected
+					store.mu.Unlock()
+				}
+				return nil
+			}, func(_ int64, message string) {
+				if message != "" {
+					warned.Store(true)
+				}
+			})
+			if mode == "message" || mode == "checkpoint" {
+				if !errors.Is(err, rejected) || !handled.Load() {
+					t.Fatal("snapshot write failure did not stop connection", err)
+				}
+			} else {
+				var detail *OperationError
+				if !errors.As(err, &detail) || detail.Code != "update_state_invalid" || handled.Load() {
+					t.Fatal("invalid snapshot was accepted", err)
+				}
+			}
+			store.mu.Lock()
+			pts := store.states["channel:100"]
+			store.mu.Unlock()
+			if pts != "20" || warned.Load() || c.RelayConnected() {
+				t.Fatal("failed recovery advanced cursor, reported success, or left listener connected")
+			}
+		})
 	}
 }

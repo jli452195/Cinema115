@@ -180,7 +180,7 @@ func TestFailedRelayStartupDoesNotBlockAnIndependentRead(t *testing.T) {
 	}
 	relayDone, readDone := make(chan error, 1), make(chan error, 1)
 	go func() {
-		relayDone <- c.RunRelay(context.Background(), store, func(context.Context, int64, *tg.Message) error { return nil })
+		relayDone <- c.RunRelay(context.Background(), store, func(context.Context, int64, *tg.Message) error { return nil }, nil)
 	}()
 	<-started
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -349,7 +349,7 @@ func TestLogoutCancelsRelayBeforeStartupIsReady(t *testing.T) {
 						<-ctx.Done()
 					}
 					return nil
-				})
+				}, nil)
 			}()
 			select {
 			case <-started:
@@ -457,7 +457,7 @@ func TestCanceledAccountWritersReleaseRelayStartupPlaceholder(t *testing.T) {
 			defer cancel()
 			relayDone := make(chan error, 1)
 			go func() {
-				relayDone <- c.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil })
+				relayDone <- c.RunRelay(ctx, store, func(context.Context, int64, *tg.Message) error { return nil }, nil)
 			}()
 			<-started
 			c.mu.Lock()

@@ -31,14 +31,25 @@ type relayUpdatesAPI struct {
 	handle func(context.Context, int64, *tg.Message) error
 }
 
-// A difference snapshot can contain the latest available messages even when
-// older history has expired. Persist those cards before gotd resets channel pts.
+// 历史差异过期后，先保存快照中仍可获取的消息，再由 gotd 推进频道游标。
 func (api relayUpdatesAPI) UpdatesGetChannelDifference(ctx context.Context, request *tg.UpdatesGetChannelDifferenceRequest) (tg.UpdatesChannelDifferenceClass, error) {
 	response, err := api.Client.UpdatesGetChannelDifference(ctx, request)
 	if err != nil {
 		return nil, err
 	}
 	if snapshot, ok := response.(*tg.UpdatesChannelDifferenceTooLong); ok {
+		channel, channelOK := request.Channel.(*tg.InputChannel)
+		dialog, dialogOK := snapshot.Dialog.(*tg.Dialog)
+		var peer *tg.PeerChannel
+		var pts int
+		var hasPts bool
+		if dialogOK {
+			peer, _ = dialog.Peer.(*tg.PeerChannel)
+			pts, hasPts = dialog.GetPts()
+		}
+		if !channelOK || peer == nil || peer.ChannelID != channel.ChannelID || !hasPts || pts <= 0 || pts < request.Pts {
+			return nil, api.state.fail(&OperationError{Code: "update_state_invalid", Message: "Telegram 频道返回的同步进度无效，将稍后重试"})
+		}
 		messages := make([]*tg.Message, 0, len(snapshot.Messages))
 		for _, raw := range snapshot.Messages {
 			if message, ok := raw.(*tg.Message); ok {

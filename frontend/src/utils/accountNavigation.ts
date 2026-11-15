@@ -1,7 +1,7 @@
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
 import {
   IconUserCircle, IconPlayerPlay, IconHeart, IconListCheck, IconUserPlus,
-  IconCloud, IconStack2, IconBrandTelegram, IconNotes, IconDeviceTv,
+  IconCloud, IconStack2, IconBrandTelegram, IconFileText, IconDeviceTv,
   IconBell, IconLogout, IconShare, IconCloudDownload, IconFolderCog,
   IconFolderShare, IconBooks, IconListSearch, IconArrowsShuffle,
   IconDatabaseCog, IconUsers, IconMovie, IconSearch, IconLink,
@@ -23,7 +23,7 @@ export const accountIcons = {
   drive: IconCloud,
   resources: IconStack2,
   telegram: IconBrandTelegram,
-  logs: IconNotes,
+  logs: IconFileText,
   emby: IconDeviceTv,
   bell: IconBell,
   logout: IconLogout,

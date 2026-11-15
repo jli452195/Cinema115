@@ -43,7 +43,7 @@ func (f *telegramRelayAPIFake) RelayAvatar(ctx context.Context, peerID, photo st
 func (*telegramRelayAPIFake) PrepareRelay(_ context.Context, source, target, _, _ string) (tguser.RelayIdentity, error) {
 	return tguser.RelayIdentity{OwnerID: 42, SourceID: source, SourceTitle: "来源", TargetID: target, TargetTitle: "目标"}, nil
 }
-func (*telegramRelayAPIFake) RunRelay(context.Context, tguser.RelayStateStore, func(context.Context, int64, *tg.Message) error) error {
+func (*telegramRelayAPIFake) RunRelay(context.Context, tguser.RelayStateStore, func(context.Context, int64, *tg.Message) error, func(int64, string)) error {
 	return nil
 }
 func (f *telegramRelayAPIFake) RelaySend(context.Context, int64, string, tguser.RelayPayload, int64) error {

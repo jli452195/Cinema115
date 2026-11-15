@@ -6,6 +6,8 @@ import type { EmbyMatch } from '../types/emby'
 import embyIcon from '../assets/emby.svg'
 import { tmdbImageURL } from '../utils/tmdbImage'
 import { vTooltip } from '../directives/tooltip'
+import PosterPlaceholder from './PosterPlaceholder.vue'
+import '../styles/mediaCards.css'
 
 const props = withDefaults(defineProps<{ item: MediaCardItem; library?: EmbyMatch; showKindBadge?: boolean; titleLines?: 1 | 2 }>(), { showKindBadge: true, titleLines: 1 })
 const imageFailed = ref(false)
@@ -22,11 +24,11 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
 <template>
   <RouterLink
     :to="detailPath"
-    class="group block min-w-0 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-amber-400"
+    class="media-poster-card group block min-w-0 rounded-xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-500"
     :aria-label="`${item.title}，查看详情`"
     v-tooltip="{ title: item.title, text: item.overview || (item.originalTitle !== item.title ? item.originalTitle : '') }"
   >
-    <div class="relative aspect-[2/3] overflow-hidden rounded-xl bg-slate-200 dark:bg-slate-700 shadow-[0_12px_24px_-14px_rgba(15,23,42,0.4)] transition group-hover:-translate-y-1 group-hover:shadow-lg motion-reduce:transform-none motion-reduce:transition-none">
+    <div class="poster-card-frame relative aspect-[2/3] overflow-hidden bg-slate-200 dark:bg-slate-700">
       <img
         v-if="item.posterUrl && !imageFailed"
         :key="`${item.kind}-${item.id}-${item.posterUrl}`"
@@ -34,20 +36,14 @@ watch(() => [props.item.kind, props.item.id, props.item.posterUrl], () => { imag
         :alt="item.title"
         loading="lazy"
         referrerpolicy="no-referrer"
-        class="h-full w-full object-cover"
+        class="poster-card-image h-full w-full object-cover"
         @error="imageFailed = true"
       />
-      <div v-else class="flex h-full flex-col items-center justify-center gap-3 p-5 text-center text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">
-        <svg class="h-9 w-9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="3" />
-          <path d="m3 16 5-5 4 4 3-3 6 6M15 8h.01" />
-        </svg>
-        <span class="text-xs">暂无海报</span>
-      </div>
-      <span v-if="showKindBadge" class="absolute left-2.5 top-2.5 rounded bg-blue-600 px-2 py-0.5 text-[10px] font-semibold leading-4 text-white shadow-sm">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
-      <span class="absolute right-2.5 top-2.5 inline-flex items-center gap-0.5 rounded bg-white dark:bg-slate-900/95 px-1.5 py-0.5 text-[10px] font-bold leading-4 text-amber-600 shadow-sm"><svg v-if="item.votes > 0 && Number.isFinite(item.rating)" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg>{{ ratingLabel }}</span>
+      <PosterPlaceholder v-else :title="item.title" />
+      <span v-if="showKindBadge" class="poster-card-badge absolute left-2.5 top-2.5 px-2 py-0.5 text-[10px] leading-4">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
+      <span class="poster-card-badge absolute right-2.5 top-2.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] leading-4"><svg v-if="item.votes > 0 && Number.isFinite(item.rating)" class="h-2.5 w-2.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg>{{ ratingLabel }}</span>
     </div>
-    <h2 class="mt-2.5 px-0.5 text-sm font-semibold text-slate-800 dark:text-slate-200 group-hover:text-amber-600" :class="titleLines === 2 ? 'media-card-title-two-lines' : 'truncate leading-6'">{{ item.title }}</h2>
+    <h2 class="poster-card-title px-0.5 text-slate-800 dark:text-slate-200" :class="titleLines === 2 ? 'media-card-title-two-lines' : 'truncate leading-6'">{{ item.title }}</h2>
     <div class="mt-0.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-0.5 text-xs">
       <span class="shrink-0 text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.date?.slice(0, 4) || '年份未知' }}</span>
       <span v-if="library?.items.length" class="ml-auto inline-flex shrink-0 items-center gap-1 text-[11px] font-medium" :class="library.state === 'stale' ? 'text-amber-600' : 'text-emerald-600'" :aria-label="`Emby ${libraryLabel}`" v-tooltip="library.state === 'stale' ? 'Emby 索引待更新，当前显示上次入库记录' : undefined">

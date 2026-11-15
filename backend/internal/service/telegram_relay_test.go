@@ -50,7 +50,7 @@ func (f *relayTransportFake) PrepareRelay(_ context.Context, source, target, _, 
 	}
 	return tguser.RelayIdentity{OwnerID: f.owner, SourceID: source, SourceTitle: "来源", TargetID: target, TargetTitle: "目标"}, nil
 }
-func (f *relayTransportFake) RunRelay(ctx context.Context, _ tguser.RelayStateStore, handle func(context.Context, int64, *tg.Message) error) error {
+func (f *relayTransportFake) RunRelay(ctx context.Context, _ tguser.RelayStateStore, handle func(context.Context, int64, *tg.Message) error, _ func(int64, string)) error {
 	f.mu.Lock()
 	f.connected = true
 	owner := f.owner

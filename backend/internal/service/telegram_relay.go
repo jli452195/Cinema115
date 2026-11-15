@@ -33,7 +33,7 @@ type TelegramRelayTransport interface {
 	SavedRelayPeers() []tguser.RelayPeer
 	RelayAvatar(context.Context, string, string) ([]byte, string, error)
 	PrepareRelay(context.Context, string, string, string, string) (tguser.RelayIdentity, error)
-	RunRelay(context.Context, tguser.RelayStateStore, func(context.Context, int64, *tg.Message) error) error
+	RunRelay(context.Context, tguser.RelayStateStore, func(context.Context, int64, *tg.Message) error, func(int64, string)) error
 	RelaySend(context.Context, int64, string, tguser.RelayPayload, int64) error
 	RelayConnected() bool
 }
@@ -71,6 +71,7 @@ type TelegramRelayView struct {
 type TelegramRelayStatus struct {
 	Connected bool   `json:"connected"`
 	Error     string `json:"error,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 }
 
 type compiledRelayRule struct {
@@ -87,6 +88,7 @@ type TelegramRelay struct {
 	rules               map[string]compiledRelayRule
 	locks               map[string]*sync.Mutex
 	lastError           string
+	lastWarning         string
 	ownerID             int64
 	cooldown            time.Time
 	wakeWatch, wakeSend chan struct{}
@@ -156,10 +158,13 @@ func (s *TelegramRelay) List(ctx context.Context) (TelegramRelayView, error) {
 	for _, value := range s.rules {
 		rules = append(rules, value.rule)
 	}
-	status := TelegramRelayStatus{Error: s.lastError}
+	status := TelegramRelayStatus{Error: s.lastError, Warning: s.lastWarning}
 	s.mu.Unlock()
 	slices.SortFunc(rules, func(a, b model.TelegramRelayRule) int { return b.UpdatedAt.Compare(a.UpdatedAt) })
 	result := TelegramRelayView{Rules: rules, Peers: s.transport.SavedRelayPeers(), Status: status, Account: s.transport.View()}
+	if !result.Account.HasSession {
+		result.Status.Warning = ""
+	}
 	result.Status.Connected = s.transport.RelayConnected()
 	return result, nil
 }
@@ -304,6 +309,9 @@ func (s *TelegramRelay) Delete(ctx context.Context, id string) error {
 func (s *TelegramRelay) receive(ctx context.Context, ownerID int64, message *tg.Message) error {
 	if message == nil {
 		s.mu.Lock()
+		if s.ownerID != ownerID {
+			s.lastWarning = ""
+		}
 		s.ownerID = ownerID
 		s.lastError = ""
 		s.mu.Unlock()
@@ -319,6 +327,9 @@ func (s *TelegramRelay) receive(ctx context.Context, ownerID int64, message *tg.
 	}
 	source := "channel:" + strconv.FormatInt(peer.ChannelID, 10)
 	s.mu.Lock()
+	if s.ownerID != ownerID {
+		s.lastWarning = ""
+	}
 	s.ownerID = ownerID
 	s.lastError = ""
 	var entry compiledRelayRule
@@ -455,6 +466,30 @@ func (s *TelegramRelay) Run(ctx context.Context) error {
 	return group.Wait()
 }
 
+// 历史缺口不影响当前监听，警告单独保留且同一提示不随重连反复写日志。
+// 空提示只同步已验证的账号身份，同账号重连时保留原有警告。
+func (s *TelegramRelay) reportWarning(ownerID int64, message string) {
+	message = strings.TrimSpace(message)
+	if ownerID <= 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.ownerID != ownerID {
+		s.lastWarning = ""
+	}
+	s.ownerID = ownerID
+	if message == "" {
+		s.mu.Unlock()
+		return
+	}
+	changed := s.lastWarning != message
+	s.lastWarning = message
+	s.mu.Unlock()
+	if changed {
+		s.logs.Append("Telegram", "", "频道转发", "WARNING", message)
+	}
+}
+
 func (s *TelegramRelay) watch(ctx context.Context) error {
 	for ctx.Err() == nil {
 		if !s.active() || !s.transport.View().HasSession {
@@ -468,7 +503,7 @@ func (s *TelegramRelay) watch(ctx context.Context) error {
 		}
 		runCtx, cancel := context.WithCancel(ctx)
 		done := make(chan error, 1)
-		go func() { done <- s.transport.RunRelay(runCtx, s.store, s.receive) }()
+		go func() { done <- s.transport.RunRelay(runCtx, s.store, s.receive, s.reportWarning) }()
 		var err error
 		select {
 		case <-ctx.Done():
@@ -490,9 +525,6 @@ func (s *TelegramRelay) watch(ctx context.Context) error {
 			var operation *tguser.OperationError
 			if errors.As(err, &operation) {
 				message = operation.Message
-				if operation.Code == "update_gap" {
-					message = "频道积压超出可恢复窗口，已处理可获取的新消息；更早的消息可能缺失"
-				}
 			}
 			s.mu.Lock()
 			changed := s.lastError != message

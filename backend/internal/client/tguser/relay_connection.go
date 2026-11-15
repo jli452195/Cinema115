@@ -99,7 +99,7 @@ func (c *Client) stopRelay() {
 	}
 }
 
-func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle func(context.Context, int64, *tg.Message) error) error {
+func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle func(context.Context, int64, *tg.Message) error, report func(int64, string)) error {
 	if store == nil || handle == nil {
 		return ErrInput
 	}
@@ -167,8 +167,15 @@ func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle fun
 	handler := telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
 		return state.handle(ctx, u, handle)
 	})
-	manager := updates.New(updates.Config{Storage: state, AccessHasher: state, Handler: handler, OnChannelTooLong: func(id int64) {
-		state.fail(&OperationError{Code: "update_gap", Message: "Telegram 频道积压超出可恢复范围，请检查频道转发记录"})
+	manager := updates.New(updates.Config{Storage: state, AccessHasher: state, Handler: handler, OnChannelTooLong: func(int64) {
+		// gotd 此时已经推进快照游标，历史缺口只需提示，不能再次断线重连。
+		// 处理消息或保存进度失败仍由 state.fail 终止连接，禁止跳过未落盘消息。
+		if report != nil && runCtx.Err() == nil && state.failure() == nil {
+			state.mu.Lock()
+			owner := state.owner
+			state.mu.Unlock()
+			report(owner, "频道积压超出可恢复窗口，已处理可获取的新消息；更早的消息可能缺失")
+		}
 	}})
 	operation := func(ctx context.Context, client *telegram.Client) error {
 		if err := c.status(ctx, client); err != nil {
@@ -181,6 +188,10 @@ func (c *Client) RunRelay(ctx context.Context, store RelayStateStore, handle fun
 		c.mu.Unlock()
 		if !authorized || owner == 0 {
 			return ErrLogin
+		}
+		// 空文本只同步已验证账号；即使频道资料校验失败，也不能残留旧账号警告。
+		if report != nil {
+			report(owner, "")
 		}
 		if saved.OwnerID != owner {
 			return &OperationError{Code: "selection_required", Message: "转发频道资料缺失，请编辑规则重新选择来源和目标"}

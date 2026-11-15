@@ -34,7 +34,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const extraPeers = Array.from({ length: 18 }, (_, index) => ({ id: `channel:${500 + index}`, title: `更多来源${index}`, avatarId: `${500 + index}`, kind: 'channel', source: true, target: false }))
     const initial = (id, name, sourceId, targetId, enabled) => ({ id, name, sourceId, targetId, sourceTitle: peers.find(peer => peer.id === sourceId).title, targetTitle: peers.find(peer => peer.id === targetId).title, enabled, linkTypes: ['115', 'ed2k'], includePattern: '', excludePattern: '' })
     let rules = [initial('r1', '动画转存', 'channel:101', 'user:201', true), initial('r2', '电影备份', 'channel:102', 'chat:301', false)]
-    let failSave = false, failPeers = false, failDelete = false, peerSerial = 0, hasSession = true
+    let failSave = false, failPeers = false, failDelete = false, peerSerial = 0, hasSession = true, statusWarning = '', statusError = ''
     function holdNext(key) {
       let release, start
       const response = new Promise(resolve => { release = resolve }), started = new Promise(resolve => { start = resolve })
@@ -55,7 +55,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         return
       }
       if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'mock', role: 'admin' } }
-      else if (endpoint === '/api/admin/telegram-relay') { await pause('load'); data = { rules, peers: peers.slice(0, 4), status: { connected: hasSession }, account: { hasSession, name: hasSession ? '测试账号' : '', avatarId: hasSession ? accountAvatarId : undefined } } }
+      else if (endpoint === '/api/admin/telegram-relay') { await pause('load'); data = { rules, peers: peers.slice(0, 4), status: { connected: hasSession, warning: statusWarning, error: statusError }, account: { hasSession, name: hasSession ? '测试账号' : '', avatarId: hasSession ? accountAvatarId : undefined } } }
       else if (endpoint === '/api/admin/telegram-relay/peers') {
         await pause('peers')
         if (failPeers) { status = 502; data = { error: '模拟会话读取失败' } }
@@ -130,6 +130,20 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const refreshHeld = holdNext('load'); await page.getByRole('button', { name: '刷新', exact: true }).click(); await refreshHeld.started
     assert.equal(await switchOne().isDisabled(), true); refreshHeld.release(); await page.getByText('监听已连接', { exact: true }).waitFor()
     passed.push('category entry, lazy reads, no polling; independent toggles rollback on errors and cannot race settings refresh')
+
+    // 历史缺口是独立提示，不能使已恢复的监听显示为断线，也不能遮住连接错误。
+    statusWarning = '频道积压超出可恢复窗口，已处理可获取的新消息；更早的消息可能缺失'
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await page.getByText(statusWarning, { exact: true }).waitFor()
+    await page.getByText('监听已连接', { exact: true }).waitFor()
+    statusError = '模拟连接中断'
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await page.getByText(statusError, { exact: true }).waitFor()
+    assert.equal(await page.getByText(statusWarning, { exact: true }).count(), 1)
+    statusWarning = ''; statusError = ''
+    await page.getByRole('button', { name: '刷新', exact: true }).click()
+    await page.locator('.relay-warning').waitFor({ state: 'detached' })
+    passed.push('恢复后的积压提示与监听连接状态、连接错误独立显示')
 
     await card('电影备份').getByRole('button', { name: '编辑电影备份', exact: true }).click(); await editor().waitFor()
     await editor().getByLabel('ed2k', { exact: true }).uncheck(); assert.equal(await card('电影备份').locator('.relay-tags').getByText('ed2k', { exact: true }).count(), 1)

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/usePortalAuth'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import MediaCard from '../components/MediaCard.vue'
 import PersonCard from '../components/PersonCard.vue'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import type { PersonItem } from '../types/person'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 import type { MediaCardItem } from '../types/media'
@@ -13,7 +14,7 @@ const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute()
 const router = useRouter()
-const scopes = [{ id: 'multi', label: '聚合' }, { id: 'movie', label: '电影' }, { id: 'tv', label: '剧集' }, { id: 'person', label: '演员' }] as const
+const scopes = [{ value: 'multi', label: '聚合' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }, { value: 'person', label: '演员' }] as const
 const scope = computed(() => route.query.scope === 'movie' || route.query.scope === 'tv' || route.query.scope === 'person' ? route.query.scope : 'multi')
 const query = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')
 const page = computed(() => {
@@ -69,26 +70,24 @@ onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
+  <div class="search-page flex min-h-screen flex-col">
     <WorkbenchHeader @logout="$emit('logout')" />
     <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-7 sm:px-8 lg:px-10 lg:pb-10">
-      <header class="mx-auto max-w-2xl text-center">
+      <header class="search-header mx-auto max-w-2xl text-center" :class="{ 'is-compact': query }">
         <h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">搜索影视</h1>
-        <p class="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">发现电影、剧集与喜爱的演员</p>
-        <form role="search" class="mt-6 flex gap-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-2 shadow-sm focus-within:border-amber-400" @submit.prevent="submit">
-          <input v-model="input" type="search" :aria-label="scope === 'person' ? '搜索演员姓名' : '搜索片名'" maxlength="100" :placeholder="scope === 'person' ? '输入演员姓名…' : '输入电影或剧集名称…'" class="min-w-0 flex-1 bg-transparent px-2 py-2 text-sm outline-none sm:px-3" />
-          <button type="submit" class="shrink-0 rounded-lg bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-700">搜索</button>
+        <p v-if="!query" class="mt-2 text-sm text-slate-500 dark:text-slate-400">发现电影、剧集与喜爱的演员</p>
+        <form role="search" class="search-form flex gap-2" @submit.prevent="submit">
+          <input v-model="input" type="search" :aria-label="scope === 'person' ? '搜索演员姓名' : '搜索片名'" maxlength="100" :placeholder="scope === 'person' ? '输入演员姓名…' : '输入电影或剧集名称…'" class="min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
+          <button type="submit" class="search-submit shrink-0 px-5 py-2 text-sm font-medium">搜索</button>
         </form>
-        <nav aria-label="搜索范围" class="mt-5 flex flex-wrap justify-center gap-1 sm:gap-2">
-          <RouterLink v-for="item in scopes" :key="item.id" :to="location(item.id)" :aria-current="scope === item.id ? 'page' : undefined" class="rounded-lg border px-4 py-2 sm:px-6 text-sm font-medium transition-colors" :class="scope === item.id ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-transparent text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 dark:bg-slate-800'">{{ item.label }}</RouterLink>
-        </nav>
+        <div class="search-scopes"><SegmentedControl :model-value="scope" :options="scopes" label="搜索范围" density="compact" appearance="neutral" @change="router.push(location($event))" /></div>
       </header>
-      <div v-if="query" class="mb-6 mt-8 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 text-xs text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500" role="status" aria-live="polite">
+      <div v-if="query" class="search-summary mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 text-xs text-slate-500 dark:text-slate-400" role="status" aria-live="polite">
         <span class="min-w-0 break-words">{{ loading ? '正在搜索…' : error ? '暂时无法搜索' : scope === 'person' ? `「${query}」· 本页 ${people.length} 位演员` : scope === 'multi' ? `「${query}」· 本页 ${items.length} 部影视` : `「${query}」· 找到 ${total.toLocaleString()} 部${scope === 'movie' ? '电影' : '剧集'}` }}</span>
-        <button type="button" class="shrink-0 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 dark:text-slate-300" @click="clear">清空搜索</button>
+        <button type="button" class="search-clear shrink-0 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" @click="clear">清空搜索</button>
       </div>
       <div v-if="!query" class="py-24 text-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ scope === 'person' ? '输入演员姓名，查看照片、代表作和参演影视。' : '输入片名开始搜索，聚合范围同时展示电影与剧集。' }}</div>
-      <div v-else-if="error" role="alert" class="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-700"><p>{{ error }}</p><button type="button" class="mt-4 rounded-lg border border-red-200 px-4 py-2" @click="load">重新搜索</button></div>
+      <div v-else-if="error" role="alert" class="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"><p>{{ error }}</p><button type="button" class="mt-4 rounded-lg border border-red-200 px-4 py-2 dark:border-red-800" @click="load">重新搜索</button></div>
       <div v-else-if="loading" aria-label="正在加载搜索结果" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><div v-for="i in 10" :key="i" class="animate-pulse motion-reduce:animate-none"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-3 h-4 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div></div></div>
       <div v-else-if="scope === 'person' && !people.length" class="py-20 text-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ totalPages > page ? '本页没有演员结果，可尝试下一页。' : '没有找到匹配的演员，试试其他姓名。' }}</div>
       <div v-else-if="scope === 'person'" class="grid grid-cols-2 gap-x-5 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"><PersonCard v-for="person in people" :key="person.id" :person="person" /></div>
@@ -105,3 +104,21 @@ onBeforeUnmount(() => controller?.abort())
     </main>
   </div>
 </template>
+
+<style scoped>
+.search-header { padding-top: .25rem; margin-bottom: 1.5rem; }
+.search-header.is-compact h1 { font-size: 1.25rem; opacity: .9; }
+.search-form { margin-top: 1.5rem; padding: 5px 7px 5px 14px; border: 1px solid rgb(203 213 225 / .85); border-radius: 14px; background: rgb(255 255 255 / .88); box-shadow: 0 4px 20px -2px rgb(15 23 42 / .05); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
+.is-compact .search-form { margin-top: .85rem; }
+.search-form:focus-within { border-color: #64748b; background: #fff; box-shadow: 0 0 0 3px rgb(148 163 184 / .22), 0 8px 24px -4px rgb(15 23 42 / .08); }
+.dark .search-form { border-color: rgb(51 65 85 / .85); background: rgb(15 23 42 / .75); }
+.dark .search-form:focus-within { border-color: #94a3b8; background: rgb(15 23 42 / .95); box-shadow: 0 0 0 3px rgb(148 163 184 / .16); }
+.search-submit { min-height: 40px; border-radius: 10px; color: #fff; background: #0f172a; transition: background-color .2s ease; }
+.dark .search-submit { color: #0f172a; background: #f1f5f9; }
+.search-submit:focus-visible, .search-clear:focus-visible { outline: 2px solid #3b82f6; outline-offset: 3px; }
+.search-scopes { margin-top: .9rem; }
+.search-clear { min-height: 36px; }
+@media (hover: hover) { .search-submit:hover { background: #334155; }.dark .search-submit:hover { background: #cbd5e1; } }
+@media (max-width: 639px) { .search-submit { min-height: 44px; }.search-clear { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { .search-form, .search-submit { transition: none; } }
+</style>
