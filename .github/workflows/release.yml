@@ -94,6 +94,7 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: write
+      actions: read
     env:
       VERSION: ${{ needs.metadata.outputs.version }}
       REVISION: ${{ needs.metadata.outputs.revision }}
@@ -122,8 +123,12 @@ jobs:
             APP_VERSION=v${{ env.VERSION }}
             APP_REVISION=${{ env.REVISION }}
             APP_CREATED=${{ env.CREATED }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+          # 标签之间的缓存相互隔离，依赖层读取 master CI 预热的默认分支缓存。
+          cache-from: |
+            type=gha,version=2,scope=cinema115-release
+            type=gha,version=2,scope=cinema115-frontend-deps
+            type=gha,version=2,scope=cinema115-backend-deps
+          cache-to: type=gha,version=2,scope=cinema115-release,mode=max,ignore-error=true
       - name: Verify both architectures and frontend metadata
         env:
           DIGEST: ${{ steps.build.outputs.digest }}

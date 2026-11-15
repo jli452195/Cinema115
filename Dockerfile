@@ -1,22 +1,27 @@
 # syntax=docker/dockerfile:1
 
-# 第一阶段：构建 Vue 前端静态页面。
-FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-builder
+# 第一阶段：独立保存前端依赖，供默认分支预热和版本发布复用。
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend-deps
 WORKDIR /src/frontend
 COPY frontend/.npmrc frontend/package.json frontend/package-lock.json ./
 RUN npm ci
+
+# 第二阶段：构建 Vue 前端静态页面。
+FROM frontend-deps AS frontend-builder
 COPY frontend/ ./
 ARG APP_VERSION=dev
 ARG APP_REVISION=""
 ARG APP_CREATED=""
 RUN npm run build
 
-# 第二阶段：编译 Go 后端，支持 amd64 和 arm64 NAS。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-builder
+# 第三阶段：独立保存 Go 模块依赖，不执行应用编译。
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS backend-deps
 WORKDIR /src/backend
 COPY backend/go.mod backend/go.sum ./
-# 依赖写入镜像层，供不同发布任务通过外部构建缓存复用。
 RUN go mod download
+
+# 第四阶段：编译 Go 后端，支持 amd64 和 arm64 NAS。
+FROM backend-deps AS backend-builder
 COPY backend/ ./
 ARG TARGETOS=linux
 ARG TARGETARCH
@@ -29,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -ldflags="-s -w -X strm115/backend/internal/buildinfo.Version=$APP_VERSION -X strm115/backend/internal/buildinfo.Revision=$APP_REVISION -X strm115/backend/internal/buildinfo.Created=$APP_CREATED" \
       -o /out/ ./cmd/server ./cmd/dbtool
 
-# 第三阶段：Go 同时提供页面和 API，运行时无需 Node.js 或 Nginx。
+# 第五阶段：Go 同时提供页面和 API，运行时无需 Node.js 或 Nginx。
 FROM alpine:3.24 AS runner
 ARG APP_VERSION=dev
 ARG APP_REVISION=""

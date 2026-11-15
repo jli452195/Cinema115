@@ -7,7 +7,7 @@ Git 标签是应用发布版本的唯一来源。前端、Go 服务、数据库�
 1. 将源码推送到 `jli452195/Cinema115`，默认分支为 `master`。
 2. 在 Docker Hub 创建公开仓库 `jli452195/cinema115`，创建具有该仓库读写权限的访问令牌。
 3. 在 GitHub 仓库「Settings → Secrets and variables → Actions」添加两个 Repository secrets：`DOCKERHUB_USERNAME`（值为 `jli452195`）与 `DOCKERHUB_TOKEN`（访问令牌）。不将令牌写进文件或提交记录。
-4. 确认仓库已启用 Actions，组织策略允许工作流发布 GitHub Release。发布任务会申请 `contents: write`，CI 记录查询使用 `actions: read`，其他任务只读取源码。
+4. 确认仓库已启用 Actions，组织策略允许工作流发布 GitHub Release。发布任务会申请 `contents: write`；CI 记录与缓存查询使用 `actions: read`，缓存通过 Actions 提供的运行时凭据读写，无需新增仓库密钥。
 
 日常 CI 在 `master` 推送和 Pull Request 时运行，不发布镜像。功能分支通过 PR 检查，避免同一次更新同时触发分支 push 与 PR 两套检查。同一分支或 PR 连续更新时自动取消旧 CI，只保留最新提交；标签发布不受此取消规则影响。
 
@@ -93,4 +93,8 @@ docker compose config --quiet
 
 需要自行构建时，可在源码根目录执行 `docker build -t cinema115:dev .`；该镜像默认记录 `dev`。发布构建由工作流传入 `APP_VERSION`、`APP_REVISION`、`APP_CREATED` 三个构建参数，不把运行凭据传入构建。Go 和 Node 版本分别与 Dockerfile 的 Go 1.26、Node 22 保持一致。
 
-发布使用 Docker Hub 的 `jli452195/cinema115:buildcache` 保存中间构建层，让不同版本标签复用依赖缓存。该标签仅供构建使用，不用于部署，也不改变版本镜像与 `latest` 的规则；首次发布没有缓存时正常构建并生成缓存。Go 模块下载独立保存在构建层中，修改业务代码可复用该层；依赖清单或基础构建镜像变化时重新下载。编译缓存挂载仅在同一构建器内复用，缓存和依赖不进入最终运行镜像。
+构建缓存使用 GitHub Actions Cache v2，不再读写 Docker Hub 的 `buildcache` 标签。GitHub 的缓存受分支和标签访问范围限制，固定 scope 不会使不同发布标签互相共享缓存。因此，`master` CI 检查通过后仅为有变动的组件预热 `frontend-deps` 或 `backend-deps` 阶段，使用独立 scope；这些默认分支依赖缓存可被后续标签发布读取。预热不编译完整应用、不登录 Docker Hub、不推送成品镜像，PR、纯文档修改及发布时的补充 CI 不执行预热，预热失败不会使 CI 失败。预热会延长整个 CI 的完成时间；如需复用该次 CI，应等待整个工作流完成后再打版本标签。
+
+发布同时读取默认分支的两个依赖缓存和当前标签的发布缓存；完整中间层写入当前标签缓存，供相同标签重试复用。首次迁移、缓存过期或被淘汰时正常完整构建，缓存导出失败不阻断发布。缓存容量和保留时间受 GitHub 的配额及淘汰策略影响，不保证每次命中；应用版本参数仍在依赖安装后注入，缓存不会复用旧版本信息。
+
+Go 模块下载独立保存在依赖层中，修改业务代码可复用该层；依赖清单或基础构建镜像变化时重新下载。编译缓存挂载仅在同一构建器内复用，缓存和依赖不进入最终运行镜像。原有 `buildcache` 标签不会自动删除，也不再由新流程更新。发布后的双架构镜像验证仍需拉取成品，Docker Hub 的累计拉取数不等于独立用户数，历史计数也不会因迁移而减少。
