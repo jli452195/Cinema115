@@ -70,3 +70,69 @@ func BenchmarkRecognitionFullNameScan(b *testing.B) {
 		}
 	}
 }
+
+// 复杂规则单独计量，避免用大量普通名称掩盖逐条正则扫描的开销。
+func BenchmarkRecognitionComplexRules(b *testing.B) {
+	for _, count := range []int{100, 1000, 2000} {
+		var source strings.Builder
+		for i := 0; i < count; i++ {
+			fmt.Fprintf(&source, "Release%04d(?:-(?:Raws|Studio))?\n", i)
+		}
+		snapshot, err := Compile(source.String(), "NF ~= NF|Netflix\nIQ ~= IQ|iQIYI|爱奇艺")
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, long := range []bool{false, true} {
+			length, prefix := "Normal", ""
+			if long {
+				length, prefix = "Long1KiB", strings.Repeat("Series.Name.", 80)
+			}
+			for _, matching := range []bool{false, true} {
+				mode, name := "Miss", "Unknown.Series.S01E01.1080p.WEB-DL.mkv"
+				if matching {
+					mode = "SparseHit"
+					name = fmt.Sprintf("[Release0000-Studio&Release%04d-Raws] Series.S01E01.NF.WEB-DL.1080p.mkv", count-1)
+				}
+				input := prefix + name
+				b.Run(fmt.Sprintf("Rules%d/%s/%s", count, length, mode), func(b *testing.B) {
+					b.ReportAllocs()
+					for i := 0; i < b.N; i++ {
+						result, err := snapshot.Recognize(input)
+						if err != nil {
+							b.Fatal(err)
+						}
+						recognitionBenchmarkResult = result
+					}
+				})
+			}
+		}
+	}
+}
+
+// 无固定文字的规则应继续走通用正则路径，单独保留其退化场景基准。
+func BenchmarkRecognitionUnfilterableRules(b *testing.B) {
+	var source strings.Builder
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&source, "(?:[A-Z]{4}|[0-9]{4})-[0-9]{%d}\n", i%12+1)
+	}
+	snapshot, err := Compile(source.String(), "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, long := range []bool{false, true} {
+		label, name := "Normal", "Unknown.Series.1080p.mkv"
+		if long {
+			label, name = "Long1KiB", strings.Repeat("Series.Name.", 80)+name
+		}
+		b.Run(label, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				result, err := snapshot.Recognize(name)
+				if err != nil {
+					b.Fatal(err)
+				}
+				recognitionBenchmarkResult = result
+			}
+		})
+	}
+}

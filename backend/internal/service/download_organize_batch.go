@@ -122,10 +122,8 @@ func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules r
 		if len(spec.Languages) == 0 {
 			spec.Languages = title.Languages
 		}
-		values, err := mediafacts.ValuesWithRecognition(out.Files[0].Name, spec.Spec, rules)
-		if err != nil {
-			return err
-		}
+		// 文件名和固定词表没有变化，只补充规格，复用首轮已校验的发布组与平台。
+		values := mediafacts.ValuesWithRecognizedRelease(out.Files[0].Name, spec.Spec, out.Files[0].NamingValues)
 		// 保留原有规格继承范围，发布标题只额外补充缺失的组名和平台。
 		if values[naming.ReleaseGroup] == "" || values[naming.Platform] == "" {
 			titleValues, err := mediafacts.ValuesWithRecognition(in.Title, spec.Spec, rules)

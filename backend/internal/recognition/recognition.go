@@ -176,7 +176,7 @@ func Activate(s Snapshot) error {
 		return nil
 	}
 	var err error
-	s, err = s.prepare()
+	s, err = s.Prepared()
 	if err != nil {
 		return err
 	}
@@ -193,7 +193,7 @@ func (s Snapshot) Recognize(name string) (Result, error) {
 		return out, nil
 	}
 	var err error
-	s, err = s.prepare()
+	s, err = s.Prepared()
 	if err != nil {
 		return out, err
 	}
@@ -304,8 +304,8 @@ func containsFold(values []string, value string) bool {
 	return false
 }
 
-// prepare 对已编译快照直接核对不可变原文，恢复或内容变化时才校验哈希并编译。
-func (s Snapshot) prepare() (Snapshot, error) {
+// Prepared 校验固定快照并复用已编译规则，持久化恢复时才重新校验哈希与编译。
+func (s Snapshot) Prepared() (Snapshot, error) {
 	if c := s.compiled; c != nil && c.revision == s.Revision && c.groupsText == s.Groups && c.platformsText == s.Platforms {
 		return s, nil
 	}

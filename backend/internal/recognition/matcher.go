@@ -14,11 +14,14 @@ import (
 type matcher struct {
 	folded, sensitive literalTrie
 	patterns          []patternRule
+	requiredFolded    literalTrie
+	requiredSensitive literalTrie
 }
 
 type patternRule struct {
-	index int
-	re    *regexp.Regexp
+	index    int
+	re       *regexp.Regexp
+	filtered bool
 }
 
 type literalNode struct {
@@ -48,7 +51,20 @@ func compileMatcher(kind string, rules []rule) (matcher, error) {
 				return matcher{}, &Diagnostic{Kind: kind, Line: r.line, Column: 1, Message: "无法编译完整名称规则：" + err.Error()}
 			}
 			scan.Longest()
-			m.patterns = append(m.patterns, patternRule{index: i, re: scan})
+			// 固定文字只用于排除不可能命中的规则，最终仍使用原正则扫描完整名称。
+			// 不把有限分支直接当成独立名称，保留最长匹配、非重叠和锚点的原有语义。
+			hints := requiredLiterals(parsed)
+			filtered := literalHintScore(hints) >= 2
+			if filtered {
+				for _, hint := range hints {
+					if hint.fold {
+						m.requiredFolded.add(hint.runes, len(m.patterns), true)
+					} else {
+						m.requiredSensitive.add(hint.runes, len(m.patterns), false)
+					}
+				}
+			}
+			m.patterns = append(m.patterns, patternRule{index: i, re: scan, filtered: filtered})
 			continue
 		}
 		if parsed.Flags&syntax.FoldCase != 0 {
@@ -109,21 +125,28 @@ func foldRune(r rune) rune {
 }
 
 func (m matcher) find(kind, name string, rules []rule, out []Match) ([]Match, error) {
+	// 候选位图只属于本次调用，索引保持只读；无需共享缓存或逐规则分配布尔切片。
+	var candidates [(MaxRules + 63) / 64]uint64
 	for start := range name {
-		if !boundary(name, start, true) {
+		if boundary(name, start, true) {
+			var err error
+			out, err = m.folded.find(kind, name, start, rules, out, true)
+			if err != nil {
+				return nil, err
+			}
+			out, err = m.sensitive.find(kind, name, start, rules, out, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// 必含文字可能位于组名内部，预筛选不能要求它自身处在词边界。
+		m.requiredFolded.markCandidates(name, start, &candidates, true)
+		m.requiredSensitive.markCandidates(name, start, &candidates, false)
+	}
+	for index, pattern := range m.patterns {
+		if pattern.filtered && candidates[index/64]&(uint64(1)<<uint(index%64)) == 0 {
 			continue
 		}
-		var err error
-		out, err = m.folded.find(kind, name, start, rules, out, true)
-		if err != nil {
-			return nil, err
-		}
-		out, err = m.sensitive.find(kind, name, start, rules, out, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-	for _, pattern := range m.patterns {
 		r := rules[pattern.index]
 		for _, span := range pattern.re.FindAllStringSubmatchIndex(name, -1) {
 			var err error
@@ -134,6 +157,28 @@ func (m matcher) find(kind, name string, rules []rule, out []Match) ([]Match, er
 		}
 	}
 	return out, nil
+}
+
+func (t literalTrie) markCandidates(name string, start int, candidates *[(MaxRules + 63) / 64]uint64, fold bool) {
+	if len(t.nodes) == 0 {
+		return
+	}
+	node := 0
+	for end := start; end < len(name); {
+		r, size := utf8.DecodeRuneInString(name[end:])
+		if fold {
+			r = foldRune(r)
+		}
+		next, ok := t.nodes[node].next[r]
+		if !ok {
+			return
+		}
+		node = next
+		end += size
+		for _, index := range t.nodes[node].rules {
+			candidates[index/64] |= uint64(1) << uint(index%64)
+		}
+	}
 }
 
 func (t literalTrie) find(kind, name string, start int, rules []rule, out []Match, fold bool) ([]Match, error) {

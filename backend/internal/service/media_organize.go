@@ -115,12 +115,13 @@ func (r *MediaOrganizeRun) prepareRecognition() error {
 		}
 		r.Recognition.Revision = recognition.Revision("", "")
 	}
-	compiled, err := recognition.Compile(r.Recognition.Groups, r.Recognition.Platforms)
+	compiled, err := r.Recognition.Prepared()
 	if err != nil {
-		return fmt.Errorf("编译批次识别词表: %w", err)
-	}
-	if compiled.Revision != r.Recognition.Revision {
-		return fmt.Errorf("%w：批次识别词表快照无效", ErrMediaOrganizeInput)
+		var diagnostic *recognition.Diagnostic
+		if errors.As(err, &diagnostic) {
+			return fmt.Errorf("编译批次识别词表: %w", err)
+		}
+		return fmt.Errorf("%w：批次识别词表快照无效：%w", ErrMediaOrganizeInput, err)
 	}
 	r.Recognition = compiled
 	return nil

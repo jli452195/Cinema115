@@ -14,8 +14,7 @@ import (
 
 // ValuesWithRecognition 用固定词表识别普通整理的发布组和平台；RSS 继续使用原有 Values 接口。
 func ValuesWithRecognition(name string, hint releaseparse.Spec, snapshot recognition.Snapshot) (map[naming.Field]string, error) {
-	values := Values(name, hint, "")
-	delete(values, naming.Platform)
+	values := valuesWithPlatform(name, hint, "", false)
 	result, err := snapshot.Recognize(name)
 	if err != nil {
 		return nil, fmt.Errorf("识别文件发布信息: %w", err)
@@ -30,6 +29,16 @@ func ValuesWithRecognition(name string, hint releaseparse.Spec, snapshot recogni
 	return values, nil
 }
 
+// ValuesWithRecognizedRelease 补充规格时复用同名文件、同一词表快照已确认的发布组和平台。
+// 仅重算普通规格，不继承其他字段，也不把当前全局词表带入原任务。
+func ValuesWithRecognizedRelease(name string, hint releaseparse.Spec, recognized map[naming.Field]string) map[naming.Field]string {
+	values := valuesWithPlatform(name, hint, recognized[naming.ReleaseGroup], false)
+	if platform, ok := recognized[naming.Platform]; ok {
+		values[naming.Platform] = platform
+	}
+	return values
+}
+
 var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
 var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "")
 var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aac|flac|opus)([12567]\.1|2\.0)`)
@@ -37,6 +46,10 @@ var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aa
 // Only explicit filename/source tags are used. Unknown and conflicting scalar
 // tags stay empty; this is unrelated to RSS matching and never reads streams.
 func Values(name string, hint releaseparse.Spec, group string) map[naming.Field]string {
+	return valuesWithPlatform(name, hint, group, true)
+}
+
+func valuesWithPlatform(name string, hint releaseparse.Spec, group string, includePlatform bool) map[naming.Field]string {
 	search := Search(name)
 	if search.Resolution != "" || resourceQuality.MatchString(name) {
 		hint.Resolution = search.Resolution
@@ -65,6 +78,9 @@ func Values(name string, hint releaseparse.Spec, group string) map[naming.Field]
 			field = naming.Source
 			value = map[string]string{"webdl": "WEB-DL", "webrip": "WEBRip", "bluray": "BluRay", "bdrip": "BDRip", "remux": "REMUX", "hdtv": "HDTV", "dvdrip": "DVDRip"}[key]
 		case "nf", "netflix", "amzn", "dsnp", "atvp", "hmax", "bilibili":
+			if !includePlatform {
+				continue
+			}
 			field = naming.Platform
 			value = strings.ToUpper(key)
 			if key == "netflix" {
