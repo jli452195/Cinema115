@@ -157,6 +157,7 @@ func (s *MediaOrganizer) scan(ctx context.Context, files *mediaOrganizeFiles, ru
 
 func mediaGroupIdentityKey(identity mediafacts.Identity) mediafacts.Identity {
 	identity.Name, identity.ParentName = mediafacts.NameKey(identity.Name), mediafacts.NameKey(identity.ParentName)
+	identity.ChineseTitle, identity.EnglishTitle = mediafacts.NameKey(identity.ChineseTitle), mediafacts.NameKey(identity.EnglishTitle)
 	if identity.ParentName == identity.Name {
 		identity.ParentName = ""
 	}

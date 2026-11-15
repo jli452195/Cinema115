@@ -113,6 +113,7 @@ func TestMediaRecognitionTVEmptySearchFallsBackToMulti(t *testing.T) {
 func TestMediaRecognitionShortUndatedTitleAndFirstEligible(t *testing.T) {
 	t.Run("short-title", func(t *testing.T) {
 		f := newMediaDecisionMetadata(tmdb.Item{ID: 1, Kind: "tv", Title: "三体", Date: "2023-01-15"})
+		f.details["tv:1"].Seasons = []tmdb.SeasonSummary{{Number: 1}}
 		match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.ParseIdentity("三体.S01E01.mkv"))
 		if err != nil || match == nil || match.Detail.ID != 1 || decision.ResultCode != "TITLE_EXACT" || f.detailCalls != 1 {
 			t.Fatalf("短片名无年份应匹配: match=%+v decision=%+v err=%v", match, decision, err)
@@ -137,8 +138,8 @@ func TestMediaRecognitionShortUndatedTitleAndFirstEligible(t *testing.T) {
 		// 别名有界查询目前只看前 3 个排名，本样本将另一条放入该范围。
 		f.items = []tmdb.Item{f.items[0], other.Item}
 		match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: "Nanatsu no Taizai", Kind: "tv", Season: 1})
-		if err != nil || match == nil || match.Detail.ID != 62104 || decision.ResultCode != "ALIAS_EXACT" {
-			t.Fatalf("同别名采用首合格条目: match=%+v decision=%+v err=%v", match, decision, err)
+		if err != nil || match != nil || decision.ResultCode != "AMBIGUOUS_TITLE" {
+			t.Fatalf("无年份同别名作品必须等待人工选择: match=%+v decision=%+v err=%v", match, decision, err)
 		}
 	})
 }
@@ -183,7 +184,7 @@ func TestMediaRecognitionFuzzyBoundsAndExactPriority(t *testing.T) {
 	} {
 		t.Run(tc.name+"/"+tc.title, func(t *testing.T) {
 			f := newMediaDecisionMetadata(tmdb.Item{ID: 1, Kind: "movie", Title: tc.title, Date: "2014-01-01"})
-			match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: tc.name, Kind: "movie", Season: 1})
+			match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: tc.name, Year: "2014", Kind: "movie", Season: 1})
 			if err != nil || (match != nil) != tc.match {
 				t.Fatalf("模糊边界异常: match=%+v decision=%+v err=%v", match, decision, err)
 			}
@@ -252,14 +253,8 @@ func TestMediaRecognitionQueryErrorsDoNotBecomeNoResult(t *testing.T) {
 			)
 			f.detailError["movie:"+strconv.Itoa(failedID)] = context.DeadlineExceeded
 			match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: "Known Film", Kind: "movie", Season: 1})
-			if failedID == 1 {
-				if match != nil || !errors.Is(err, context.DeadlineExceeded) || decision.ResultCode != "METADATA_QUERY_FAILED" {
-					t.Fatalf("首个相关候选未核实，不能静默选择后项: %+v %+v %v", match, decision, err)
-				}
-				return
-			}
-			if err != nil || match == nil || match.Detail.ID != 1 || decision.ResultCode != "TITLE_EXACT" {
-				t.Fatalf("已确认首条不受后项异常影响: %+v %+v %v", match, decision, err)
+			if match != nil || !errors.Is(err, context.DeadlineExceeded) || decision.ResultCode != "METADATA_QUERY_FAILED" {
+				t.Fatalf("无年份相关候选未核实，不能断言唯一作品: %+v %+v %v", match, decision, err)
 			}
 		})
 	}

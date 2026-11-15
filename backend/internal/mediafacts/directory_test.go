@@ -11,7 +11,7 @@ func TestResolveIdentityUsesDirectoryRolesAndAllAncestors(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := ResolveIdentity("S02E03 - 第 3 话.mkv", ctx)
-	if got.Name != "作品" || got.Year != "2024" || got.TMDBID != 42 || got.Kind != "tv" || got.ContentType != "animation" || got.Season != 2 || !got.YearFromParent {
+	if got.Name != "作品" || got.Year != "2024" || !got.YearExplicit || got.TMDBID != 42 || got.Kind != "tv" || got.ContentType != "animation" || got.Season != 2 || !got.YearFromParent {
 		t.Fatalf("目录应逐字段补缺: %+v", got)
 	}
 	if got.NameSource != "parent:4" || got.YearSource != "parent:4" || got.TMDBIDSource != "parent:4" || got.SeasonSource != "filename" || ctx.WorkPath != "/Cinema115/待整理目录/剧集/日番/作品 (2024) {tmdb-42}" {
@@ -19,6 +19,29 @@ func TestResolveIdentityUsesDirectoryRolesAndAllAncestors(t *testing.T) {
 	}
 	if ctx.Ancestors[0].Role != DirectoryTechnical || ctx.Ancestors[1].Role != DirectorySeason || ctx.Ancestors[2].Role != DirectoryTechnical || ctx.Ancestors[3].Role != DirectoryWork || ctx.Ancestors[4].Role != DirectoryCategory {
 		t.Fatalf("目录角色不正确: %+v", ctx.Ancestors)
+	}
+}
+
+func TestResolveIdentityYearEvidenceFollowsSelectedYear(t *testing.T) {
+	for _, tc := range []struct {
+		file, work, year string
+		explicit, parent bool
+	}{
+		{"Wonderland.S00E169.strm", "五十公里桃花坞 (2021)", "2021", true, true},
+		{"Wonderland.S00E169.strm", "五十公里桃花坞 2021.全24集", "2021", false, true},
+		{"Wonderland.2022.S00E169.strm", "五十公里桃花坞 (2021)", "2022", false, false},
+		{"Wonderland (2022).S00E169.strm", "五十公里桃花坞 2021.全24集", "2022", true, false},
+	} {
+		t.Run(tc.file+"/"+tc.work, func(t *testing.T) {
+			ctx, err := ParseDirectoryContext("/root", tc.work+"/S*******/"+tc.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ResolveIdentity(tc.file, ctx)
+			if got.Year != tc.year || got.YearExplicit != tc.explicit || got.YearFromParent != tc.parent {
+				t.Fatalf("年份强弱必须跟随实际采用的年份，不能被其他来源覆盖: %+v", got)
+			}
+		})
 	}
 }
 
@@ -172,5 +195,63 @@ func TestDirectoryTechnicalLayersDoNotSupplyWorkIdentity(t *testing.T) {
 	}
 	if fact := directoryFact("Cleo Show (2024)", "/root/Cleo Show (2024)", "parent:1"); fact.Role != DirectoryWork || fact.Identity.Name != "Cleo Show" {
 		t.Fatalf("发布组同名开头不应删除真正的作品目录: %+v", fact)
+	}
+}
+
+func TestDirectorySeasonPlaceholderInheritsWorkWithoutInventingSeason(t *testing.T) {
+	const filename = "Wonderland.2021.S00E169.2160p.WEB-DL.60fps.HEVC.DDP 2.0-WF.strm"
+	const work = "/strm/待整理/五十公里桃花坞 (2021) {tmdb-126398}"
+	for _, placeholder := range []string{"S*******", "S*", "s***", " S*** "} {
+		t.Run(placeholder, func(t *testing.T) {
+			ctx, err := ParseDirectoryContext("/strm/待整理", work+"/"+placeholder+"/"+filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ResolveIdentity(filename, ctx)
+			if ctx.WorkPath != work || ctx.Ancestors[0].Role != DirectoryContainer || ctx.Identity.SeasonExplicit {
+				t.Fatalf("占位季目录不能提供作品或具体季号: %+v", ctx)
+			}
+			if got.Name != "Wonderland" || got.ParentName != "五十公里桃花坞" || got.Year != "2021" || got.TMDBID != 126398 || got.TMDBIDSource != "parent:2" || got.Season != 0 || got.SeasonSource != "filename" || !got.SeasonExplicit {
+				t.Fatalf("应继承作品 ID 并保留文件明确的季零编号: %+v", got)
+			}
+			got = ResolveIdentity("Wonderland.strm", ctx)
+			if got.TMDBID != 126398 || got.SeasonExplicit || got.Kind != "" {
+				t.Fatalf("星号不能补造季号或剧集类型: %+v", got)
+			}
+		})
+	}
+}
+
+func TestDirectorySeasonPlaceholderKeepsIdentityConflictsAndBoundaries(t *testing.T) {
+	const filename = "Wonderland.2021.S00E169.strm"
+	for _, tc := range []struct {
+		path, work, parent string
+		id                 int
+	}{
+		{"Show {tmdb-42}/合集/S*******/", "", "", 0},
+		{"Show {tmdb-42}/Unknown Work/S*******/", "/root/Show {tmdb-42}/Unknown Work", "Unknown Work", 0},
+		{"Show {tmdb-42}/合集/Other {tmdb-43}/S*******/", "/root/Show {tmdb-42}/合集/Other {tmdb-43}", "Other", 43},
+	} {
+		ctx, err := ParseDirectoryContext("/root", tc.path+filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := ResolveIdentity(filename, ctx)
+		if ctx.WorkPath != tc.work || got.ParentName != tc.parent || got.TMDBID != tc.id {
+			t.Fatalf("占位目录不能跨过合集或独立作品边界: path=%q identity=%+v context=%+v", tc.path, got, ctx)
+		}
+	}
+	ctx, err := ParseDirectoryContext("/root", "五十公里桃花坞 (2021) {tmdb-126398}/S*******/"+filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ResolveIdentity("Wonderland.2021.{tmdb-48936}.S00E169.strm", ctx)
+	if got.TMDBID != 48936 || got.Conflict != "TMDB_ID_CONFLICT" {
+		t.Fatalf("文件与目录的明确 ID 冲突不能被占位目录隐藏: %+v", got)
+	}
+	for _, name := range []string{"S", "S** Story", "S*01", "S?", "Season*** Story", "S*** {tmdb-42}"} {
+		if fact := directoryFact(name, "/root/"+name, "parent:1"); fact.Role != DirectoryWork {
+			t.Fatalf("普通未知目录不能被当成纯星号占位目录: %+v", fact)
+		}
 	}
 }

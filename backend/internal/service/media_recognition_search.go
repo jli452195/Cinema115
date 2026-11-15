@@ -18,12 +18,26 @@ func (s *mediaRecognitionSearch) choose(ctx context.Context, observations []*med
 			return nil, err
 		}
 		item, identity := observation.item, observation.query.identity
+		undated := mediaRecognitionUndated(identity) || s.yearDiscarded
+		if undated && mode == "fuzzy" {
+			continue
+		}
 		key := item.Kind + ":" + strconv.Itoa(item.ID)
 		if item.ID < 1 || item.Kind != "tv" && item.Kind != "movie" || identity.Kind != "" && item.Kind != identity.Kind || identity.TMDBID > 0 && item.ID != identity.TMDBID {
 			continue
 		}
 		names := []string{item.Title, item.OriginalTitle}
 		if mode == "alias" {
+			if undated && observation.rank > 3 {
+				s.undatedIncomplete = true
+				continue
+			}
+			if undated && s.aliasCalls >= mediaRecognitionAliasLimit {
+				if _, cached := s.aliases[key]; !cached {
+					s.undatedIncomplete = true
+					continue
+				}
+			}
 			aliases, err := s.alternativeNames(ctx, observation)
 			if err != nil {
 				s.queryError = fmt.Errorf("查询作品别名: %w", err)
@@ -34,35 +48,101 @@ func (s *mediaRecognitionSearch) choose(ctx context.Context, observations []*med
 		if mode == "fuzzy" {
 			names = append(names, s.aliases[key]...)
 		}
-		basis, _ := mediaRecognitionNameBasis(observation.query.name, identity.Name, item.Kind, names, mode)
+		basis := ""
+		for _, name := range []string{identity.ChineseTitle, identity.EnglishTitle, identity.Name} {
+			if name == "" {
+				continue
+			}
+			basis, _ = mediaRecognitionNameBasis(observation.query.name, name, item.Kind, names, mode)
+			if basis != "" {
+				// 完整双语标题是同一来源身份的不同名称，不按零散词放宽。
+				identity.Name = name
+				break
+			}
+		}
 		if basis == "" {
 			continue
+		}
+		if identity.YearFromParent && !identity.YearExplicit && identity.ParentName != "" && !mediaRelatedName(identity.ParentName, names) {
+			identity.Year = ""
+			undated, s.yearDiscarded, s.undatedSearched = true, true, true
+		}
+		if undated && mode == "fuzzy" {
+			continue
+		}
+		if undated && s.detailCalls >= mediaRecognitionDetailLimit {
+			if _, cached := s.details[key]; !cached {
+				s.undatedIncomplete = true
+				continue
+			}
 		}
 		detail, err := s.detail(ctx, item.Kind, item.ID)
 		if err != nil {
 			return nil, fmt.Errorf("查询作品候选详情: %w", err)
 		}
 		if detail == nil || detail.ID != item.ID || detail.Kind != item.Kind {
+			if undated {
+				s.undatedUncertain = true
+			}
 			continue
 		}
 		if code, _ := mediaRecognitionContentType(identity.ContentType, detail); code != "" {
+			if undated && code == "CONTENT_TYPE_UNKNOWN" {
+				s.undatedUncertain = true
+			}
 			continue
 		}
 		year := identity.Year
-		if identity.YearFromParent && identity.ParentName != "" && !mediaRelatedName(identity.ParentName, names) {
-			year = ""
+		if identity.YearFromParent && identity.ParentName != "" {
+			related := mediaRelatedName(identity.ParentName, names)
+			seasonPack := related && identity.SeasonExplicit && !mediaExactName(identity.ParentName, names) &&
+				(!identity.YearExplicit && identity.Season != 1 || mediaRecognitionSeasonSubtitle(identity.ParentName, detail, names))
+			if !related && !identity.YearExplicit || seasonPack {
+				// 明确目录年份只在副标题得到季资料印证时忽略，不能把地区版等同名前缀当作季度。
+				year = ""
+			}
+		}
+		if year == "" && (identity.TMDBID == 0 || identity.Kind != "tv" && identity.Kind != "movie") {
+			undated = true
+			s.undatedSearched = true
+			if identity.Year != "" {
+				// 已放弃的弱年份不能再让后续同名候选按首条短路。
+				s.yearDiscarded = true
+				identity.Year = ""
+			}
+		}
+		if undated && mode == "fuzzy" {
+			continue
 		}
 		if item.Kind == "movie" && year != "" && !strings.HasPrefix(detail.Date, year) {
 			continue
 		}
-		season, ok := mediaRecognitionSeason(identity, detail, names, year)
+		season, ok, err := s.season(ctx, identity, detail, names, year)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
-		// 第一条合格结果核实后立即返回，不为统计候选数量继续请求。
 		if s.queryError != nil {
 			return nil, s.queryError
 		}
+		if undated {
+			if s.undatedMatch != nil && s.undatedKey != key {
+				s.decision.ResultCode, s.decision.Message = "AMBIGUOUS_TITLE", "来源没有年份，存在多个符合条件的同名作品，请补充年份或指定作品"
+				s.undatedTerminal = true
+				return nil, nil
+			}
+			if s.undatedMatch == nil {
+				s.undatedMatch = &mediaRecognition{Detail: detail, Season: season}
+				s.undatedBasis, s.undatedKey = basis, key
+			}
+			continue
+		}
+		if s.undatedMatch != nil || s.undatedSearched && (s.undatedIncomplete || s.undatedUncertain) {
+			return s.finishUndated(), nil
+		}
+		// 第一条合格结果核实后立即返回，不为统计候选数量继续请求。
 		s.decision.ResultCode, s.decision.Message = mediaRecognitionBasisCode(basis), "已匹配作品"
 		return &mediaRecognition{Detail: detail, Season: season}, nil
 	}
@@ -128,7 +208,21 @@ func (s *mediaRecognitionSearch) detail(ctx context.Context, kind string, id int
 		return nil, fmt.Errorf("本次作品详情查询已达到数量上限")
 	}
 	s.detailCalls++
-	detail, err := s.source.Details(ctx, kind, id)
+	lookup := ctx
+	if source, ok := s.source.(interface {
+		PinNumbering(context.Context, int) (context.Context, error)
+	}); ok && kind == "tv" {
+		var err error
+		lookup, err = source.PinNumbering(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("固定候选季集编排: %w", err)
+		}
+		if s.seasonContexts == nil {
+			s.seasonContexts = make(map[int]context.Context, mediaRecognitionSeasonLimit)
+		}
+		s.seasonContexts[id] = lookup
+	}
+	detail, err := s.source.Details(lookup, kind, id)
 	if errors.Is(err, tmdb.ErrNotFound) {
 		detail, err = nil, nil
 	}
@@ -154,11 +248,13 @@ func (s *mediaRecognitionSearch) alternativeNames(ctx context.Context, observati
 	names, err := source.AlternativeNames(ctx, observation.item.Kind, observation.item.ID)
 	// 别名只保留本次比较所需的有界文本，外部返回不能使任务快照无限增长。
 	if len(names) > 50 {
+		s.undatedIncomplete = true
 		names = names[:50]
 	}
 	bounded := make([]string, 0, len(names))
 	for _, name := range names {
 		if len([]rune(name)) > 200 {
+			s.undatedIncomplete = true
 			continue
 		}
 		bounded = append(bounded, name)

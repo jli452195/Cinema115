@@ -97,12 +97,14 @@ func ResolveFilenameIdentity(facts FilenameFacts, ctx DirectoryContext) Identity
 	out, inherited := facts.Identity, ctx.Identity
 	if out.Name == "" && utf8.RuneCountInString(NameKey(inherited.Name)) > 1 {
 		out.Name, out.NameSource = inherited.Name, inherited.NameSource
+		out.ChineseTitle, out.EnglishTitle = inherited.ChineseTitle, inherited.EnglishTitle
 		out.AlternativeName, out.AlternativeYear = inherited.AlternativeName, inherited.AlternativeYear
 	} else if out.Name != "" && inherited.Name != "" && NameKey(out.Name) != NameKey(inherited.Name) {
 		out.ParentName = inherited.Name
 	}
 	if out.Year == "" && inherited.Year != "" {
 		out.Year, out.YearSource, out.YearFromParent = inherited.Year, inherited.YearSource, true
+		out.YearExplicit = inherited.YearExplicit
 	}
 	if out.TMDBID == 0 {
 		out.TMDBID, out.TMDBIDSource = inherited.TMDBID, inherited.TMDBIDSource
@@ -159,6 +161,11 @@ func directoryEqual(a, b string) bool {
 func directoryFact(name, fullPath, source string) DirectoryFact {
 	fact := DirectoryFact{Name: name, Path: fullPath, Role: DirectoryWork, Identity: Identity{Season: 1}}
 	trimmed := strings.TrimSpace(name)
+	// 纯星号季目录只表示未给出的季号，不能遮住上层作品，也不能推断为特别篇。
+	if len(trimmed) > 1 && (trimmed[0] == 'S' || trimmed[0] == 's') && strings.Trim(trimmed[1:], "*") == "" {
+		fact.Role = DirectoryContainer
+		return fact
+	}
 	key := NameKey(trimmed)
 	if identityCollection.MatchString(trimmed) || identityYearRange.MatchString(trimmed) || directoryMixedKinds.MatchString(trimmed) {
 		fact.Role = DirectoryCollection

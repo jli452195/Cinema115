@@ -16,11 +16,16 @@ type Identity struct {
 	Kind   string `json:"kind,omitempty"`
 	TMDBID int    `json:"tmdbId,omitempty"`
 	Season int    `json:"season"`
+	// 明确双语边界中的完整标题独立保留，不能把任意关键词当成别名。
+	ChineseTitle string `json:"chineseTitle,omitempty"`
+	EnglishTitle string `json:"englishTitle,omitempty"`
 	// Parent hints are independent declarations, not permission to replace a
 	// filename identity with the contents of a mixed collection directory.
 	ParentName     string `json:"parentName,omitempty"`
 	YearFromParent bool   `json:"yearFromParent,omitempty"`
-	SeasonExplicit bool   `json:"seasonExplicit,omitempty"`
+	// 括号或多个年份词元构成明确年份，跨语言名称尚未核实时也不能直接丢弃。
+	YearExplicit   bool `json:"yearExplicit,omitempty"`
+	SeasonExplicit bool `json:"seasonExplicit,omitempty"`
 	// 裸年份保留完整片名和“片名＋年份”两种解释，不能直接当作明确声明冲突。
 	AlternativeName   string `json:"alternativeName,omitempty"`
 	AlternativeYear   string `json:"alternativeYear,omitempty"`
@@ -105,12 +110,13 @@ func ParseIdentity(name string, parents ...string) Identity {
 			out.KindSource = source
 		}
 		value = identityStripGroup(value)
-		year := identityYearIndex(value)
-		ambiguousYear := year != nil && i == 0 && !tvContext && !identityStrongYear(value, year)
+		year, strongYear := identityYearDeclaration(value)
+		ambiguousYear := year != nil && i == 0 && !tvContext && !strongYear
 		if year != nil && !ambiguousYear && out.Year == "" {
 			out.Year = value[year[0]:year[1]]
 			out.YearFromParent = i > 0
 			out.YearSource = source
+			out.YearExplicit = strongYear
 		}
 		end := len(value)
 		if year != nil && !ambiguousYear {
@@ -145,6 +151,12 @@ func ParseIdentity(name string, parents ...string) Identity {
 		key := NameKey(title)
 		numericTitle := i == 0 && len(key) == 4 && year != nil && key != out.Year
 		if out.Name == "" && key != "" && (!onlyDigits(key) || numericTitle) && key != "season" && key != "specials" && key != "sp" {
+			if !ambiguousYear {
+				out.ChineseTitle, out.EnglishTitle = identityBilingualTitles(value[:end])
+				if out.ChineseTitle != "" {
+					title = out.ChineseTitle + " " + out.EnglishTitle
+				}
+			}
 			out.Name = title
 			out.NameSource = source
 			if ambiguousYear && year[0] < end {
@@ -166,14 +178,18 @@ func ParseIdentity(name string, parents ...string) Identity {
 	return out
 }
 
-// The year token must stand alone. Leading numeric titles, dimensions and
-// collection ranges are not release years; the last remaining year wins.
-func identityYearIndex(value string) []int {
-	indices := identityYearIndices(value, false)
+// 年份词元须独立存在；开头数字标题、分辨率和合集范围不作发行年，采用最后一个有效年份。
+func identityYearDeclaration(value string) ([]int, bool) {
+	// 只扫描一次年份，同时保留开头数字标题对多年份解释的证据。
+	indices := identityYearIndices(value, true)
 	if len(indices) == 0 {
-		return nil
+		return nil, false
 	}
-	return indices[len(indices)-1]
+	year := indices[len(indices)-1]
+	if year[0] == 0 {
+		return nil, false
+	}
+	return year, len(indices) > 1 || identityBracketedYear(value, year)
 }
 
 func identityYearIndices(value string, leading bool) [][]int {
@@ -195,15 +211,15 @@ func identityYearIndices(value string, leading bool) [][]int {
 	return found
 }
 
-// 配对括号和多个年份词元提供发行年份证据，单独的裸年份仍可能属于作品标题。
-func identityStrongYear(value string, year []int) bool {
+// 配对括号提供发行年份证据，单独的裸年份仍可能属于作品标题。
+func identityBracketedYear(value string, year []int) bool {
 	left, right := strings.TrimSpace(value[:year[0]]), strings.TrimSpace(value[year[1]:])
 	for _, pair := range [][2]string{{"(", ")"}, {"[", "]"}, {"{", "}"}, {"（", "）"}, {"【", "】"}} {
 		if strings.HasSuffix(left, pair[0]) && strings.HasPrefix(right, pair[1]) {
 			return true
 		}
 	}
-	return len(identityYearIndices(value, true)) > 1
+	return false
 }
 
 func identityStripGroup(value string) string {

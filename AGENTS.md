@@ -5,6 +5,7 @@
 - 前端图标使用 SVG 或已有图标组件，禁止用 Emoji、Unicode 字符或文本符号充当图标、装饰。
 - 前端交互强调复用已有蓝色与中性色，兼顾深浅主题；禁止用薄荷绿、青绿色作按钮、标签页、选中态或装饰主题。成功、警告、错误和日志等级使用各自语义色，成功色不用作导航或装饰。
 - 当前没有生产环境，无需新增旧功能账号绑定的迁移或兼容逻辑。
+- 修改整理的识别、目录继承、季集或命名逻辑时，在 `backend/internal/service/testdata/media_organize_regression.csv` 追加本次新适配成功的代表样本，并在 `backend` 目录重跑 `go test ./internal/service -run '^TestMediaOrganizeRegressionCorpus$'` 及相关专项测试。表中保留少量此前正确的样本，同一格式不逐集重复；只存必要输入、预期作品和文件名，不堆积历史记录、元数据详情或测试日志。失败边界另放普通单元测试。
 
 # 业务底线
 

@@ -327,8 +327,10 @@ func TestMediaOrganizerGrayRun(t *testing.T) {
 		t.Helper()
 		until := time.Now().Add(5 * time.Second)
 		for time.Now().Before(until) {
+			// 先确认后台已释放任务，再读取最终快照，避免返回释放前的临时执行状态。
+			active := s.State().Active
 			r, _ := s.Snapshot(id)
-			if !mediaRunActive(r.Status) && !s.State().Active {
+			if !mediaRunActive(r.Status) && !active {
 				return r
 			}
 			time.Sleep(5 * time.Millisecond)

@@ -121,6 +121,9 @@ func TestMediaOrganizerResultsPersistWithoutProcessSnapshots(t *testing.T) {
 			s, db, dir := newMediaSQLiteTest(t)
 			item := tmdb.Item{ID: 318902, Kind: tc.kind, Title: tc.title, Date: "2026-01-01"}
 			metadata := &mediaCollectionMetadata{items: []tmdb.Item{item}, details: map[int]*tmdb.Detail{item.ID: {Item: item}}}
+			if tc.kind == "tv" {
+				metadata.details[item.ID].Seasons = []tmdb.SeasonSummary{{Number: 1}}
+			}
 			s.metadata, s.Logs = metadata, &GenerationLogs{}
 			rule, err := s.SaveRule(MediaOrganizeRule{Name: "结果验收", Storage: "local", Source: t.TempDir(), Target: t.TempDir(), IntervalSeconds: 300})
 			if err != nil {

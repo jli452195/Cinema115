@@ -20,6 +20,7 @@ type mediaRecognitionFake struct {
 	browseCalls int
 	items       []tmdb.Item
 	err         error
+	seasons     []tmdb.SeasonSummary
 }
 
 type mediaOrganizeDirectoryFake struct{ *organizeFakeDrive }
@@ -44,7 +45,12 @@ func (f *mediaRecognitionFake) Details(_ context.Context, kind string, id int) (
 			date = item.Date
 		}
 	}
-	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品", OriginalTitle: "Work", Date: date}, OriginalLanguage: "zh"}, nil
+	// 通用整理样本明确包含这些季；缺季与空季资料由专门的识别测试覆盖。
+	seasons := f.seasons
+	if seasons == nil {
+		seasons = []tmdb.SeasonSummary{{Number: 0}, {Number: 1}, {Number: 2}}
+	}
+	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品", OriginalTitle: "Work", Date: date}, OriginalLanguage: "zh", Seasons: seasons}, nil
 }
 func (f *mediaRecognitionFake) AlternativeNames(context.Context, string, int) ([]string, error) {
 	return []string{"作品别名"}, nil
@@ -226,6 +232,7 @@ func TestMediaOrganizerLocalScanExecuteAndPersistence(t *testing.T) {
 
 func TestMediaOrganizerStandardNumberingPreviewAndExecution(t *testing.T) {
 	s, metadata, _, rule := newMediaOrganizeTest(t)
+	metadata.seasons = []tmdb.SeasonSummary{{Number: 1}, {Number: 2}, {Number: 1000}}
 	metadata.items = append(metadata.items, tmdb.Item{ID: 43, Kind: "tv", Title: "魔法骑士雷阿斯", Date: "2026-01-01"})
 	cases := []struct {
 		name            string

@@ -1,6 +1,9 @@
 package mediafacts
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestParseIdentity(t *testing.T) {
 	for _, tc := range []struct {
@@ -10,10 +13,10 @@ func TestParseIdentity(t *testing.T) {
 	}{
 		{"Moana.2.2024.V2.Bluray.2160p.HEVC.mkv", nil, Identity{Name: "Moana 2 2024", AlternativeName: "Moana 2", AlternativeYear: "2024", Season: 1}},
 		{"Show.S02E13.1080p.WEB-DL.strm", nil, Identity{Name: "Show", Kind: "tv", Season: 2, SeasonExplicit: true}},
-		{"E03.strm", []string{"Season 02", "剧集 (2024) {tmdb-42}"}, Identity{Name: "剧集", Year: "2024", TMDBID: 42, Kind: "tv", Season: 2, YearFromParent: true, SeasonExplicit: true}},
+		{"E03.strm", []string{"Season 02", "剧集 (2024) {tmdb-42}"}, Identity{Name: "剧集", Year: "2024", TMDBID: 42, Kind: "tv", Season: 2, YearFromParent: true, YearExplicit: true, SeasonExplicit: true}},
 		{"[Nix-Raws] VERTEX FORCE S01E01 [CR WEB-DL 1080p AVC AAC][SC_TC].mkv", nil, Identity{Name: "VERTEX FORCE", Kind: "tv", Season: 1, SeasonExplicit: true}},
 		{"[Cleo]Trinity_Blood_-_03_(Dual Audio_10bit_BD1080p_x265).mkv", nil, Identity{Name: "Trinity Blood", Season: 1}},
-		{"01.mkv", []string{"第二季", "作品 (2026)"}, Identity{Name: "作品", Year: "2026", Kind: "tv", Season: 2, YearFromParent: true, SeasonExplicit: true}},
+		{"01.mkv", []string{"第二季", "作品 (2026)"}, Identity{Name: "作品", Year: "2026", Kind: "tv", Season: 2, YearFromParent: true, YearExplicit: true, SeasonExplicit: true}},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
 			if got := identityWithoutSources(ParseIdentity(tc.file, tc.parents...)); got != tc.want {
@@ -53,9 +56,9 @@ func TestParseIdentityPreservesTitlesAndExplicitDeclarations(t *testing.T) {
 		parents []string
 		want    Identity
 	}{
-		{"1917.2019.1080p.BluRay.mkv", nil, Identity{Name: "1917", Year: "2019", Season: 1}},
-		{"2001.A.Space.Odyssey.1968.1080p.BluRay.mkv", nil, Identity{Name: "2001 A Space Odyssey", Year: "1968", Season: 1}},
-		{"Blade.Runner.2049.2017.1080p.mkv", nil, Identity{Name: "Blade Runner 2049", Year: "2017", Season: 1}},
+		{"1917.2019.1080p.BluRay.mkv", nil, Identity{Name: "1917", Year: "2019", YearExplicit: true, Season: 1}},
+		{"2001.A.Space.Odyssey.1968.1080p.BluRay.mkv", nil, Identity{Name: "2001 A Space Odyssey", Year: "1968", YearExplicit: true, Season: 1}},
+		{"Blade.Runner.2049.2017.1080p.mkv", nil, Identity{Name: "Blade Runner 2049", Year: "2017", YearExplicit: true, Season: 1}},
 		{"Planet 51 [1080p].mkv", nil, Identity{Name: "Planet 51", Season: 1}},
 		{"[Cleo]Planet 51 [1080p].mkv", nil, Identity{Name: "Planet 51", Season: 1}},
 		{"Moana 2 [BD 1920x1080].mkv", nil, Identity{Name: "Moana 2", Season: 1}},
@@ -68,8 +71,8 @@ func TestParseIdentityPreservesTitlesAndExplicitDeclarations(t *testing.T) {
 		{"[TrinityBlood] - 01 [1080p].mkv", nil, Identity{Name: "TrinityBlood", Season: 1}},
 		{"[Bank] - 01.mkv", nil, Identity{Name: "Bank", Season: 1}},
 		{"[REC].2007.1080p.mkv", nil, Identity{Name: "REC 2007", AlternativeName: "REC", AlternativeYear: "2007", Season: 1}},
-		{"The Specials (2019).mkv", nil, Identity{Name: "The Specials", Year: "2019", Season: 1}},
-		{"Bonus (2019).mkv", nil, Identity{Name: "Bonus", Year: "2019", Season: 1}},
+		{"The Specials (2019).mkv", nil, Identity{Name: "The Specials", Year: "2019", YearExplicit: true, Season: 1}},
+		{"Bonus (2019).mkv", nil, Identity{Name: "Bonus", Year: "2019", YearExplicit: true, Season: 1}},
 		{"Show [Special 01].mkv", nil, Identity{Name: "Show", Kind: "tv", Season: 1}},
 		{"Show.S03E04.2024.1080p.mkv", []string{"Unrelated.2021", "Other.2020"}, Identity{Name: "Show", ParentName: "Unrelated", Kind: "tv", Year: "2024", Season: 3, SeasonExplicit: true}},
 		{"Show S01E01 [1920×1080].mkv", nil, Identity{Name: "Show", Kind: "tv", Season: 1, SeasonExplicit: true}},
@@ -104,11 +107,11 @@ func TestParseIdentityAmbiguousYearsAndBracketTitles(t *testing.T) {
 		{"Blade Runner 2049.mkv", Identity{Name: "Blade Runner 2049", AlternativeName: "Blade Runner", AlternativeYear: "2049", Season: 1}},
 		{"Blade.Runner.2049.1080p.mkv", Identity{Name: "Blade Runner 2049", AlternativeName: "Blade Runner", AlternativeYear: "2049", Season: 1}},
 		{"Known.Movie.2024.1080p.mkv", Identity{Name: "Known Movie 2024", AlternativeName: "Known Movie", AlternativeYear: "2024", Kind: "movie", Season: 1}},
-		{"Known Movie (2024).1080p.mkv", Identity{Name: "Known Movie", Year: "2024", Kind: "movie", Season: 1}},
-		{"Known Movie [2024].1080p.mkv", Identity{Name: "Known Movie", Year: "2024", Kind: "movie", Season: 1}},
-		{"1917.2019.mkv", Identity{Name: "1917", Year: "2019", Season: 1}},
-		{"2001.A.Space.Odyssey.1968.mkv", Identity{Name: "2001 A Space Odyssey", Year: "1968", Season: 1}},
-		{"Blade.Runner.2049.2017.mkv", Identity{Name: "Blade Runner 2049", Year: "2017", Season: 1}},
+		{"Known Movie (2024).1080p.mkv", Identity{Name: "Known Movie", Year: "2024", Kind: "movie", YearExplicit: true, Season: 1}},
+		{"Known Movie [2024].1080p.mkv", Identity{Name: "Known Movie", Year: "2024", Kind: "movie", YearExplicit: true, Season: 1}},
+		{"1917.2019.mkv", Identity{Name: "1917", Year: "2019", YearExplicit: true, Season: 1}},
+		{"2001.A.Space.Odyssey.1968.mkv", Identity{Name: "2001 A Space Odyssey", Year: "1968", YearExplicit: true, Season: 1}},
+		{"Blade.Runner.2049.2017.mkv", Identity{Name: "Blade Runner 2049", Year: "2017", YearExplicit: true, Season: 1}},
 		{"Show.2024.S01E01.mkv", Identity{Name: "Show", Year: "2024", Kind: "tv", Season: 1, SeasonExplicit: true}},
 	} {
 		t.Run(tc.file, func(t *testing.T) {
@@ -121,7 +124,7 @@ func TestParseIdentityAmbiguousYearsAndBracketTitles(t *testing.T) {
 
 func TestParseIdentityDeclarationSources(t *testing.T) {
 	got := ParseIdentity("E03.strm", "Season 02", "剧集 (2024) {tmdb-42}")
-	want := Identity{Name: "剧集", Year: "2024", TMDBID: 42, Kind: "tv", Season: 2, YearFromParent: true, SeasonExplicit: true,
+	want := Identity{Name: "剧集", Year: "2024", TMDBID: 42, Kind: "tv", Season: 2, YearFromParent: true, YearExplicit: true, SeasonExplicit: true,
 		NameSource: "parent:2", YearSource: "parent:2", KindSource: "parent:1", TMDBIDSource: "parent:2", SeasonSource: "parent:1"}
 	if got != want {
 		t.Fatalf("got %+v; want %+v", got, want)
@@ -133,6 +136,51 @@ func TestParseIdentityDeclarationSources(t *testing.T) {
 	// 作为分组键的身份必须始终可比较，不能加入切片或映射字段。
 	if identities := map[Identity]bool{got: true}; !identities[got] {
 		t.Fatal("身份不能作为分组键")
+	}
+}
+
+func TestParseIdentityYearEvidenceSurvivesJSON(t *testing.T) {
+	for _, tc := range []struct {
+		file, parent, year string
+		explicit           bool
+	}{
+		{"Wonderland (2021).S00E169.strm", "", "2021", true},
+		{"Wonderland [2021].S00E169.strm", "", "2021", true},
+		{"Wonderland {2021}.S00E169.strm", "", "2021", true},
+		{"Wonderland（2021）.S00E169.strm", "", "2021", true},
+		{"Wonderland【2021】.S00E169.strm", "", "2021", true},
+		{"Wonderland.2021.S00E169.strm", "", "2021", false},
+		{"Blade Runner 2049.mkv", "", "", false},
+		{"1917.2019.mkv", "", "2019", true},
+		{"Blade Runner 2049 2017.mkv", "", "2017", true},
+		{"Wonderland.S00E169.strm", "五十公里桃花坞 (2021)", "2021", true},
+		{"Wonderland.S00E169.strm", "五十公里桃花坞 2021.全24集", "2021", false},
+		{"Wonderland.2022.S00E169.strm", "五十公里桃花坞 (2021)", "2022", false},
+	} {
+		t.Run(tc.file+"/"+tc.parent, func(t *testing.T) {
+			got := ParseIdentity(tc.file, tc.parent)
+			if got.Year != tc.year || got.YearExplicit != tc.explicit {
+				t.Fatalf("括号或多年份证据应独立于裸年份和数字片名: %+v", got)
+			}
+			body, err := json.Marshal(got)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored Identity
+			if err := json.Unmarshal(body, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if restored != identityWithoutSources(got) {
+				t.Fatalf("JSON 恢复应保留年份强弱与继承语义: restored=%+v original=%+v", restored, got)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(body, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := fields["yearExplicit"]; exists != tc.explicit {
+				t.Fatalf("仅强年份证据需要持久化标记: %s", body)
+			}
+		})
 	}
 }
 
