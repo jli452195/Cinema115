@@ -60,7 +60,7 @@ test('49 anime subtitles with hyphen episode numbers match unique organized vide
     assert.equal(result.confidence, 'high')
     assert.match(result.reason, /唯一对应/)
   }
-  for (const name of ['Show_03.ass', 'Show - 03.chs.ass', '[Group][03][1080p].ass', 'Show EP03.ass', 'Show 第03话.ass']) assert.equal(episodeNumber(name).episode, 3)
+  for (const name of ['Show_03.ass', 'Show - 03.chs.ass', '[Group][03][1080p].ass', 'Show EP03.ass', 'Show 第03话.ass', 'Show 第 03 集.ass', 'Show # 03.ass']) assert.equal(episodeNumber(name).episode, 3)
 })
 
 test('confirmed target episodes match numeric subtitles independently of original video names', () => {
@@ -69,7 +69,7 @@ test('confirmed target episodes match numeric subtitles independently of origina
     season: 1, episode,
   }))
   for (const target of videos) {
-    assert.equal(episodeNumber(target.name), undefined)
+    assert.deepEqual(episodeNumber(target.name), { episode: target.episode })
     for (const [tag, language] of [['sc', 'zh-CN'], ['tc', 'zh-TW']]) {
       const name = `${String(target.episode).padStart(2, '0')}.${tag}.ass`
       const match = analyzeSubtitle(name, videos, 1)
@@ -81,6 +81,89 @@ test('confirmed target episodes match numeric subtitles independently of origina
   assert.equal(analyzeSubtitle('04.sc.ass', videos, 1).videoId, '')
   assert.equal(analyzeSubtitle('01.sc.ass', videos.slice(1), 1).videoId, '', 'unselected videos cannot be matched')
   for (const name of ['SP01.ass', '01-02.ass', 'OVA01.ass', '01.5.ass']) assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
+})
+
+test('space-separated release episodes accept complete technical suffixes without guessing metadata', () => {
+  const names = [
+    '[ReinForce] Shangri-La 01 (DVDRip 852x480 x264 FLAC).ass',
+    '[LP-Raws] Mayoi Neko Overrun! 01 (BDRip 1080p HEVC-YUV420P10 FLAC).ass',
+    'Shangri-La 01 [DVDRip][852x480][x264][FLAC].chs.ass',
+    'Shangri-La 01 DVDRip 852x480 x264 FLAC.ass',
+    '目录/[ReinForce] Shangri-La 01 (DVDRip 852x480 x264 FLAC).tc.ass',
+    '香格里拉 01 (DVDRip 852×480 x264 FLAC).srt',
+  ]
+  const videos = [video('first', '香格里拉.S02E01.mkv'), video('other-season', '香格里拉.S01E01.mkv')]
+  for (const name of names) {
+    assert.deepEqual(episodeNumber(name), { episode: 1 }, name)
+    const match = analyzeSubtitle(name, videos, 2)
+    assert.equal(match.videoId, 'first', name)
+    assert.equal(match.confidence, 'high', name)
+    assert.equal(analyzeSubtitle(name, videos, NaN).videoId, '', name)
+    assert.equal(analyzeSubtitle(name, [...videos, video('version', '香格里拉.S02E01 - 1080p.mkv')], 2).confidence, 'medium', name)
+  }
+  assert.deepEqual(episodeNumber('Show 112 (BDRip 1080p x265 FLAC).ass'), { episode: 112 })
+  assert.equal(analyzeSubtitle(names[0], [video('done', names[0].replace(/ass$/, 'mkv'))], 2).videoId, 'done')
+})
+
+test('space-separated episodes reject revisions, resolutions, specials and competing numeric evidence', () => {
+  const suffix = '(DVDRip 852x480 x264 FLAC).ass'
+  const invalid = [
+    'Show 01.ass', 'Show 01.chs.ass', 'Show 01 (unknown release).ass',
+    'Show 01 (BDRip 1080p x265 FLAC.ass', 'Show 01 BDRip 1080p x265 FLAC).ass',
+    ...['00', '2024', '1080', '2160', '480', '576', '720', '852', '264', '265', '9999',
+      '01v2', '01-02', '01~02', '01+02', '01.5', 'SP01', 'OVA01', '01 02',
+      '2024 01', 'v2 01', 'revision 01', 'SP 01'].map(number => `Show ${number} ${suffix}`),
+    'Show 01 (BDRip 1080p x265 FLAC v2).ass', 'Show 01 (BDRip 1080p x265 FLAC 02).ass',
+    'Show 01 (BDRip 1080p x265 FLAC) (SP).ass',
+    'Show 852x480 x264 FLAC.ass', '[Group] 01 (BDRip 1080p x265 FLAC).ass',
+  ]
+  const videos = [video('first', 'Show.S01E01.mkv'), video('second', 'Show.S01E02.mkv')]
+  for (const name of invalid) {
+    assert.equal(episodeNumber(name), undefined, name)
+    assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
+  }
+})
+
+test('explicit legacy episode evidence wins over numeric titles and years before space-separated fallback', () => {
+  const names = [
+    'Show (2020) - 03.ass', 'Show 2 [03].ass',
+    'Show (2020) - 03 (DVDRip 852x480 x264 FLAC).ass',
+    'Show 2 [03] (BDRip 1080p x265 FLAC).ass',
+    'Show 2 EP03.ass', 'Show 2 #03.ass', 'Show 2 第 03 集.ass', 'Show 2020_03.ass',
+  ]
+  const videos = [video('third', 'Show.S01E03.mkv'), video('other', 'Show.S01E04.mkv')]
+  for (const name of names) {
+    assert.deepEqual(episodeNumber(name), { episode: 3 }, name)
+    assert.equal(analyzeSubtitle(name, videos, 1).videoId, 'third', name)
+  }
+  // 无括号的年份加横线仍沿用原数字范围保护，不借本次增强放宽。
+  for (const name of ['Show 2020 - 03.ass', 'Show 2020 - 03 (DVDRip 852x480 x264 FLAC).ass', 'Show 2 [03] [04].ass', 'Show 2020 - 03 [04].ass', 'Show 2 EP03 #04.ass', 'Show 2 03 (BDRip 1080p x265 FLAC).ass']) {
+    assert.equal(episodeNumber(name), undefined, name)
+    assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
+  }
+})
+
+test('space-separated source episodes preserve authoritative targets and ambiguous offset interpretations', () => {
+  const name = '[ReinForce] Shangri-La 27 (DVDRip 852x480 x264 FLAC).ass'
+  const offset = { ...video('offset', name.replace(/ass$/, 'mkv')), season: 2, episode: 1 }
+  const target = { ...video('target', 'Shangri-La 53 (BDRip 1080p x265 FLAC).mkv'), season: 2, episode: 27 }
+  const options = { sourceEpisodes: true }
+  assert.equal(analyzeSubtitle(name, [offset], 2).videoId, '')
+  assert.equal(analyzeSubtitle(name, [offset], 2, 'tv', options).videoId, 'offset')
+  assert.match(analyzeSubtitle(name, [offset], 2, 'tv', options).reason, /发布第 27 集.*S02E01/)
+  assert.equal(analyzeSubtitle(name, [offset], 1, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle(name, [offset], NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('S02E27.ass', [offset], 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('01.ass', [offset], 2, 'tv', options).videoId, 'offset')
+  assert.equal(analyzeSubtitle(name, [offset, target], 2).videoId, 'target')
+  const ambiguous = analyzeSubtitle(name, [offset, target], 2, 'tv', options)
+  assert.equal(ambiguous.videoId, '')
+  assert.equal(ambiguous.confidence, 'medium')
+  assert.deepEqual(new Set(ambiguous.candidates.map(candidate => candidate.id)), new Set(['offset', 'target']))
+  assert.equal(analyzeSubtitle('S02E27.ass', [offset, target], NaN, 'tv', options).videoId, 'target')
+  for (const fields of [{ episode: 0 }, { episode: '' }, { season: '' }, { season: 3 }]) {
+    assert.equal(analyzeSubtitle(name, [{ ...offset, ...fields }], 2, 'tv', options).videoId, '', JSON.stringify(fields))
+  }
 })
 
 test('edited numbers take priority, invalid targets do not fall back, and duplicate targets require confirmation', () => {

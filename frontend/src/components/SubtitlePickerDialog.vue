@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
@@ -29,9 +29,9 @@ const libraryRows = ref<LibraryRow[]>(props.library.map(item => ({ ...item, key:
 const localRows = ref<LocalRow[]>(props.local.map(item => ({ ...item, key: item.localId, pairKey: localPairKey(item.file), sourceLabel: localSourceLabel(item.file), selected: true, reason: '已保存的字幕匹配' })))
 const hasLocal = computed(() => localRows.value.some(row => row.file.origin !== 'assrt'))
 const rows = computed(() => [...libraryRows.value, ...localRows.value])
-const manualRows = new Set<string>()
+const manualRows = reactive(new Set<string>())
 let matching = false
-watch(() => rows.value.map(row => ({ key: row.key, videoId: row.videoId, selected: row.selected })), (current, previous) => {
+const manualRowWatch = watch(() => rows.value.map(row => ({ key: row.key, videoId: row.videoId, selected: row.selected })), (current, previous) => {
   if (matching) return
   const before = new Map(previous.map(row => [row.key, row]))
   for (const row of current) { const old = before.get(row.key); if (old && (old.videoId !== row.videoId || old.selected !== row.selected)) manualRows.add(row.key) }
@@ -133,7 +133,7 @@ async function read(files: File[], item?: AssrtSubtitle) {
       return { key: localId, pairKey: localPairKey(file), sourceLabel: localSourceLabel(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: props.kind !== 'movie' && !!match.videoId, reason: match.reason }
     })]
     if (item) loadedAssrt.add(item.id)
-    notice.value = `共 ${localRows.value.length} 个字幕，${localRows.value.filter(row => !row.videoId).length} 个未匹配，默认不选${merged.duplicates ? `；已跳过 ${merged.duplicates} 个重复字幕` : ''}${data.ignored ? `；已忽略 ${data.ignored} 个其他文件` : ''}。`
+    notice.value = [merged.duplicates ? `已跳过 ${merged.duplicates} 个重复字幕` : '', data.ignored ? `已忽略 ${data.ignored} 个其他文件` : ''].filter(Boolean).join('；')
   } catch (reason) {
     if (lifecycle.signal.aborted) return
     if (controller.signal.aborted) notice.value = '已取消读取，原列表已保留。'
@@ -153,6 +153,9 @@ function matchUnassigned() {
     }
   } finally { matching = false }
 }
+// 批量应用和撤销不冒充逐项手动编辑，否则撤销后的空映射会被永久保护而无法再次匹配。
+function beginBatchEdit() { matching = true; manualRowWatch.pause() }
+function endBatchEdit() { try { manualRowWatch.resume() } finally { matching = false } }
 function clear() { libraryRows.value = []; localRows.value = []; manualRows.clear(); version.value = undefined; loadedVersion = ''; loadedAssrt.clear(); notice.value = ''; importError.value = ''; showResults.value = true }
 function apply() {
   if (reading.value || choosing.value || issue.value) return
@@ -191,11 +194,12 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
       </template>
       <div v-else-if="version" class="picker-version"><button type="button" class="picker-back" :disabled="choosing" @click="showResults = true; searchError = ''"><IconArrowLeft :size="15" aria-hidden="true" />返回搜索结果</button><strong>{{ version.title }} · {{ version.name }}</strong><a :href="version.url" target="_blank" rel="noopener noreferrer">查看来源</a><details v-if="version.description" class="picker-note"><summary>版本说明</summary><p class="whitespace-pre-wrap break-words">{{ version.description }}</p></details></div>
       <p v-if="reading" role="status" class="picker-note">正在读取和解析字幕…<button type="button" @click="controller?.abort()">取消读取</button></p>
+      <p v-if="rows.length" role="status" class="picker-note">共 {{ rows.length }} 个字幕，{{ rows.filter(row => !row.videoId).length }} 个未匹配。可批量匹配或设置语言。</p>
       <p v-if="notice" role="status" class="picker-note">{{ notice }}</p>
       <p v-if="importError" role="alert" class="picker-error">{{ importError }}</p>
       <div v-if="hasLocal" class="picker-local"><label><input v-model="append" type="checkbox" :disabled="reading" />继续添加时保留已导入文件</label><button type="button" :disabled="reading" @click="localRows = localRows.filter(row => row.file.origin === 'assrt'); notice = ''; importError = ''">移除本地字幕</button></div>
       <p v-if="kind === 'movie' && rows.length" class="picker-note">{{ videos.length === 1 ? '字幕已关联当前电影，请勾选要使用的版本。' : '存在多个视频版本，请指定对应视频并勾选字幕。' }}</p>
-      <SubtitleMatchList v-if="rows.length" :rows="rows" :videos="videos" :target-names="targetNames" :disabled="reading || choosing" />
+      <SubtitleMatchList v-if="rows.length" :rows="rows" :videos="videos" :target-names="targetNames" :kind="kind" :protected-keys="manualRows" :disabled="reading || choosing" @batch-start="beginBatchEdit" @batch-end="endBatchEdit" />
     </div>
     <template #footer>
       <div class="picker-footer"><span>已选 {{ selected.length }} 个字幕 · {{ formatSubtitleSize(total) }}</span><div><button v-if="rows.length" type="button" :disabled="reading || choosing" @click="clear">移除全部</button><button v-if="rows.length || library.length || local.length" type="button" class="picker-apply" :disabled="reading || choosing || !!issue" @click="apply">使用所选字幕</button></div></div>

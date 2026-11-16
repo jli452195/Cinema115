@@ -16,6 +16,21 @@ const stem = (name: string) => base(name).replace(/\.[^.]+$/, '')
 const withoutAudioMetadata = (title: string) => title.replace(/(?:^|[^a-z0-9])(?:AAC|FLAC|ALAC|AC-?3|E-?AC-?3|DDP?|DTS(?:-HD)?|TRUEHD|OPUS|AUDIO)[ ._-]*\[[^\[\]]*\]/gi, ' ')
 const episodeTitle = (name: string) => withoutAudioMetadata(stem(name))
 
+// 空格裸集号只接受完整的技术后缀；未知文字、裸数字和修订号都保留为歧义。
+function technicalEpisodeSuffix(suffix: string) {
+  let technical = false
+  const remainder = suffix.replace(/\b(?:DVDRip|BDRip|BluRay|WEB[ .-]?DL|WEBRip|HDTV|(?:2160|1080|720|576|480)p|[1-9]\d{2,3}[x×][1-9]\d{2,3}|[xh]26[45]|HEVC(?:-YUV420P10)?|AVC|FLAC|AAC|ALAC|AC3|DTS|OPUS|(?:8|10|12)bit)\b/gi, () => { technical = true; return ' ' })
+    .replace(/\b(?:chs|cht|sc|tc|eng|jpn)\b/gi, ' ')
+  if (!technical || !/^[\s._()[\]【】-]*$/.test(remainder)) return false
+  const brackets: string[] = []
+  const openingByClosing: Record<string, string> = { ')': '(', ']': '[', '】': '【' }
+  for (const char of remainder) {
+    if ('([【'.includes(char)) brackets.push(char)
+    else if (char in openingByClosing && brackets.pop() !== openingByClosing[char]) return false
+  }
+  return brackets.length === 0
+}
+
 export function episodeNumber(name: string): { season?: number; episode: number } | undefined {
   const title = episodeTitle(name)
   // Ranges, specials, resolutions, years and release revisions are not episodes.
@@ -34,6 +49,19 @@ export function episodeNumber(name: string): { season?: number; episode: number 
     /[\[【](\d{1,3})[\]】]/g,
     /(?:\s-\s*|_)(\d{1,3})(?=$|[ ._\[【])/g,
   ]) for (const m of title.matchAll(pattern)) numbers.push(Number(m[1]))
+  if (!numbers.length) {
+    const spaced = title.match(/^(.+?)\s+(\d{1,4})(?=$|[\s([【])(.*)$/)
+    // 仅在旧规则没有证据时尝试裸集号，避免数字标题或年份抢占明确集号。
+    if (spaced) {
+      const episode = Number(spaced[2])
+      const prefix = spaced[1].replace(/\[[^\]]*\]|【[^】]*】/g, ' ')
+      // 常见尺寸、分辨率和编码数字不能独立充当新增格式的集号。
+      if (!/\p{L}/u.test(prefix) || /\d/.test(spaced[1]) || /(?:^|[^a-z0-9])(?:v|ver|version|rev|revision)[ ._-]*$/i.test(prefix)
+        || episode < 1 || episode > 999 || [240, 264, 265, 360, 480, 540, 576, 640, 704, 720, 768, 800, 848, 852, 854, 960].includes(episode)
+        || !technicalEpisodeSuffix(spaced[3])) return undefined
+      numbers.push(episode)
+    }
+  }
   const unique = [...new Set(numbers.filter(n => n > 0 && ![480, 576, 720].includes(n)))]
   return unique.length === 1 ? { episode: unique[0] } : undefined
 }
@@ -43,6 +71,9 @@ function ambiguousEpisode(title: string) {
     || /(?:S\d+[ ._-]*E|(?:^|[ _\[【(-])(?:EP?|#\s*)?)(\d{1,4})\.\d/i.test(title)
     || /(?:^|[ ._\[【-])(?:SP|OVA|OAD|NCOP|NCED|OP|ED|PV)(?:\d|\b)|特典|特别篇|特別篇|总集篇|總集篇/i.test(title)
 }
+
+// 批量顺序匹配复用同一歧义边界，不能把多集范围或小数集号降级成普通未知文件。
+export function hasAmbiguousSubtitleEpisode(name: string) { return ambiguousEpisode(episodeTitle(name)) }
 
 export interface SubtitleMatch {
   videoId: string
