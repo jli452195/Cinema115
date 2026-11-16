@@ -151,7 +151,7 @@ onBeforeUnmount(() => {
           </div>
           <button autofocus type="button" :aria-label="batchRunning ? `停止提交并关闭${providerName}搜索` : `关闭${providerName}搜索`" class="mikan-icon-button" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
-        <div ref="scrollBody" class="mikan-body">
+        <div ref="scrollBody" class="mikan-body" data-auto-scrollbar>
           <form class="mikan-search-form" @submit.prevent="search()">
             <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
             <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
@@ -168,7 +168,7 @@ onBeforeUnmount(() => {
               <span>{{ bangumis.length }} 个番剧<span class="mikan-picker-hint">，全部条目显示关键词搜索结果</span></span>
               <button v-if="hasBrokenCovers" type="button" class="mikan-tool-button mikan-cover-retry" @click="retryCovers">重试封面</button>
             </div>
-            <nav ref="itemStrip" aria-label="蜜柑影视条目" :aria-busy="interactionBusy" class="mikan-item-strip">
+            <nav ref="itemStrip" aria-label="蜜柑影视条目" :aria-busy="interactionBusy" class="mikan-item-strip" data-auto-scrollbar>
               <div class="mikan-item-indicator" :style="itemIndicatorStyle" aria-hidden="true"></div>
               <button type="button" class="mikan-item-card mikan-all-items" :aria-disabled="interactionBusy" :aria-pressed="activeBangumiId === 'all'" aria-label="全部条目：显示关键词搜索结果" title="恢复关键词搜索结果与筛选" @click="backToSearch">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
@@ -286,7 +286,7 @@ onBeforeUnmount(() => {
   --mikan-warning: #765500; --mikan-warning-bg: #fff1cd;
   --mikan-error: #a12b2b; --mikan-error-bg: #ffe9e7;
   margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--mikan-max-height);
-  border-radius: 28px; color: var(--search-dialog-text); color-scheme: light;
+  border-radius: 24px; color: var(--search-dialog-text); color-scheme: light;
   overflow: hidden;
 }
 .dark .mikan-dialog { --mikan-success: #a5d8b8; --mikan-success-bg: #223d31; --mikan-warning: #eed085; --mikan-warning-bg: #42371e; --mikan-error: #ffb4ab; --mikan-error-bg: #502c2b; color-scheme: dark; }
@@ -319,9 +319,7 @@ onBeforeUnmount(() => {
 .mikan-picker-heading h3 { margin: 0; color: var(--search-dialog-text); font-size: 13px; line-height: 20px; font-weight: 600; }
 .mikan-picker-heading > span { color: var(--search-dialog-muted); font-size: 11px; }
 .mikan-picker-heading > button { margin-left: auto; }
-.mikan-item-strip { position: relative; isolation: isolate; display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; scrollbar-color: var(--search-dialog-outline) transparent; scrollbar-width: thin; }
-.mikan-item-strip::-webkit-scrollbar { height: 4px; }
-.mikan-item-strip::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--search-dialog-outline); }
+.mikan-item-strip { position: relative; isolation: isolate; display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
 .mikan-item-indicator { position: absolute; z-index: 1; border-radius: 16px; background: var(--search-dialog-action-background); pointer-events: none; }
 .mikan-item-card { position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 220px; min-height: 92px; padding: 8px; border: 2px solid transparent; border-radius: 16px; background: var(--search-dialog-card); color: var(--search-dialog-text); text-align: left; cursor: pointer; }
 .mikan-item-card > svg, .mikan-item-card > span { position: relative; z-index: 2; }
@@ -439,7 +437,7 @@ onBeforeUnmount(() => {
   .mikan-action-label-mobile { display: inline; }
 }
 @media (max-width: 639px) {
-  .mikan-dialog { --mikan-max-height: calc(min(100dvh, var(--mikan-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--mikan-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--mikan-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .mikan-dialog { --mikan-max-height: calc(min(100dvh, var(--mikan-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--mikan-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--mikan-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 16px); border-radius: 20px; }
   .mikan-header { gap: 10px; padding: 16px 16px 8px; }
   .mikan-heading h2 { height: 26px; }
   .mikan-heading h2 img { height: 20px; }

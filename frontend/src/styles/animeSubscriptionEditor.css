@@ -74,7 +74,7 @@
 .ae-preview-destination p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ae-ink); }
 .ae-preview-scroll-hint { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; color: var(--ae-muted); font-size: 11px; line-height: 1.8; }
 .ae-preview-scroll-hint svg { flex: none; }
-.ae-release-list { max-height: min(520px, 55dvh); overflow: auto; overscroll-behavior: contain; border-radius: 9px; scrollbar-width: thin; }
+.ae-release-list { max-height: min(520px, 55dvh); overflow: auto; overscroll-behavior: contain; border-radius: 9px; }
 .ae-preview-table { table-layout: fixed; width: 100%; min-width: 1468px; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .ae-select-column { width: 36px; }
 .ae-rule-column { width: 76px; }.ae-state-column { width: 100px; }.ae-feed-column { width: 64px; }.ae-group-column { width: 100px; }.ae-title-column { width: auto; }.ae-name-column { width: 360px; }.ae-date-column { width: 132px; }

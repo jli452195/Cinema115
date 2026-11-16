@@ -330,7 +330,7 @@ onBeforeUnmount(() => {
             </RouterLink>
           </div>
         </div>
-        <div ref="scrollBody" class="gy-body">
+        <div ref="scrollBody" class="gy-body" data-auto-scrollbar>
           <div v-if="config && !searchEnabled" class="gy-setup">
             <h3>登录{{ sourceLabel }}后搜索资源</h3><p>请先在资源配置中保存{{ sourceLabel }}账号并登录。</p>
             <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="closeDialog">配置{{ sourceLabel }}搜索</RouterLink>
@@ -355,7 +355,7 @@ onBeforeUnmount(() => {
             <template v-if="resultItems.length">
               <section id="gy-item-picker" class="gy-item-picker" aria-label="选择影视条目">
                 <div class="gy-picker-heading"><h3>影视条目</h3><span>{{ resultItems.length }} 个条目<span class="gy-picker-hint">，可能包含不同季度与版本</span></span></div>
-                <nav ref="itemStrip" aria-label="影视条目" class="gy-item-strip gy-scroll">
+                <nav ref="itemStrip" aria-label="影视条目" class="gy-item-strip gy-scroll" data-auto-scrollbar>
                   <div class="gy-selection-indicator gy-item-indicator" :style="itemIndicatorStyle" aria-hidden="true"></div>
                   <button type="button" class="gy-item-card gy-all-items" :aria-pressed="activeItemId === 'all'" @click="selectItem('all')">
                     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
@@ -377,13 +377,13 @@ onBeforeUnmount(() => {
                   <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
                   <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="closeDialog" />
                 </div>
-                <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll">
+                <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll" data-auto-scrollbar>
                   <div class="gy-selection-indicator gy-chip-indicator" :style="sourceIndicatorStyle" aria-hidden="true"></div>
                   <button v-for="option in resourceOptions" :key="option.type" type="button" :aria-pressed="activeResourceType === option.type" class="gy-chip" @click="selectResourceType(option.type)">
                     <span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span>
                   </button>
                 </nav>
-                <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" ref="subTypeStrip" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll">
+                <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" ref="subTypeStrip" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll" data-auto-scrollbar>
                   <div class="gy-selection-indicator gy-chip-indicator" :style="subTypeIndicatorStyle" aria-hidden="true"></div>
                   <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="gy-chip" @click="selectMagnetSubType(option.type)"><span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span></button>
                 </nav>
@@ -625,9 +625,6 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
 .gy-dialog button { cursor: pointer; }
 .gy-dialog button:disabled { cursor: default; opacity: .45; }
 .gy-dialog button:focus-visible, .gy-dialog a:focus-visible, .gy-dialog summary:focus-visible { outline: 2px solid var(--gy-primary); outline-offset: 3px; }
-.gy-scroll { scrollbar-color: var(--gy-outline) transparent; scrollbar-width: thin; }
-.gy-scroll::-webkit-scrollbar { height: 4px; }
-.gy-scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--gy-outline); }
 .gy-spinning { animation: gy-spin 1s linear infinite; }
 @keyframes gy-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {

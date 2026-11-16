@@ -94,7 +94,7 @@ function navigate() {
       </template>
     </div>
     <template #footer>
-      <p class="dp-current" :title="currentPath">{{ currentPath || '请选择目录' }}</p>
+      <p v-if="pathEditable" class="dp-current" :title="currentPath">{{ currentPath || '请选择目录' }}</p>
       <p v-if="saveError" role="alert" class="dp-error dp-save-error">{{ saveError }}</p>
       <div class="dp-actions">
         <button type="button" class="dp-button" :disabled="saving" @click="emit('close')">取消</button>
@@ -108,49 +108,57 @@ function navigate() {
 <style scoped>
 :global(dialog.directory-picker-dialog.anime-floating) {
   width: min(640px, calc(100vw - 32px));
-  height: min(660px, calc(100dvh - 48px));
+  height: min(620px, calc(100dvh - 64px));
 }
 :global(dialog.directory-picker-dialog .anime-floating-body) { scrollbar-gutter: stable; }
 .dp-help { font-size: 12px; line-height: 1.7; color: var(--floating-surface-muted); overflow-wrap: anywhere; }
 .dp-description { margin-bottom: 12px; }
 .dp-path { display: flex; align-items: flex-end; gap: 8px; }
 .dp-path label { display: grid; flex: 1; min-width: 0; gap: 6px; font-size: 12px; color: var(--floating-surface-muted); }
-.dp-path input { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid rgb(148 163 184 / .25); border-radius: 9px; background: rgb(148 163 184 / .06); color: var(--floating-surface-text); font-size: 13px; outline: none; text-overflow: ellipsis; }
-.dp-path input:focus-visible { border-color: #3b82f6; outline: 2px solid rgb(59 130 246 / .2); outline-offset: 1px; }
+.dp-path input { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid rgb(var(--line-default)); border-radius: 9px; background: rgb(var(--surface-card) / .6); color: var(--floating-surface-text); font-size: 13px; outline: none; text-overflow: ellipsis; }
+.dp-path input:focus-visible { border-color: rgb(var(--focus)); outline: 2px solid rgb(var(--focus) / .3); outline-offset: 1px; }
 .dp-path input:disabled { opacity: .5; }
 .dp-path-hint { margin-top: 6px; }
-.dp-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 7px 12px; border-radius: 9px; background: rgb(148 163 184 / .1); color: var(--floating-surface-text); font-size: 12px; line-height: 1.6; }
-.dp-button:not(:disabled):hover { background: rgb(148 163 184 / .18); }
+.dp-button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 5px; min-height: 36px; padding: 7px 12px; border-radius: 9px; background: rgb(var(--surface-hover) / .65); color: var(--floating-surface-text); font-size: 12px; line-height: 1.6; }
+.dp-button:not(:disabled):hover { background: rgb(var(--surface-hover)); }
 .dp-button:disabled { opacity: .4; cursor: default; }
 .dp-navigation { display: flex; gap: 8px; margin-top: 12px; }
 .dp-navigation .dp-button { white-space: nowrap; }
 .dp-refresh { margin-left: auto; padding-inline: 10px; }
-.dp-primary { background: #2563eb; color: #fff; }
-.dp-primary:not(:disabled):hover { background: #1d4ed8; }
+.dp-primary { background: rgb(var(--action-primary)); color: rgb(var(--action-on-primary)); }
+.dp-primary:not(:disabled):hover { background: rgb(var(--action-primary-hover)); }
 .dp-content { min-width: 0; }
 .dp-empty { display: flex; min-height: 160px; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 18px 4px; text-align: center; font-size: 13px; line-height: 1.7; color: var(--floating-surface-muted); }
-.dp-error { color: #dc2626; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
-.dp-list { display: grid; gap: 6px; }
-.dp-entry { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 48px; padding: 10px 12px; border: 1px solid rgb(148 163 184 / .17); border-radius: 10px; text-align: left; color: var(--floating-surface-text); }
-.dp-entry:not(:disabled):hover { background: rgb(59 130 246 / .08); border-color: rgb(59 130 246 / .35); }
+.dp-error { color: rgb(var(--status-danger)); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.dp-list { display: grid; overflow: hidden; border: 1px solid rgb(var(--line-default) / .75); border-radius: 12px; background: rgb(var(--surface-card) / .45); }
+.dp-entry { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 48px; padding: 10px 12px; border: 0; border-radius: 0; background: transparent; text-align: left; color: var(--floating-surface-text); }
+.dp-entry + .dp-entry { border-top: 1px solid rgb(var(--line-default) / .65); }
+.dp-entry:not(:disabled):is(:hover, :focus-visible) { background: rgb(var(--selection-surface)); }
 .dp-entry:disabled { opacity: .5; cursor: default; }
-.dp-button:focus-visible, .dp-entry:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.dp-button:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+/* 焦点框收在行内，避免被列表容器的圆角裁切。 */
+.dp-list .dp-entry:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
 .dp-entry svg { flex: none; color: var(--floating-surface-muted); }
-.dp-entry .dp-folder { color: #3b82f6; }
+.dp-entry .dp-folder { color: rgb(var(--action-link)); }
 .dp-entry span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .dp-notice { padding: 14px 2px 0; }
 .dp-current { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.8; color: var(--floating-surface-muted); }
-.dp-save-error { margin-top: 6px; }
-.dp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.dp-current + .dp-save-error { margin-top: 6px; }
+.dp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.dp-current + .dp-actions, .dp-save-error + .dp-actions { margin-top: 10px; }
 .dp-actions .dp-button { min-width: 0; overflow-wrap: anywhere; }
-:global(.dark .directory-picker-dialog .dp-primary) { background: #3769b5; }
-:global(.dark .directory-picker-dialog .dp-primary:not(:disabled):hover) { background: #4479ca; }
-:global(.dark .directory-picker-dialog .dp-error) { color: #fca5a5; }
 @media (max-width: 639px) {
-  :global(dialog.directory-picker-dialog.anime-floating) { width: calc(100vw - 16px); height: min(660px, calc(100dvh - 24px)); }
-  .dp-button, .dp-path input { min-height: 44px; }
-  .dp-path input { font-size: 16px; }
+  /* 按可用宽度留白，避免页面滚动条槽挤占窄屏外沿。 */
+  :global(dialog.directory-picker-dialog.anime-floating) { width: calc(100% - 48px); height: min(620px, calc(100dvh - 48px)); }
+  .dp-navigation { flex-wrap: wrap; }
+  .dp-navigation .dp-button { padding-inline: 8px; }
   .dp-entry { min-height: 52px; }
   .dp-actions .dp-create { order: -1; width: 100%; }
+}
+@media (max-width: 639px), (pointer: coarse) {
+  :global(dialog.directory-picker-dialog .anime-floating-toolbar button) { min-width: 44px; min-height: 44px; }
+  .dp-button { min-width: 44px; min-height: 44px; }
+  .dp-entry { min-width: 44px; }
+  .dp-path input { min-height: 44px; font-size: 16px; }
 }
 </style>

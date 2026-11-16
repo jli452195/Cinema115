@@ -1,4 +1,4 @@
-// Both providers run the same workflow. Every API is mocked; no real 115 writes.
+// 两种来源复用同一流程，全部接口使用内存响应，不会真实写入 115。
 const assert = require('node:assert/strict')
 const path = require('node:path'), os = require('node:os')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
@@ -59,6 +59,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     }
     const search = page.locator('dialog.mikan-dialog'), editor = page.locator('dialog.anime-floating-organize')
     const submit = () => page.getByRole('button', { name: '下载并自动整理', exact: true })
+    async function episodeInput(row) {
+      const input = row.getByRole('spinbutton', { name: 'Show.mkv 集', exact: true })
+      if (!await input.count()) await row.getByRole('button', { name: '编辑季集 Show.mkv', exact: true }).click()
+      return input
+    }
     await page.goto(`${origin}/tv/12501`)
     await openSearch()
     await page.getByRole('button', { name: '批量选择', exact: true }).click()
@@ -110,13 +115,19 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.waitFor()
     await editor.getByText('批量整理 4 项资源，包含外层筛选隐藏的 1 项', { exact: true }).waitFor()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 1)
-    await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).fill('9')
-    // Editing already prepared files is possible while the next request waits.
+    await (await episodeInput(editor.locator('[data-organize-file]').first())).fill('9')
+    // 下一份资源尚在解析时，已就绪文件仍可编辑。
     await page.getByRole('button', { name: '停止解析', exact: true }).click()
     await page.getByRole('button', { name: '继续解析', exact: true }).waitFor()
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     assert.equal(await submit().isEnabled(), true, 'waiting resources do not block confirmed files')
     await editor.getByText('文件已全部暂存，可继续核对整理清单。', { exact: true }).waitFor()
+    assert.equal(await editor.locator('.numbering-bar').count(), 0)
+    assert.equal(await editor.locator('.mapping-bar').count(), 0)
+    await editor.locator('.submit-summary > strong').getByText('待整理 1 个视频', { exact: true }).waitFor()
+    await editor.locator('.submit-composition').getByText('已暂存 1 · 当前勾选 0', { exact: true }).waitFor()
+    assert.equal(await editor.getByRole('button', { name: '查找全部所选字幕', exact: true }).isEnabled(), true)
+    assert.equal(await editor.locator('.confirmed-group > details > summary').evaluate(el => el === document.activeElement), true)
     await editor.getByRole('button', { name: '退回编辑第 1 季', exact: true }).click()
     held = 0; release()
     await page.getByRole('button', { name: '继续解析', exact: true }).click()
@@ -124,25 +135,28 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 3)
     await page.waitForFunction(() => [...document.querySelectorAll('dialog.anime-floating-organize button')].some(button => /^暂存这 \d+ 项$/.test(button.textContent) && !button.disabled))
     assert.equal(await submit().isEnabled(), true, 'ready checked files submit without staging despite another resource failure')
-    assert.equal(await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).inputValue(), '9')
+    assert.equal(await (await episodeInput(editor.locator('[data-organize-file]').first())).inputValue(), '9')
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     assert.equal(await submit().isEnabled(), true, 'failed resources do not block confirmed files')
     await editor.getByRole('button', { name: '退回编辑第 1 季', exact: true }).click()
     fail = 0
     await page.getByRole('button', { name: '重试解析', exact: true }).click()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 4)
-    const episodes = await editor.locator('[data-organize-file]').getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).evaluateAll(inputs => inputs.map(input => input.value))
+    const episodes = []
+    for (const row of await editor.locator('[data-organize-file]').all()) episodes.push(await (await episodeInput(row)).inputValue())
     assert.deepEqual(episodes, ['9', '1', '4', '1'])
     assert.equal(await editor.getByRole('textbox', { name: /自定义标记/ }).count(), 0)
+    const namingDetails = editor.locator('.naming-details')
+    if (!await namingDetails.evaluate(element => element.open)) await namingDetails.locator('summary').click()
     await editor.getByRole('link', { name: '公共命名模板', exact: true }).waitFor()
     assert.equal(await editor.getByLabel('字幕语言', { exact: true }).count(), 0)
-    await editor.locator('[data-organize-file]').first().getByRole('spinbutton', { name: 'Show.mkv 集', exact: true }).fill('1')
+    await (await episodeInput(editor.locator('[data-organize-file]').first())).fill('1')
     await editor.getByRole('alert').filter({ hasText: '2 个文件目标重名' }).first().waitFor()
-    // Resource 3 is the same version of episode 1; remove only from this editor.
+    // 第三份资源是同一集的重复版本，仅从本次整理中移除。
     await editor.locator('.resource-status > summary').click()
     await editor.locator('.resource-status-list > div').nth(2).getByRole('button', { name: /^移除资源/ }).click()
     assert.equal(await editor.locator('[data-organize-file]').count(), 3)
-    await editor.locator('[data-organize-file]').first().getByText('整理后：测试作品.S01E01.1080p.[简体]-测试字幕组.mkv', { exact: true }).waitFor()
+    await editor.locator('[data-organize-file]').first().getByText('测试作品.S01E01.1080p.[简体]-测试字幕组.mkv', { exact: true }).waitFor()
     const requests = count('/download-organize/files')
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     await submit().click()
@@ -159,7 +173,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.getByRole('textbox', { name: isMikan ? '筛选蜜柑结果' : '筛选Garden结果' }).fill('')
     await page.getByRole('button', { name: '批量整理（1）', exact: true }).waitFor()
     passed.push('hidden selections, progressive edit, pause/continue, failed parse retry, per-file numbering, collisions, editor-only removal and atomic idempotent submit')
-    // A larger batch must be parsed exactly once, then sent in one request.
+    // 大批量资源仅解析一次，并在一个批量请求中提交。
     await page.keyboard.press('Escape'); await search.waitFor({ state: 'detached' })
     total = 61; titleMode = true
     await openSearch()
@@ -173,62 +187,79 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = 0 })
     await page.waitForFunction(() => {
       const bar = document.querySelector('dialog.anime-floating-organize .numbering-bar')
-      return !bar.classList.contains('is-stuck') && getComputedStyle(bar).backgroundColor === 'rgba(0, 0, 0, 0)'
+      const body = document.querySelector('dialog.anime-floating-organize .anime-floating-body')
+      return bar.getBoundingClientRect().top > body.getBoundingClientRect().top + 1
     })
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-in-flow.png`) })
-    // Mixed title intents/file manifests share one list. Expected names never
-    // invent a filename extension or expose the internal intent ID as a path.
+    // 标题识别与文件清单共用列表，预计命名不虚构扩展名或暴露内部标识路径。
     assert.equal(await editor.getByRole('button', { name: /^展开或折叠/ }).count(), 1)
     const titleRow = editor.locator('[data-organize-file]').first()
-    assert.equal(await titleRow.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
+    assert.equal(await titleRow.getByRole('button', { name: /^(?:详情|收起)：完整路径 / }).count(), 0)
+    const originalName = titleRow.getByRole('button', { name: `原名：完整资源名 ${resource(1).title}`, exact: true })
+    assert.equal(await originalName.getAttribute('aria-expanded'), 'false')
+    await originalName.click()
+    await titleRow.locator('.file-path-details').getByText(`完整资源名：${resource(1).title}`, { exact: true }).waitFor()
+    const collapseOriginalName = titleRow.getByRole('button', { name: `收起：完整资源名 ${resource(1).title}`, exact: true })
+    assert.equal(await collapseOriginalName.getAttribute('aria-expanded'), 'true')
+    await collapseOriginalName.click()
+    assert.equal(await titleRow.locator('.file-path-details').count(), 0)
+    assert.equal(await titleRow.getByRole('checkbox').isChecked(), true, '原名详情展开和收起保持原有选择')
     await titleRow.getByText('预计命名：测试作品.S01E01.1080p.[简体]-测试字幕组', { exact: true }).waitFor()
     assert.equal((await titleRow.textContent()).includes('.mkv'), false)
     assert.equal(await editor.getByRole('searchbox').count(), 0)
-    await editor.locator('[data-organize-file]').nth(1).getByRole('button', { name: /^查看完整路径/ }).click()
-    await editor.locator('[data-organize-file]').nth(1).getByText('/same/Show.mkv', { exact: true }).waitFor()
-    await editor.locator('[data-organize-file]').nth(2).getByRole('checkbox').uncheck()
+    await editor.locator('[data-organize-file]').nth(1).getByRole('button', { name: '详情：完整路径 Show.mkv', exact: true }).click()
+    await editor.locator('[data-organize-file]').nth(1).getByText('完整路径：/same/Show.mkv', { exact: true }).waitFor()
+    const uncheckedRow = editor.locator('[data-organize-file]').nth(2)
+    await uncheckedRow.getByRole('checkbox').uncheck()
+    assert.equal(await uncheckedRow.getByRole('spinbutton').count(), 0)
+    await uncheckedRow.getByRole('button', { name: /^编辑季集 / }).click()
+    assert.equal(await uncheckedRow.getByRole('spinbutton').count(), 2)
+    assert.equal(await uncheckedRow.getByRole('checkbox').isChecked(), false, '手动编辑不纳入提交选择')
     const assertStickyNumbering = async () => {
       await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
       await page.waitForFunction(() => {
         const dialog = document.querySelector('dialog.anime-floating-organize')
-        const body = dialog.querySelector('.anime-floating-body'), bar = dialog.querySelector('.numbering-bar'), folder = dialog.querySelector('.directory-heading-sticky')
+        const body = dialog.querySelector('.anime-floating-body'), bar = dialog.querySelector('.numbering-bar'), mapping = dialog.querySelector('.mapping-bar')
         const bounds = bar.getBoundingClientRect(), viewport = body.getBoundingClientRect()
         const stage = bar.querySelector('.stage-action')
         if (!stage || stage.disabled) return false
-        const action = stage.getBoundingClientRect(), folderBounds = folder.getBoundingClientRect()
+        const action = stage.getBoundingClientRect()
         const hit = document.elementFromPoint(action.x + action.width / 2, action.y + action.height / 2)
-        return bar.classList.contains('is-stuck') && getComputedStyle(bar).backdropFilter === 'none'
-          && Math.abs(bounds.top - viewport.top) <= 1
+        return Math.abs(bounds.top - viewport.top) <= 1
           && Math.abs(bounds.left - viewport.left) <= 1
           && Math.abs(bounds.right - viewport.left - body.clientWidth) <= 1
-          && Math.abs(folderBounds.top - bounds.bottom) <= 1
-          // Staging stays usable while scrolling, including when the folder
-          // header and mobile numbering controls are pinned alongside it.
+          && (!mapping.getClientRects().length || mapping.getBoundingClientRect().bottom < viewport.top)
+          && [...dialog.querySelectorAll('.directory-heading')].every(folder => folder.getBoundingClientRect().bottom < viewport.top)
+          // 只有工具条留在顶部，暂存按钮整块可见且实际命中按钮。
           && action.width > 0 && action.height > 0
           && action.top >= viewport.top - 1 && action.bottom <= viewport.bottom + 1
           && action.left >= viewport.left - 1 && action.right <= viewport.left + body.clientWidth + 1
-          && action.bottom <= folderBounds.top + 1 && stage.contains(hit)
+          && action.top >= bounds.top && action.bottom <= bounds.bottom && stage.contains(hit)
       })
     }
     await assertStickyNumbering()
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-pinned-desktop.png`) })
-      await page.setViewportSize({ width: 320, height: 740 })
-      await page.evaluate(() => document.documentElement.classList.remove('dark'))
-      assert.equal(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
-      const footer = await editor.locator('.anime-floating-footer').boundingBox()
-      assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
+    await page.setViewportSize({ width: 320, height: 740 })
+    await page.evaluate(() => document.documentElement.classList.remove('dark'))
+    assert.equal(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+    const footer = await editor.locator('.anime-floating-footer').boundingBox()
+    assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
+    await assertStickyNumbering()
+    const numberingHeight = (await editor.locator('.numbering-bar').boundingBox()).height
+    if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-mobile.png`) })
+    assert.ok(numberingHeight <= 68, `移动端吸顶工具条高度不得超过 68px，实际 ${numberingHeight}px`)
+    const toggle = editor.getByRole('button', { name: '调整季集', exact: true })
+    for (let index = 0; index < 2; index++) {
+      await toggle.click()
       await assertStickyNumbering()
-      const numberingHeight = (await editor.locator('.numbering-bar').boundingBox()).height
-      if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-mobile.png`) })
-      assert.ok(numberingHeight <= 220, `expanded mobile numbering must leave room for the file list (${numberingHeight}px)`)
-      await editor.getByRole('button', { name: '调整季集', exact: true }).click()
-      await assertStickyNumbering()
-      await editor.getByRole('button', { name: '调整季集', exact: true }).click()
-      await assertStickyNumbering()
-      if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
-      assert.equal(await editor.locator('.confirmed-group').count(), 0)
-      await submit().click()
-      await editor.waitFor({ state: 'detached' })
+      assert.ok(Math.abs((await editor.locator('.numbering-bar').boundingBox()).height - numberingHeight) <= 1, '参数展开或折叠不改变吸顶高度')
+    }
+    const targets = await editor.locator('.numbering-bar button, .mapping-bar button, .mapping-bar input, .mapping-bar [role="combobox"], .episode-summary, .file-editors input, .path-toggle, .directory-toggle').evaluateAll(elements => elements.filter(el => el.getClientRects().length).map(el => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), height: el.getBoundingClientRect().height })))
+    assert.ok(targets.length > 0 && targets.every(target => target.height >= 44), `移动端触摸高度至少 44px：${JSON.stringify(targets)}`)
+    if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-sticky-numbering.png`) })
+    assert.equal(await editor.locator('.confirmed-group').count(), 0)
+    await submit().click()
+    await editor.waitFor({ state: 'detached' })
     assert.equal(count('/download-organize/files') - before, 61)
     assert.equal(calls.filter(c => c.endpoint.endsWith('/download-organize/batch/preview')).at(-1).body.resources.length, 60)
     assert.equal(await search.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
@@ -237,7 +268,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     const specBar = await search.getByRole('group', { name: '资源规格筛选' }).boundingBox()
     assert.ok(specBar.x >= 0 && specBar.x + specBar.width <= 320)
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-light.png`) })
-    passed.push('61 mixed resources prepare once; numbering pins without gaps or extra blur and staging stays visible and hit-testable through desktop/mobile wrapping and collapse; single batch request')
+    passed.push('61 mixed resources prepare once; only the compact toolbar pins, mapping and directories scroll away, staging remains hit-testable, mobile height stays within 68px across collapse; manual editing preserves selection; single batch request')
     // Escape cancels preparation and restores focus; navigation releases locks.
     await page.evaluate(() => document.documentElement.classList.add('dark'))
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-dark.png`) })
@@ -315,7 +346,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await editor.locator('[data-organize-file]').getByRole('checkbox').isChecked(), true)
     await editor.locator('.organize-help > summary').click()
     await editor.getByText(/1 项单集按标题预览命名/).waitFor()
-    assert.equal(await editor.getByRole('button', { name: /^查看完整路径/ }).count(), 0)
+    assert.equal(await editor.getByRole('button', { name: /^(?:详情|收起)：完整路径 / }).count(), 0)
     assert.equal(await editor.locator('.confirmed-group').count(), 0)
     await submit().click()
     await editor.waitFor({ state: 'detached' })

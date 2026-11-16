@@ -166,6 +166,7 @@ onBeforeUnmount(() => { fieldsetObserver?.disconnect(); document.removeEventList
       :id="listboxID"
       popover="manual"
       role="listbox"
+      data-auto-scrollbar
       :aria-label="label"
       :style="panelStyle"
       class="select-menu-panel"

@@ -221,7 +221,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
         <div class="min-w-0"><h2 :id="headingID" class="text-base font-semibold">设置季集方案</h2><p class="numbering-muted mt-1 truncate text-xs">{{ title }}</p></div>
         <button type="button" aria-label="关闭季集方案" :disabled="saving" class="numbering-close" @click="close"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
       </header>
-      <div class="numbering-context">
+      <div class="numbering-context" data-auto-scrollbar>
         <p class="numbering-muted text-xs leading-5">应用于本剧的详情、入库、追更与整理；不改名或移动文件。请核对 Emby 资源编号。</p>
         <p v-if="choices" class="numbering-current"><span class="numbering-muted">当前生效：</span>{{ numberingLabel(choices.current) }}<span v-if="choices.current.groupId && choices.current.savedAt" class="numbering-muted numbering-saved-at">已保存 {{ new Date(choices.current.savedAt * 1000).toLocaleString('zh-CN') }}</span></p>
         <button v-if="loadFailed || conflict || choices?.groupsError || choices?.defaultError" type="button" class="numbering-text-button" :disabled="loading || saving" @click="load">重新读取</button>
@@ -235,7 +235,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
           <div class="numbering-grid">
             <section :id="`${panelID}-choices`" class="numbering-choice-panel" :hidden="isMobile && mobilePanel !== 'choices'" :role="isMobile ? 'tabpanel' : undefined" :aria-labelledby="`${panelID}-choices${isMobile ? '-tab' : '-heading'}`">
               <h3 :id="`${panelID}-choices-heading`" class="numbering-panel-heading">选择方案<span class="numbering-muted font-normal">{{ candidates.length + 1 }} 项</span></h3>
-              <fieldset ref="choiceScroll" class="numbering-options numbering-scroll" :aria-labelledby="`${panelID}-choices-heading`" :disabled="saving || conflict">
+              <fieldset ref="choiceScroll" class="numbering-options numbering-scroll" data-auto-scrollbar :aria-labelledby="`${panelID}-choices-heading`" :disabled="saving || conflict">
               <label class="numbering-option" :class="{ selected: draftID === '' }">
                 <input type="radio" :name="radioName" value="" :checked="draftID === ''" @change="select('')" />
                 <span class="min-w-0"><span class="block text-sm font-medium">TMDB 默认季集</span><span class="numbering-muted mt-1 block text-xs">{{ choices.defaultError ? '默认季集资料暂时不可用' : `${choices.defaultSeasons.filter(s => s.number > 0).length} 季，共 ${choices.defaultEpisodeCount} 集` }}</span><span v-if="!choices.current.groupId" class="numbering-current-badge">当前生效</span></span>
@@ -248,7 +248,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
               </fieldset>
             </section>
             <section :id="`${panelID}-preview`" class="numbering-preview" :hidden="isMobile && mobilePanel !== 'preview'" :role="isMobile ? 'tabpanel' : 'region'" :aria-labelledby="`${panelID}-preview${isMobile ? '-tab' : '-heading'}`" :aria-busy="previewLoading">
-              <div ref="previewScroll" class="numbering-preview-content numbering-scroll" tabindex="0" aria-label="分集编排内容">
+              <div ref="previewScroll" class="numbering-preview-content numbering-scroll" data-auto-scrollbar tabindex="0" aria-label="分集编排内容">
               <div class="numbering-preview-heading">
                 <div class="min-w-0"><p class="numbering-muted mb-1 text-[11px]">正在预览</p><h3 :id="`${panelID}-preview-heading`" class="break-words text-sm font-semibold">{{ selectedName }}</h3><p v-if="draftID && preview && !previewLoading" class="numbering-muted mt-1 text-xs">{{ preview.group.groupCount }} 组，共 {{ preview.group.episodeCount }} 集</p></div>
                 <button v-if="draftID && isCurrent" type="button" class="numbering-text-button" :disabled="previewLoading || saving || conflict" @click="checkUpstream">查看 TMDB 更新</button>
@@ -314,7 +314,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 .numbering-choice-panel, .numbering-preview { @apply flex min-h-0 min-w-0 flex-col; }
 .numbering-choice-panel[hidden], .numbering-preview[hidden] { display: none; }
 .numbering-panel-heading { @apply flex shrink-0 items-center justify-between gap-2 px-1 pb-3 text-xs font-semibold; }
-.numbering-scroll { @apply min-h-0 overflow-y-auto; overscroll-behavior: contain; scrollbar-gutter: stable; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
+.numbering-scroll { @apply min-h-0 overflow-y-auto; overscroll-behavior: contain; scrollbar-gutter: stable; -webkit-overflow-scrolling: touch; }
 .numbering-options { @apply m-0 min-w-0 flex-1 space-y-2 border-0 p-1 pt-0; }
 .numbering-option { @apply flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors; background: var(--search-dialog-card); border-color: var(--search-dialog-card-border); overflow-wrap: anywhere; }
 .numbering-option:hover { background: var(--search-dialog-secondary-hover); }

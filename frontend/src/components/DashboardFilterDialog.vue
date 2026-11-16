@@ -39,7 +39,7 @@ onBeforeUnmount(() => { dialog.value?.close(); dialogLifecycle.release() })
           <div><h2 id="dashboard-filter-title">筛选影视</h2><p id="dashboard-filter-summary">{{ summary || '选择题材、地区与年份' }}</p></div>
           <button type="button" autofocus class="catalog-icon-button" aria-label="关闭筛选" @click="close"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
-        <div class="catalog-dialog-body">
+        <div class="catalog-dialog-body" data-auto-scrollbar>
           <fieldset><legend>题材</legend><div class="catalog-dialog-options">
             <button type="button" class="catalog-chip" :aria-pressed="draftGenre === ''" @click="draftGenre = ''">全部</button>
             <button v-for="item in genres" :key="item.id" type="button" class="catalog-chip" :aria-pressed="draftGenre === String(item.id)" @click="draftGenre = String(item.id)">{{ item.name }}</button>

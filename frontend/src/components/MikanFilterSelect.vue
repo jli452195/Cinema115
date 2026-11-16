@@ -14,7 +14,7 @@ function choose(value: string) {
 </script>
 
 <template>
-  <nav ref="strip" :aria-label="label" :aria-busy="disabled" class="mikan-filter-strip">
+  <nav ref="strip" :aria-label="label" :aria-busy="disabled" class="mikan-filter-strip" data-auto-scrollbar>
     <div class="mikan-filter-indicator" :style="indicatorStyle" aria-hidden="true"></div>
     <button v-for="option in options" :key="option.value" type="button" :aria-pressed="modelValue === option.value" :aria-disabled="disabled" :title="option.label" class="mikan-filter-chip" @click="choose(option.value)">
       <span>{{ option.label }}</span>
@@ -23,9 +23,7 @@ function choose(value: string) {
 </template>
 
 <style scoped>
-.mikan-filter-strip { position: relative; isolation: isolate; display: flex; min-width: 0; gap: 6px; padding: 2px; overflow-x: auto; scrollbar-color: var(--search-dialog-outline) transparent; scrollbar-width: thin; }
-.mikan-filter-strip::-webkit-scrollbar { height: 4px; }
-.mikan-filter-strip::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--search-dialog-outline); }
+.mikan-filter-strip { position: relative; isolation: isolate; display: flex; min-width: 0; gap: 6px; padding: 2px; overflow-x: auto; }
 .mikan-filter-indicator { position: absolute; z-index: 1; border-radius: 10px; background: var(--search-dialog-action-background); pointer-events: none; }
 .mikan-filter-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; white-space: nowrap; cursor: pointer; }
 .mikan-filter-chip::before { position: absolute; z-index: 0; inset: 6px 0; border-radius: inherit; background: var(--search-dialog-card); pointer-events: none; content: ''; }

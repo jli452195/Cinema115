@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <nav v-bind="$attrs" ref="navigation" class="management-navigation" :class="{ 'is-collapsed': isDockMode, 'is-mobile': mobile, 'is-transitioning': transitioning }" aria-label="功能导航" @scroll.passive="onScroll" @keydown="resetDock" @keydown.esc="hideTooltip" @pointermove="onPointerMove" @pointerleave="leaveDock" @focusin="focusDock">
+  <nav v-bind="$attrs" ref="navigation" class="management-navigation" data-auto-scrollbar :class="{ 'is-collapsed': isDockMode, 'is-mobile': mobile, 'is-transitioning': transitioning }" aria-label="功能导航" @scroll.passive="onScroll" @keydown="resetDock" @keydown.esc="hideTooltip" @pointermove="onPointerMove" @pointerleave="leaveDock" @focusin="focusDock">
     <section v-for="group in groups" :key="group.label" class="management-nav-group" :aria-label="group.label">
       <p class="management-nav-label">{{ group.label }}</p>
       <div v-for="link in group.links" :key="link.to" class="management-nav-item" :data-section="link.to">
@@ -133,25 +133,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .management-navigation {
-  --navigation-scrollbar-thumb: transparent;
   min-height: 0;
   flex: 1;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--navigation-scrollbar-thumb) transparent;
   padding: 14px 10px 16px;
   color: rgb(var(--color-slate-600));
 }
-/* WebKit 使用 4px 无轨道滑块与隐藏按钮，标准浏览器降级为细滚动条并通过局部变量控制滑块显隐 */
-@supports selector(::-webkit-scrollbar) { .management-navigation { scrollbar-width: auto; scrollbar-color: auto; } }
-.management-navigation:not(.is-collapsed):has(:focus-visible) { --navigation-scrollbar-thumb: var(--scrollbar-thumb); }
-@media (hover: hover) { .management-navigation:not(.is-collapsed):hover { --navigation-scrollbar-thumb: var(--scrollbar-thumb); } }
-.management-navigation::-webkit-scrollbar { width: 4px; height: 4px; background: transparent; }
-.management-navigation::-webkit-scrollbar-track, .management-navigation::-webkit-scrollbar-corner { background: transparent; }
-.management-navigation::-webkit-scrollbar-thumb { background: var(--navigation-scrollbar-thumb); border-radius: 9999px; }
-.management-navigation::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
 .management-nav-group + .management-nav-group { margin-top: 18px; }
 .management-nav-label { margin: 0 12px 8px; color: rgb(var(--color-slate-500)); font-size: 11px; font-weight: 500; }
 .management-nav-item + .management-nav-item { margin-top: 4px; }

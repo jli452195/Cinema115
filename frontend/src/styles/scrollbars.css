@@ -1,0 +1,39 @@
+/* 普通输入与未接入的区域保留原有细滚动条，触屏使用系统指示条。 */
+@media (hover: hover) and (pointer: fine) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 999px; }
+
+  /* 每个容器独立设值，父层激活不会让嵌套列表同时亮起。 */
+  :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *)) {
+    --auto-scrollbar-thumb: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: var(--auto-scrollbar-thumb) transparent;
+  }
+  :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):is([data-scrollbar-state], :focus-visible, :has(:focus-visible)) {
+    --auto-scrollbar-thumb: var(--scrollbar-thumb-active);
+  }
+  :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):is([data-scrollbar-state='edge'], [data-scrollbar-state='dragging']) {
+    --auto-scrollbar-thumb: var(--scrollbar-thumb-hover);
+  }
+  /* Chromium 标准属性非 auto 时会覆盖伪元素，显式退让后才能去掉箭头与宽轨道。 */
+  @supports selector(::-webkit-scrollbar) {
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *)) { scrollbar-width: auto; scrollbar-color: auto; }
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *))::-webkit-scrollbar { width: 4px; height: 4px; background: transparent; }
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *))::-webkit-scrollbar-track,
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *))::-webkit-scrollbar-corner { background: transparent; }
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *))::-webkit-scrollbar-thumb { background: var(--auto-scrollbar-thumb); border-radius: 999px; }
+    :is(html[data-auto-scrollbar], html [data-auto-scrollbar]):not(:where(textarea, select, pre, code, .cm-editor, .cm-editor *, [data-scrollbar='native'], [data-scrollbar='native'] *))::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  }
+}
+
+/* 低视力与减少透明偏好保留常驻指示；强制色由系统提供可读颜色。 */
+@media (prefers-contrast: more), (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root, :root.dark { --scrollbar-thumb-active: rgb(var(--content-secondary)); --scrollbar-thumb-hover: rgb(var(--content-secondary)); }
+  :is(html[data-auto-scrollbar], html [data-auto-scrollbar]) { --auto-scrollbar-thumb: rgb(var(--content-secondary)); scrollbar-color: auto; }
+}
+@media (forced-colors: active) {
+  :root, :root.dark { --scrollbar-thumb-active: CanvasText; --scrollbar-thumb-hover: CanvasText; }
+  :is(html[data-auto-scrollbar], html [data-auto-scrollbar]) { --auto-scrollbar-thumb: CanvasText; }
+}

@@ -253,7 +253,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="re0-body" :aria-busy="phase === 'search'">
+        <div class="re0-body" data-auto-scrollbar :aria-busy="phase === 'search'">
           <div class="re0-results-heading">
             <h3>115 资源</h3>
             <span v-if="result" role="status">{{ query.trim() ? '显示 ' + filtered.length + ' / ' + result.items.length + ' 个版本' : result.items.length + ' 个版本' }}</span>

@@ -44,6 +44,10 @@
 dialog.floating-surface::backdrop,
 .media-search-dialog::backdrop { background: var(--floating-surface-scrim); }
 
+/* 子窗口打开时退让父层外壳，关闭后直接呈现原位置，无需重建内容。 */
+dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog) { visibility: hidden; }
+dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdrop { background: transparent; }
+
 /* A non-modal picker must not dim or intercept the rest of the page. */
 .floating-surface[popover]::backdrop { background: transparent; pointer-events: none; }
 

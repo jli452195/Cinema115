@@ -203,9 +203,12 @@ const gate = () => {
     assert.equal(calls.filter(c => c.endpoint.endsWith('/retry')).length, retryCount)
     await detail.getByRole('spinbutton', { name: '集', exact: true }).fill('13')
     assert.equal(await detail.evaluate(el => el.scrollWidth > el.clientWidth + 1), false)
-    assert.ok((await detail.getByRole('button', { name: '重试此任务', exact: true }).boundingBox()).x >= 0)
+    assert.ok((await detail.getByRole('button', { name: '保存并重试此任务', exact: true }).boundingBox()).x >= 0)
     await page.screenshot({ path: 'test-results/media-organize-task-narrow.png' })
     await detail.getByRole('button', { name: '关闭整理详情', exact: true }).click()
+    const leaveDialog = page.getByRole('dialog', { name: '放弃未保存的整理修改？', exact: true })
+    await leaveDialog.getByRole('button', { name: '放弃修改并离开', exact: true }).click()
+    await detail.waitFor({ state: 'hidden' })
     await page.setViewportSize({ width: 390, height: 844 })
     await tab('整理规则').click()
     rule.attachmentGraceSeconds = 1200; state.rules = [copy(rule)]

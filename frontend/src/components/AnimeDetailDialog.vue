@@ -101,7 +101,7 @@ onBeforeUnmount(() => {
         <span v-else class="text-xs text-slate-500 dark:text-slate-400">Bangumi 篇章资料</span>
         <button ref="closeButton" type="button" class="anime-icon-button" aria-label="关闭篇章详情" @click="emit('close')"><IconX :size="20" aria-hidden="true" /></button>
       </header>
-      <div ref="body" class="anime-detail-body">
+      <div ref="body" class="anime-detail-body" data-auto-scrollbar>
         <div class="anime-detail-heading">
           <div class="anime-detail-poster">
             <img v-if="animeImageURL(subject.coverUrl) && !imageFailed" :src="animeImageURL(subject.coverUrl)" :alt="subject.title" referrerpolicy="no-referrer" @error="imageFailed = true" />

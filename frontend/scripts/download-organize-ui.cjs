@@ -1,5 +1,5 @@
 const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
-// All network APIs are mocked. This test never submits a real 115 download.
+// 所有网络接口均使用内存响应，不会提交真实的 115 下载。
 const assert = require('node:assert/strict')
 const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
@@ -20,6 +20,20 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock'); localStorage.setItem('cinema115-theme', 'light') })
     const page = await context.newPage(); page.setDefaultTimeout(8000)
     page.on('pageerror', e => errors.push(e.message))
+    async function expectSubtitleErrorToast(title, message) {
+      const notification = page.locator('[data-sonner-toast][data-type="error"]:not([data-removed="true"])').filter({ has: page.getByText(title, { exact: true }) })
+      await notification.getByText(message, { exact: true }).waitFor()
+      assert.equal(await notification.count(), 1, '一次读取失败只显示一条活动错误通知')
+      await page.waitForFunction(title => {
+        const notification = [...document.querySelectorAll('[data-sonner-toast][data-type="error"]:not([data-removed="true"])')].find(element => element.querySelector('[data-title]')?.textContent === title)
+        if (!notification) return false
+        const bounds = notification.getBoundingClientRect()
+        return notification.closest('dialog.subtitle-picker') && bounds.width > 0 && bounds.top >= 0 && bounds.bottom <= innerHeight && bounds.left >= 0 && bounds.right <= innerWidth
+      }, title)
+      assert.equal(await notification.evaluate(element => element.contains(document.activeElement)), false, '错误通知不抢走字幕编辑焦点')
+      await notification.getByRole('button', { name: '关闭提示', exact: true }).click()
+      await notification.waitFor({ state: 'detached' })
+    }
     const subtitleRow = (dialog, name) => dialog.locator('.match-files > li').filter({ has: page.getByRole('checkbox', { name: `选择字幕 ${name}`, exact: true }) })
     const selectedSubtitles = (dialog, count) => dialog.locator('.picker-selection > span').filter({ hasText: new RegExp(`已选\\s*${count}\\s*个`) }).waitFor()
     const subtitleStats = (dialog, count, unmatched) => dialog.locator('.picker-stats > span').filter({ hasText: new RegExp(`已匹配\\s*${unmatched === undefined ? '\\d+' : count - unmatched}\\s*/\\s*${count}$`) }).waitFor()
@@ -47,7 +61,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     let loseResponse = true, conflict = false, holdJob = false, releaseJob, failFiles = false, releaseNaming, namingRevision = 3, staleTemplate = false, renamed = false, subtitleError = false, nestedMode = false
     let shareConfigured = false, omitOrganizeDirectory = false, loseAttachmentResponse = localSubtitleMode
     let japanese = true, animation = true, emptySubtitles = localSubtitleMode, assrtConfigured = assrtMode
-    let assrtFail = false, assrtDownloadFail = false, releaseLibrary
+    let assrtFail = false, assrtDownloadFail = false, libraryFilesFail = false, releaseLibrary
     const files = [
       { id: 'show/E027-E28.mkv', name: 'E027-E28.mkv', sourcePath: '/show/E027-E28.mkv', episode: 27, endEpisode: 28 },
       { id: 'show/E030.mkv', name: 'E030.mkv', sourcePath: '/show/E030.mkv', episode: 30 },
@@ -88,7 +102,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         const bytes = Buffer.from(zipSync({ '01.chs.ass': strToU8('[Script Info]\nTitle: Assrt'), '01.cht.ass': strToU8('[Script Info]\nTitle: Assrt CHT'), 'font.ttf': strToU8('font') }))
         await route.fulfill({ status: 200, contentType: 'application/octet-stream', headers: { 'Content-Length': String(bytes.length), 'X-Subtitle-Filename': encodeURIComponent('测试字幕.zip') }, body: bytes }); return
       }
-      else if (endpoint === '/api/admin/subtitles/versions/v1/files') data = { files: ['01.sc.ass', '01.tc.ass', 'Show [SP01].chs.ass'].map((name, i) => ({ path: `subs_list/animation/2003/Show/BD/Group/${name}`, name, sha: String(i + 1).repeat(40), revision: 'a'.repeat(40), size: 100 })) }
+      else if (endpoint === '/api/admin/subtitles/versions/v1/files') {
+        if (libraryFilesFail) { status = 502; data = { error: '模拟字幕版本读取失败' } }
+        else data = { files: ['01.sc.ass', '01.tc.ass', 'Show [SP01].chs.ass'].map((name, i) => ({ path: `subs_list/animation/2003/Show/BD/Group/${name}`, name, sha: String(i + 1).repeat(40), revision: 'a'.repeat(40), size: 100 })) }
+      }
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
       else if (endpoint.endsWith('/dmhy/search')) data = { items: Array.from({ length: 15 }, (_, i) => {
         const r = resource(i + 1)
@@ -147,13 +164,23 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(count('/download-organize/files'), 0)
     const row = list.locator(':scope > li').first()
     assert.equal(await page.getByRole('link', { name: '下载种子', exact: true }).count(), 0)
+    const searchDialog = page.locator(isGying ? 'dialog.gy-dialog' : 'dialog.mikan-dialog')
     await open(row)
     const panel = page.getByRole('region', { name: '下载并整理映射' })
     const organizeDialog = page.locator('dialog.anime-floating-organize')
     const fileRow = index => organizeDialog.locator(`[data-organize-file=${JSON.stringify(files[index].id)}]`)
     const stagedRow = index => organizeDialog.locator('.confirmation-zone li').filter({ has: page.getByText(files[index].name, { exact: true }) })
     async function stashSelection() {
+      const summary = await organizeDialog.locator('.submit-summary > strong').innerText()
+      const total = Number(summary.match(/\d+/)[0])
       await organizeDialog.getByRole('button', { name: /^暂存这 [1-9]\d* 项$/ }).click()
+      await organizeDialog.locator('.numbering-bar').waitFor({ state: 'detached' })
+      assert.equal(await organizeDialog.locator('.mapping-bar').count(), 0)
+      await organizeDialog.locator('.submit-summary > strong').getByText(summary, { exact: true }).waitFor()
+      await organizeDialog.locator('.submit-composition').getByText(`已暂存 ${total} · 当前勾选 0`, { exact: true }).waitFor()
+      assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).isEnabled(), true)
+      assert.equal(await organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true }).isEnabled(), true)
+      assert.equal(await organizeDialog.locator('.confirmed-group > details > summary').evaluateAll(elements => elements.includes(document.activeElement)), true, '暂存后焦点移到整理清单')
     }
     async function editStaged() {
       const buttons = organizeDialog.getByRole('button', { name: /^退回编辑/ })
@@ -163,11 +190,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       const details = stagedRow(index).locator('xpath=ancestor::details')
       if (!await details.evaluate(el => el.open)) await details.locator('summary').click()
     }
-    const searchDialog = page.locator(isGying ? 'dialog.gy-dialog' : 'dialog.mikan-dialog')
     await panel.waitFor()
     assert.equal(await page.locator('dialog[open]').count(), 2)
-    assert.equal(await list.isVisible(), true)
-    assert.equal(await searchDialog.locator(isGying ? '.gy-resource-list' : '.mikan-search-form').isVisible(), true)
+    assert.equal(await list.isVisible(), false)
+    assert.equal(await searchDialog.locator(isGying ? '.gy-resource-list' : '.mikan-search-form').isVisible(), false)
+    assert.equal(await searchDialog.getAttribute('data-dialog-covered'), '', '父层保留 DOM 并退让视觉')
     for (let i = 0; i < 6; i++) {
       await page.keyboard.press('Tab')
       assert.equal(await organizeDialog.evaluate(el => el.contains(document.activeElement)), true)
@@ -206,13 +233,16 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     passed.push('no filter toolbar; excluding all directories keeps recovery accessible; keyboard restore remains unselected without requests or dialog resize')
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isDisabled(), true)
-    assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).isDisabled(), true, 'subtitle mapping still requires selected videos')
+    assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).isDisabled(), true, 'subtitle mapping still requires selected videos')
+    assert.equal(await organizeDialog.locator('.numbering-bar').count(), 0)
+    assert.equal(await organizeDialog.locator('.mapping-bar').count(), 0)
+    await organizeDialog.locator('.selection-prompt').waitFor()
     if (assrtMode) {
       const second = fileRow(1)
       await second.getByRole('checkbox').check()
       await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
       assert.equal(await organizeDialog.locator('.confirmed-group').count(), 0)
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       const picker = page.locator('dialog.subtitle-picker'), result = picker.getByRole('button', { name: /百变之星 BD 中文字幕/ })
       await result.waitFor()
       await picker.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
@@ -220,6 +250,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assrtDownloadFail = true
       await result.click()
       await picker.getByRole('alert').filter({ hasText: '射手下载配额不足' }).waitFor()
+      await expectSubtitleErrorToast('读取字幕失败', '射手下载配额不足，请稍后重试')
       assert.equal(await picker.locator('.match-files > li').count(), 0)
       assrtDownloadFail = false
       await result.click()
@@ -265,7 +296,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await picker.getByRole('button', { name: '使用字幕', exact: true }).click()
       await organizeDialog.getByText('外部字幕 1 个 · 射手网 1 个', { exact: true }).waitFor()
 
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await selectedSubtitles(picker, 1)
       await subtitleSearch(picker)
       await result.click()
@@ -274,7 +305,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await picker.getByRole('button', { name: '使用字幕', exact: true }).click()
       await page.setViewportSize({ width: 1440, height: 1000 })
 
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await subtitleSearch(picker)
       await picker.getByRole('button', { name: /百变之星.*2003/ }).click()
       await subtitleManagement(picker)
@@ -308,7 +339,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
       assert.equal(await organizeDialog.getByRole('button', { name: '导入字幕', exact: true }).count(), 0, 'one outer subtitle entry')
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await imported.getByText('没有找到匹配字幕', { exact: true }).waitFor()
       assert.equal(await imported.getByRole('button', { name: '导入字幕', exact: true }).first().isEnabled(), true)
       const artifact = path.join(os.tmpdir(), 'cinema115-local-subtitles-ui')
@@ -351,7 +382,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await editStaged()
       await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('2')
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await editSubtitle(imported, '01.tc.ass')
       assert.equal(await inputValue(subtitleRow('01.tc.ass').getByRole('combobox', { name: /对应视频/ })), files[0].id)
       await editSubtitle(imported, '01.sc.ass')
@@ -364,7 +395,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await editStaged()
       await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('30')
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       assert.equal(await page.locator('dialog[open]').count(), 3)
       const archive = zipSync({
         '字幕组/Show [30].chs.ass': strToU8('[Script Info]\nTitle: first'),
@@ -383,9 +414,12 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await special.getByRole('checkbox').check()
       await picker().setInputFiles(zip)
       await imported.getByText(/已跳过 3 个重复字幕/).waitFor()
-      // Invalid archives leave all mappings intact; RAR/7z use the real WASM worker.
+      // 损坏压缩包立即显示全局通知，保留原有匹配；RAR/7z 使用真实 WASM 工作线程。
+      await imported.locator('.anime-floating-body').evaluate(element => { element.scrollTop = 0 })
       await picker().setInputFiles({ name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('broken') })
-      await imported.getByRole('alert').waitFor()
+      const archiveError = imported.locator('.picker-error')
+      await archiveError.waitFor()
+      await expectSubtitleErrorToast('读取字幕失败', await archiveError.innerText())
       assert.equal(await imported.locator('.match-files > li').count(), 3)
       for (const [index, name] of ['normal.7z', 'normal-v5.rar'].entries()) {
         await picker().setInputFiles(path.join(__dirname, '../tests/fixtures/subtitle-archives', name))
@@ -421,12 +455,12 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await page.waitForTimeout(700)
       assert.notEqual(await external.locator('.subtitle-target').first().innerText(), beforeName)
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       assert.equal(await imported.locator('.match-files > li').count(), 4, 'only selected local files are retained')
       await page.keyboard.press('Escape')
       await imported.waitFor({ state: 'detached' })
       assert.equal(await organizeDialog.isVisible(), true)
-      assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).evaluate(el => el === document.activeElement), true)
+      assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).evaluate(el => el === document.activeElement), true)
       await page.setViewportSize({ width: 1440, height: 1000 })
       const start = organizeDialog.getByRole('button', { name: '下载并自动整理', exact: true })
 
@@ -452,8 +486,14 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await second.getByRole('checkbox').check()
       await second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       const library = page.locator('dialog.subtitle-picker')
+      libraryFilesFail = true
+      await library.getByRole('button', { name: /百变之星.*2003/ }).click()
+      await library.locator('.picker-error').getByText('模拟字幕版本读取失败', { exact: true }).waitFor()
+      await expectSubtitleErrorToast('读取字幕版本失败', '模拟字幕版本读取失败')
+      assert.equal(await library.locator('.match-files > li').count(), 0, '版本读取失败保留原列表')
+      libraryFilesFail = false
       await library.getByRole('button', { name: /百变之星.*2003/ }).click()
       await selectedSubtitles(library, 1)
       assert.equal(await library.getByRole('checkbox').count(), 3)
@@ -474,9 +514,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await editSubtitle(library, '01.chs.ass')
       assert.equal(await inputValue(localRow('01.chs.ass').getByRole('textbox', { name: /版本/ })), 'Local')
       await library.getByRole('button', { name: '使用字幕', exact: true }).click()
-      await organizeDialog.getByText('，外部字幕 3 个', { exact: true }).waitFor()
+      await organizeDialog.locator('.submit-summary > span').getByText('外部字幕 3 个', { exact: true }).waitFor()
 
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await selectedSubtitles(library, 3)
       await editSubtitle(library, '01.chs.ass')
       assert.equal(await inputValue(localRow('01.chs.ass').getByRole('textbox', { name: /版本/ })), 'Local')
@@ -484,9 +524,9 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await library.getByRole('checkbox', { name: '选择字幕 01.sc.ass', exact: true }).uncheck()
       await closeSubtitleEditor(library)
       await page.keyboard.press('Escape')
-      await organizeDialog.getByText('，外部字幕 3 个', { exact: true }).waitFor()
+      await organizeDialog.locator('.submit-summary > span').getByText('外部字幕 3 个', { exact: true }).waitFor()
 
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await selectedSubtitles(library, 3)
       await editSubtitle(library, '01.chs.ass')
       assert.equal(await inputValue(localRow('01.chs.ass').getByRole('textbox', { name: /版本/ })), 'Local', 'cancel does not change saved selections')
@@ -495,7 +535,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await selectedSubtitles(library, 1)
       await library.getByRole('button', { name: '使用字幕', exact: true }).click()
       assert.equal(await library.count(), 0)
-      await organizeDialog.getByText('，外部字幕 1 个', { exact: true }).waitFor()
+      await organizeDialog.locator('.submit-summary > span').getByText('外部字幕 1 个', { exact: true }).waitFor()
       await editStaged()
       const external = second.locator('details.subtitle-details')
       await external.locator('summary').click()
@@ -506,7 +546,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.notEqual(await external.locator('.subtitle-target').innerText(), beforeName)
       const afterCalls = count('/subtitles/versions/v1/files')
       await second.getByRole('checkbox').uncheck()
-      assert.equal(await organizeDialog.getByText('，外部字幕 1 个', { exact: true }).count(), 0)
+      assert.equal(await organizeDialog.locator('.submit-summary > span').getByText('外部字幕 1 个', { exact: true }).count(), 0)
       await second.getByRole('checkbox').check()
       assert.equal(count('/subtitles/versions/v1/files'), afterCalls)
       await stashSelection()
@@ -517,7 +557,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
         await page.screenshot({ path: path.join(artifact, `organize-${width}-${theme}.png`) })
 
-        await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+        await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
         await subtitleSearch(library)
         await library.getByRole('button', { name: /百变之星.*2003/ }).click()
         // Saved associations survive target edits; reopening must not rematch them.
@@ -541,11 +581,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await page.getByRole('button', { name: searchLabel, exact: true }).click()
       await open(row)
       await panel.waitFor()
-      assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).isDisabled(), true, 'all works keep selection required')
+      assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).isDisabled(), true, 'all works keep selection required')
       assert.equal(count('/subtitles/search'), libraryCalls)
       await fileRow(1).getByRole('checkbox').check()
       await stashSelection()
-      await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+      await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
       await library.getByRole('button', { name: /百变之星.*2003/ }).waitFor()
       assert.equal(count('/subtitles/search'), libraryCalls + 1, 'non-Japanese animation also searches the animation catalogue')
       if (isGying) {
@@ -560,7 +600,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         await seriesVideo.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true }).fill('1')
         assert.equal(count('/subtitles/assrt/search'), beforeAssrt, 'selecting videos does not search subtitles')
         await stashSelection()
-        await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).click()
+        await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).click()
         const assrtResult = library.getByRole('button', { name: /百变之星 BD 中文字幕/ })
         await assrtResult.click()
         await selectedSubtitles(library, 2)
@@ -578,7 +618,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         await page.getByRole('button', { name: searchLabel, exact: true }).click()
         await open(row)
         await panel.waitFor()
-        const find = organizeDialog.getByRole('button', { name: '查找字幕', exact: true })
+        const find = organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true })
         assert.equal(await find.isDisabled(), true)
         await fileRow(0).getByRole('checkbox').check()
         await stashSelection()
@@ -633,11 +673,20 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       return
     }
     const first = fileRow(0), second = fileRow(1)
+    assert.equal(await first.getByRole('spinbutton').count(), 0, '未勾选文件默认收起季集输入')
+    assert.equal(await second.getByRole('spinbutton').count(), 0)
+    await first.getByRole('button', { name: '编辑季集 E027-E28.mkv', exact: true }).click()
+    assert.equal(await first.getByRole('checkbox').isChecked(), false, '手动展开季集不改变勾选')
+    assert.equal(await organizeDialog.locator('.numbering-bar').count(), 0)
     assert.equal(await second.getByRole('spinbutton', { name: 'E030.mkv 结束集', exact: true }).count(), 0)
     assert.equal(await first.getByRole('textbox', { name: 'E027-E28.mkv 自定义标记', exact: true }).count(), 0)
     assert.equal(await first.getByRole('spinbutton').count(), 2)
     assert.equal(await first.getByRole('spinbutton', { name: /结束集/ }).count(), 0)
     assert.equal(await first.getByRole('button', { name: /^更多编辑/ }).count(), 0)
+    await first.getByRole('spinbutton', { name: 'E027-E28.mkv 集', exact: true }).fill('27')
+    assert.equal(await first.getByRole('checkbox').isChecked(), false, '编辑季集不自动选择文件')
+    await first.getByRole('button', { name: '收起季集编辑 E027-E28.mkv', exact: true }).click()
+    assert.equal(await first.getByRole('spinbutton').count(), 0)
     const subtitleToggle = first.locator('.subtitle-details > summary')
     await subtitleToggle.focus(); await page.keyboard.press('Enter')
     assert.equal(await first.getByRole('checkbox').isChecked(), false)
@@ -647,10 +696,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await first.getByRole('checkbox').click()
     await page.getByText('待处理 3 个视频 · 已勾选 1 个', { exact: true }).waitFor()
     await first.getByRole('checkbox').click()
-    await first.getByText('整理后：百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
     assert.equal(await organizeDialog.getByRole('button', { name: /^暂存这 [1-9]\d* 项$/ }).isEnabled(), true)
     assert.equal(await page.getByRole('button', { name: '下载并自动整理', exact: true }).isEnabled(), true, 'checked files can be submitted without staging')
-    assert.equal(await organizeDialog.getByRole('button', { name: '查找字幕', exact: true }).isEnabled(), true, 'checked files can find subtitles without staging')
+    assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).isEnabled(), true, 'checked files can find subtitles without staging')
     if (shareMode) {
       assert.equal(await organizeDialog.locator('.confirmed-group').count(), 0)
       const shareButton = page.getByRole('button', { name: '115 分享 STRM', exact: true })
@@ -681,8 +730,17 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(await original.isDisabled(), true)
       releaseJob()
       await organizeDialog.waitFor({ state: 'detached' })
-      await page.getByText('任务完成', { exact: true }).waitFor()
-      assert.equal(await page.locator('[data-sonner-toast]').count(), 1, 'one batch uses one toast')
+      await page.getByText('下载整理完成', { exact: true }).waitFor()
+      const taskToasts = page.locator('[data-sonner-toast]').filter({ has: page.locator('.task-resource-summary') })
+      const activeTaskToasts = page.locator('[data-sonner-toast]:not([data-removed="true"])').filter({ has: page.locator('.task-resource-summary') })
+      const toastState = await page.locator('[data-sonner-toast]').evaluateAll(elements => elements.map(element => ({ title: element.querySelector('[data-title]')?.textContent, description: element.querySelector('[data-description]')?.textContent, removed: element.getAttribute('data-removed') })))
+      // 终态替换进度卡时，旧卡仍短暂留在 DOM；活动任务通知必须立即唯一。
+      assert.equal(await activeTaskToasts.count(), 1, `单批次只允许一条活动任务通知：${JSON.stringify(toastState)}`)
+      await page.waitForFunction(() => [...document.querySelectorAll('[data-sonner-toast][data-removed="true"]')].every(element => !element.querySelector('.task-resource-summary')))
+      assert.equal(await taskToasts.count(), 1, '旧进度卡退出后，单批次只保留一条任务通知')
+      assert.equal(await taskToasts.getAttribute('data-type'), 'success')
+      assert.equal(await taskToasts.locator('[data-title]').innerText(), '下载整理完成')
+      assert.equal(await taskToasts.locator('.task-resource-summary').innerText(), '测试作品 · 2 个视频')
       assert.equal(await page.getByRole('link', { name: '查看分享 STRM 日志', exact: true }).count(), 0)
       if (isGying) assert.equal(await row.locator('[data-gy-action="cloud-task"]').getAttribute('href'), '/115/download-organize')
       else {
@@ -705,7 +763,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await badRow.getByRole('alert').waitFor()
     await badRow.getByRole('checkbox').uncheck()
     assert.equal(count('/naming/media-preview'), namingCalls)
+    const editBadRow = badRow.getByRole('button', { name: '编辑季集 OVA.mkv', exact: true })
+    if (await editBadRow.count()) await editBadRow.click()
     await badRow.getByRole('spinbutton', { name: 'OVA.mkv 集', exact: true }).fill('1.5')
+    assert.equal(await badRow.getByRole('checkbox').isChecked(), false)
     await page.waitForRequest(req => req.url().endsWith('/naming/media-preview') && req.postDataJSON().files[2].episode === -1)
     await page.getByText('版本 3', { exact: true }).waitFor()
     assert.equal(await organizeDialog.getByRole('button', { name: /^暂存这 [1-9]\d* 项$/ }).isEnabled(), true)
@@ -726,10 +787,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await episode.fill('26')
     await page.waitForRequest(req => req.url().endsWith('/naming/media-preview') && req.postDataJSON().files[0].episode === 26)
     await episode.fill('25')
-    await first.getByText('整理后：百变之星.S01E25-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S01E25-测试组.mkv', { exact: true }).waitFor()
     releaseNaming()
     await episode.fill('27')
-    await first.getByText('整理后：百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files'), 1)
     passed.push('selection performs no naming requests, unselected invalid rows do not block, stale naming responses are discarded without cloud reads')
     await page.getByRole('combobox', { name: '目标季', exact: true }).click()
@@ -739,13 +800,13 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await page.getByRole('button', { name: '应用偏移（2 项）', exact: true }).click()
     assert.equal(await inputValue(first.getByRole('spinbutton', { name: 'E027-E28.mkv 集', exact: true })), '1')
     assert.equal(await inputValue(second.getByRole('spinbutton', { name: 'E030.mkv 集', exact: true })), '4')
-    await first.getByText('整理后：百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
     await first.getByText('整理后：百变之星.S02E01-测试组.zh-TW.default.srt', { exact: true }).waitFor()
     await episode.fill('2')
     await first.getByText('整理后：百变之星.S02E02-测试组.zh-CN.ass', { exact: true }).waitFor()
     await episode.fill('1')
     assert.equal(await first.locator('.subtitle-details').getAttribute('open'), '')
-    await first.getByText('整理后：百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
     assert.equal(count('/download-organize/preview'), 0)
     await page.getByText('1 个字幕未能唯一匹配，整理成功后清理', { exact: true }).click()
     await page.getByText('/subtitles/unmatched.ass', { exact: true }).waitFor()
@@ -778,7 +839,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await first.locator('.subtitle-details').getAttribute('open'), null)
     await episode.fill('1')
     conflict = false
-    await first.getByText('整理后：百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
+    await first.getByText('百变之星.S02E01-测试组.mkv', { exact: true }).waitFor()
     namingRevision = 4; staleTemplate = true
     await stashSelection()
     await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()
@@ -859,8 +920,15 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(await organizeDialog.getByRole('listbox', { name: '目标季', exact: true }).evaluate(el => el.scrollWidth <= el.clientWidth + 1 && el.getBoundingClientRect().left >= 0 && el.getBoundingClientRect().right <= innerWidth), true)
       await page.keyboard.press('Escape')
       assert.equal(await organizeDialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+      // 下拉控件松开后的缩放过渡结束后，再测量真实触控尺寸。
+      await page.waitForFunction(() => {
+        const controls = [...document.querySelectorAll('dialog.anime-floating-organize .mapping-bar input, dialog.anime-floating-organize .mapping-bar [role="combobox"]')]
+        return controls.length > 0 && controls.every(element => !element.getAnimations().some(animation => animation.playState === 'running') && element.getBoundingClientRect().height >= 44)
+      })
       const controls = await organizeDialog.locator('.mapping-bar input, .mapping-bar [role="combobox"]').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().height))
-      assert.ok(controls.every(height => height >= 36), 'compact mobile numbering controls stay usable')
+      assert.ok(controls.length > 0 && controls.every(height => height >= 44), `移动端季集参数触摸高度至少 44px：${JSON.stringify(controls)}`)
+      const buttons = await organizeDialog.locator('.numbering-bar button, .mapping-bar button, .subtitle-action, .file-editors input, .path-toggle, .directory-toggle, .directory-exclude').evaluateAll(elements => elements.filter(el => el.getClientRects().length).map(el => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), height: el.getBoundingClientRect().height })))
+      assert.ok(buttons.every(button => button.height >= 44), `移动端交互触摸高度至少 44px：${JSON.stringify(buttons)}`)
       await organizeDialog.getByRole('button', { name: '调整季集', exact: true }).click()
       assert.deepEqual(await organizeDialog.evaluate(el => [...el.querySelectorAll('*')].filter(node => ['auto', 'scroll'].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight).map(node => node.className)), ['anime-floating-body'])
       if (process.env.CINEMA_UI_SHOTS) await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, `${source}-organize-mobile-${theme}.png`) })
@@ -1040,7 +1108,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await panel.waitFor()
       const movieFile = fileRow(0)
       await movieFile.getByRole('checkbox').click()
-      await movieFile.getByText('整理后：百变之星 (2003)-测试组.mkv', { exact: true }).waitFor()
+      await movieFile.getByText('百变之星 (2003)-测试组.mkv', { exact: true }).waitFor()
       assert.equal(await page.getByRole('combobox', { name: '目标季', exact: true }).count(), 0)
       assert.equal(await organizeDialog.locator('.confirmed-group').count(), 0)
       await page.getByRole('button', { name: '下载并自动整理', exact: true }).click()

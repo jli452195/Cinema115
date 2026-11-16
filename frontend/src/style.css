@@ -61,6 +61,8 @@
     --workbench-toolbar-height: 4rem;
     --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top));
     --scrollbar-thumb: rgb(var(--color-slate-300));
+    --scrollbar-thumb-active: rgb(100 116 139 / 34%);
+    --scrollbar-thumb-hover: rgb(71 85 105 / 52%);
     --scrollbar-track: rgb(var(--color-slate-50));
     color-scheme: light;
   }
@@ -101,6 +103,8 @@
     --status-danger: 252 165 165;
     --status-danger-surface: 53 28 32;
     --scrollbar-thumb: rgb(var(--color-slate-600));
+    --scrollbar-thumb-active: rgb(184 196 212 / 32%);
+    --scrollbar-thumb-hover: rgb(203 213 225 / 48%);
     --scrollbar-track: rgb(var(--color-slate-950));
     --app-chrome-color: var(--color-slate-950);
     color-scheme: dark;
@@ -299,24 +303,4 @@ html.theme-reveal-pattern::view-transition-new(auth-pattern) {
   html.theme-reveal::view-transition-new(*) {
     animation: none !important;
   }
-}
-
-/* Include the root scrollbar and use the same sizing in both themes. */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
-}
-::-webkit-scrollbar {
-  height: 8px;
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background-color: var(--scrollbar-track);
-}
-::-webkit-scrollbar-thumb {
-  background-color: var(--scrollbar-thumb);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-corner {
-  background-color: var(--scrollbar-track);
 }

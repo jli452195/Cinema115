@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="bot-body">
+        <div class="bot-body" data-auto-scrollbar>
           <p v-if="checking" role="status" class="bot-notice bot-info">读取 Telegram 登录状态…</p>
           <div v-else-if="!state?.botConfigured || !state.hasSession" class="bot-setup">
             <h3>{{ state?.hasSession ? '先配置资源 Bot' : '登录 Telegram 后搜索资源' }}</h3>

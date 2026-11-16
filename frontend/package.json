@@ -60,6 +60,7 @@
     "test:subtitle-batch-ui": "node scripts/subtitle-batch-ui.cjs && node scripts/subtitle-list-ui.cjs",
     "test:subtitle-settings-ui": "node scripts/subtitle-settings-ui.cjs",
     "test:network-proxy-ui": "node scripts/network-proxy-ui.cjs",
+    "test:auto-hide-scrollbar-ui": "node scripts/auto-hide-scrollbar-ui.cjs",
     "test:search-settings-ui": "node scripts/search-settings-ui.cjs",
     "test:cd2-ui": "node scripts/cd2-ui.cjs",
     "test:telegram-relay-ui": "node scripts/telegram-relay-ui.cjs",

@@ -8,7 +8,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const requests = [], errors = [], passed = []
   let role = 'admin'
   try {
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: 'light', serviceWorkers: 'block' })
     await context.addInitScript(() => {
       if (!sessionStorage.getItem('account-menu-anonymous')) localStorage.setItem('admin_token', 'mock-account-menu-token')
       localStorage.setItem('cinema115-theme', 'light')
@@ -85,11 +85,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await menu().waitFor({ state: 'detached' })
     passed.push('personal-menu-only-with-keyboard-navigation-escape-outside-and-focus-close')
 
-    // Management destinations remain reachable through the left navigation and category cards.
+    // 管理入口按路径核验，追更入口可以携带默认筛选参数。
     await go('/movie/123'); await open()
     const desktopSidebar = page.getByRole('complementary', { name: '功能侧栏', exact: true })
     const drawer = page.getByRole('dialog', { name: '功能导航', exact: true })
-    for (const to of adminDestinations) assert.equal(await desktopSidebar.locator(`a[href="${to}"]`).count(), 1)
+    const sidebarPaths = await desktopSidebar.locator('a').evaluateAll(links => links.map(link => new URL(link.href).pathname))
+    for (const to of adminDestinations) assert.equal(sidebarPaths.filter(path => path === to).length, 1)
     await desktopSidebar.getByRole('link', { name: '用户与邀请', exact: true }).click()
     await page.waitForURL('**/users'); await drawer.waitFor({ state: 'detached' })
     await menu().waitFor({ state: 'detached' })
@@ -109,7 +110,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(new URL(page.url()).search, '?from=bookmark')
     assert.equal(new URL(page.url()).hash, '#users')
     await go('/emby')
-    assert.equal(await page.locator('.navigation-card').count(), 4)
+    assert.deepEqual(await page.locator('.navigation-card').evaluateAll(cards => cards.map(card => card.getAttribute('href'))), [
+      '/emby/library', '/emby/refresh', '/emby/deep-delete', '/emby/missing', '/emby/proxy', '/emby/cache',
+    ])
     assert.equal(await page.locator('.navigation-card[href="/users/list"]').count(), 0)
     await go('/follows/manage'); await open()
     assert.equal(await menu().getByRole('link', { name: '我的追更', exact: true }).getAttribute('aria-current'), null)
@@ -155,6 +158,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     const touchSession = await context.newCDPSession(page)
     for (const [index, activation] of ['mouse', 'touch', 'keyboard'].entries()) {
+      // 第三次从跟随系统切到浅色，先设为系统深色，确保本次确实发生视觉转场。
+      if (activation === 'keyboard') await page.emulateMedia({ colorScheme: 'dark' })
       await open()
       const themeButton = menu().locator('.theme-toggle')
       const bounds = await themeButton.boundingBox()

@@ -7,8 +7,10 @@ import './styles/dashboardFilters.css'
 import App from './App.vue'
 import { router } from './router'
 import { useTheme } from './composables/useTheme'
+import { installAutoHideScrollbars } from './lib/auto-hide-scrollbar'
 
 useTheme()
+installAutoHideScrollbars()
 
 
 const app = createApp(App).use(router)

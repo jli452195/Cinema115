@@ -114,7 +114,7 @@ onBeforeUnmount(() => {
       <button type="button" class="ae-icon ac-chapter-popover-close" aria-label="关闭 Bangumi 集数" @click="close(true)"><IconX :size="17" aria-hidden="true" /></button>
     </header>
     <p class="ac-chapter-popover-hint">Bangumi 收录信息，仅供参考。</p>
-    <div class="ac-chapter-popover-body" tabindex="0" aria-label="滚动查看 Bangumi 集数">
+    <div class="ac-chapter-popover-body" data-auto-scrollbar tabindex="0" aria-label="滚动查看 Bangumi 集数">
       <AnimeChapterEpisodes :token="token" :bangumi-id="bangumiId" :active="opened" />
     </div>
   </section>
@@ -128,7 +128,7 @@ onBeforeUnmount(() => {
 .ac-chapter-popover-header h3 { font-size: 13px; font-weight: 600; }
 .ac-chapter-popover-close { min-height: var(--ae-control-height); width: var(--ae-control-height); border-radius: 9px; }
 .ac-chapter-popover-hint { flex: none; margin: 1px 0 10px; color: var(--floating-surface-muted); font-size: 11px; line-height: 1.7; }
-.ac-chapter-popover-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.ac-chapter-popover-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .ac-chapter-popover-body:focus-visible { outline: 2px solid var(--ae-blue); outline-offset: 2px; }
 @media (max-width: 639px) {
   .ac-chapter-popover[popover] { padding: 12px; }

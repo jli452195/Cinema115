@@ -10,6 +10,7 @@ import { subtitleOutputConflicts } from '../utils/subtitlePresentation'
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
+import { useToast } from '../composables/useToast'
 import type { OrganizeRow } from '../types/organize'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
@@ -17,6 +18,7 @@ const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection
 type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
 type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
 const lifecycle = new AbortController()
+const toast = useToast()
 const query = ref(props.title), busy = ref<'' | 'search' | 'files'>(''), searchError = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref(props.version), showResults = ref(!props.library.length && !props.local.length)
 const dialogRef = ref<InstanceType<typeof AnimeFloatingDialog>>()
 const matchList = ref<InstanceType<typeof SubtitleMatchList>>()
@@ -128,7 +130,11 @@ async function choose(item: SubtitleVersion) {
       return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, version: saved?.version || '', videoId: saved ? props.videos.some(video => video.id === saved.videoId) ? saved.videoId : '' : match.videoId, selected: existing ? !!saved?.selected : props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: saved?.reason || match.reason }
     })]
     version.value = item; loadedVersion = item.id; showResults.value = false
-  } catch (reason) { if (!lifecycle.signal.aborted) searchError.value = reason instanceof Error ? reason.message : '读取版本失败' }
+  } catch (reason) {
+    if (lifecycle.signal.aborted) return
+    searchError.value = reason instanceof Error ? reason.message : '读取版本失败'
+    toast.error(searchError.value, { title: '读取字幕版本失败' })
+  }
   finally { busy.value = '' }
 }
 function libraryPairKey(id: string, name: string) { const pair = subtitlePairKey(name); return pair ? `library:${id}/${pair}` : '' }
@@ -166,7 +172,10 @@ async function read(files: File[], item?: AssrtSubtitle) {
   } catch (reason) {
     if (lifecycle.signal.aborted) return
     if (controller.signal.aborted) notice.value = '已取消读取，原列表已保留。'
-    else importError.value = reason instanceof Error ? reason.message : '读取字幕失败'
+    else {
+      importError.value = reason instanceof Error ? reason.message : '读取字幕失败'
+      toast.error(importError.value, { title: '读取字幕失败' })
+    }
   } finally { reading.value = false }
 }
 function selectFiles(event: Event) { const input = event.target as HTMLInputElement; const files = Array.from(input.files || []); input.value = ''; void read(files) }

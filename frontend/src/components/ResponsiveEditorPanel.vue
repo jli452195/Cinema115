@@ -10,7 +10,7 @@ const titleID = useId()
 <template>
   <aside v-if="desktop" class="editor-panel" :aria-labelledby="titleID">
     <header><span v-if="$slots.icon" class="editor-panel-icon"><slot name="icon" /></span><div><h2 :id="titleID">{{ title }}</h2><p v-if="description">{{ description }}</p></div></header>
-    <div class="editor-panel-body"><slot /></div>
+    <div class="editor-panel-body" data-auto-scrollbar><slot /></div>
   </aside>
   <P115SidePanel v-else :title="title" :content-key="contentKey" :description="description || ''" :busy="busy" narrow @close="$emit('close')">
     <template v-if="$slots.actions" #actions><slot name="actions" /></template>

@@ -20,16 +20,23 @@ export function restoreDialogFocus(target: HTMLElement | null | undefined) {
   return document.activeElement === target
 }
 
-interface DialogLayer { targets: HTMLElement[]; unlock: () => void }
+interface DialogLayer { targets: HTMLElement[]; unlock: () => void; covered: HTMLDialogElement[] }
 const layers: DialogLayer[] = []
+const coveredDialogs = new Map<HTMLDialogElement, number>()
 
-export function createDialogLifecycle() {
+export function createDialogLifecycle(options: { coverParent?: boolean } = {}) {
   let layer: DialogLayer | undefined
   function acquire(target = document.activeElement instanceof HTMLElement ? document.activeElement : null) {
     if (layer) return
     // 父弹窗先卸载时，子弹窗仍能沿原触发链恢复到页面上的控件。
     const fallback = layers.at(-1)?.targets || []
-    layer = { targets: [...new Set([...(target ? [target] : []), ...fallback])], unlock: lockBodyScroll() }
+    // 只退让父层的视觉，保留原生模态栈、滚动位置和未提交状态。
+    const covered = options.coverParent ? [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')] : []
+    for (const dialog of covered) {
+      coveredDialogs.set(dialog, (coveredDialogs.get(dialog) || 0) + 1)
+      dialog.setAttribute('data-dialog-covered', '')
+    }
+    layer = { targets: [...new Set([...(target ? [target] : []), ...fallback])], unlock: lockBodyScroll(), covered }
     layers.push(layer)
   }
   function release(returnFocus = true) {
@@ -39,6 +46,15 @@ export function createDialogLifecycle() {
     layer = undefined
     layers.splice(layers.indexOf(current), 1)
     current.unlock()
+    // 先恢复父层显示，再沿触发链恢复焦点；计数兼容三层嵌套和乱序卸载。
+    for (const dialog of current.covered) {
+      const remaining = (coveredDialogs.get(dialog) || 1) - 1
+      if (remaining) coveredDialogs.set(dialog, remaining)
+      else {
+        coveredDialogs.delete(dialog)
+        dialog.removeAttribute('data-dialog-covered')
+      }
+    }
     if (returnFocus && wasTopLayer) current.targets.some(restoreDialogFocus)
   }
   return { acquire, release }

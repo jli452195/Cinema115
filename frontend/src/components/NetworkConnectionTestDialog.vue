@@ -167,13 +167,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <P115ActionDialog title="服务连通性" size="wide" compact @close="handleClose">
+  <P115ActionDialog title="服务连通性" size="wide" surface="floating" compact @close="handleClose">
     <p class="np-test-top-note">
       {{ isFormSnapshot ? '当前表单测试，不保存配置；未启用代理或未勾选的服务直连。' : '使用已保存配置；未启用代理或未勾选的服务直连。' }}
     </p>
     <p v-if="configError" role="alert" class="np-feedback np-error mt-2">
       {{ configError }}
-      <button type="button" class="underline ml-3" @click="initConfig">重试</button>
+      <button type="button" class="np-test-retry" @click="initConfig">重试</button>
     </p>
     <p v-if="notice" role="status" class="np-feedback np-note mt-2">{{ notice }}</p>
     <p v-if="configLoading" role="status" class="np-muted mt-2">正在读取网络代理配置…</p>
@@ -203,8 +203,8 @@ onBeforeUnmount(() => {
             class="np-test-result"
             :class="testResults[service.id].result?.reachable ? 'is-success' : testResults[service.id].state === 'failed' || testResults[service.id].result ? 'is-failed' : ''"
           >
-            {{ testResults[service.id].state === 'running' ? '测试中…' : testResults[service.id].result ? (testResults[service.id].result!.reachable ? '连接成功' : '连接失败') : testResults[service.id].error }}
-            <span v-if="testResults[service.id].result?.status"> · HTTP {{ testResults[service.id].result!.status }}</span>
+            <span class="np-test-state">{{ testResults[service.id].state === 'running' ? '测试中…' : testResults[service.id].result ? (testResults[service.id].result!.reachable ? '网络可达' : '网络不可达') : testResults[service.id].error }}</span>
+            <span v-if="testResults[service.id].result?.status" class="np-test-http">HTTP {{ testResults[service.id].result!.status }}</span>
             <span v-if="testResults[service.id].result && !testResults[service.id].result!.reachable" class="np-test-message">{{ testResults[service.id].result!.message }}</span>
           </p>
           <span v-else class="np-muted">{{ service.id === 'telegram_user' ? '数据中心 TCP／代理隧道' : '未测试' }}</span>
@@ -243,52 +243,68 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.np-muted { color: rgb(var(--content-secondary)); font-size: 12px; line-height: 1.8; }
+.np-muted { color: var(--floating-surface-muted, rgb(var(--content-secondary))); font-size: 12px; line-height: 1.8; }
 .np-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 16px; border: 1px solid rgb(var(--line-control)); border-radius: 8px; background: rgb(var(--surface-card)); color: rgb(var(--content-primary)); font-size: 14px; font-weight: 500; transition: background-color 160ms; }
 .np-primary { border-color: rgb(var(--action-primary)); background: rgb(var(--action-primary)); color: rgb(var(--action-on-primary)); }
 .np-button:disabled { opacity: .5; cursor: not-allowed; }
 .np-button:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
 .np-feedback { border-radius: 8px; padding: 12px 16px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; }
-.np-feedback button { margin-left: 12px; }
-.np-error, .np-test-result.is-failed { color: rgb(var(--status-danger)); }
+.np-test-retry { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; margin-left: 12px; padding: 4px 8px; border-radius: 6px; text-decoration: underline; text-underline-offset: 3px; }
+.np-test-retry:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+.np-error, .np-test-result.is-failed .np-test-state, .np-test-result.is-failed .np-test-message { color: rgb(var(--status-danger)); }
 .np-error { background: rgb(var(--status-danger-surface)); }
 .np-note { color: rgb(var(--content-secondary)); background: rgb(var(--surface-page)); }
-.np-test-result.is-success { color: rgb(var(--status-success)); }
-.np-test-list { display: grid; gap: 8px; max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; margin: 12px 0 0; padding: 0; list-style: none; }
-.np-test-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto 36px; align-items: center; gap: 12px; min-height: 72px; padding: 12px; border-radius: 12px; background: rgb(var(--surface-page)); color: rgb(var(--content-primary)); }
-.np-test-logo { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0; border-radius: 8px; background: rgb(var(--surface-hover)); }
-.np-test-logo img { max-width: 28px; max-height: 28px; object-fit: contain; }
+.np-test-result.is-success .np-test-state { color: rgb(var(--status-success)); }
+/* 列表只绘制一层轻表面；普通行透明，长错误随内容自然增高。 */
+.np-test-list { margin: 12px 0 0; padding: 0; border: 1px solid rgb(var(--line-default) / .65); border-radius: 12px; background: rgb(var(--surface-card) / .45); list-style: none; }
+.np-test-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 36px; align-items: center; gap: 12px; min-height: 58px; padding: 8px 12px; color: rgb(var(--content-primary)); }
+.np-test-row + .np-test-row { border-top: 1px solid rgb(var(--line-default) / .65); }
+.np-test-logo { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; color: rgb(var(--content-primary)); }
+.np-test-logo img { max-width: 24px; max-height: 24px; object-fit: contain; }
 .np-test-info { min-width: 0; }
 .np-test-name { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
-.np-test-route { font-size: 12px; font-weight: 400; color: rgb(var(--content-secondary)); }
-.np-test-result { font-size: 12px; line-height: 1.7; color: rgb(var(--content-secondary)); overflow-wrap: anywhere; margin: 0; }
-.np-test-message { display: block; }
-.np-test-latency { font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.np-test-route { font-size: 12px; font-weight: 400; color: var(--floating-surface-muted, rgb(var(--content-secondary))); }
+.np-test-result { font-size: 12px; line-height: 1.5; color: var(--floating-surface-muted, rgb(var(--content-secondary))); overflow-wrap: anywhere; margin: 0; }
+.np-test-state, .np-test-message { white-space: pre-wrap; }
+.np-test-http { margin-inline-start: 8px; color: var(--floating-surface-muted, rgb(var(--content-secondary))); white-space: nowrap; }
+.np-test-message { display: block; margin-top: 2px; }
+.np-test-latency { justify-self: end; text-align: right; font-size: 13px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .np-test-action { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; color: rgb(var(--content-secondary)); border: none; background: transparent; cursor: pointer; }
 .np-test-action:disabled { opacity: .5; cursor: not-allowed; }
 .np-test-action:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
 .np-spin { animation: np-spin 1s linear infinite; }
 @keyframes np-spin { to { transform: rotate(360deg); } }
 /* 连接测试紧凑模式顶部与底部说明及操作栏 */
-.np-test-top-note { color: rgb(var(--content-secondary)); font-size: 12px; line-height: 18px; margin: 0; }
+.np-test-top-note { color: var(--floating-surface-muted, rgb(var(--content-secondary))); font-size: 12px; line-height: 18px; margin: 0; }
 .np-test-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
-.np-test-footer-note { flex: 1 1 auto; min-width: 0; margin: 0; color: rgb(var(--content-secondary)); font-size: 12px; line-height: 18px; }
+.np-test-footer-note { flex: 1 1 auto; min-width: 0; margin: 0; color: var(--floating-surface-muted, rgb(var(--content-secondary))); font-size: 12px; line-height: 18px; }
 .np-test-footer-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
 @media (hover: hover) {
   .np-button:not(:disabled):hover { background: rgb(var(--surface-hover)); }
   .np-primary:not(:disabled):hover { border-color: rgb(var(--action-primary-hover)); background: rgb(var(--action-primary-hover)); }
   .np-test-action:not(:disabled):hover { color: rgb(var(--selection-content)); background: rgb(var(--selection-surface)); }
 }
+@media (max-width: 639px), (pointer: coarse) {
+  .np-button, .np-test-retry { min-width: 44px; min-height: 44px; }
+  .np-test-row { grid-template-columns: 28px minmax(0, 1fr) auto 44px; }
+  .np-test-action { width: 44px; height: 44px; }
+}
 @media (max-width: 639px) {
-  .np-button { min-height: 44px; }
-  .np-test-row { grid-template-columns: 28px minmax(0, 1fr) auto 44px; gap: 8px; padding: 8px; }
-  .np-test-logo { width: 28px; height: 28px; }
-  .np-test-logo img { max-width: 24px; max-height: 24px; }
+  .np-test-row { grid-template-columns: 24px minmax(0, 1fr) auto 44px; gap: 8px; padding: 8px; }
+  .np-test-logo { width: 24px; height: 24px; }
   .np-test-name { font-size: 13px; }
   .np-test-latency { font-size: 12px; }
-  .np-test-action { width: 44px; height: 44px; }
   .np-test-footer { flex-direction: column; align-items: stretch; gap: 10px; }
-  .np-test-footer-actions { justify-content: flex-end; }
+  .np-test-footer-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
+/* 与公共外壳同步，在不支持模糊或用户要求清晰表面时退回实色。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .np-test-list { background: rgb(var(--surface-card)); border-color: rgb(var(--line-default)); }
+  .np-test-row + .np-test-row { border-color: rgb(var(--line-default)); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .np-test-list { background: rgb(var(--surface-card)); border-color: rgb(var(--line-control)); }
+  .np-test-row + .np-test-row { border-color: rgb(var(--line-control)); }
 }
 @media (prefers-reduced-motion: reduce) { .np-spin { animation: none; } .np-button { transition: none; } }
 </style>

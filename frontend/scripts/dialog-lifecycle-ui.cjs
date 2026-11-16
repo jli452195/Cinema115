@@ -61,6 +61,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       origin.hidden = false
       passed.push('原最上层恢复焦点，父弹窗先移除时保留页面触发链，重复关闭不抢焦点')
 
+      const coveredOuter = document.createElement('dialog'), coveredMiddle = document.createElement('dialog'), coveredTop = document.createElement('dialog')
+      coveredOuter.innerHTML = '<div style="height:80px;overflow:auto"><input value="尚未提交"><div style="height:600px"></div></div><button>打开整理</button>'
+      coveredMiddle.innerHTML = '<button>选择目录</button>'
+      coveredTop.innerHTML = '<button>目录确认</button>'
+      for (const element of [coveredOuter, coveredMiddle, coveredTop]) { element.className = 'floating-surface'; fixture.append(element) }
+      const coveredOuterLayer = createDialogLifecycle(), coveredMiddleLayer = createDialogLifecycle({ coverParent: true }), coveredTopLayer = createDialogLifecycle({ coverParent: true })
+      const outerBody = coveredOuter.querySelector('div'), outerTrigger = coveredOuter.querySelector('button'), middleTrigger = coveredMiddle.querySelector('button')
+      coveredOuterLayer.acquire(origin); coveredOuter.showModal(); outerBody.scrollTop = 123
+      coveredMiddleLayer.acquire(outerTrigger); coveredMiddle.showModal()
+      coveredTopLayer.acquire(middleTrigger); coveredTop.showModal()
+      check(getComputedStyle(coveredOuter).visibility === 'hidden' && getComputedStyle(coveredMiddle).visibility === 'hidden', '三层弹窗只显示最上层外壳')
+      check(outerBody.scrollTop === 123 && coveredOuter.querySelector('input').value === '尚未提交', '父层退让保留滚动和未提交输入')
+      coveredTop.close(); coveredTopLayer.release()
+      check(getComputedStyle(coveredMiddle).visibility === 'visible' && coveredOuter.hasAttribute('data-dialog-covered'), '关闭第三层后仅恢复中层')
+      check(document.activeElement === middleTrigger, '恢复中层显示后再恢复目录触发器焦点')
+      coveredTopLayer.acquire(middleTrigger); coveredTop.showModal()
+      coveredMiddle.close(); coveredMiddleLayer.release()
+      check(coveredOuter.hasAttribute('data-dialog-covered'), '中层先关闭时顶层仍保持父层退让')
+      coveredTop.close(); coveredTopLayer.release()
+      check(!coveredOuter.hasAttribute('data-dialog-covered') && document.activeElement === outerTrigger, '乱序关闭后清除覆盖并沿触发链恢复')
+      check(outerBody.scrollTop === 123 && coveredOuter.querySelector('input').value === '尚未提交', '恢复父层后内容位置不变')
+      coveredOuter.close(); coveredOuterLayer.release()
+      check(document.activeElement === origin && document.body.style.overflow === 'clip', '所有层关闭后恢复页面焦点和滚动锁')
+      for (const element of [coveredOuter, coveredMiddle, coveredTop]) element.remove()
+      passed.push('三层外壳退让保留父层滚动及输入，逐层和乱序关闭均恢复显示与焦点')
+
       const mount = document.createElement('div')
       document.body.append(mount)
       const panelOpen = ref(false), nestedOpen = ref(false), sidebar = ref()

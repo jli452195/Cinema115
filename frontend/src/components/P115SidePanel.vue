@@ -35,7 +35,7 @@ onUnmounted(() => { dialogLifecycle.release() })
           <button type="button" :disabled="busy" :aria-label="'关闭' + title" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-40 dark:hover:bg-slate-800" @click="close"><P115Icon name="close" /></button>
         </header>
         <div v-if="$slots.actions" class="shrink-0 border-b border-slate-200 px-5 py-3 sm:px-6 dark:border-slate-700"><slot name="actions" /></div>
-        <div ref="scrollBody" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6"><slot /></div>
+        <div ref="scrollBody" class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" data-auto-scrollbar><slot /></div>
         <footer v-if="$slots.footer" class="flex shrink-0 items-center gap-3 border-t border-slate-200 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 sm:px-6 dark:border-slate-700"><slot name="footer" /></footer>
       </div>
     </dialog>

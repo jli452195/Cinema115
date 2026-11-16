@@ -31,7 +31,7 @@ function logout() {
 
 <template>
   <nav id="header-management" aria-label="账户菜单" class="account-menu">
-    <div class="account-surface account-main floating-surface">
+    <div class="account-surface account-main floating-surface" data-auto-scrollbar>
       <div class="account-summary">
         <span class="account-avatar" aria-hidden="true">
           <NavigationIcon name="user" :size="20" />
@@ -95,7 +95,6 @@ function logout() {
   padding: 0.5rem;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-width: thin;
   border-radius: 1rem;
   color: var(--account-text);
   background: var(--floating-surface-container);
