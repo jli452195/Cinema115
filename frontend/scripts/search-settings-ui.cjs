@@ -2,7 +2,7 @@
 const assert = require('node:assert/strict'), path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
-const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
+const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'dmhy', 'woniu']
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const errors = [], passed = [], calls = []
@@ -39,32 +39,32 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     const page = await context.newPage(); page.setDefaultTimeout(8000); page.on('pageerror', error => errors.push(error.message))
     await page.goto(origin + '/resources')
     await page.locator('main').getByRole('link', { name: '搜索设置', exact: true }).click()
-    await page.locator('[data-source-id]').nth(6).waitFor()
+    await page.locator('[data-source-id]').nth(7).waitFor()
     assert.deepEqual(await orderOf(page), defaults)
     const save = () => page.getByRole('button', { name: '保存排序', exact: true })
     assert.equal(await save().isDisabled(), true)
     const keyboardHandle = page.locator('[data-source-id="re0"] [data-action="handle"]')
     await keyboardHandle.focus(); await keyboardHandle.press('Alt+ArrowDown')
-    assert.deepEqual(await orderOf(page), ['bot', 're0', 'channels', 'gying', 'mikan', 'garden', 'woniu'])
+    assert.deepEqual(await orderOf(page), ['bot', 're0', 'channels', 'gying', 'mikan', 'garden', 'dmhy', 'woniu'])
     assert.equal(await keyboardHandle.evaluate(element => element === document.activeElement), true)
     await keyboardHandle.press('Alt+ArrowUp')
     assert.deepEqual(await orderOf(page), defaults)
     assert.equal(await save().isDisabled(), true)
-    passed.push('资源配置入口、七个来源和默认顺序读取正确')
+    passed.push('资源配置入口、八个来源和默认顺序读取正确')
     passed.push('键盘调整顺序并保持原来源焦点，回到已保存顺序后清除未保存状态')
 
     // 后续交互基于页面可访问名称验证，不依赖 Vue 内部状态。
     await page.getByRole('button', { name: '动画作品', exact: true }).click()
-    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 6)
+    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 7)
     assert.deepEqual(await pillsOf(page), defaults.filter(id => id !== 'woniu'))
     await page.getByRole('button', { name: '普通影视', exact: true }).click()
-    assert.deepEqual(await pillsOf(page), ['re0', 'bot', 'channels', 'gying'])
+    assert.deepEqual(await pillsOf(page), ['re0', 'bot', 'channels', 'gying', 'dmhy'])
     assert.equal(puts().length, 0)
     passed.push('实时预览保留未配置隐藏和仅动画来源过滤，编辑不触发后台搜索')
 
     const row = id => page.locator(`[data-source-id="${id}"]`)
     await row('garden').getByRole('button', { name: /上移/ }).click()
-    const moved = ['re0', 'bot', 'channels', 'gying', 'garden', 'mikan', 'woniu']
+    const moved = ['re0', 'bot', 'channels', 'gying', 'garden', 'mikan', 'dmhy', 'woniu']
     assert.deepEqual(await orderOf(page), moved)
     assert.equal(await save().isEnabled(), true)
     await page.locator('main').getByRole('link', { name: '返回 资源配置', exact: true }).click()
@@ -92,7 +92,7 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     await page.locator('.drag-list-fallback').waitFor()
     await page.mouse.move(to.x + to.width / 2, to.y + 2, { steps: 15 }); await page.waitForTimeout(200)
     await page.mouse.up(); await page.locator('.drag-list-fallback').waitFor({ state: 'detached' })
-    const dragged = ['gying', 're0', 'bot', 'channels', 'garden', 'mikan', 'woniu']
+    const dragged = ['gying', 're0', 'bot', 'channels', 'garden', 'mikan', 'dmhy', 'woniu']
     assert.deepEqual(await orderOf(page), dragged)
     assert.equal(puts().length, beforeDrag)
     await save().click()
@@ -100,12 +100,12 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     passed.push('桌面拖动排序与插入位置正确，拖动过程零保存请求')
 
     await page.goto(origin + '/tv/42')
-    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 6)
+    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 7)
     assert.deepEqual(await pillsOf(page), dragged.filter(id => id !== 'woniu'))
     state.animation = false
     await page.reload()
-    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 4)
-    assert.deepEqual(await pillsOf(page), ['gying', 're0', 'bot', 'channels'])
+    await page.waitForFunction(() => document.querySelectorAll('[data-search-source]').length === 5)
+    assert.deepEqual(await pillsOf(page), ['gying', 're0', 'bot', 'channels', 'dmhy'])
     assert.equal(calls.some(call => /\/(?:search|resource-order)$/.test(call.endpoint)), false)
     passed.push('实际详情页应用服务端顺序，普通影视与动画过滤一致，不执行真实搜索')
 
@@ -113,7 +113,7 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     await init(mobile)
     const phone = await mobile.newPage(); phone.setDefaultTimeout(8000); phone.on('pageerror', error => errors.push(error.message))
     await phone.goto(origin + '/resources/search')
-    await phone.locator('[data-source-id]').nth(6).waitFor()
+    await phone.locator('[data-source-id]').nth(7).waitFor()
     assert.deepEqual(await orderOf(phone), dragged)
     const mobileFrom = phone.locator('[data-source-id="re0"] [data-drag-handle]').first()
     await mobileFrom.scrollIntoViewIfNeeded()
@@ -136,7 +136,7 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     await fs.mkdir(path.join(__dirname, '../test-results'), { recursive: true })
     for (const [target, name] of [[phone, 'mobile'], [page, 'desktop']]) {
       await target.goto(origin + '/resources/search')
-      await target.locator('[data-source-id]').nth(6).waitFor()
+      await target.locator('[data-source-id]').nth(7).waitFor()
       for (const theme of ['light', 'dark']) {
         await target.evaluate(theme => { document.documentElement.classList.toggle('dark', theme === 'dark') }, theme)
         await target.screenshot({ path: path.join(__dirname, `../test-results/search-settings-${name}-${theme}.png`), fullPage: true })
@@ -150,7 +150,7 @@ const defaults = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu']
     assert.equal(await save().isDisabled(), true)
     state.failLoad = false
     await page.getByRole('button', { name: '重新加载', exact: true }).click()
-    await page.locator('[data-source-id]').nth(6).waitFor()
+    await page.locator('[data-source-id]').nth(7).waitFor()
     assert.deepEqual(await orderOf(page), state.order)
     await page.getByRole('button', { name: '恢复默认', exact: true }).click()
     assert.deepEqual(await orderOf(page), defaults)

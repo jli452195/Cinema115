@@ -14,7 +14,7 @@ type DetailSearchSettings struct {
 }
 
 func DefaultDetailSearchOrder() []string {
-	return []string{"re0", "bot", "channels", "gying", "mikan", "garden", "woniu"}
+	return []string{"re0", "bot", "channels", "gying", "mikan", "garden", "dmhy", "woniu"}
 }
 
 func (s DetailSearchSettings) Validate() error {

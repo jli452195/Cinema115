@@ -44,7 +44,10 @@ func TorrentURL(provider, postKey, raw string) (string, error) {
 	return "", ErrInvalid
 }
 
-type HTTPReader struct{ HTTP *http.Client }
+type HTTPReader struct {
+	HTTP       *http.Client
+	ProxyScope string // 原站直搜可独立选择代理范围，聚合站保留自己的出站策略。
+}
 
 func (r *HTTPReader) ReadTorrent(ctx context.Context, provider, postKey, raw string) ([]byte, error) {
 	endpoint, err := TorrentURL(provider, postKey, raw)
@@ -54,7 +57,9 @@ func (r *HTTPReader) ReadTorrent(ctx context.Context, provider, postKey, raw str
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	scope := provider
-	if scope == "dmhy" {
+	if r != nil && r.ProxyScope != "" {
+		scope = r.ProxyScope
+	} else if scope == "dmhy" {
 		scope = "garden"
 	}
 	client := http.Client{Transport: netproxy.Transport(scope), Timeout: 20 * time.Second}

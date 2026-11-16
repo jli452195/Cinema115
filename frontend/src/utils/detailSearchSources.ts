@@ -3,9 +3,10 @@ import telegramLogo from '../assets/telegram/telegram.svg'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import mikanLogo from '../assets/mikan/mikan-pic.svg?no-inline'
 import gardenLogo from '../assets/anime-providers/garden.svg'
+import dmhyLogo from '../assets/dmhy.svg'
 import woniuLogo from '../assets/woniu.svg'
 
-export const defaultDetailSearchOrder = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'woniu'] as const
+export const defaultDetailSearchOrder = ['re0', 'bot', 'channels', 'gying', 'mikan', 'garden', 'dmhy', 'woniu'] as const
 export type DetailSearchSourceID = typeof defaultDetailSearchOrder[number]
 export type DetailSearchAvailability = Partial<Record<DetailSearchSourceID, boolean>>
 export interface DetailSearchSource { id: DetailSearchSourceID; name: string; label: string; logo: string; animationOnly?: boolean }
@@ -17,6 +18,7 @@ export const detailSearchSources: readonly DetailSearchSource[] = [
   { id: 'gying', name: '观影', label: '观影搜索', logo: gyingLogo },
   { id: 'mikan', name: 'Mikan', label: 'Mikan 搜索', logo: mikanLogo, animationOnly: true },
   { id: 'garden', name: 'Garden', label: 'Garden 搜索', logo: gardenLogo, animationOnly: true },
+  { id: 'dmhy', name: '动漫花园', label: '动漫花园 搜索', logo: dmhyLogo },
   { id: 'woniu', name: '蜗牛', label: '蜗牛搜索', logo: woniuLogo },
 ]
 

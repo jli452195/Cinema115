@@ -49,6 +49,7 @@ type downloadResourceReader interface {
 // Sites retain separate sessions/caches/gates; only file normalization is shared.
 type DownloadResources struct {
 	Garden *GardenService
+	Dmhy   *DmhyService
 	Gying  interface {
 		ReadTorrent(context.Context, string, string, string) ([]byte, error)
 	}
@@ -60,6 +61,12 @@ func NewDownloadResources(g *GardenService, m *MikanService, reader btresource.T
 }
 
 func (s *DownloadResources) Files(ctx context.Context, in DownloadResourceInput) (DownloadFiles, error) {
+	if in.Source == "dmhy" {
+		if s.Dmhy == nil {
+			return DownloadFiles{}, fmt.Errorf("%w：动漫花园来源暂不可用", ErrOrganizeInput)
+		}
+		return s.Dmhy.Files(ctx, in)
+	}
 	if in.Source == "garden" && s.Garden != nil && in.TorrentURL == "" {
 		return s.Garden.Files(ctx, in)
 	}
@@ -116,6 +123,10 @@ func downloadTorrentFiles(body []byte, hash string) (DownloadFiles, error) {
 	if err != nil {
 		return DownloadFiles{}, err
 	}
+	return downloadTorrentMetadata(meta)
+}
+
+func downloadTorrentMetadata(meta torrentmeta.Metadata) (DownloadFiles, error) {
 	if meta.MultiFile {
 		for i := range meta.Files {
 			meta.Files[i].Path = path.Join(meta.Name, meta.Files[i].Path)

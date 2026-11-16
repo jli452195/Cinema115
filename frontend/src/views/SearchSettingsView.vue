@@ -64,6 +64,7 @@ function sourceStatus(source: DetailSearchSource): {
   if (source.animationOnly) {
     return { label: '仅动画', type: 'anime' }
   }
+  if (source.id === 'dmhy') return { label: '公开来源', type: 'configured' }
   const state = availability.value[source.id]
   if (state === true) {
     return { label: '已配置', type: 'configured' }

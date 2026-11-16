@@ -11,6 +11,7 @@ export function useDetailSearchAvailability(token: () => string, enabled: () => 
   watch(() => [token(), enabled()] as const, ([value, allowed], _, onCleanup) => {
     availability.value = {}
     if (!allowed || !value) return
+    availability.value.dmhy = true
     const controller = new AbortController()
     onCleanup(() => controller.abort())
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)])

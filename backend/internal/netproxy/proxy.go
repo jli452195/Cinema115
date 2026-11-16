@@ -22,7 +22,7 @@ type Service struct {
 
 var services = []Service{
 	{"tmdb", "TMDB"}, {"github", "GitHub 数据与字幕库"}, {"mikan", "蜜柑"},
-	{"anibt", "AniBT"}, {"garden", "AnimeGarden"}, {"bangumi", "Bangumi"},
+	{"anibt", "AniBT"}, {"garden", "AnimeGarden"}, {"dmhy", "动漫花园"}, {"bangumi", "Bangumi"},
 	{"assrt", "射手网 Assrt"}, {"gying", "观影"}, {"woniu", "蜗牛"},
 	{"telegram_bot", "Telegram 机器人"},
 	{"telegram_user", "Telegram 用户与频道搜索"},
@@ -48,7 +48,7 @@ func KnownService(id string) bool {
 }
 
 func DefaultConfig() Config {
-	return Config{Services: []string{"tmdb", "github", "mikan", "anibt", "garden", "bangumi"}}
+	return Config{Services: []string{"tmdb", "github", "mikan", "anibt", "garden", "dmhy", "bangumi"}}
 }
 
 // Policy is immutable after preparation. It contains credentials only in memory;

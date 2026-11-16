@@ -4,7 +4,7 @@ import type { LibrarySubtitleFile } from '../utils/subtitleLibrary'
 export interface DownloadResourceInput {
   title?: string
   fansub?: string
-  source: 'mikan' | 'garden' | 'gying'
+  source: 'mikan' | 'garden' | 'dmhy' | 'gying'
   provider?: string
   providerId: string
   magnet: string

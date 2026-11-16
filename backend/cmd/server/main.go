@@ -22,6 +22,7 @@ import (
 	"strm115/backend/internal/client/anibt"
 	"strm115/backend/internal/client/bangumi"
 	"strm115/backend/internal/client/bangumidata"
+	"strm115/backend/internal/client/dmhy"
 	"strm115/backend/internal/client/garden"
 	"strm115/backend/internal/client/imagecache"
 	"strm115/backend/internal/client/mikan"
@@ -174,6 +175,9 @@ func main() {
 	}()
 	mikanService := service.NewMikanService(mikan.New(), generationLogs)
 	httpapi.RegisterMikan(admin, mikanService)
+	dmhyService := service.NewDmhyService(dmhy.New())
+	dmhyService.Logs = generationLogs
+	httpapi.RegisterDmhy(admin, dmhyService)
 	animeDiscovery := bangumi.New()
 	animeBindings := &service.AnimeBindingService{Entries: database, Subjects: animeDiscovery, Mikan: mikanService, Anibt: service.NewAnibtService(anibt.New()), Garden: service.NewGardenService(garden.New())}
 	animeBindings.Mikan.CatalogLinks = database
@@ -334,6 +338,7 @@ func main() {
 	mediaOrganizer.Refresh = embyService
 	httpapi.RegisterMediaOrganize(admin, mediaOrganizer)
 	downloadResources := service.NewDownloadResources(animeBindings.Garden, mikanService, &btresource.HTTPReader{})
+	downloadResources.Dmhy = dmhyService
 	downloadResources.Gying = gyingService
 	downloadOrganize := service.NewDownloadOrganize(organizeEngine, downloadResources, cloudDownloads, cloudDownloadSettings, cloudClient)
 	subtitleLibrary := subshare.New(filepath.Join(dataDir, "subtitle-library"))

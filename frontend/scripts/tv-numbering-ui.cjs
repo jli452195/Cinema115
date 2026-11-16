@@ -1,4 +1,4 @@
-// All API requests are intercepted. This suite never changes a real media library.
+// 所有接口均被拦截，不会改动真实媒体库。
 const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 
@@ -34,7 +34,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const group = { id: 'group12', name: 'Season', description: '电视版十二集', type: 6, groupCount: 1, episodeCount: 12, seasons: [{ id: 1, number: 1, name: 'Season 1', overview: '', episodes: episodes.slice(0, 12) }] }
     let current = { groupId: '', name: 'TMDB 默认', type: 0, revision: 0 }, snapshot = null, role = 'admin'
     let upstream = structuredClone(group), failSave = false, holdSave = false, releaseSave, writes = 0
-    let holdPreview = false, releasePreview, choicesFailure = false, listingOffline = false, extendedChoices = false, loseResponse = false
+    let holdPreview = false, releasePreview, previewFailure = false, detailFailure = false, choicesFailure = false, listingOffline = false, extendedChoices = false, loseResponse = false
     const previewReads = []
     const manySeasons = Array.from({ length: 19 }, (_, i) => ({ id: i + 1, number: i, name: '编排分组 ' + i, overview: '', episodes: episodes.slice(0, 7).map(e => ({ ...e, id: i * 100 + e.id })) }))
     const longGroup = { ...group, id: 'long-group', name: 'Order by initial air date', groupCount: 19, episodeCount: 133, seasons: manySeasons }
@@ -52,7 +52,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else if (endpoint.endsWith('/episode-groups/group12')) {
         previewReads.push('group12')
         if (holdPreview) await new Promise(resolve => { releasePreview = resolve })
-        data = { group: upstream, fingerprint: 'a'.repeat(64), changed: JSON.stringify(snapshot) !== JSON.stringify(upstream) }
+        if (previewFailure) { status = 502; data = { error: '暂时无法读取分集' } }
+        else data = { group: upstream, fingerprint: 'a'.repeat(64), changed: JSON.stringify(snapshot) !== JSON.stringify(upstream) }
       }
       else if (endpoint.includes('/episode-groups/')) {
         const id = decodeURIComponent(endpoint.split('/').pop())
@@ -63,7 +64,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
       else if (endpoint.endsWith('/numbering') && request.method() === 'PUT') {
         writes++
-        if (loseResponse) { await route.abort('failed'); return }
         if (holdSave) await new Promise(resolve => { releaseSave = resolve })
         if (failSave) { status = 409; data = { error: '季集方案已变化，请重新读取并预览' } }
         else {
@@ -71,6 +71,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           assert.equal(body.revision, current.revision)
           current = { groupId: body.groupId, name: body.groupId ? 'Season' : 'TMDB 默认', type: body.groupId ? 6 : 0, revision: current.revision + 1, savedAt: 1791936000 }
           snapshot = body.groupId ? structuredClone(upstream) : null
+          if (loseResponse) { await route.abort('failed'); return }
           data = current
         }
       } else if (endpoint.endsWith('/detail/tv/80462')) data = { id: 80462, kind: 'tv', title: '千绪的上学路', originalTitle: '', overview: '十二集电视版', posterUrl: '', backdropUrl: '', date: '2018-07-06', rating: 7.1, votes: 39, tagline: '', status: 'Ended', runtime: 24, episodeCount: snapshot?.episodeCount || 29, genres: [], countries: [], cast: [], seasons: snapshot ? snapshot.seasons.map(s => ({ ...summary, number: s.number, name: s.name, episodeCount: s.episodes.length })) : [summary], collection: null, imdbId: '', imdbUrl: '', tmdbUrl: '', numbering: current }
@@ -82,12 +83,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else if (endpoint.includes('/follows/')) data = { subscribed: false, request: null, libraryState: 'present' }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
       else data = { configured: false, accounts: [] }
+      if (detailFailure && endpoint.endsWith('/detail/tv/80462')) { status = 502; data = { error: '暂时无法刷新详情' } }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) }).catch(() => {})
     })
     await page.goto(origin + '/tv/80462', { waitUntil: 'networkidle' })
     const open = () => page.getByRole('button', { name: '设置季集方案', exact: true }).click()
     await open()
     const dialog = page.getByRole('dialog'), save = dialog.locator('.numbering-primary')
+    const toasts = page.locator('[data-sonner-toast]:not([data-removed="true"])')
+    const clearToasts = async () => {
+      await page.evaluate(async () => (await import('/src/composables/useToast.ts')).useToast().clear())
+      await page.waitForFunction(() => !document.querySelector('[data-sonner-toast]'))
+    }
     const groupID = dialog.locator('.numbering-group-id'), copyID = dialog.locator('.numbering-copy-id'), groupLink = dialog.locator('.numbering-group-actions a')
     await dialog.getByRole('group', { name: /^选择方案/ }).waitFor()
     await dialog.getByText('当前方案未更改。', { exact: true }).waitFor()
@@ -105,19 +112,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await save.isDisabled(), true)
     assert.equal(await groupID.count(), 0)
     passed.push('delayed group preview cannot replace a newer default selection; initial radio receives focus')
+    previewFailure = true
     await dialog.getByRole('radio').nth(1).check()
+    await toasts.filter({ hasText: '暂时无法读取分集' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '分集预览失败' }).getAttribute('data-type'), 'error')
+    assert.equal(await dialog.locator('.numbering-error').count(), 0)
+    assert.equal(await save.isDisabled(), true)
+    previewFailure = false
+    await dialog.getByRole('button', { name: '重试预览', exact: true }).click()
     await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
     assert.equal(await save.isEnabled(), true)
+    await clearToasts()
+    passed.push('preview failure uses toast, keeps retry available and blocks saving until a valid preview')
     const readsBeforeCopy = previewReads.length
     await copyID.click()
-    await dialog.getByRole('status').filter({ hasText: '剧集组 ID 已复制' }).waitFor()
+    await toasts.filter({ hasText: '剧集组 ID 已复制' }).waitFor()
     assert.deepEqual(await page.evaluate(() => window.__copies.at(-1)), { value: 'group12', mode: 'fallback', modal: true, selected: true })
     assert.equal(await copyID.evaluate(el => el === document.activeElement), true)
     await page.evaluate(() => { window.__copyMode = 'failure' })
     await copyID.click()
-    await dialog.locator('.numbering-copy-feedback').waitFor()
+    await toasts.filter({ hasText: '复制失败，已选中 ID，可手动复制。' }).waitFor()
     assert.equal(await page.evaluate(() => window.getSelection().toString()), 'group12')
     assert.equal(await groupID.evaluate(el => el === document.activeElement), true)
+    await clearToasts()
     await page.evaluate(() => { window.__copyMode = 'hold' })
     await copyID.click()
     await page.waitForFunction(() => !!window.__releaseCopy)
@@ -131,6 +148,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
     assert.equal(await copyID.getAttribute('aria-busy'), 'false')
     assert.equal(await copyID.getAttribute('aria-label'), '复制剧集组 ID')
+    assert.equal(await toasts.count(), 0, '过期的复制结果不得弹出通知')
     assert.equal(previewReads.length, readsBeforeCopy + 1, 'copying must not fetch new data')
     assert.equal(writes, 0, 'copying or following a group link must not apply a scheme')
     passed.push('default hides ID; preview identity is immediate; dialog clipboard fallback, manual selection on failure, stale copy feedback discarded')
@@ -142,9 +160,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await dialog.getByRole('button', { name: '关闭季集方案' }).isDisabled(), true)
     releaseSave(); holdSave = false
     await dialog.waitFor({ state: 'detached' })
+    await toasts.filter({ hasText: '季集方案已保存' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '季集方案已保存' }).getAttribute('data-type'), 'success')
+    assert.equal(await page.locator('.detail-notice').count(), 0)
+    assert.equal(await page.getByText('追更状态正在重新计算。', { exact: false }).count(), 0)
     await page.waitForFunction(() => { const bar = document.querySelector('[role="progressbar"]'); return bar?.getAttribute('aria-valuenow') === '12' && bar?.getAttribute('aria-valuemax') === '12' })
     await page.getByText('共 12 集', { exact: true }).waitFor()
     assert.equal(current.groupId, 'group12')
+    await clearToasts()
     passed.push('explicit selection and save; busy dismissal blocked; 12/12 library progress')
 
     await open()
@@ -167,28 +190,39 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(snapshot.seasons[0].episodes[0].name, '分集 1')
     await dialog.getByText('查看变化', { exact: true }).click()
     await dialog.getByText(/调整：S01E01 分集 1 改为 S01E01 上游调整后的标题/).waitFor()
+    detailFailure = true
     await dialog.getByRole('button', { name: '更新本剧快照' }).click()
     await dialog.waitFor({ state: 'detached' })
+    await toasts.filter({ hasText: '季集方案已保存' }).waitFor()
+    await toasts.filter({ hasText: '方案已保存，详情刷新失败，请重新加载。' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '季集方案保存失败' }).count(), 0)
     assert.equal(snapshot.seasons[0].episodes[0].name, '上游调整后的标题')
-    passed.push('upstream changes require preview and explicit snapshot update')
+    detailFailure = false
+    await page.getByRole('button', { name: '重新加载', exact: true }).click()
+    await page.getByRole('button', { name: '设置季集方案', exact: true }).waitFor()
+    await clearToasts()
+    passed.push('upstream changes require explicit snapshot update; saved success remains distinct from a failed detail refresh')
 
     await open()
     await dialog.getByRole('radio').first().check()
     failSave = true
     await dialog.getByRole('button', { name: '恢复默认方案' }).click()
-    await dialog.getByRole('alert').waitFor()
+    await toasts.filter({ hasText: '季集方案保存失败' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '季集方案保存失败' }).getAttribute('data-type'), 'error')
+    assert.equal(await dialog.locator('.numbering-error').count(), 0)
     assert.equal(current.groupId, 'group12')
     assert.equal(await dialog.getByRole('button', { name: '恢复默认方案' }).isDisabled(), true)
     failSave = false
     choicesFailure = true
     await dialog.getByRole('button', { name: '重新读取', exact: true }).click()
-    await dialog.getByText('暂时无法读取方案', { exact: false }).waitFor()
+    await toasts.filter({ hasText: '暂时无法读取方案' }).waitFor()
     assert.equal(await save.isDisabled(), true)
     choicesFailure = false
     await dialog.getByRole('button', { name: '重新读取', exact: true }).click()
     await dialog.getByText('以下为已保存编排。', { exact: false }).waitFor()
     await page.keyboard.press('Escape')
     await dialog.waitFor({ state: 'detached' })
+    await clearToasts()
     assert.equal(await page.getByRole('button', { name: '设置季集方案', exact: true }).evaluate(el => el === document.activeElement), true)
     passed.push('conflict preserves saved scheme and requires reload; Escape restores focus')
 
@@ -197,7 +231,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await open()
     await dialog.getByRole('button', { name: '查看预览', exact: true }).click()
     await dialog.getByText('以下为已保存编排。', { exact: false }).waitFor()
-    await dialog.getByText('TMDB 剧集组列表暂时不可用，已保存编排仍可查看或恢复默认。', { exact: false }).waitFor()
+    await toasts.filter({ hasText: 'TMDB 剧集组列表暂时不可用，已保存编排仍可查看或恢复默认。' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '部分季集资料未能读取' }).getAttribute('data-type'), 'warning')
+    assert.equal(await dialog.getByRole('button', { name: '重新读取', exact: true }).isEnabled(), true)
     assert.equal(await dialog.getByRole('radio', { includeHidden: true }).count(), 2)
     const dimensions = await dialog.evaluate(el => ({ width: el.getBoundingClientRect().width, height: el.getBoundingClientRect().height, overflow: el.scrollWidth > el.clientWidth, footer: el.querySelector('footer').getBoundingClientRect().bottom, windowHeight: window.innerHeight }))
     assert.ok(dimensions.width <= 375 && dimensions.height <= 812 && !dimensions.overflow && dimensions.footer <= dimensions.windowHeight)
@@ -252,7 +288,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const fullIDReads = previewReads.length, fullIDWrites = writes
     await page.evaluate(() => { window.__copyMode = 'secure' })
     await copyID.focus(); await page.keyboard.press('Enter')
-    await dialog.getByRole('status').filter({ hasText: '剧集组 ID 已复制' }).waitFor()
+    await toasts.filter({ hasText: '剧集组 ID 已复制' }).waitFor()
     assert.deepEqual(await page.evaluate(() => window.__copies.at(-1)), { value: fullGroupID, mode: 'secure' })
     await page.keyboard.press('Tab')
     assert.equal(await groupLink.evaluate(el => el === document.activeElement && getComputedStyle(el).outlineStyle === 'solid'), true)
@@ -325,11 +361,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.evaluate(() => document.documentElement.classList.remove('dark'))
     passed.push('mobile tabs preserve both scroll positions and move focus explicitly; preview remains above footer; dark and high-contrast surfaces')
 
+    await clearToasts()
     await dialog.locator('input[value="group12"]').check()
     await dialog.getByText('TMDB 原编号 S01E12', { exact: true }).waitFor()
     loseResponse = true
     await save.click()
-    await dialog.getByRole('alert').filter({ hasText: '状态待核实' }).waitFor()
+    await toasts.filter({ hasText: '保存结果待核实' }).waitFor()
+    assert.equal(await toasts.filter({ hasText: '保存结果待核实' }).getAttribute('data-type'), 'warning')
+    assert.equal(await toasts.filter({ hasText: '季集方案已保存' }).count(), 0)
+    assert.equal(current.groupId, 'group12', '响应丢失时服务端可能已提交')
     assert.equal(await save.isDisabled(), true)
     await save.evaluate(el => el.click())
     assert.equal(writes, 5, 'lost responses must block a second PUT')

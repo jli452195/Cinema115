@@ -27,7 +27,8 @@ func (s *DownloadOrganize) resourceFiles(ctx context.Context, in DownloadResourc
 	if err := ctx.Err(); err != nil {
 		return DownloadFiles{}, err
 	}
-	if in.Source == "gying" {
+	// 原站直搜先核验原帖与真实种子，不以发布标题替代文件清单。
+	if in.Source == "gying" || in.Source == "dmhy" {
 		return s.Resources.Files(ctx, in)
 	}
 	parsed, err := releaseparse.Title(in.Title)

@@ -4,13 +4,13 @@ const assert = require('node:assert/strict')
 const path = require('node:path'), os = require('node:os'), fs = require('node:fs/promises')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
-const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGying = source === 'gying'
+const source = process.argv[2] || 'garden', isMikan = source === 'mikan', isGying = source === 'gying', isDmhy = source === 'dmhy'
 const shareMode = process.argv[3] === 'share'
 const subtitleMode = process.argv[3] === 'subtitles'
 const localSubtitleMode = process.argv[3] === 'local-subtitles'
 const assrtMode = process.argv[3] === 'assrt'
-const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : 'Garden 搜索'
-const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : '/resources/garden/search'
+const searchLabel = isGying ? /观影\s*搜索/ : isMikan ? 'Mikan 搜索' : isDmhy ? '动漫花园 搜索' : 'Garden 搜索'
+const searchSuffix = isGying ? '/gying/search' : isMikan ? '/mikan/search' : isDmhy ? '/dmhy/search' : '/resources/garden/search'
 const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
@@ -66,6 +66,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       }
       else if (endpoint === '/api/admin/subtitles/versions/v1/files') data = { files: ['01.sc.ass', '01.tc.ass', 'Show [SP01].chs.ass'].map((name, i) => ({ path: `subs_list/animation/2003/Show/BD/Group/${name}`, name, sha: String(i + 1).repeat(40), revision: 'a'.repeat(40), size: 100 })) }
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: Array.from({ length: 15 }, (_, i) => resource(i + 1)), groups: [], query: body.query, page: 1, hasMore: false, cached: false }
+      else if (endpoint.endsWith('/dmhy/search')) data = { items: Array.from({ length: 15 }, (_, i) => {
+        const r = resource(i + 1)
+        return { id: String(i + 1), title: r.title, magnet: r.magnet, url: `https://share.dmhy.org/topics/view/${i + 1}_.html`, torrentUrl: '', groupId: '2', fansub: '测试组', size: '1 GB', updatedAt: '2026-11-16', categoryId: 2, categoryName: '动画', categoryScope: 'film' }
+      }), groups: [{ id: '2', name: '测试组' }], query: body.query, page: body.page, hasMore: false }
       else if (endpoint.endsWith('/mikan/search')) data = { items: Array.from({ length: 15 }, (_, i) => {
         const r = resource(i + 1), id = (i + 1).toString(16).padStart(40, '0')
         return { id, title: r.title, magnet: r.magnet, url: `https://mikanani.me/Home/Episode/${id}`, torrentUrl: `https://mikanani.me/Download/20261024/${id}.torrent`, groupId: '2', size: '1 GB', updatedAt: '2026-10-24', resolution: '1080P' }
@@ -114,7 +118,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const open = row => trigger(row).click()
     await page.goto(`${origin}/tv/12501`)
     await page.getByRole('button', { name: searchLabel, exact: true }).click()
-    const list = isGying ? page.locator('.gy-resource-list') : page.getByRole('list', { name: isMikan ? '蜜柑资源列表' : 'Garden资源列表' })
+    const list = isGying ? page.locator('.gy-resource-list') : page.getByRole('list', { name: isMikan ? '蜜柑资源列表' : isDmhy ? '动漫花园资源列表' : 'Garden资源列表' })
     await list.waitFor()
     assert.equal(count('/download-organize/files'), 0)
     const row = list.locator(':scope > li').first()
@@ -148,6 +152,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const input = calls.find(c => c.endpoint.endsWith('/download-organize/files')).body
     assert.equal(input.source, source)
     if (isMikan) { assert.equal(input.providerId, '1'.padStart(40, '0')); assert.equal(input.fansub, '测试组'); assert.ok(input.torrentUrl.startsWith('https://mikanani.me/Download/')) }
+    if (isDmhy) { assert.equal(input.providerId, '1'); assert.equal(input.fansub, '测试组'); assert.equal(input.torrentUrl, undefined); assert.equal(input.provider, undefined); assert.equal(count('/resources/garden/search'), 0) }
     if (isGying) { assert.equal(input.provider, 'tv'); assert.equal(input.providerId, 'Show'); assert.equal(input.torrentUrl, undefined) }
     assert.equal(count('/download-organize/jobs'), 0)
     const stableLayout = () => organizeDialog.evaluate(el => {

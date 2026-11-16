@@ -82,7 +82,7 @@ func TestTorrentReaderUsesProviderProxyScope(t *testing.T) {
 	manager := netproxy.New()
 	netproxy.Default = manager
 	t.Cleanup(func() { manager.CloseIdleConnections(); netproxy.Default = previous })
-	for _, scope := range []string{"mikan", "anibt", "garden"} {
+	for _, scope := range []string{"mikan", "anibt", "garden", "dmhy"} {
 		manager.Transport(scope).DialContext = func(ctx context.Context, network, target string) (net.Conn, error) {
 			if target != proxyURL.Host {
 				return nil, errors.New("unexpected direct connection")
@@ -91,10 +91,11 @@ func TestTorrentReaderUsesProviderProxyScope(t *testing.T) {
 		}
 	}
 	const hash = "57294b2c4f26b6c6f2fa71416194ead5a82adc7c"
-	for _, tc := range []struct{ provider, scope, post, endpoint, host string }{
-		{"mikan", "mikan", hash, "https://mikanani.me/Download/20230121/" + hash + ".torrent", "mikanani.me:443"},
-		{"anibt", "anibt", "rel_test", "https://anibt.net/api/torrent/rel_test.torrent", "anibt.net:443"},
-		{"dmhy", "garden", hash, "https://dl.dmhy.org/2023/01/21/" + hash + ".torrent", "dl.dmhy.org:443"},
+	for _, tc := range []struct{ provider, scope, post, endpoint, host, override string }{
+		{"mikan", "mikan", hash, "https://mikanani.me/Download/20230121/" + hash + ".torrent", "mikanani.me:443", ""},
+		{"anibt", "anibt", "rel_test", "https://anibt.net/api/torrent/rel_test.torrent", "anibt.net:443", ""},
+		{"dmhy", "garden", hash, "https://dl.dmhy.org/2023/01/21/" + hash + ".torrent", "dl.dmhy.org:443", ""},
+		{"dmhy", "dmhy", hash, "https://dl.dmhy.org/2023/01/21/" + hash + ".torrent", "dl.dmhy.org:443", "dmhy"},
 	} {
 		t.Run(tc.provider, func(t *testing.T) {
 			_, policy, err := netproxy.Prepare(netproxy.Config{Enabled: true, URL: proxy.URL, Services: []string{tc.scope}})
@@ -102,7 +103,7 @@ func TestTorrentReaderUsesProviderProxyScope(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager.Apply(policy)
-			if _, err := (&HTTPReader{}).ReadTorrent(context.Background(), tc.provider, tc.post, tc.endpoint); !errors.Is(err, ErrRead) {
+			if _, err := (&HTTPReader{ProxyScope: tc.override}).ReadTorrent(context.Background(), tc.provider, tc.post, tc.endpoint); !errors.Is(err, ErrRead) {
 				t.Fatal("unexpected proxy failure", err)
 			}
 			select {

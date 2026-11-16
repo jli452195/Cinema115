@@ -1,14 +1,15 @@
 import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { searchGardenResources } from '../lib/garden-search'
+import { searchDmhyResources } from '../lib/dmhy-search'
 import { searchMikanResources, readMikanBangumiResources } from '../lib/anime-resource-api'
 import { matchesResourceSpec, resourceSpecOptions, type ResourceSpecSelection, type ResourceSpecOption } from '../utils/resourceSpecFilters'
-import type { AnimeResourceItem as Item, AnimeResourceGroup as Group, AnimeResourceBangumi as Bangumi, AnimeResourceExpansion as Expansion, AnimeResourceResult as Result } from '../types/animeResourceSearch'
+import type { AnimeResourceItem as Item, AnimeResourceGroup as Group, AnimeResourceBangumi as Bangumi, AnimeResourceExpansion as Expansion, AnimeResourceResult as Result, AnimeResourceProvider } from '../types/animeResourceSearch'
 
 interface AnimeResourceSearchOptions {
   token: string
   title: string
   originalTitle: string
-  provider?: 'mikan' | 'garden'
+  provider?: AnimeResourceProvider
 }
 interface AnimeResourceSearchHooks {
   batchMode: Ref<boolean>
@@ -19,6 +20,9 @@ interface AnimeResourceSearchHooks {
 
 export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, signal: AbortSignal, hooks: AnimeResourceSearchHooks) {
   const isGarden = computed(() => options.provider === 'garden')
+  const isDmhy = computed(() => options.provider === 'dmhy')
+  const pagedSearch = computed(() => isGarden.value || isDmhy.value)
+  const providerName = computed(() => isDmhy.value ? '动漫花园' : isGarden.value ? 'Garden' : '蜜柑')
   const query = ref(options.title || options.originalTitle)
   const group = ref('')
   const groups = ref<Group[]>([])
@@ -30,6 +34,12 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
   const error = ref('')
   const filter = ref('')
   const resolution = ref('全部')
+  const categoryScope = ref('film')
+  const categoryOptions = computed(() => [
+    { value: 'film', label: '影视', count: (result.value?.items || []).filter(item => item.categoryScope === 'film').length },
+    { value: 'supplement', label: '补充', count: (result.value?.items || []).filter(item => item.categoryScope === 'supplement').length },
+    { value: 'all', label: '全部', count: result.value?.items.length || 0 },
+  ])
   const specFilters = reactive<ResourceSpecSelection>({ resolution: [], language: [], external: false })
   const specOptions = computed(() => resourceSpecOptions((result.value?.items || []).map(item => item.spec)))
   const specActive = computed(() => !!(specFilters.resolution.length || specFilters.language.length || specFilters.external))
@@ -55,9 +65,14 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
   const filtered = computed(() => {
     if (busy.value && retainedItems.value) return retainedItems.value
     const words = filter.value.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean)
-    return (result.value?.items || []).filter(item => (!result.value?.bangumi || !group.value || item.groupId === group.value) && (hooks.batchMode.value ? matchesResourceSpec(item.spec, specFilters) : resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
+    return (result.value?.items || []).filter(item => (!isDmhy.value || categoryScope.value === 'all' || item.categoryScope === categoryScope.value) && (!result.value?.bangumi || !group.value || item.groupId === group.value) && (hooks.batchMode.value ? matchesResourceSpec(item.spec, specFilters) : resolution.value === '全部' || item.resolution === resolution.value) && words.every(word => item.title.toLocaleLowerCase().includes(word)))
   })
   const siteURL = computed(() => {
+    if (isDmhy.value) {
+      const params = new URLSearchParams({ keyword: result.value?.query || query.value })
+      if (group.value) params.set('team_id', group.value)
+      return `https://share.dmhy.org/topics/list?${params}`
+    }
     if (isGarden.value) {
       const params = new URLSearchParams({ search: result.value?.query || query.value })
       const selected = groups.value.find(item => item.id === group.value)
@@ -69,11 +84,11 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
     if (result.value?.group) params.set('subgroupid', result.value.group)
     return `https://mikanani.me/Home/Search?${params}`
   })
-  watch([filter, resolution], () => { visible.value = 50 }, { flush: 'sync' })
+  watch([filter, resolution, categoryScope], () => { visible.value = 50 }, { flush: 'sync' })
   watch(specFilters, () => { visible.value = 50 }, { flush: 'sync' })
 
   async function search(refresh = false, selectedGroup = '') {
-    if (isGarden.value) { await searchGarden(refresh, selectedGroup); return }
+    if (pagedSearch.value) { await searchGarden(refresh, selectedGroup); return }
     if (interactionBusy.value || !query.value.trim()) return
     const previousGroup = group.value
     const previousBangumi = selectedBangumi.value
@@ -110,16 +125,22 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
     const selected = groups.value.find(item => item.id === selectedGroup)
     const previousVisible = Math.min(visible.value, filtered.value.length)
     let appended = false
-    retainedItems.value = filtered.value; busy.value = true; error.value = ''; loadingMessage.value = '正在搜索 Garden…'
+    retainedItems.value = filtered.value; busy.value = true; error.value = ''; loadingMessage.value = `正在搜索 ${providerName.value}…`
     try {
-      const data = await searchGardenResources(options.token, { query: q, fallback: q === options.title.trim() && !selectedGroup && page === 1 ? options.originalTitle : '', group: selectedGroup, groupName: selected?.name || '', page, refresh }, signal)
+      const input = { query: q, fallback: q === options.title.trim() && !selectedGroup && page === 1 ? options.originalTitle : '', group: selectedGroup, page, refresh }
+      const data = isDmhy.value ? await searchDmhyResources(options.token, input, signal) : await searchGardenResources(options.token, { ...input, groupName: selected?.name || '' }, signal)
       if (signal.aborted) return
-      result.value = page > 1 && result.value ? { ...data, items: [...new Map([...result.value.items, ...data.items].map(item => [item.id, item])).values()] } : data
+      if (page > 1 && result.value) {
+        const loaded = new Map(result.value.items.map(item => [item.id, item]))
+        // 原站分页重叠时保留已补读的条目；首页刷新仍完整替换结果。
+        for (const item of data.items) if (!isDmhy.value || !loaded.has(item.id)) loaded.set(item.id, item)
+        result.value = { ...data, items: [...loaded.values()] }
+      } else result.value = data
       if (!selectedGroup) groups.value = page > 1 ? [...new Map([...groups.value, ...data.groups].map(item => [item.id, item])).values()] : data.groups
       query.value = data.query; group.value = selectedGroup
       if (page > 1) { visible.value += 50; appended = true }
       else { visible.value = 50; resolution.value = '全部'; resetSpecFilters(); filter.value = ''; await hooks.resetResultPosition() }
-    } catch (reason) { if (!signal.aborted) error.value = reason instanceof Error ? reason.message : 'Garden 搜索失败，请重试' }
+    } catch (reason) { if (!signal.aborted) error.value = reason instanceof Error ? reason.message : `${providerName.value} 搜索失败，请重试` }
     finally {
       busy.value = false; retainedItems.value = undefined
       if (appended && !signal.aborted) {
@@ -129,13 +150,13 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
   }
   function selectGroup(value: string) {
     if (interactionBusy.value) return
-    if (isGarden.value) { void searchGarden(false, value); return }
+    if (pagedSearch.value) { void searchGarden(false, value); return }
     if (selectedBangumi.value) { group.value = value; visible.value = 50 }
     else void search(false, value)
   }
   function useTitle(value: string) { if (interactionBusy.value) return; query.value = value; void search() }
   function refreshCurrent() {
-    if (isGarden.value) { void searchGarden(true, group.value); return }
+    if (pagedSearch.value) { void searchGarden(true, group.value); return }
     if (selectedBangumi.value) void loadBangumi(selectedBangumi.value, true)
     else void search(true, group.value)
   }
@@ -193,6 +214,11 @@ export function useAnimeResourceSearch(options: AnimeResourceSearchOptions, sign
   function selectBangumi(card: Bangumi) {
     if (selectedBangumi.value?.id !== card.id) void loadBangumi(card)
   }
+  function updateMagnet(id: string, magnet: string) {
+    if (!result.value) return
+    // 替换当前结果，确保补读磁力后按钮与批量选择立即更新。
+    result.value = { ...result.value, items: result.value.items.map(item => item.id === id ? { ...item, magnet, magnetIssue: undefined } : item) }
+  }
 
-  return { isGarden, interactionBusy, query, group, groups, result, busy, loadingMessage, error, filter, resolution, specFilters, specOptions, specActive, resetSpecFilters, visible, selectedBangumi, bangumis, expansions, groupOptions, resolutionOptions, filtered, siteURL, specChecked, toggleSpecOption, search, searchGarden, selectGroup, useTitle, refreshCurrent, backToSearch, loadBangumi, selectBangumi }
+  return { isGarden, isDmhy, pagedSearch, providerName, categoryScope, categoryOptions, interactionBusy, query, group, groups, result, busy, loadingMessage, error, filter, resolution, specFilters, specOptions, specActive, resetSpecFilters, visible, selectedBangumi, bangumis, expansions, groupOptions, resolutionOptions, filtered, siteURL, specChecked, toggleSpecOption, search, searchGarden, selectGroup, useTitle, refreshCurrent, backToSearch, loadBangumi, selectBangumi, updateMagnet }
 }

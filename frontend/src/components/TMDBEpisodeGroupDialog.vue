@@ -1,25 +1,26 @@
 <script setup lang="ts">
 import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
-import { IconCheck, IconCopy, IconExternalLink } from '@tabler/icons-vue'
+import { IconCopy, IconExternalLink } from '@tabler/icons-vue'
+import { useToast } from '../composables/useToast'
 import type { NumberingChoices, NumberingInfo, NumberingPreview } from '../types/tvNumbering'
 import { episodeCode, episodeGroupTypes, numberingChanges, numberingLabel } from '../types/tvNumbering'
 import { copyText } from '../utils/clipboard'
 
 const props = defineProps<{ token: string; tmdbId: string; title: string }>()
+const toast = useToast()
 const emit = defineEmits<{ close: []; saved: [value: NumberingInfo] }>()
 const dialog = ref<HTMLDialogElement>(), headingID = useId(), radioName = useId()
 const choices = ref<NumberingChoices>(), draftID = ref(''), preview = ref<NumberingPreview>()
-const loading = ref(false), previewLoading = ref(false), saving = ref(false), error = ref(''), previewError = ref(''), conflict = ref(false)
+const loading = ref(false), previewLoading = ref(false), saving = ref(false), loadFailed = ref(false), previewFailed = ref(false), conflict = ref(false)
 const limits = ref<Record<number, number>>({})
 const choiceScroll = ref<HTMLElement>(), previewScroll = ref<HTMLElement>()
 const choiceTab = ref<HTMLButtonElement>(), previewTab = ref<HTMLButtonElement>()
 const mobilePanel = ref<'choices' | 'preview'>('choices'), isMobile = ref(false)
 const panelID = useId(), statusID = useId()
-const groupIDElement = ref<HTMLElement>(), copiedID = ref(''), copyError = ref(''), copying = ref(false)
+const groupIDElement = ref<HTMLElement>(), copying = ref(false)
 const groupURL = computed(() => `https://www.themoviedb.org/tv/${encodeURIComponent(props.tmdbId)}/episode_group/${encodeURIComponent(draftID.value)}?language=zh-CN`)
 let copyAttempt = 0
-let copyTimer: ReturnType<typeof setTimeout> | undefined
 const scrollPositions = { choices: 0, preview: 0 }
 let mobileQuery: MediaQueryList | undefined
 const lifecycle = new AbortController()
@@ -34,7 +35,7 @@ const candidates = computed(() => {
 })
 const isCurrent = computed(() => draftID.value === choices.value?.current.groupId)
 const emptyPreview = computed(() => !!draftID.value && !!preview.value?.fingerprint && !preview.value.group.seasons.some(season => season.episodes.length))
-const canSave = computed(() => !!choices.value && !loading.value && !previewLoading.value && !saving.value && !conflict.value && !previewError.value && !emptyPreview.value && (draftID.value ? !!preview.value?.fingerprint && (!isCurrent.value || preview.value.changed) : !!choices.value.current.groupId))
+const canSave = computed(() => !!choices.value && !loading.value && !previewLoading.value && !saving.value && !conflict.value && !previewFailed.value && !emptyPreview.value && (draftID.value ? !!preview.value?.fingerprint && (!isCurrent.value || preview.value.changed) : !!choices.value.current.groupId))
 const changes = computed(() => choices.value?.snapshot && preview.value && isCurrent.value && preview.value.fingerprint ? numberingChanges(choices.value.snapshot, preview.value.group) : undefined)
 const selectedName = computed(() => draftID.value ? preview.value?.group.name || candidates.value.find(item => item.id === draftID.value)?.name || '剧集组' : 'TMDB 默认季集')
 const duplicateIDs = computed(() => {
@@ -52,10 +53,8 @@ const actionLabel = computed(() => saving.value ? '正在保存…' : emptyPrevi
 const statusMessage = computed(() => {
   if (saving.value) return '正在保存本剧方案，请稍候。'
   if (loading.value) return '正在读取当前方案与候选列表。'
-  if (conflict.value) return '请重新读取，核实当前生效方案后再应用。'
-  if (error.value) return '方案读取失败，请重新读取。'
+  if (conflict.value || loadFailed.value || previewFailed.value) return ''
   if (previewLoading.value) return '正在读取分集，完成后可核对预览。'
-  if (previewError.value) return '分集预览失败，请查看原因后重试。'
   if (emptyPreview.value) return '该方案详情无有效分集数据，无法应用。'
   if (!choices.value) return '读取方案后可查看分集编排。'
   if (!draftID.value && choices.value.current.groupId) return '将恢复 TMDB 默认季集，随常规资料刷新同步。'
@@ -65,23 +64,20 @@ const statusMessage = computed(() => {
 })
 watch(draftID, () => {
   copyAttempt++
-  clearTimeout(copyTimer)
-  copiedID.value = ''; copyError.value = ''; copying.value = false
+  copying.value = false
 }, { flush: 'sync' })
 async function copyGroupID() {
   const id = draftID.value
   if (!id || copying.value) return
   const attempt = ++copyAttempt
-  clearTimeout(copyTimer)
-  copiedID.value = ''; copyError.value = ''; copying.value = true
+  copying.value = true
   try {
     await copyText(id, dialog.value)
     if (lifecycle.signal.aborted || attempt !== copyAttempt) return
-    copiedID.value = id
-    copyTimer = setTimeout(() => { copiedID.value = '' }, 2000)
+    toast.success('剧集组 ID 已复制')
   } catch {
     if (lifecycle.signal.aborted || attempt !== copyAttempt) return
-    copyError.value = '复制失败，请选中 ID 手动复制。'
+    toast.error('复制失败，已选中 ID，可手动复制。')
     const selection = window.getSelection()
     if (selection && groupIDElement.value) {
       groupIDElement.value.focus({ preventScroll: true })
@@ -139,14 +135,15 @@ function backdropClick(event: MouseEvent) {
 async function request<T>(path: string, init: RequestInit = {}, signal = lifecycle.signal): Promise<T> {
   const response = await fetch(`/api/admin/tmdb/tv/${props.tmdbId}/${path}`, { ...init, headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, signal: AbortSignal.any([signal, AbortSignal.timeout(50000)]) })
   const body = await response.json().catch(() => null)
-  if (!response.ok || !body) { const failure = new Error(body?.error || `请求失败（HTTP ${response.status}）`); Object.assign(failure, { status: response.status }); throw failure }
+  if (!response.ok) { const failure = new Error(body?.error || `请求失败（HTTP ${response.status}）`); Object.assign(failure, { status: response.status }); throw failure }
+  if (!body) throw new Error('响应数据不完整')
   return body
 }
 async function load() {
   const epoch = ++loadEpoch
   previewController?.abort()
   previewLoading.value = false
-  loading.value = true; choices.value = undefined; error.value = ''; preview.value = undefined; previewError.value = ''; limits.value = {}
+  loading.value = true; choices.value = undefined; loadFailed.value = false; preview.value = undefined; previewFailed.value = false; limits.value = {}
   mobilePanel.value = 'choices'; scrollPositions.choices = 0; scrollPositions.preview = 0
   try {
     const data = await request<NumberingChoices>('episode-groups')
@@ -154,17 +151,24 @@ async function load() {
     conflict.value = false
     choices.value = data; draftID.value = data.current.groupId || ''
     if (data.snapshot) preview.value = { group: data.snapshot, fingerprint: '', changed: false }
+    const warning = [data.groupsError, data.defaultError].filter(Boolean).join('\n')
+    if (warning) toast.warning(warning, { title: '部分季集资料未能读取' })
     loading.value = false
     await nextTick()
     if (lifecycle.signal.aborted || epoch !== loadEpoch) return
     dialog.value?.querySelector<HTMLInputElement>('input:checked')?.focus()
-  } catch (e) { if (!lifecycle.signal.aborted && epoch === loadEpoch) error.value = e instanceof Error ? e.message : '读取方案失败' }
+  } catch (e) {
+    if (!lifecycle.signal.aborted && epoch === loadEpoch) {
+      loadFailed.value = true
+      toast.error(e instanceof Error ? e.message : '请重试', { title: '读取季集方案失败' })
+    }
+  }
   finally { if (!lifecycle.signal.aborted && epoch === loadEpoch) loading.value = false }
 }
 async function select(id: string) {
   if (saving.value || conflict.value) return
   previewController?.abort(); previewLoading.value = false
-  draftID.value = id; preview.value = undefined; previewError.value = ''; error.value = ''; limits.value = {}
+  draftID.value = id; preview.value = undefined; previewFailed.value = false; limits.value = {}
   void resetPreviewScroll()
   if (!id) return
   if (id === choices.value?.current.groupId && choices.value.snapshot) {
@@ -177,31 +181,37 @@ async function checkUpstream() {
   previewController?.abort()
   const controller = new AbortController(); previewController = controller
   const targetID = draftID.value
-  previewLoading.value = true; previewError.value = ''
+  previewLoading.value = true; previewFailed.value = false
   void resetPreviewScroll()
   try {
     const data = await request<NumberingPreview>(`episode-groups/${encodeURIComponent(targetID)}`, {}, AbortSignal.any([lifecycle.signal, controller.signal]))
     if (!controller.signal.aborted && !lifecycle.signal.aborted && draftID.value === targetID) preview.value = data
-  } catch (e) { if (!controller.signal.aborted && !lifecycle.signal.aborted && draftID.value === targetID) previewError.value = e instanceof Error ? e.message : '预览失败' }
+  } catch (e) {
+    if (!controller.signal.aborted && !lifecycle.signal.aborted && draftID.value === targetID) {
+      previewFailed.value = true
+      toast.error(e instanceof Error ? e.message : '请重试', { title: '分集预览失败' })
+    }
+  }
   finally { if (previewController === controller) previewLoading.value = false }
 }
 async function save() {
   if (!canSave.value || !choices.value) return
-  saving.value = true; error.value = ''
+  saving.value = true
   try {
     const result = await request<NumberingInfo>('numbering', { method: 'PUT', body: JSON.stringify({ groupId: draftID.value, revision: choices.value.current.revision, fingerprint: preview.value?.fingerprint || '' }) })
     if (!lifecycle.signal.aborted) emit('saved', result)
   } catch (e) {
     if (!lifecycle.signal.aborted) {
       const reason = e instanceof Error ? e.message : '保存失败'
-      error.value = e instanceof Error && 'status' in e ? reason : `响应未确认，本剧方案状态待核实，请重新读取。${reason}`
-      // A lost response may have committed. Re-read before any subsequent write.
+      if (e instanceof Error && 'status' in e) toast.error(reason, { title: '季集方案保存失败' })
+      else toast.warning(`响应未确认，请重新读取当前生效方案后再操作。${reason}`, { title: '保存结果待核实', duration: 7000 })
+      // 响应丢失时可能已保存，重新读取前阻止再次写入。
       conflict.value = true
     }
   } finally { if (!lifecycle.signal.aborted) saving.value = false }
 }
 onMounted(() => { mobileQuery = window.matchMedia('(max-width: 639px)'); isMobile.value = mobileQuery.matches; mobileQuery.addEventListener('change', updateViewport); dialogLifecycle.acquire(); dialog.value?.showModal(); void load() })
-onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); clearTimeout(copyTimer); previewController?.abort(); dialog.value?.close(); dialogLifecycle.release() })
+onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewport); lifecycle.abort(); previewController?.abort(); dialog.value?.close(); dialogLifecycle.release() })
 </script>
 
 <template>
@@ -214,8 +224,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
       <div class="numbering-context">
         <p class="numbering-muted text-xs leading-5">应用于本剧的详情、入库、追更与整理；不改名或移动文件。请核对 Emby 资源编号。</p>
         <p v-if="choices" class="numbering-current"><span class="numbering-muted">当前生效：</span>{{ numberingLabel(choices.current) }}<span v-if="choices.current.groupId && choices.current.savedAt" class="numbering-muted numbering-saved-at">已保存 {{ new Date(choices.current.savedAt * 1000).toLocaleString('zh-CN') }}</span></p>
-        <p v-if="error" role="alert" class="numbering-error">{{ error }}<button v-if="!saving" type="button" class="ml-2 underline" @click="load">重新读取</button></p>
-        <p v-if="choices && (choices.groupsError || choices.defaultError)" role="status" class="numbering-warning">{{ choices.groupsError }} {{ choices.defaultError }}<button type="button" class="ml-2 underline" :disabled="saving" @click="load">重新读取</button></p>
+        <button v-if="loadFailed || conflict || choices?.groupsError || choices?.defaultError" type="button" class="numbering-text-button" :disabled="loading || saving" @click="load">重新读取</button>
       </div>
       <p v-if="loading" role="status" class="numbering-muted min-h-0 flex-1 py-12 text-center text-sm">正在读取季集方案…</p>
       <div v-else-if="choices" class="numbering-body">
@@ -247,19 +256,16 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
                   <span class="numbering-group-label">剧集组 ID</span>
                   <code ref="groupIDElement" class="numbering-group-id" tabindex="-1">{{ draftID }}</code>
                   <div class="numbering-group-actions">
-                    <button type="button" class="numbering-id-action numbering-copy-id" :aria-label="copying ? '正在复制剧集组 ID' : copiedID === draftID ? '剧集组 ID 已复制' : '复制剧集组 ID'" :title="copying ? '正在复制' : copiedID === draftID ? '已复制' : '复制剧集组 ID'" :aria-busy="copying" :aria-disabled="copying" @click="copyGroupID">
-                      <IconCheck v-if="copiedID === draftID" :size="16" stroke="1.75" aria-hidden="true" focusable="false" />
-                      <IconCopy v-else :size="16" stroke="1.75" aria-hidden="true" focusable="false" />
+                    <button type="button" class="numbering-id-action numbering-copy-id" :aria-label="copying ? '正在复制剧集组 ID' : '复制剧集组 ID'" :title="copying ? '正在复制' : '复制剧集组 ID'" :aria-busy="copying" :aria-disabled="copying" @click="copyGroupID">
+                      <IconCopy :size="16" stroke="1.75" aria-hidden="true" focusable="false" />
                     </button>
                     <a :href="groupURL" target="_blank" rel="noopener noreferrer" class="numbering-id-action" aria-label="在 TMDB 打开此剧集组（新标签页）" title="在 TMDB 打开此剧集组（新标签页）"><IconExternalLink :size="16" stroke="1.75" aria-hidden="true" focusable="false" /></a>
                   </div>
-                  <p v-if="copyError" class="numbering-copy-feedback">{{ copyError }}</p>
-                  <span role="status" class="sr-only">{{ copiedID === draftID ? '剧集组 ID 已复制' : copyError }}</span>
                 </div>
               </div>
               <div class="numbering-preview-detail">
               <p v-if="previewLoading" role="status" class="numbering-muted py-8 text-center text-xs">正在读取 TMDB 分集…</p>
-              <p v-if="previewError" role="alert" class="numbering-error">{{ previewError }}<button type="button" class="ml-2 underline" :disabled="previewLoading || saving || conflict" @click="checkUpstream">重试</button></p>
+              <button v-if="previewFailed" type="button" class="numbering-text-button" :disabled="previewLoading || saving || conflict" @click="checkUpstream">重试预览</button>
               <template v-if="draftID && preview && !previewLoading">
                 <p v-if="!preview.fingerprint" class="numbering-muted mb-3 text-xs leading-5">以下为已保存编排。点击“查看 TMDB 更新”可预览上游变化。</p>
                 <div v-else-if="isCurrent" class="numbering-update" role="status">
@@ -287,7 +293,7 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
           </div>
       </div>
       <div v-else class="min-h-0 flex-1"></div>
-      <footer class="numbering-footer"><p :id="statusID" role="status" class="numbering-muted numbering-footer-status">{{ statusMessage }}</p><div class="numbering-footer-actions"><button type="button" class="numbering-secondary" :disabled="saving" @click="close">取消</button><button v-if="isMobile && choices && mobilePanel === 'choices'" type="button" class="numbering-secondary" :disabled="saving" @click="switchPanel('preview')">查看预览</button><button type="button" class="numbering-primary" :aria-describedby="statusID" :disabled="!canSave" @click="save">{{ actionLabel }}</button></div></footer>
+      <footer class="numbering-footer"><p :id="statusID" role="status" class="numbering-muted numbering-footer-status">{{ statusMessage }}</p><div class="numbering-footer-actions"><button type="button" class="numbering-secondary" :disabled="saving" @click="close">取消</button><button v-if="isMobile && choices && mobilePanel === 'choices'" type="button" class="numbering-secondary" :disabled="saving" @click="switchPanel('preview')">查看预览</button><button type="button" class="numbering-primary" :aria-describedby="statusMessage ? statusID : undefined" :disabled="!canSave" @click="save">{{ actionLabel }}</button></div></footer>
     </dialog>
   </Teleport>
 </template>
@@ -327,7 +333,6 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 .numbering-id-action { @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors; color: var(--search-dialog-muted); }
 .numbering-id-action:hover { background: var(--search-dialog-secondary-hover); color: var(--search-dialog-primary); }
 .numbering-id-action[aria-disabled='true'] { cursor: wait; opacity: .6; }
-.numbering-copy-feedback { @apply col-span-full leading-5; }
 .numbering-preview-content { @apply flex-1; }
 .numbering-preview-detail { @apply px-4 py-3; }
 .numbering-season { border-bottom: 1px solid var(--search-dialog-card-border); }
@@ -337,7 +342,6 @@ onBeforeUnmount(() => { mobileQuery?.removeEventListener('change', updateViewpor
 .numbering-season[open] > summary svg { transform: rotate(90deg); }
 .numbering-episodes { @apply pl-5; }
 .numbering-episodes > li + li { border-top: 1px solid var(--search-dialog-card-border); }
-.numbering-error { @apply rounded-lg bg-red-50/90 p-3 text-xs leading-5 text-red-700 dark:bg-red-950/50 dark:text-red-200; overflow-wrap: anywhere; }
 .numbering-warning { @apply rounded-lg bg-amber-50/90 p-3 text-xs leading-5 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200; }
 .numbering-update { @apply mb-3 rounded-lg p-3 text-xs leading-5; background: var(--search-dialog-tonal); color: var(--search-dialog-on-tonal); }
 .numbering-text-button { @apply min-h-9 shrink-0 text-left text-xs font-medium disabled:opacity-40; color: var(--search-dialog-primary); }

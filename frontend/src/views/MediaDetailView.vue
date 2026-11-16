@@ -14,6 +14,7 @@ import InfiniteLoadMore from '../components/InfiniteLoadMore.vue'
 import HistoryBackButton from '../components/HistoryBackButton.vue'
 import { useEmbyMedia } from '../composables/useEmbyMedia'
 import { useMediaColors } from '../composables/useMediaColors'
+import { useToast } from '../composables/useToast'
 import { useTMDBSeasons, type CacheInfo } from '../composables/useTMDBSeasons'
 import { provideEmbyVersionCache } from '../composables/useEmbyVersionCache'
 import { formatEpisodeRanges, localDateKey, seasonLibraryProgress } from '../types/seasonLibrary'
@@ -34,6 +35,7 @@ const RE0SearchDialog = defineAsyncComponent(() => import('../components/RE0Sear
 const TMDBEpisodeGroupDialog = defineAsyncComponent(() => import('../components/TMDBEpisodeGroupDialog.vue'))
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string }>()
+const toast = useToast()
 const versionCache = provideEmbyVersionCache()
 const botSearchOpen = ref(false)
 const channelSearchOpen = ref(false)
@@ -41,9 +43,9 @@ const gyingSearchOpen = ref(false)
 const woniuSearchOpen = ref(false)
 const mikanSearchOpen = ref(false)
 const gardenSearchOpen = ref(false)
+const dmhySearchOpen = ref(false)
 const re0SearchOpen = ref(false)
 const numberingOpen = ref(false)
-const numberingNotice = ref('')
 const searchConfigured = useDetailSearchAvailability(() => props.token, () => isPortalAdmin.value)
 const searchOrder = ref<DetailSearchSourceID[]>([...defaultDetailSearchOrder])
 watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onCleanup) => {
@@ -51,7 +53,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   channelSearchOpen.value = false
   re0SearchOpen.value = false; botSearchOpen.value = false; gyingSearchOpen.value = false
   woniuSearchOpen.value = false
-  mikanSearchOpen.value = false; gardenSearchOpen.value = false
+  mikanSearchOpen.value = false; gardenSearchOpen.value = false; dmhySearchOpen.value = false
   if (!admin || !token) return
   const controller = new AbortController()
   onCleanup(() => controller.abort())
@@ -66,7 +68,7 @@ watch(() => [props.token, isPortalAdmin.value] as const, ([token, admin], _, onC
   void loadOrder()
 }, { immediate: true })
 const route = useRoute(), router = useRouter()
-watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; channelSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; re0SearchOpen.value = false })
+watch(() => [props.kind, props.tmdbId], () => { botSearchOpen.value = false; channelSearchOpen.value = false; gyingSearchOpen.value = false; woniuSearchOpen.value = false; mikanSearchOpen.value = false; gardenSearchOpen.value = false; dmhySearchOpen.value = false; re0SearchOpen.value = false })
 const emit = defineEmits<{ logout: [] }>()
 const { media: embyMedia, episodes: embyEpisodes, error: embyError, refresh: refreshEmbyMedia, lastReadSucceeded: embyReadSucceeded } = useEmbyMedia(() => props.token, () => props.kind, () => props.tmdbId)
 watch(() => `${embyMedia.value?.state || ''}|${embyMedia.value?.items.map(item => [item.id, item.season, item.episode, item.endEpisode].join(':')).sort().join('|') || ''}`, () => versionCache.clear())
@@ -87,7 +89,7 @@ const canSearchAnimeResources = computed(() => isPortalAdmin.value && isAnimatio
 const visibleSearchSources = computed(() => isPortalAdmin.value ? visibleDetailSearchSources(searchOrder.value, searchConfigured.value, isAnimation.value) : [])
 function openResourceSearch(id: DetailSearchSourceID) {
   if (!visibleSearchSources.value.some(source => source.id === id)) return
-  const dialogs = { re0: re0SearchOpen, bot: botSearchOpen, channels: channelSearchOpen, gying: gyingSearchOpen, mikan: mikanSearchOpen, garden: gardenSearchOpen, woniu: woniuSearchOpen }
+  const dialogs = { re0: re0SearchOpen, bot: botSearchOpen, channels: channelSearchOpen, gying: gyingSearchOpen, mikan: mikanSearchOpen, garden: gardenSearchOpen, dmhy: dmhySearchOpen, woniu: woniuSearchOpen }
   dialogs[id].value = true
 }
 watch(canSearchAnimeResources, allowed => { if (!allowed) { mikanSearchOpen.value = false; gardenSearchOpen.value = false } })
@@ -164,7 +166,7 @@ async function loadDetail() {
   metadataRefreshing.value = false; metadataError.value = ''
   document.title = `${mediaLabel.value}详情 · Cinema115`
   if (!/^[1-9]\d*$/.test(props.tmdbId) || !Number.isSafeInteger(Number(props.tmdbId))) {
-    error.value = 'TMDB ID 无效，请从看板选择影视'; loading.value = false; return
+    error.value = 'TMDB ID 无效，请从看板选择影视'; loading.value = false; return false
   }
   try {
     const data = await request(`detail/${props.kind}/${props.tmdbId}`, current.signal)
@@ -173,8 +175,12 @@ async function loadDetail() {
     detail.value = data
     document.title = `${data.title} · Cinema115`
     if (data.cacheStale) void refreshDetail()
+    return true
   } catch (e) {
-    if (!current.signal.aborted) error.value = e instanceof Error ? e.message : '详情加载失败'
+    if (!current.signal.aborted) {
+      error.value = e instanceof Error ? e.message : '详情加载失败'
+      return false
+    }
   } finally {
     if (!current.signal.aborted) loading.value = false
   }
@@ -205,10 +211,10 @@ function refreshMetadata() {
 }
 async function numberingSaved(value: NumberingInfo) {
   numberingOpen.value = false
-  numberingNotice.value = `已保存：${numberingLabel(value)}。追更状态正在重新计算。`
-  await loadDetail()
+  toast.success(numberingLabel(value), { title: '季集方案已保存' })
+  if (await loadDetail() === false) toast.warning('方案已保存，详情刷新失败，请重新加载。', { title: '详情未能刷新' })
 }
-watch(() => [props.kind, props.tmdbId, props.token], () => { numberingOpen.value = false; numberingNotice.value = '' })
+watch(() => [props.kind, props.tmdbId, props.token], () => { numberingOpen.value = false })
 watch(() => detail.value?.numbering?.revision, (value, previous) => {
   if (value === previous) return
   versionCache.clear()
@@ -262,7 +268,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <RE0SearchDialog v-if="isPortalAdmin && searchConfigured.re0 && re0SearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :theme-colors="mediaColorStyle" @close="re0SearchOpen = false" />
     <GyingSearchDialog :animation-library="isAnimation" v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
     <WoniuSearchDialog :animation-library="isAnimation" v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
-    <AnimeResourceSearchDialog :animation-library="isAnimation" v-if="canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen) && detail" :key="gardenSearchOpen ? 'garden' : 'mikan'" :provider="gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :tmdb-id="detail.id" :kind="detail.kind" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false" />
+    <AnimeResourceSearchDialog :animation-library="isAnimation" v-if="detail && (isPortalAdmin && dmhySearchOpen || canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen))" :key="dmhySearchOpen ? 'dmhy' : gardenSearchOpen ? 'garden' : 'mikan'" :provider="dmhySearchOpen ? 'dmhy' : gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :tmdb-id="detail.id" :kind="detail.kind" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false; dmhySearchOpen = false" />
     <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
       <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
@@ -312,7 +318,6 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
           <section v-if="kind === 'tv'" class="mt-12" aria-label="剧集季列表">
             <div class="mb-3 flex flex-wrap items-center gap-3"><h2 class="text-lg font-bold detail-on-surface">季</h2><span class="text-xs detail-muted">{{ detail.seasons.filter(item => item.number > 0).length }} 季<span v-if="detail.seasons.some(item => item.number === 0)"> · 含特别篇</span></span><div v-if="isPortalAdmin" class="ml-auto flex flex-wrap items-center gap-4"><button type="button" class="inline-flex items-center gap-1.5 detail-link text-xs disabled:opacity-50" :disabled="metadataBusy" @click="numberingOpen = true"><svg aria-hidden="true" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="2" fill="currentColor" /><circle cx="16" cy="12" r="2" fill="currentColor" /><circle cx="10" cy="18" r="2" fill="currentColor" /></svg>设置季集方案</button><button type="button" class="detail-secondary-action text-xs disabled:opacity-50" :disabled="metadataBusy" @click="refreshMetadata">{{ metadataBusy ? '更新播出信息…' : '刷新播出信息' }}</button></div></div>
             <p v-if="detail.numbering?.groupId" class="mb-4 text-xs detail-muted">季集方案：{{ numberingLabel(detail.numbering) }}</p>
-            <p v-if="numberingNotice" role="status" class="mb-4 detail-notice rounded-xl px-3 py-2 text-xs leading-5">{{ numberingNotice }}</p>
             <p v-if="metadataError" class="mb-3 text-xs text-amber-600">{{ metadataError }}，当前保留缓存数据。</p>
             <p v-if="!detail.seasons.length" class="rounded-xl border border-slate-200 dark:border-slate-700 dark:border-slate-800 bg-white dark:bg-slate-900 dark:bg-slate-900/80 p-5 text-sm detail-muted">暂无季信息</p>
             <div class="season-list space-y-3">
@@ -494,7 +499,6 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 .detail-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .detail-secondary-action { color: var(--md-sys-color-on-surface-variant); }
 .detail-secondary-action:hover { color: var(--md-sys-color-primary); }
-.detail-notice { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 .detail-rating { color: var(--md-sys-color-on-surface); }
 .detail-rating:hover { color: var(--md-sys-color-primary); }
 .media-detail :is(a, button):focus-visible { outline-color: var(--md-sys-color-primary); }

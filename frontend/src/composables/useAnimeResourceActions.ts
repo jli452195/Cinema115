@@ -2,23 +2,27 @@ import { computed, nextTick, ref } from 'vue'
 import { useCloudDownloadBatch, type BatchStatus } from './useCloudDownloadBatch'
 import { magnetKey } from '../lib/cloud-download-batch'
 import { loadAnimeOrganizeFiles } from '../lib/anime-resource-api'
+import { readDmhyMagnet } from '../lib/dmhy-search'
 import { useCloudDownloadAction } from './useCloudDownloadAction'
 import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/organize'
-import type { AnimeResourceItem as Item, AnimeResourceGroup as Group } from '../types/animeResourceSearch'
+import type { AnimeResourceItem as Item, AnimeResourceGroup as Group, AnimeResourceProvider } from '../types/animeResourceSearch'
 
 interface AnimeResourceActionOptions {
   token: string
-  provider?: 'mikan' | 'garden'
+  provider?: AnimeResourceProvider
   tmdbId?: number
   searching: () => boolean
   filtered: () => Item[]
   groups: () => Group[]
+  updateMagnet?: (id: string, magnet: string) => void
 }
 
 export function useAnimeResourceActions(options: AnimeResourceActionOptions, signal: AbortSignal, batch: ReturnType<typeof useCloudDownloadBatch>) {
   const { selected: batchSelected, count: batchCount } = batch
-  const preparingItem = ref('')
-  const busy = computed(() => batch.running.value || !!preparingItem.value)
+  const preparing = ref<{ id: string; kind: 'files' | 'magnet' }>()
+  const preparingItem = computed(() => preparing.value?.kind === 'files' ? preparing.value.id : '')
+  const readingMagnet = computed(() => preparing.value?.kind === 'magnet' ? preparing.value.id : '')
+  const busy = computed(() => batch.running.value || !!preparing.value)
   const interactionBusy = computed(() => options.searching() || busy.value)
   const submissions = ref<Record<string, BatchStatus & { organize?: boolean }>>({})
   const cloudDownload = useCloudDownloadAction(options.token, signal, submissions)
@@ -42,8 +46,30 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
   const organizeEntries = ref<DownloadOrganizeResource[]>([])
   const organizingBatch = ref(false), organizeHiddenCount = ref(0)
   const prepareNotices = ref<Record<string, string>>({})
+  function canReadMagnet(item: Item) { return options.provider === 'dmhy' && !magnetKey(item.magnet) && item.magnetIssue !== 'conflict' }
+  async function readMagnet(item: Item, event: MouseEvent) {
+    if (signal.aborted || interactionBusy.value || singleSubmitting.value || !canReadMagnet(item) || !options.updateMagnet) return
+    const returnFocus = event.currentTarget as HTMLElement
+    const resourceRow = returnFocus.closest<HTMLElement>('.mikan-resource')
+    preparing.value = { id: item.id, kind: 'magnet' }
+    delete prepareNotices.value[item.id]
+    try {
+      const magnet = await readDmhyMagnet(options.token, item.id, signal)
+      if (!signal.aborted) options.updateMagnet(item.id, magnet)
+    } catch (reason) {
+      if (!signal.aborted) prepareNotices.value[item.id] = reason instanceof Error ? reason.message : '读取原帖磁力失败，请查看原帖'
+    } finally {
+      preparing.value = undefined
+      if (!signal.aborted) {
+        await nextTick()
+        // 成功后读取按钮被移除，将焦点留在同一资源的复制按钮。
+        if (!returnFocus.isConnected) resourceRow?.querySelector<HTMLElement>('.mikan-copy-button')?.focus({ preventScroll: true })
+      }
+    }
+  }
   function organizeSource(item: Item): DownloadResourceInput {
     const fansub = item.fansub || options.groups().find(group => (options.provider !== 'garden' || group.kind === 'fansub') && (group.id === item.groupId || item.title.startsWith(`[${group.name}]`) || item.title.startsWith(`【${group.name}】`)))?.name
+    if (options.provider === 'dmhy') return { source: 'dmhy', title: item.title, fansub, providerId: item.id, magnet: item.magnet }
     if (options.provider !== 'garden') return { source: 'mikan', title: item.title, fansub, providerId: item.id, torrentUrl: item.torrentUrl, magnet: item.magnet }
     const [provider, providerId] = item.id.split(':')
     return { source: 'garden', title: item.title, fansub, provider, providerId: providerId || '', magnet: item.magnet }
@@ -59,15 +85,15 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     organizingBatch.value = true; organizeHiddenCount.value = hiddenSelectionCount.value; organizeEntries.value = entries
   }
   async function openOrganize(item: Item, event: MouseEvent) {
-    if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !options.tmdbId || submission(item)?.success || submission(item)?.uncertain) return
+    if (organizeEntries.value.length || interactionBusy.value || singleSubmitting.value || !options.tmdbId || !magnetKey(item.magnet) || submission(item)?.success || submission(item)?.uncertain) return
     const returnFocus = event.currentTarget as HTMLElement
     returnFocus.focus({ preventScroll: true })
-    preparingItem.value = item.id
+    preparing.value = { id: item.id, kind: 'files' }
     delete prepareNotices.value[item.id]
     try {
       const data = await loadAnimeOrganizeFiles(options.token, organizeSource(item), signal)
       if (!data.files.length) { prepareNotices.value[item.id] = data.reason || '没有可整理的文件清单，可使用普通离线'; return }
-      preparingItem.value = ''
+      preparing.value = undefined
       await nextTick()
       if (signal.aborted) return
       returnFocus?.focus({ preventScroll: true })
@@ -75,7 +101,7 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     } catch (e) { if (!signal.aborted) prepareNotices.value[item.id] = e instanceof Error ? e.message : '读取文件清单失败，可使用普通离线' }
     finally {
       if (!signal.aborted) {
-        preparingItem.value = ''
+        preparing.value = undefined
         await nextTick()
         if (!organizeEntries.value.length && returnFocus.isConnected && document.activeElement === document.body) returnFocus.focus({ preventScroll: true })
       }
@@ -96,7 +122,7 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     organizeEntries.value = []
   }
   async function submit(item: Item) {
-    if (signal.aborted || interactionBusy.value || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain) return
+    if (signal.aborted || interactionBusy.value || !magnetKey(item.magnet) || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain) return
     const key = magnetKey(item.magnet)
     delete batch.statuses.value[key]
     const status = await cloudDownload.submit(item.magnet, key)
@@ -105,5 +131,5 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     if (status.success || status.uncertain) batchSelected.value.delete(key)
   }
 
-  return { busy, preparingItem, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizingBatch, organizeHiddenCount, prepareNotices, openBatchOrganize, openOrganize, organizeUncertain, organized, submit }
+  return { busy, preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizingBatch, organizeHiddenCount, prepareNotices, openBatchOrganize, openOrganize, organizeUncertain, organized, submit }
 }

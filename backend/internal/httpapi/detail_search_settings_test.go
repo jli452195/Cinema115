@@ -69,7 +69,7 @@ func TestDetailSearchSettingsPermissionsValidationAndPersistence(t *testing.T) {
 	if !reflect.DeepEqual(read().Order, model.DefaultDetailSearchOrder()) {
 		t.Fatal("未配置时没有返回默认顺序")
 	}
-	order := []string{"garden", "woniu", "mikan", "gying", "channels", "bot", "re0"}
+	order := []string{"garden", "dmhy", "woniu", "mikan", "gying", "channels", "bot", "re0"}
 	raw, err := json.Marshal(model.DetailSearchSettings{Order: order})
 	if err != nil {
 		t.Fatal(err)
@@ -80,8 +80,8 @@ func TestDetailSearchSettingsPermissionsValidationAndPersistence(t *testing.T) {
 	}
 	for _, input := range []string{
 		`{}`, `{"order":null}`, `{"order":[]}`, `{"order":["garden"]}`,
-		`{"order":["garden","woniu","mikan","gying","channels","bot","bot"]}`,
-		`{"order":["garden","woniu","mikan","gying","channels","bot","unknown"]}`,
+		`{"order":["garden","dmhy","woniu","mikan","gying","channels","bot","bot"]}`,
+		`{"order":["garden","dmhy","woniu","mikan","gying","channels","bot","unknown"]}`,
 		`{"order":"re0"}`, `{"order":[],"autoSearch":true}`, `{} {}`,
 	} {
 		call(http.MethodPut, endpoint, manager, input, 400)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"strm115/backend/internal/model"
 )
@@ -22,6 +23,12 @@ func (s *Store) DetailSearchSettings(ctx context.Context) (model.DetailSearchSet
 	}
 	if err := json.Unmarshal([]byte(raw), &settings.Order); err != nil {
 		return settings, fmt.Errorf("解码详情页搜索顺序: %w", err)
+	}
+	// 新来源补到已保存顺序末尾，保留管理员对已有入口的排序。
+	for _, id := range model.DefaultDetailSearchOrder() {
+		if !slices.Contains(settings.Order, id) {
+			settings.Order = append(settings.Order, id)
+		}
 	}
 	if err := settings.Validate(); err != nil {
 		return settings, fmt.Errorf("读取已保存的详情页搜索顺序: %w", err)
