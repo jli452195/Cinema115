@@ -89,6 +89,13 @@ func TestEmbyHTTPWebhookCharsetAndAdminBoundary(t *testing.T) {
 		{"POST", "/api/admin/emby/deep-delete-config", `{}`, 400},
 		{"POST", "/api/admin/emby/deep-delete-config", `{"enabled":"true"}`, 400},
 		{"POST", "/api/admin/emby/deep-delete-config", `{invalid`, 400},
+		{"POST", "/api/admin/emby/sync-settings", `{"enabled":true,"intervalDays":7,"time":"03:00"}`, 200},
+		{"POST", "/api/admin/emby/sync-settings", `{"enabled":false,"intervalDays":14,"time":"04:00"}`, 200},
+		{"POST", "/api/admin/emby/sync-settings", `{"enabled":true,"intervalDays":0,"time":"03:00"}`, 400},
+		{"POST", "/api/admin/emby/sync-settings", `{"enabled":true,"intervalDays":31,"time":"03:00"}`, 400},
+		{"POST", "/api/admin/emby/sync-settings", `{"enabled":true,"intervalDays":7,"time":"25:00"}`, 400},
+		{"POST", "/api/admin/emby/sync-settings", `{"intervalDays":7,"time":"03:00"}`, 400},
+		{"POST", "/api/admin/emby/sync-settings", `{invalid`, 400},
 	} {
 		if w := call(tc.method, tc.path, tc.body, false); w.Code != 401 {
 			t.Fatal("Emby 接口未鉴权", tc.path, w.Code)

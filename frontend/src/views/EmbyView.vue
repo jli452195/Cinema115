@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
+import SelectMenu from '../components/SelectMenu.vue'
+import SettingSwitch from '../components/SettingSwitch.vue'
 import { copyText } from '../utils/clipboard'
-import { embyRequest, type EmbyConfig, type EmbyStatus } from '../types/emby'
+import { embyRequest, type EmbyConfig, type EmbyStatus, type EmbySyncSettings } from '../types/emby'
 import { invalidateEmbyMissingCache, observeEmbyMissingSync } from '../composables/useEmbyMissingSession'
 import '../styles/emby-library.css'
 
@@ -18,6 +20,10 @@ const libraryLoading = ref(false), loading = ref(true), busy = ref(''), refreshi
 const loadError = ref(''), libraryError = ref(''), pollingError = ref('')
 const connectionError = ref(''), connectionNotice = ref(''), syncError = ref(''), syncNotice = ref('')
 const webhookError = ref(''), webhookNotice = ref(''), connectionOpen = ref(false), revealWebhook = ref(false)
+const syncSettings = ref<EmbySyncSettings>({ enabled: true, intervalDays: 7, time: '03:00' })
+const syncSettingsError = ref(''), syncSettingsNotice = ref('')
+const syncSettingsForm = ref<HTMLFormElement>()
+const syncIntervalOptions = [1, 3, 7, 14, 30].map(value => ({ value, label: value === 1 ? '每天' : `每 ${value} 天` }))
 const syncAccepted = ref(false)
 const connectionForm = ref<HTMLFormElement>(), webhookForm = ref<HTMLFormElement>()
 const metadataDetails = ref<HTMLDetailsElement>(), webhookDetails = ref<HTMLDetailsElement>()
@@ -44,6 +50,11 @@ const canSave = computed(() => !connectionLocked.value && dirty.value && selecte
 // Copy the persisted address, never an unsaved preview. Connection saves leave the Webhook draft alone.
 const webhookURL = computed(() => config.value?.webhookBaseUrl && config.value.webhookPath ? `${config.value.webhookBaseUrl}${config.value.webhookPath}` : '')
 const webhookDirty = computed(() => normalizeBase(webhookBase.value) !== (config.value?.webhookBaseUrl || ''))
+const syncSettingsDirty = computed(() => !!config.value && (
+  syncSettings.value.enabled !== config.value.syncSettings.enabled ||
+  syncSettings.value.intervalDays !== config.value.syncSettings.intervalDays ||
+  syncSettings.value.time !== config.value.syncSettings.time
+))
 const webhookLoopback = computed(() => {
   try { return ['localhost', '127.0.0.1', '[::1]', '0.0.0.0', '[::]'].includes(new URL(webhookBase.value).hostname) }
   catch { return false }
@@ -55,11 +66,19 @@ const notificationFailed = computed(() => Math.max(0, (status.value?.failed || 0
 const stateLabel = computed(() => syncAccepted.value ? '等待开始' : status.value ? ({ queued: '等待开始', running: '同步中', failed: '同步失败', idle: status.value.syncedAt ? '已建立索引' : '等待首次同步' }[status.value.status] || '状态待确认') : '读取中')
 const connectionLabel = computed(() => !config.value ? loadError.value ? '配置待重试' : '读取中' : !status.value ? '读取中' : pollingError.value ? '状态待刷新' : !config.value.configured ? '未配置' : status.value.connected ? '连接正常' : '连接异常')
 const updatesLabel = computed(() => status.value ? ({ ready: '已就绪', building: '正在构建', failed: '构建失败', waiting: '等待全量同步' }[status.value.updatesStatus] || '状态待确认') : '读取中')
-const syncDisabledReason = computed(() => !config.value?.configured ? '先连接 Emby 并保存同步范围。' : dirty.value ? '连接或同步范围有修改，请先保存。' : syncing.value ? '任务在后台运行，离开页面也会继续。' : '首次使用或调整范围后执行，日常通过 Webhook 增量更新。')
+const syncDisabledReason = computed(() => !config.value?.configured ? '先连接 Emby 并保存同步范围。' : dirty.value ? '连接或同步范围有修改，请先保存。' : syncing.value ? '任务在后台运行，离开页面也会继续。' : '首次配置或范围变更后自动同步，也可随时手动校准。')
+const nextSyncLabel = computed(() => {
+  if (!config.value || !status.value) return '读取中'
+  if (!config.value.configured) return '保存连接与范围后生效'
+  if (!config.value.syncSettings.enabled) return '已关闭定时校准'
+  if (syncing.value) return '本次完成后更新计划'
+  return status.value.nextSyncAt ? beijingTime(status.value.nextSyncAt) : '等待后台安排'
+})
 watch(connectionDirty, changed => { if (changed) connectionOpen.value = true })
 watch(identity, () => { connectionNotice.value = ''; connectionError.value = ''; libraryError.value = '' }, { flush: 'sync' })
 function message(reason: unknown, fallback: string) { return reason instanceof Error ? reason.message : fallback }
 function time(value?: string) { return value ? new Date(value).toLocaleString() : '尚无记录' }
+function beijingTime(value: string) { return new Date(value).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) }
 function request(path: string, body?: object) { return embyRequest(props.token, path, lifecycle.signal, body) }
 function selectVisible() { selected.value = [...new Set([...selected.value, ...filteredLibraries.value.map(library => library.ItemId)])] }
 function clearVisible() {
@@ -118,6 +137,7 @@ async function loadConfig() {
     const data: EmbyConfig = await request('config')
     if (lifecycle.signal.aborted) return
     config.value = data; url.value = data.url; selected.value = [...data.libraryIds]
+    syncSettings.value = { ...data.syncSettings }
     webhookBase.value = data.webhookBaseUrl || webhookBase.value; connectionOpen.value = !data.configured
     if (data.configured) void readLibraries()
     if (!data.webhookBaseUrl && webhookDetails.value) webhookDetails.value.open = true
@@ -144,7 +164,7 @@ async function saveConnection() {
     const retainLibraries = librariesCurrent.value
     config.value = data; url.value = data.url; apiKey.value = ''; selected.value = [...data.libraryIds]
     if (retainLibraries) libraryIdentity.value = identity.value
-    connectionNotice.value = '连接与范围已保存。首次使用或调整范围后，请执行全量同步。'
+    connectionNotice.value = '连接与范围已保存。首次配置或范围变更后会自动在后台同步。'
     if (!retainLibraries) void readLibraries()
     await refreshNow()
   } catch (reason) { if (!lifecycle.signal.aborted) connectionError.value = message(reason, '配置保存失败') }
@@ -171,6 +191,27 @@ async function startSync() {
     syncNotice.value = '已加入后台队列，离开页面也会继续。'
     await refreshNow()
   } catch (reason) { if (!lifecycle.signal.aborted) syncError.value = message(reason, '同步启动失败') }
+  finally { busy.value = '' }
+}
+function resetSyncSettings() {
+  if (locked.value || !config.value) return
+  syncSettings.value = { ...config.value.syncSettings }
+  syncSettingsError.value = ''; syncSettingsNotice.value = ''
+}
+async function saveSyncSettings() {
+  if (locked.value || !syncSettingsDirty.value || !syncSettingsForm.value?.reportValidity()) return
+  busy.value = 'save-sync-settings'; syncSettingsError.value = ''; syncSettingsNotice.value = ''
+  try {
+    const data: EmbyConfig = await request('sync-settings', { ...syncSettings.value })
+    if (lifecycle.signal.aborted || !config.value) return
+    // 仅更新已保存的校准设置，保留连接与 Webhook 的独立草稿。
+    config.value = { ...config.value, syncSettings: { ...data.syncSettings } }
+    syncSettings.value = { ...data.syncSettings }
+    syncSettingsNotice.value = data.syncSettings.enabled ? '自动校准设置已保存。' : '已停止后续自动校准及失败重试，已排队或运行的任务会继续完成。'
+    // 等待此前的状态请求结束，再读取新设置对应的后台计划。
+    if (statusRequest) await statusRequest
+    if (!lifecycle.signal.aborted) await refreshNow()
+  } catch (reason) { if (!lifecycle.signal.aborted) syncSettingsError.value = message(reason, '自动校准设置保存失败') }
   finally { busy.value = '' }
 }
 async function saveWebhook() {
@@ -227,8 +268,30 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.
           <div class="library-task"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><div><strong>{{ syncing ? syncAccepted || status?.status === 'queued' ? '等待后台开始' : `已读取 ${(status?.scanned || 0).toLocaleString()} 条` : !status ? '正在读取索引状态' : status.syncedAt ? '完整索引已建立' : '等待首次全量同步' }}</strong><p class="library-help">{{ syncing ? '正在同步所选媒体库' : '入库状态由完整索引与已处理通知共同更新。' }}</p></div></div>
           <p v-if="status?.lastError || syncError" role="alert" class="library-alert is-error">{{ syncError || status?.lastError }}</p>
           <details v-if="metadataTotal || status?.eventError" ref="metadataDetails" class="library-details library-metadata"><summary><span>{{ metadataTotal ? `${metadataTotal} 个条目元数据待补全` : '通知处理提示' }}</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></summary><div><p v-if="metadataTotal">请在 Emby 补全 TMDB ID、季号或集号。其他条目仍按当前索引显示入库结果。</p><p v-if="status?.metadataFailed">其中 {{ status.metadataFailed }} 个已达补查上限。补全后通过媒体更新通知或全量同步重新识别。</p><p v-if="status?.eventError">最近处理提示：{{ status.eventError }}</p><RouterLink :to="logsRoute" class="library-text-button">查看处理日志</RouterLink></div></details>
-          <div class="library-sync-actions"><button type="button" class="library-button" :disabled="locked || !config?.configured || syncing || dirty" @click="startSync">{{ busy === 'sync' ? '正在提交' : syncing ? '同步进行中' : '开始全量同步' }}</button><p class="library-help">{{ syncDisabledReason }}</p></div>
+          <div class="library-sync-actions"><button type="button" class="library-button" :disabled="locked || !config?.configured || syncing || dirty" @click="startSync">{{ busy === 'sync' ? '正在提交' : syncing ? '校准进行中' : '立即全量校准' }}</button><p class="library-help">{{ syncDisabledReason }}</p></div>
           <p v-if="syncNotice" role="status" class="library-alert is-success">{{ syncNotice }}</p>
+          <form ref="syncSettingsForm" class="library-sync-settings" :aria-busy="busy === 'save-sync-settings'" @submit.prevent="saveSyncSettings">
+            <SettingSwitch v-model="syncSettings.enabled" label="自动全量校准" :disabled="locked" />
+            <p class="library-help">日常通过 Webhook 增量更新，定期校准遗漏的变化。</p>
+            <fieldset class="library-sync-fields" :disabled="locked || !syncSettings.enabled">
+              <legend class="sr-only">自动全量校准周期与时间</legend>
+              <div><label for="library-sync-interval">校准周期</label><SelectMenu id="library-sync-interval" v-model="syncSettings.intervalDays" :options="syncIntervalOptions" label="校准周期" :disabled="locked || !syncSettings.enabled" class="library-sync-interval" /></div>
+              <label for="library-sync-time">执行时间（北京时间）<input id="library-sync-time" v-model="syncSettings.time" type="time" required step="60" class="library-input" /></label>
+            </fieldset>
+            <p class="library-help">只读取 Emby 目录信息，不触发 Emby 扫描或刮削。</p>
+            <p v-if="!syncSettings.enabled" class="library-help">保存后停止定时校准及失败重试，已排队或运行的任务继续。首次配置或范围变更仍会自动同步。</p>
+            <div class="library-field-actions library-sync-save">
+              <button type="submit" class="library-tool is-accent" :disabled="locked || !syncSettingsDirty">{{ busy === 'save-sync-settings' ? '正在保存' : '保存校准设置' }}</button>
+              <button v-if="syncSettingsDirty" type="button" class="library-text-button" :disabled="locked" @click="resetSyncSettings">撤销修改</button>
+              <span v-if="syncSettingsDirty" class="library-caption">有未保存修改</span>
+            </div>
+            <p v-if="syncSettingsError" role="alert" class="library-alert is-error">{{ syncSettingsError }}</p>
+            <p v-else-if="syncSettingsNotice && !syncSettingsDirty" role="status" class="library-alert is-success">{{ syncSettingsNotice }}</p>
+          </form>
+          <div class="library-sync-plan" aria-live="polite">
+            <p class="library-help">下次自动校准：{{ nextSyncLabel }}<span v-if="config?.configured && config.syncSettings.enabled && status?.nextSyncAt && !syncing">（北京时间）</span></p>
+            <p v-if="config?.syncSettings.enabled && !syncing && status?.status === 'failed' && status.syncRetryAt" class="library-help library-warning-text">{{ status.syncRetryCount >= 3 ? '本轮重试已用完，下周期' : `已失败 ${status.syncRetryCount} 次，计划于` }} {{ beijingTime(status.syncRetryAt) }}（北京时间）{{ status.syncRetryCount >= 3 ? '再次校准。' : '重试。' }}</p>
+          </div>
         </section>
 
         <section class="library-card library-settings" aria-labelledby="library-settings-title">

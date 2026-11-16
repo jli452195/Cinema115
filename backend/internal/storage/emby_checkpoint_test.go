@@ -30,8 +30,16 @@ func TestEmbyRecoveryPreservesOnlyCompletedStagingSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	state, err := s.EmbyState(ctx, scope)
-	if err != nil || state.Status != "queued" || !state.StagingComplete || state.StagingGeneration != "complete" || state.StagingCutoff != 12 {
+	if err != nil || state.Status != "failed" || !state.StagingComplete || state.StagingGeneration != "complete" || state.StagingCutoff != 12 {
 		t.Fatalf("完整暂存快照未保留: %+v %v", state, err)
+	}
+	// 已失败的完整快照等待显式入队，重启不能绕过持久化退避。
+	if err := s.EmbyQueueSync(ctx, scope); err != nil {
+		t.Fatal(err)
+	}
+	state, err = s.EmbyState(ctx, scope)
+	if err != nil || state.Status != "queued" || !state.StagingComplete || state.StagingGeneration != "complete" || state.StagingCutoff != 12 {
+		t.Fatalf("手动重试未保留完整暂存快照: %+v %v", state, err)
 	}
 	if err := s.EmbyPublish(ctx, scope, "complete", state.StagingCutoff); err != nil {
 		t.Fatal(err)

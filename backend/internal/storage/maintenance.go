@@ -2,10 +2,31 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// Stats 返回当前进程连接池的累计指标，不执行数据库查询。
+func (s *Store) Stats() sql.DBStats { return s.db.Stats() }
+
+// Optimize 限制统计采样量，补充或更新查询规划统计，不整理文件或改变业务数据。
+func (s *Store) Optimize(ctx context.Context) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("获取数据库维护连接: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=400"); err != nil {
+		return fmt.Errorf("设置数据库统计采样上限: %w", err)
+	}
+	// 检查所有表的统计需求，覆盖启动后尚未查询过的索引。
+	if _, err := conn.ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
+		return fmt.Errorf("维护数据库查询统计: %w", err)
+	}
+	return nil
+}
 
 type Status struct {
 	SchemaVersion  int            `json:"schemaVersion"`

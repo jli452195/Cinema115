@@ -79,7 +79,7 @@ func TestEmbyLogsConfigurationAndPolling(t *testing.T) {
 	if err := f.service.Save(ctx, EmbyConfig{URL: c.URL, LibraryIDs: []string{"movies"}}); err != nil {
 		t.Fatal(err)
 	}
-	requireEmbyLog(t, logs, "WARNING", "同步范围已改变")
+	requireEmbyLog(t, logs, "INFO", "全量同步已自动加入后台队列")
 	if err := f.service.SaveWebhookBaseURL(ctx, "http://cinema.test:3002"); err != nil {
 		t.Fatal(err)
 	}

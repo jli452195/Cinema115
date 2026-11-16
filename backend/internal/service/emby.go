@@ -23,28 +23,30 @@ import (
 )
 
 type EmbyConfig struct {
-	URL                  string   `json:"url"`
-	APIKey               string   `json:"apiKey,omitempty"`
-	LibraryIDs           []string `json:"libraryIds"`
-	ServerID             string   `json:"serverId"`
-	ServerName           string   `json:"serverName"`
-	WebhookSecret        string   `json:"webhookSecret,omitempty"`
-	WebhookBaseURL       string   `json:"webhookBaseUrl"`
-	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
-	RefreshPathMappings  string   `json:"refreshPathMappings"`
-	DeepDeleteEnabled    bool     `json:"deepDeleteEnabled"`
+	URL                  string            `json:"url"`
+	APIKey               string            `json:"apiKey,omitempty"`
+	LibraryIDs           []string          `json:"libraryIds"`
+	ServerID             string            `json:"serverId"`
+	ServerName           string            `json:"serverName"`
+	WebhookSecret        string            `json:"webhookSecret,omitempty"`
+	WebhookBaseURL       string            `json:"webhookBaseUrl"`
+	RefreshAfterOrganize bool              `json:"refreshAfterOrganize"`
+	RefreshPathMappings  string            `json:"refreshPathMappings"`
+	DeepDeleteEnabled    bool              `json:"deepDeleteEnabled"`
+	SyncSettings         *EmbySyncSettings `json:"syncSettings,omitempty"`
 }
 type EmbyConfigView struct {
-	URL                  string   `json:"url"`
-	Configured           bool     `json:"configured"`
-	LibraryIDs           []string `json:"libraryIds"`
-	ServerID             string   `json:"serverId"`
-	ServerName           string   `json:"serverName"`
-	WebhookPath          string   `json:"webhookPath"`
-	WebhookBaseURL       string   `json:"webhookBaseUrl"`
-	RefreshAfterOrganize bool     `json:"refreshAfterOrganize"`
-	RefreshPathMappings  string   `json:"refreshPathMappings"`
-	DeepDeleteEnabled    bool     `json:"deepDeleteEnabled"`
+	URL                  string           `json:"url"`
+	Configured           bool             `json:"configured"`
+	LibraryIDs           []string         `json:"libraryIds"`
+	ServerID             string           `json:"serverId"`
+	ServerName           string           `json:"serverName"`
+	WebhookPath          string           `json:"webhookPath"`
+	WebhookBaseURL       string           `json:"webhookBaseUrl"`
+	RefreshAfterOrganize bool             `json:"refreshAfterOrganize"`
+	RefreshPathMappings  string           `json:"refreshPathMappings"`
+	DeepDeleteEnabled    bool             `json:"deepDeleteEnabled"`
+	SyncSettings         EmbySyncSettings `json:"syncSettings"`
 }
 type EmbyStatus struct {
 	model.EmbyState
@@ -57,6 +59,7 @@ type EmbyStatus struct {
 	MetadataPending int    `json:"metadataPending"`
 	MetadataFailed  int    `json:"metadataFailed"`
 	UpdatesStatus   string `json:"updatesStatus"`
+	NextSyncAt      string `json:"nextSyncAt"`
 }
 
 var errEmbyMetadataPending = errors.New("Emby 刮削信息不完整")
@@ -109,6 +112,10 @@ func (s *EmbyService) snapshot() EmbyConfig {
 	defer s.mu.RUnlock()
 	c := s.config
 	c.LibraryIDs = append([]string{}, c.LibraryIDs...)
+	if c.SyncSettings != nil {
+		settings := *c.SyncSettings
+		c.SyncSettings = &settings
+	}
 	return c
 }
 
@@ -141,7 +148,7 @@ func (s *EmbyService) Config() EmbyConfigView {
 	if c.WebhookSecret != "" {
 		path = "/api/webhook/emby?token=" + url.QueryEscape(c.WebhookSecret)
 	}
-	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL, RefreshAfterOrganize: c.RefreshAfterOrganize, RefreshPathMappings: c.RefreshPathMappings, DeepDeleteEnabled: c.DeepDeleteEnabled}
+	return EmbyConfigView{URL: c.URL, Configured: c.APIKey != "", LibraryIDs: c.LibraryIDs, ServerID: c.ServerID, ServerName: c.ServerName, WebhookPath: path, WebhookBaseURL: c.WebhookBaseURL, RefreshAfterOrganize: c.RefreshAfterOrganize, RefreshPathMappings: c.RefreshPathMappings, DeepDeleteEnabled: c.DeepDeleteEnabled, SyncSettings: embySyncSettings(c)}
 }
 
 func normalizeWebhookBaseURL(raw string) (string, error) {
@@ -278,6 +285,7 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr err
 	// 刷新设置独立保存，连接页面不能覆盖另一页面已保存的开关与路径。
 	c.RefreshAfterOrganize, c.RefreshPathMappings = s.config.RefreshAfterOrganize, s.config.RefreshPathMappings
 	c.DeepDeleteEnabled = s.config.DeepDeleteEnabled
+	c.SyncSettings = s.config.SyncSettings
 	// 兼容旧页面；未提交地址时保留当前已保存的地址。
 	if input.WebhookBaseURL == "" {
 		c.WebhookBaseURL = s.config.WebhookBaseURL
@@ -289,16 +297,9 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr err
 	if err := s.db.EmbyEnsure(ctx, embyScope(c)); err != nil {
 		return err
 	}
-	if embyScope(c) != embyScope(s.config) {
-		state, err := s.db.EmbyState(ctx, embyScope(c))
-		if err != nil {
-			return err
-		}
-		if state.Active != "" {
-			if err := s.db.EmbyProgress(ctx, embyScope(c), "failed", 0, "同步范围已切换，请重新执行全量同步"); err != nil {
-				return err
-			}
-		}
+	state, err := s.db.EmbyState(ctx, embyScope(c))
+	if err != nil {
+		return err
 	}
 	if err := s.secrets.Save(string(data)); err != nil {
 		return fmt.Errorf("保存 Emby 加密配置: %w", err)
@@ -309,8 +310,17 @@ func (s *EmbyService) Save(ctx context.Context, input EmbyConfig) (resultErr err
 	s.checkedAt = time.Now()
 	s.connectionError = ""
 	logEmby(ctx, "INFO", fmt.Sprintf("配置已保存，同步范围 %d 个媒体库", len(c.LibraryIDs)))
-	if changed {
-		logEmby(ctx, "WARNING", "服务器或同步范围已改变，请执行全量同步")
+	if changed || state.Active == "" {
+		// 历史范围停用期间可能漏收通知，不能把旧暂存快照当成本次最新全量结果。
+		if changed && state.StagingComplete && state.Status != "running" {
+			if err := s.db.EmbyFailSync(ctx, embyScope(c), state.StagingGeneration, "同步范围已切换，将重新读取当前媒体库", true); err != nil {
+				return fmt.Errorf("配置已保存，但清理历史同步快照失败: %w", err)
+			}
+		}
+		if err := s.db.EmbyQueueSync(ctx, embyScope(c)); err != nil {
+			return fmt.Errorf("配置已保存，但自动同步入队失败，请手动全量同步: %w", err)
+		}
+		logEmby(ctx, "INFO", "首次配置或同步范围已改变，全量同步已自动加入后台队列")
 	}
 	return s.db.RecheckFollows(ctx)
 }
@@ -351,7 +361,7 @@ func (s *EmbyService) statusLocked(ctx context.Context) (EmbyStatus, error) {
 			updatesStatus = "failed"
 		}
 	}
-	return EmbyStatus{EmbyState: state, Configured: c.APIKey != "", Pending: pending, Failed: failed, Connected: connected, ConnectionError: message, EventError: eventError, MetadataPending: metadataPending, MetadataFailed: metadataFailed, UpdatesStatus: updatesStatus}, nil
+	return EmbyStatus{EmbyState: state, Configured: c.APIKey != "", Pending: pending, Failed: failed, Connected: connected, ConnectionError: message, EventError: eventError, MetadataPending: metadataPending, MetadataFailed: metadataFailed, UpdatesStatus: updatesStatus, NextSyncAt: embyNextSyncAt(c, state, time.Now())}, nil
 }
 func (s *EmbyService) StartSync(ctx context.Context) (resultErr error) {
 	s.mu.Lock()
@@ -452,7 +462,18 @@ func (s *EmbyService) Run(ctx context.Context) (resultErr error) {
 			}
 			continue
 		}
-		if state.Active == "" {
+		queued, err := s.queueDueSync(ctx, c, state, time.Now())
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		if queued {
+			continue
+		}
+		// 完整暂存快照等待发布时保留通知，避免先消费后被旧暂存结果覆盖。
+		if state.Active == "" || state.StagingComplete {
 			continue
 		}
 		if state.UpdatesGeneration == state.Active && !state.UpdatesReady {

@@ -32,6 +32,8 @@ type EmbyState struct {
 	UpdatesGeneration string `json:"-"`
 	UpdatesReady      bool   `json:"updatesReady"`
 	UpdatesError      string `json:"updatesError"`
+	SyncRetryCount    int    `json:"syncRetryCount"`
+	SyncRetryAt       string `json:"syncRetryAt"`
 }
 
 type EmbyEvent struct {

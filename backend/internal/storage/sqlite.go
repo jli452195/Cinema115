@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 69
+const schemaVersion = 71
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -564,6 +564,27 @@ PRAGMA user_version=30;`); err != nil {
 	if version < 68 {
 		if _, err := tx.ExecContext(ctx, embyDeepDeleteSchema); err != nil {
 			return fmt.Errorf("创建 Emby 删除联动存储: %w", err)
+		}
+	}
+	if version < 70 {
+		if _, err := tx.ExecContext(ctx, embyDeletionIndexesSchema); err != nil {
+			return fmt.Errorf("创建 Emby 层级删除索引: %w", err)
+		}
+	}
+	if version < 71 {
+		for _, column := range []struct{ name, definition string }{
+			{"sync_retry_count", "INTEGER NOT NULL DEFAULT 0"},
+			{"sync_retry_at", "TEXT NOT NULL DEFAULT ''"},
+		} {
+			var exists int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info('emby_state') WHERE name=?`, column.name).Scan(&exists); err != nil {
+				return fmt.Errorf("检查 Emby 同步重试字段 %s: %w", column.name, err)
+			}
+			if exists == 0 {
+				if _, err := tx.ExecContext(ctx, "ALTER TABLE emby_state ADD COLUMN "+column.name+" "+column.definition); err != nil {
+					return fmt.Errorf("创建 Emby 同步重试字段 %s: %w", column.name, err)
+				}
+			}
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

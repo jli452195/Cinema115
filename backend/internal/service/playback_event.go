@@ -166,14 +166,14 @@ func (s *MemberPlaybackService) applyPlaybackEventAtomic(ctx context.Context, e 
 	defer p.mu.Unlock()
 	ud, pd := u.clone(), p.clone()
 	now := u.now()
-	changed := false
+	var userChange *model.UserPlaybackDocument
 	for key, l := range ud.Leases {
 		if l.EventKey != e.key || l.Generation != e.userGeneration || l.ExpiresAt <= now.UnixMilli() {
 			continue
 		}
-		changed = true
 		if stopped {
 			delete(ud.Leases, key)
+			userChange = &ud
 		} else {
 			l.CandidateUntil = 0
 			l.LastPlaybackAt = now.UnixMilli()
@@ -182,17 +182,25 @@ func (s *MemberPlaybackService) applyPlaybackEventAtomic(ctx context.Context, e 
 				l.UpdatedAt = now.UnixMilli()
 				l.ExpiresAt = now.Add(userPlaybackIdleTTL).UnixMilli()
 			}
-			ud.Leases[key] = l
+			if l != ud.Leases[key] {
+				ud.Leases[key] = l
+				userChange = &ud
+			}
 		}
 	}
-	changed = applyPoolEvent(&pd, e, stopped, p.now()) || changed
-	if !changed {
-		return nil
+	var poolChange *model.PlaybackPoolDocument
+	if applyPoolEvent(&pd, e, stopped, p.now()) {
+		poolChange = &pd
 	}
-	if err := s.db.SavePlaybackState(ctx, ud, pd); err != nil {
+	if err := s.db.SavePlaybackStateChanges(ctx, userChange, poolChange); err != nil {
 		return err
 	}
-	u.doc, p.doc = ud, pd
+	if userChange != nil {
+		u.doc = ud
+	}
+	if poolChange != nil {
+		p.doc = pd
+	}
 	return nil
 }
 

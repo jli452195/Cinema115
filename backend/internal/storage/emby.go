@@ -20,9 +20,9 @@ func (s *Store) embyExec(ctx context.Context, query string, args ...any) error {
 func (s *Store) EmbyState(ctx context.Context, scope string) (model.EmbyState, error) {
 	v := model.EmbyState{Scope: scope, Status: "idle"}
 	err := s.db.QueryRowContext(ctx, `SELECT active,status,count,scanned,synced_at,last_error,webhook_at,webhook_event,webhook_error,
-staging_generation,staging_complete,staging_cutoff,updates_generation,updates_ready,updates_error
+staging_generation,staging_complete,staging_cutoff,updates_generation,updates_ready,updates_error,sync_retry_count,sync_retry_at
 FROM emby_state WHERE scope=?`, scope).Scan(&v.Active, &v.Status, &v.Count, &v.Scanned, &v.SyncedAt, &v.LastError, &v.WebhookAt, &v.WebhookEvent, &v.WebhookError,
-		&v.StagingGeneration, &v.StagingComplete, &v.StagingCutoff, &v.UpdatesGeneration, &v.UpdatesReady, &v.UpdatesError)
+		&v.StagingGeneration, &v.StagingComplete, &v.StagingCutoff, &v.UpdatesGeneration, &v.UpdatesReady, &v.UpdatesError, &v.SyncRetryCount, &v.SyncRetryAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return v, nil
 	}
@@ -37,7 +37,7 @@ func (s *Store) EmbyEnsure(ctx context.Context, scope string) error {
 func (s *Store) EmbyRecover(ctx context.Context) error {
 	return s.embyExec(ctx, `
 UPDATE emby_state SET status='queued',last_error='服务重启，正在重试发布已完成的媒体快照'
- WHERE status IN ('running','failed') AND staging_complete=1 AND staging_generation<>'';
+ WHERE status='running' AND staging_complete=1 AND staging_generation<>'';
 UPDATE emby_state SET status='failed',last_error='服务重启中断同步，请重新执行全量同步',staging_generation='',staging_complete=0,staging_cutoff=0
  WHERE status='running' AND staging_complete=0;
 DELETE FROM emby_snapshots WHERE NOT EXISTS (
@@ -49,8 +49,27 @@ func (s *Store) EmbyQueueSync(ctx context.Context, scope string) error {
 	if err := s.EmbyEnsure(ctx, scope); err != nil {
 		return err
 	}
-	return s.embyExec(ctx, `UPDATE emby_state SET status='queued',last_error='',webhook_error='',scanned=0 WHERE scope=? AND status NOT IN ('queued','running')`, scope)
+	return s.embyExec(ctx, `UPDATE emby_state SET status='queued',last_error='',webhook_error='',scanned=0,sync_retry_count=0,sync_retry_at='' WHERE scope=? AND status NOT IN ('queued','running')`, scope)
 }
+
+// EmbyQueueScheduledSync 仅入队空闲或失败任务，重试时可保留本轮失败次数。
+func (s *Store) EmbyQueueScheduledSync(ctx context.Context, scope string, resetRetry bool) error {
+	if err := s.EmbyEnsure(ctx, scope); err != nil {
+		return err
+	}
+	return s.embyExec(ctx, `UPDATE emby_state SET status='queued',scanned=0,last_error='',sync_retry_at='',sync_retry_count=CASE WHEN ? THEN 0 ELSE sync_retry_count END WHERE scope=? AND status NOT IN ('queued','running')`, resetRetry, scope)
+}
+
+// EmbyRecordSyncRetry 只为尚未安排重试的失败任务写入计划，避免覆盖新任务。
+func (s *Store) EmbyRecordSyncRetry(ctx context.Context, scope string, count int, retryAt string) error {
+	return s.embyExec(ctx, `UPDATE emby_state SET sync_retry_count=?,sync_retry_at=? WHERE scope=? AND status='failed' AND sync_retry_at=''`, count, retryAt, scope)
+}
+
+// EmbyRescheduleSyncRetry 仅调整已耗尽重试的下一轮，不改变短时退避或运行中的任务。
+func (s *Store) EmbyRescheduleSyncRetry(ctx context.Context, scope, retryAt string) error {
+	return s.embyExec(ctx, `UPDATE emby_state SET sync_retry_at=? WHERE scope=? AND status='failed' AND sync_retry_count>=3 AND sync_retry_at<>''`, retryAt, scope)
+}
+
 func (s *Store) EmbyProgress(ctx context.Context, scope, status string, scanned int, message string) error {
 	return s.embyExec(ctx, `UPDATE emby_state SET status=?,scanned=?,last_error=? WHERE scope=?`, status, scanned, message, scope)
 }
@@ -174,7 +193,7 @@ func (s *Store) EmbyPublish(ctx context.Context, scope, generation string, cutof
 	}{
 		{`UPDATE emby_state SET active=?,status='idle',count=(SELECT COUNT(*) FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?)),synced_at=?,last_error='',
 staging_generation='',staging_complete=0,staging_cutoff=0,
-updates_generation=?,updates_ready=1,updates_error=''
+updates_generation=?,updates_ready=1,updates_error='',sync_retry_count=0,sync_retry_at=''
 WHERE scope=?`, []any{generation, scope, generation, now.Format(time.RFC3339), generation, scope}},
 		{`DELETE FROM emby_snapshots WHERE scope=? AND generation<>?`, []any{scope, generation}},
 		// 同步开始前已失败的通知由完整快照修复；同步期间的通知仍须重放。
@@ -302,6 +321,17 @@ func (s *Store) EmbyApplyMetadataEvent(ctx context.Context, scope, generation st
 	return s.applyEmbyEvent(ctx, scope, generation, event, items, false, message)
 }
 
+// 分支先沿各自索引查找并去重，再按完整主键删除，避免 OR 导致整份快照扫描。
+const embyDeleteItemsSQL = `WITH snapshot AS (
+ SELECT id FROM emby_snapshots WHERE scope=?1 AND generation=?2
+), matched AS (
+ SELECT snapshot_id,id FROM emby_items WHERE snapshot_id=(SELECT id FROM snapshot) AND id=?3
+ UNION SELECT snapshot_id,id FROM emby_items WHERE snapshot_id=(SELECT id FROM snapshot) AND series_id=?3
+ UNION SELECT snapshot_id,id FROM emby_items WHERE snapshot_id=(SELECT id FROM snapshot) AND parent_id=?3
+ UNION SELECT snapshot_id,id FROM emby_items WHERE snapshot_id=(SELECT id FROM snapshot) AND library_id=?3
+)
+DELETE FROM emby_items WHERE (snapshot_id,id) IN (SELECT snapshot_id,id FROM matched) RETURNING type,id,series_id`
+
 func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, event model.EmbyEvent, items []model.EmbyItem, remove bool, metadataError string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -338,7 +368,7 @@ func (s *Store) applyEmbyEvent(ctx context.Context, scope, generation string, ev
 		if err := deleteMediaUpdates(ctx, tx, scope, event.ItemID, time.Now().UTC().Unix()); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, `DELETE FROM emby_items WHERE snapshot_id=(SELECT id FROM emby_snapshots WHERE scope=? AND generation=?) AND (id=? OR series_id=? OR parent_id=? OR library_id=?) RETURNING type,id,series_id`, scope, generation, event.ItemID, event.ItemID, event.ItemID, event.ItemID)
+		rows, err := tx.QueryContext(ctx, embyDeleteItemsSQL, scope, generation, event.ItemID)
 		if err != nil {
 			return fmt.Errorf("移除 Emby 条目: %w", err)
 		}

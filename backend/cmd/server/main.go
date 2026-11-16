@@ -577,6 +577,8 @@ func main() {
 	server := &http.Server{Handler: r, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	var workers sync.WaitGroup
 	workers.Add(1)
+	go func() { defer workers.Done(); runDatabaseMaintenance(ctx, database, log.Printf) }()
+	workers.Add(1)
 	go func() { defer workers.Done(); memberPlayback.Run(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); tmdbImages.Run(ctx) }()

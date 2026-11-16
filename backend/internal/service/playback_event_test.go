@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
 	"strm115/backend/internal/model"
+	"strm115/backend/internal/storage"
 )
 
 func TestPoolCapturedStopSurvivesMissingUserSlotAndRejectsReplay(t *testing.T) {
@@ -97,5 +101,118 @@ func TestPlaybackMultipleSessionsStopIsolation(t *testing.T) {
 	}
 	if leases[1].Current() || !s.Pool.doc.Leases["second"].Stopped {
 		t.Fatal("admin release failed")
+	}
+}
+
+func TestPlaybackEventPersistsOnlyChangedDocuments(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		advance    time.Duration
+		staleUser  bool
+		stalePool  bool
+		failPool   bool
+		userWrites int
+		poolWrites int
+	}{
+		{name: "frequent_heartbeats", advance: time.Second, userWrites: 2},
+		{name: "renew_both", advance: time.Minute, userWrites: 1, poolWrites: 1},
+		{name: "pool_only", advance: time.Minute, staleUser: true, poolWrites: 1},
+		{name: "stale_generations", advance: time.Minute, staleUser: true, stalePool: true},
+		{name: "failed_renewal", advance: time.Minute, failPool: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, r, userLease, poolLease, now := handoffFixture(t)
+			ctx := context.Background()
+			path := filepath.Join(t.TempDir(), "playback-event.db")
+			db, err := storage.Open(ctx, path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = db.Close() })
+			beforeUser, beforePool := s.UserPlayback.clone(), s.Pool.clone()
+			if err := db.SavePlaybackState(ctx, beforeUser, beforePool); err != nil {
+				t.Fatal(err)
+			}
+			s.db, s.UserPlayback.store, s.Pool.store = db, db, db
+			connection, err := sql.Open("sqlite", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = connection.Close() })
+			// 临时库内记录实际 UPDATE 次数，避免仅比较最终 JSON 而漏掉重复写入。
+			for _, query := range []string{
+				`CREATE TABLE event_writes(document TEXT NOT NULL)`,
+				`CREATE TRIGGER count_user AFTER UPDATE ON user_playback_leases BEGIN INSERT INTO event_writes VALUES('user'); END`,
+				`CREATE TRIGGER count_pool AFTER UPDATE ON playback_pool BEGIN INSERT INTO event_writes VALUES('pool'); END`,
+			} {
+				if _, err := connection.ExecContext(ctx, query); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.failPool {
+				if _, err := connection.ExecContext(ctx, `CREATE TRIGGER fail_pool BEFORE UPDATE ON playback_pool BEGIN SELECT RAISE(ABORT,'injected failure'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e := s.CapturePlaybackEvent("http://emby", r.EmbyID, "old", "client", "movie", false)
+			if !e.Matched() || e.poolGenerations[poolLease.Record.Key] == 0 {
+				t.Fatal("fixture event did not match user and pool")
+			}
+			if tc.staleUser {
+				e.userGeneration++
+			}
+			if tc.stalePool {
+				e.poolGenerations[poolLease.Record.Key]++
+			}
+			pulses := max(tc.userWrites, 1)
+			for i := 0; i < pulses; i++ {
+				*now = now.Add(tc.advance)
+				err := s.ApplyPlaybackEvent(ctx, e, false)
+				if (err != nil) != tc.failPool {
+					t.Fatalf("playback event error = %v, want failure %v", err, tc.failPool)
+				}
+				if !tc.failPool && !tc.staleUser {
+					u, err := db.UserPlayback(ctx)
+					if err != nil || u.Leases[userLease.Record.Key].LastPlaybackAt != now.UnixMilli() {
+						t.Fatal("heartbeat evidence was not persisted on every pulse", err)
+					}
+				}
+				if tc.userWrites > 1 {
+					// 相同毫秒、相同状态的重复事件没有新证据，无需再次保存。
+					if err := s.ApplyPlaybackEvent(ctx, e, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			for _, want := range []struct {
+				document string
+				writes   int
+			}{{"user", tc.userWrites}, {"pool", tc.poolWrites}} {
+				var got int
+				if err := connection.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_writes WHERE document=?`, want.document).Scan(&got); err != nil {
+					t.Fatal(err)
+				}
+				if got != want.writes {
+					t.Fatalf("%s writes = %d, want %d", want.document, got, want.writes)
+				}
+			}
+			persistedUser, err := db.UserPlayback(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			persistedPool, err := db.PlaybackPool(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(persistedUser, s.UserPlayback.doc) || !reflect.DeepEqual(persistedPool, s.Pool.doc) {
+				t.Fatal("persisted documents differ from published memory")
+			}
+			if tc.userWrites == 0 && !reflect.DeepEqual(beforeUser, s.UserPlayback.doc) {
+				t.Fatal("unchanged or failed user document was published")
+			}
+			if tc.poolWrites == 0 && !reflect.DeepEqual(beforePool, s.Pool.doc) {
+				t.Fatal("unchanged or failed pool document was published")
+			}
+		})
 	}
 }

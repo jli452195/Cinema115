@@ -24,6 +24,23 @@ func RegisterEmby(r *gin.Engine, admin *gin.RouterGroup, s *service.EmbyService)
 		c.Next()
 	})
 	group.GET("/config", func(c *gin.Context) { c.JSON(200, s.Config()) })
+	group.POST("/sync-settings", func(c *gin.Context) {
+		var input struct {
+			Enabled      *bool  `json:"enabled"`
+			IntervalDays int    `json:"intervalDays"`
+			Time         string `json:"time"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.Enabled == nil {
+			c.JSON(400, gin.H{"error": "自动校准设置格式无效"})
+			return
+		}
+		settings := service.EmbySyncSettings{Enabled: *input.Enabled, IntervalDays: input.IntervalDays, Time: input.Time}
+		if err := s.SaveSyncSettings(c.Request.Context(), settings); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, s.Config())
+	})
 	group.POST("/deep-delete-config", func(c *gin.Context) {
 		var input struct {
 			Enabled *bool `json:"enabled"`
