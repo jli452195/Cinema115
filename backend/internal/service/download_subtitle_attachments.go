@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
 
 func subtitleAttachmentID(id string) bool {
@@ -33,6 +35,25 @@ func (s *DownloadOrganize) attachmentPath(sub DownloadSubtitle) (string, error) 
 // Preview metadata never contains file bytes. Validate and atomically persist
 // attachments before Start can accept a task; filenames always come from us.
 func (s *DownloadOrganize) SaveSubtitleAttachments(ctx context.Context, previewID string, files map[string][]byte) error {
+	if len(files) == 0 {
+		return fmt.Errorf("%w：请选择字幕附件", ErrOrganizeInput)
+	}
+	if len(files) > MaxSubtitleImportFiles {
+		return fmt.Errorf("%w：字幕附件超过 %d 个", ErrOrganizeInput, MaxSubtitleImportFiles)
+	}
+	var total int64
+	for _, data := range files {
+		if len(data) == 0 {
+			return fmt.Errorf("%w：字幕不能为空文件", ErrOrganizeInput)
+		}
+		if len(data) > p115.MaxSubtitleBytes {
+			return fmt.Errorf("%w：单个字幕不能超过 16 MiB", ErrOrganizeInput)
+		}
+		total += int64(len(data))
+		if total > MaxSubtitleImportBytes {
+			return fmt.Errorf("%w：字幕总大小不能超过 64 MiB", ErrOrganizeInput)
+		}
+	}
 	s.mu.Lock()
 	s.Organize.mu.Lock()
 	s.Organize.pruneLocked()
@@ -48,8 +69,7 @@ func (s *DownloadOrganize) SaveSubtitleAttachments(ctx context.Context, previewI
 	if len(jobs) == 0 {
 		return fmt.Errorf("%w：预览已过期，请重新确认", ErrOrganizeConflict)
 	}
-	seen := make(map[string]bool)
-	var total int64
+	seen := make(map[string]bool, len(files))
 	for _, job := range jobs {
 		if _, err := s.Organize.account(job.Config.AccountID); err != nil {
 			return err
@@ -63,14 +83,11 @@ func (s *DownloadOrganize) SaveSubtitleAttachments(ctx context.Context, previewI
 			if !ok || int64(len(data)) != sub.File.Size || hex.EncodeToString(digest[:]) != sub.SHA256 {
 				return fmt.Errorf("%w：本地字幕内容与预览不一致", ErrOrganizeInput)
 			}
-			if !seen[sub.LocalID] {
-				total += int64(len(data))
-				seen[sub.LocalID] = true
-			}
+			seen[sub.LocalID] = true
 		}
 	}
-	if len(seen) != len(files) || len(files) == 0 || len(files) > 100 || total > MaxSubtitleImportBytes {
-		return fmt.Errorf("%w：字幕附件重复、未选中或超过大小限制", ErrOrganizeInput)
+	if len(seen) != len(files) {
+		return fmt.Errorf("%w：字幕附件重复或未选中", ErrOrganizeInput)
 	}
 	s.attachmentMu.Lock()
 	defer s.attachmentMu.Unlock()

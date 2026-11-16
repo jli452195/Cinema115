@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/gin-gonic/gin"
@@ -9,7 +10,7 @@ import (
 )
 
 func readSubtitleUpload(c *gin.Context) (map[string]string, map[string][]byte, bool) {
-	// Stream multipart parsing into bounded memory; no browser paths reach disk.
+	// 流式读取 multipart 并限制内存，浏览器提供的路径不会用于磁盘写入。
 	reader, err := c.Request.MultipartReader()
 	if err != nil {
 		c.JSON(400, gin.H{"error": "请选择字幕文件后重新预览"})
@@ -29,19 +30,37 @@ func readSubtitleUpload(c *gin.Context) (map[string]string, map[string][]byte, b
 		}
 		key := part.FormName()
 		isFile := part.FileName() != ""
+		if isFile {
+			if _, exists := files[key]; exists {
+				c.JSON(400, gin.H{"error": "字幕条目重复"})
+				return nil, nil, false
+			}
+			if len(files) >= service.MaxSubtitleImportFiles {
+				c.JSON(400, gin.H{"error": fmt.Sprintf("字幕不能超过 %d 个", service.MaxSubtitleImportFiles)})
+				return nil, nil, false
+			}
+		}
 		limit := int64(1024)
 		if isFile {
 			limit = p115.MaxSubtitleBytes
 		}
 		data, readErr := io.ReadAll(io.LimitReader(part, limit+1))
 		_ = part.Close()
-		if readErr != nil || int64(len(data)) > limit {
-			c.JSON(400, gin.H{"error": "单个字幕不能超过 16 MiB，或请求内容不完整"})
+		if readErr != nil {
+			c.JSON(400, gin.H{"error": "字幕请求内容不完整"})
+			return nil, nil, false
+		}
+		if int64(len(data)) > limit {
+			message := "字幕确认参数过长"
+			if isFile {
+				message = "单个字幕不能超过 16 MiB"
+			}
+			c.JSON(400, gin.H{"error": message})
 			return nil, nil, false
 		}
 		if isFile {
-			if _, exists := files[key]; exists || len(files) >= 100 {
-				c.JSON(400, gin.H{"error": "字幕条目重复或超过 100 个"})
+			if len(data) == 0 {
+				c.JSON(400, gin.H{"error": "字幕不能为空文件"})
 				return nil, nil, false
 			}
 			total += len(data)

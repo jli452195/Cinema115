@@ -5,12 +5,13 @@ import { createRequire } from 'node:module'
 import { File } from 'node:buffer'
 import ts from 'typescript'
 import { zipSync, strToU8 } from 'fflate'
+import { subtitleLimits } from './helpers/subtitle-limits.mjs'
 
 const require = createRequire(import.meta.url)
 const source = await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
-new Function('require', 'module', 'exports', compiled)(name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
+new Function('require', 'module', 'exports', compiled)(name => name === './subtitleLimits' ? subtitleLimits : name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
 const { episodeNumber, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
@@ -213,8 +214,8 @@ test('raw subtitles, count limits, empty files and cancellation', async () => {
   const result = await readLocalSubtitles([new File(['text'], 'a.ass'), new File(['font'], 'a.ttf')])
   assert.equal(result.files.length, 1)
   assert.equal(result.ignored, 1)
-  await assert.rejects(readLocalSubtitles([new File([], 'empty.srt')]), /空文件/)
-  await assert.rejects(readLocalSubtitles(Array.from({ length: 101 }, () => new File(['x'], 'a.srt'))), /100/)
+  await assert.rejects(readLocalSubtitles([new File([], 'empty.srt')]), /空字幕文件/)
+  await assert.rejects(readLocalSubtitles(Array.from({ length: 1001 }, () => new File(['x'], 'a.srt'))), /1000/)
   const controller = new AbortController(); controller.abort()
   await assert.rejects(readLocalSubtitles([new File(['text'], 'a.ass')], controller.signal))
 })
@@ -228,7 +229,69 @@ test('append preserves edited row identity, deduplicates within sources and chec
   assert.equal(result.added.length, 1)
   assert.equal(mergeSubtitleFiles([old], [{ ...old, sourceKey: 'other-directory' }], true).added.length, 1)
   assert.equal(mergeSubtitleFiles([old], [old], false).kept.length, 0)
-  const full = Array.from({ length: 100 }, (_, index) => ({ ...old, name: `${index}.srt` }))
-  assert.throws(() => mergeSubtitleFiles(full, [{ ...old, name: 'new.srt' }], true), /100/)
-  assert.equal(full.length, 100)
+  const full = Array.from({ length: 1000 }, (_, index) => ({ ...old, name: `${index}.srt` }))
+  assert.throws(() => mergeSubtitleFiles(full, [{ ...old, name: 'new.srt' }], true), /1000/)
+  assert.equal(full.length, 1000)
+})
+
+test('long-series ZIPs import and match 112 episodes, 224 language variants and 1000 subtitles', async t => {
+  for (const count of [112, 224, 1000]) {
+    const episodes = count === 224 ? 112 : count
+    const videos = Array.from({ length: episodes }, (_, index) => ({
+      ...video(String(index + 1), `Yu.Yu.Hakusho.S01E${String(index + 1).padStart(3, '0')}.mkv`),
+      season: 1, episode: index + 1,
+    }))
+    const entries = Object.fromEntries(Array.from({ length: count }, (_, index) => {
+      const episode = index % episodes + 1
+      const language = index >= episodes ? 'cht' : 'chs'
+      // 分辨率同形数字沿用现有保护，使用明确季集标记避免歧义。
+      const tag = [480, 576, 720].includes(episode) ? 'S01E' : 'E'
+      return [`Yu.Yu.Hakusho.${tag}${String(episode).padStart(3, '0')}.${language}.srt`, strToU8(`subtitle ${episode} ${language}`)]
+    }))
+    const start = performance.now()
+    const result = await readLocalSubtitles([new File([zipSync(entries)], '幽游白书.zip')])
+    const imported = performance.now()
+    assert.equal(result.files.length, count)
+    for (let index = 0; index < result.files.length; index++) {
+      const file = result.files[index]
+      const match = analyzeSubtitle(file.name, videos, 1, 'tv', { sourceEpisodes: true })
+      assert.equal(match.videoId, String(index % episodes + 1))
+      assert.equal(match.confidence, 'high')
+      assert.equal(subtitleLanguage(file.name), index >= episodes ? 'zh-TW' : 'zh-CN')
+    }
+    t.diagnostic(`${count} subtitles: ZIP/import ${(imported - start).toFixed(1)} ms, matching ${(performance.now() - imported).toFixed(1)} ms`)
+  }
+})
+
+test('ZIP count and remaining byte budgets report the actual exceeded constraint', async () => {
+  const entries = Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [`${index + 1}.srt`, strToU8('text')]))
+  await assert.rejects(readLocalSubtitles([new File([zipSync(entries)], 'too-many.zip')]), /数量.*1000/)
+  const zip = zipSync({ '01.srt': strToU8('text') })
+  await assert.rejects(module.exports.readSubtitleZip(zip, undefined, { files: 1000, bytes: 3 }), /总大小.*64 MiB/)
+  const empty = zipSync({ 'empty.srt': new Uint8Array() })
+  await assert.rejects(readLocalSubtitles([new File([empty], 'empty.zip')]), /empty.srt.*空字幕文件/)
+})
+
+test('size limits stay bounded and are checked before reading large local files', async () => {
+  const unreadable = size => ({ name: 'large.srt', size, arrayBuffer() { throw new Error('不应读取超限文件') } })
+  await assert.rejects(readLocalSubtitles([unreadable(subtitleLimits.maxFileBytes + 1)]), /单个字幕.*16 MiB/)
+  await assert.rejects(readLocalSubtitles([unreadable(subtitleLimits.maxTotalBytes + 1)]), /总大小.*64 MiB/)
+  assert.equal(subtitleLimits.subtitleSelectionIssue(1000, subtitleLimits.maxTotalBytes), '')
+  assert.match(subtitleLimits.subtitleSelectionIssue(1001, 1), /数量.*1000/)
+  assert.match(subtitleLimits.subtitleSelectionIssue(1, subtitleLimits.maxTotalBytes + 1), /总大小.*64 MiB/)
+  const data = new Uint8Array(subtitleLimits.maxFileBytes)
+  const current = Array.from({ length: 4 }, (_, index) => ({ name: `${index}.srt`, data, sha256: String(index) }))
+  assert.equal(mergeSubtitleFiles([], current, true).added.length, 4)
+  assert.throws(() => mergeSubtitleFiles(current, [{ name: 'over.srt', data: new Uint8Array([1]), sha256: 'extra' }], true), /总大小.*64 MiB/)
+  assert.equal(current.length, 4)
+})
+
+test('cancelling during the final ZIP time slice never returns imported files', async t => {
+  let time = 0
+  t.mock.method(performance, 'now', () => time += 20)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 0)
+  try {
+    await assert.rejects(module.exports.readSubtitleZip(zipSync({ '01.srt': strToU8('text') }, { level: 0 }), controller.signal), { name: 'AbortError' })
+  } finally { clearTimeout(timer) }
 })

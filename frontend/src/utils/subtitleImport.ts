@@ -1,8 +1,8 @@
 import { Inflate } from 'fflate'
 import { sha256 } from 'js-sha256'
+import { maxSubtitleFiles, maxFileBytes, maxTotalBytes, subtitleLimitMessages, subtitleSelectionIssue } from './subtitleLimits'
 
-export const maxFileBytes = 16 * 1024 * 1024
-export const maxTotalBytes = 64 * 1024 * 1024
+export { maxFileBytes, maxTotalBytes } from './subtitleLimits'
 export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string; sourceKey?: string; sourceLabel?: string; origin?: 'assrt' }
 export interface LocalSubtitleSelection { localId: string; file: LocalSubtitle; videoId: string; language: string; version: string }
 export interface SubtitleMatchRow { key: string; pairKey?: string; sourceLabel?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
@@ -143,7 +143,7 @@ function crc32(data: Uint8Array) { let c = 0xffffffff; for (const b of data) c =
 
 // Read the central directory before inflating. Stream bounded compressed chunks,
 // check actual output size and CRC, and never interpret archive paths as disk paths.
-export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, limits = { bytes: maxTotalBytes, files: 100 }): Promise<{ files: LocalSubtitle[]; ignored: number }> {
+export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, limits = { bytes: maxTotalBytes, files: maxSubtitleFiles }): Promise<{ files: LocalSubtitle[]; ignored: number }> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   let end = -1
   for (let p = bytes.length - 22; p >= Math.max(0, bytes.length - 65557); p--) {
@@ -153,7 +153,7 @@ export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, l
   const count = view.getUint16(end + 10, true), centralSize = view.getUint32(end + 12, true), centralOffset = view.getUint32(end + 16, true)
   if (view.getUint16(end + 4, true) || view.getUint16(end + 6, true) || view.getUint16(end + 8, true) !== count || count > 2000 || centralOffset + centralSize !== end) throw new Error('不支持分卷、ZIP64 或超过 2000 个条目的压缩包。')
   const files: LocalSubtitle[] = []
-  let offset = centralOffset, total = 0, ignored = 0
+  let offset = centralOffset, total = 0, ignored = 0, yieldedAt = performance.now()
   for (let i = 0; i < count; i++) {
     signal?.throwIfAborted()
     if (offset + 46 > end || view.getUint32(offset, true) !== 0x02014b50) throw new Error('ZIP 目录损坏。')
@@ -170,7 +170,10 @@ export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, l
     if (!isSubtitle(name)) { ignored++; continue }
     if (!name || name.length > 2048 || /^(?:\/|[a-z]:)/i.test(name) || name.split('/').includes('..') || /[\x00\r\n]/.test(name)) throw new Error('ZIP 中包含无效文件路径。')
     if (method !== 0 && method !== 8) throw new Error('ZIP 压缩方法不受支持，请先在电脑上解压。')
-    if (!size || size > maxFileBytes || total + size > limits.bytes || files.length >= limits.files) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB。')
+    if (!size) throw new Error(`${name}：${subtitleLimitMessages.empty}`)
+    if (size > maxFileBytes) throw new Error(`${name}：${subtitleLimitMessages.file}`)
+    if (files.length >= limits.files) throw new Error(subtitleLimitMessages.count)
+    if (total + size > limits.bytes) throw new Error(subtitleLimitMessages.total)
     if (local + 30 > centralOffset || view.getUint32(local, true) !== 0x04034b50 || view.getUint16(local + 8, true) !== method || view.getUint16(local + 6, true) & 1) throw new Error('ZIP 文件头无效。')
     const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true)
     if (start + compressed > centralOffset) throw new Error('ZIP 文件内容不完整。')
@@ -188,38 +191,47 @@ export async function readSubtitleZip(bytes: Uint8Array, signal?: AbortSignal, l
         signal?.throwIfAborted()
         const last = Math.min(p + 4096, start + compressed)
         inflater.push(bytes.subarray(p, last), last === start + compressed)
-        if ((p - start) % 131072 === 0) await new Promise(resolve => setTimeout(resolve, 0))
+        // 按处理时长让出执行权，避免每个小字幕都等待一次定时器。
+        if (performance.now() - yieldedAt >= 16) { await new Promise(resolve => setTimeout(resolve, 0)); yieldedAt = performance.now() }
       }
     }
     if (written !== size || crc32(data) !== crc) throw new Error(`字幕校验失败：${name}`)
     total += size
     files.push({ name, data, sha256: sha256(data) })
+    if (performance.now() - yieldedAt >= 16) { await new Promise(resolve => setTimeout(resolve, 0)); yieldedAt = performance.now() }
   }
   if (offset !== end) throw new Error('ZIP 目录大小不一致。')
+  signal?.throwIfAborted()
   return { files, ignored }
 }
 
 export async function readLocalSubtitles(input: File[], signal?: AbortSignal): Promise<{ files: LocalSubtitle[]; ignored: number }> {
   const files: LocalSubtitle[] = []
   let ignored = 0, total = 0
-  if (input.length > 100 || input.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) throw new Error('每次选择的文件不能超过 100 个或 64 MiB。')
+  if (input.length > maxSubtitleFiles) throw new Error(`每次最多选择 ${maxSubtitleFiles} 个文件，请减少选择。`)
+  if (input.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) throw new Error('所选文件总大小不能超过 64 MiB。')
   for (const file of input) {
     signal?.throwIfAborted()
     if (splitSubtitleArchive.test(file.name)) throw new Error('不支持分卷压缩包，请在电脑上解压后选择字幕。')
     const archive = isSubtitleArchive(file.name)
     if (!archive && !isSubtitle(file.name)) { ignored++; continue }
+    if (!archive && !file.size) throw new Error(`${file.name}：${subtitleLimitMessages.empty}`)
+    if (!archive && file.size > maxFileBytes) throw new Error(`${file.name}：${subtitleLimitMessages.file}`)
     const bytes = new Uint8Array(await file.arrayBuffer())
     signal?.throwIfAborted()
     const sourceKey = archive ? `archive:${sha256(bytes)}` : undefined
     let result: { files: LocalSubtitle[]; ignored: number }
     if (archive) {
       const { readSubtitleArchive } = await import('./subtitleArchiveClient')
-      result = await readSubtitleArchive(bytes, /\.zip$/i.test(file.name) ? 'zip' : /\.rar$/i.test(file.name) ? 'rar' : '7z', { bytes: maxTotalBytes - total, files: 100 - files.length }, signal)
+      result = await readSubtitleArchive(bytes, /\.zip$/i.test(file.name) ? 'zip' : /\.rar$/i.test(file.name) ? 'rar' : '7z', { bytes: maxTotalBytes - total, files: maxSubtitleFiles - files.length }, signal)
     } else result = { files: [{ name: file.name, data: bytes, sha256: sha256(bytes) }], ignored: 0 }
     ignored += result.ignored
     for (const sub of result.files) {
       total += sub.data.length
-      if (!sub.data.length || sub.data.length > maxFileBytes || total > maxTotalBytes || files.length >= 100) throw new Error('每次最多 100 个字幕，单个 16 MiB、合计 64 MiB，不能导入空文件。')
+      if (!sub.data.length) throw new Error(`${sub.name}：${subtitleLimitMessages.empty}`)
+      if (sub.data.length > maxFileBytes) throw new Error(`${sub.name}：${subtitleLimitMessages.file}`)
+      const issue = subtitleSelectionIssue(files.length + 1, total)
+      if (issue) throw new Error(issue)
       files.push({ ...sub, sourceKey, sourceLabel: archive ? file.name : undefined })
     }
   }
@@ -236,7 +248,8 @@ export function mergeSubtitleFiles<T extends LocalSubtitle>(current: T[], incomi
     const identity = key(file)
     if (seen.has(identity)) { duplicates++; continue }
     seen.add(identity); total += file.data.length
-    if (kept.length + added.length >= 100 || total > maxTotalBytes) throw new Error('合并后超过 100 个字幕或 64 MiB，请减少文件或选择替换当前列表。')
+    const issue = subtitleSelectionIssue(kept.length + added.length + 1, total)
+    if (issue) throw new Error(`${issue}也可选择替换当前列表。`)
     added.push(file)
   }
   return { kept, added, duplicates }

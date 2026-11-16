@@ -4,7 +4,8 @@ import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
 import SelectMenu from './SelectMenu.vue'
-import { analyzeSubtitle, formatSubtitleSize, maxTotalBytes, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
+import { analyzeSubtitle, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
+import { maxSubtitleFiles, subtitleSelectionIssue } from '../utils/subtitleLimits'
 import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
@@ -42,7 +43,8 @@ let controller: AbortController | undefined
 let loadedVersion = ''
 const loadedAssrt = new Set<number>()
 const issue = computed(() => {
-  if (selected.value.length > 100 || total.value > maxTotalBytes) return '每次最多选择 100 个字幕，总大小不超过 64 MiB。'
+  const limitIssue = subtitleSelectionIssue(selected.value.length, total.value)
+  if (limitIssue) return limitIssue
   const targets = new Set<string>()
   for (const row of selected.value) {
     if (!props.videos.some(video => video.id === row.videoId)) return '请为所选字幕指定对应视频。'
@@ -198,7 +200,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
     <template #footer>
       <div class="picker-footer"><span>已选 {{ selected.length }} 个字幕 · {{ formatSubtitleSize(total) }}</span><div><button v-if="rows.length" type="button" :disabled="reading || choosing" @click="clear">移除全部</button><button v-if="rows.length || library.length || local.length" type="button" class="picker-apply" :disabled="reading || choosing || !!issue" @click="apply">使用所选字幕</button></div></div>
       <p v-if="issue" role="alert" class="picker-error">{{ issue }}</p>
-      <p class="picker-note">支持字幕文件、ZIP / RAR / 7z，可拖入。单个 16 MiB，合计 64 MiB / 100 个。确认下载整理后上传。</p>
+      <p class="picker-note">支持字幕文件、ZIP / RAR / 7z，可拖入。单个 16 MiB，合计 64 MiB / {{ maxSubtitleFiles }} 个。确认下载整理后上传。</p>
       <p v-if="assrtConfigured || assrtItems.length || localRows.some(row => row.file.origin === 'assrt')" class="picker-note">字幕服务由 <a href="https://secure.assrt.net/" target="_blank" rel="noopener noreferrer">assrt.net</a> 提供。</p>
     </template>
   </AnimeFloatingDialog>

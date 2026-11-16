@@ -59,6 +59,12 @@ func pendingDownloadSubtitles(job OrganizeJob) bool {
 func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob, resources []DownloadOrganizeInput) error {
 	var total int64
 	count := 0
+	for _, resource := range resources {
+		count += len(resource.Subtitles)
+		if count > MaxSubtitleImportFiles {
+			return fmt.Errorf("%w：所选字幕超过 %d 个", ErrOrganizeInput, MaxSubtitleImportFiles)
+		}
+	}
 	versions := make(map[string][]subshare.File)
 	targets := make(map[string]bool)
 	for _, job := range jobs {
@@ -69,15 +75,14 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 	for i, resource := range resources {
 		job := &jobs[i]
 		for _, selection := range resource.Subtitles {
-			count++
-			if count > 100 {
-				return fmt.Errorf("%w：所选字幕超过 100 个", ErrOrganizeInput)
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			var source *subshare.File
 			attachment := ""
 			if selection.LocalID != "" {
-				if s.SubtitleAttachments == "" || !subtitleAttachmentID(selection.LocalID) || !subtitleDigest(selection.SHA256) || selection.Size < 1 || selection.Size > p115.MaxSubtitleBytes || !subtitle.Supported(selection.OriginalName) || len(selection.OriginalName) > 2048 || strings.ContainsAny(selection.OriginalName, "\x00\r\n") || selection.VersionID != "" || selection.Path != "" || selection.SHA != "" {
-					return fmt.Errorf("%w：本地字幕文件或大小无效", ErrOrganizeInput)
+				if s.SubtitleAttachments == "" || !subtitleAttachmentID(selection.LocalID) || !subtitleDigest(selection.SHA256) || !subtitle.Supported(selection.OriginalName) || len(selection.OriginalName) > 2048 || strings.ContainsAny(selection.OriginalName, "\x00\r\n") || selection.VersionID != "" || selection.Path != "" || selection.SHA != "" {
+					return fmt.Errorf("%w：本地字幕文件无效", ErrOrganizeInput)
 				}
 				var err error
 				attachment, err = organizeToken()
@@ -114,6 +119,12 @@ func (s *DownloadOrganize) planSubtitles(ctx context.Context, jobs []OrganizeJob
 			}
 			if source == nil || videoIndex < 0 {
 				return fmt.Errorf("%w：字幕或关联视频不在本次选择中", ErrOrganizeInput)
+			}
+			if source.Size < 1 {
+				return fmt.Errorf("%w：字幕不能为空文件", ErrOrganizeInput)
+			}
+			if source.Size > p115.MaxSubtitleBytes {
+				return fmt.Errorf("%w：单个字幕不能超过 16 MiB", ErrOrganizeInput)
 			}
 			video := job.Items[videoIndex]
 			videoName := video.Name

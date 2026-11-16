@@ -10,7 +10,10 @@ type organizeRecycleBatchDrive interface {
 	DeleteEntriesBatch(context.Context, string, []string, string) error
 }
 
-const MaxSubtitleImportBytes = 64 << 20
+const (
+	MaxSubtitleImportFiles = 1000
+	MaxSubtitleImportBytes = 64 << 20
+)
 
 type subtitleUploader interface {
 	UploadSubtitle(context.Context, string, string, []byte, string) error

@@ -4,16 +4,17 @@ import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
 import { libarchiveWasm } from 'libarchive-wasm'
+import { subtitleLimits } from './helpers/subtitle-limits.mjs'
 
 const require = createRequire(import.meta.url)
 const source = await readFile(new URL('../src/utils/subtitleArchive.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const module = { exports: {} }
-new Function('require', 'module', 'exports', compiled)(require, module, module.exports)
+new Function('require', 'module', 'exports', compiled)(name => name === './subtitleLimits' ? subtitleLimits : require(name), module, module.exports)
 const { extractSubtitleArchive } = module.exports
 const wasm = await libarchiveWasm({ wasmBinary: await readFile(new URL('../node_modules/libarchive-wasm/dist/libarchive.wasm', import.meta.url)) })
 const fixture = async name => new Uint8Array(await readFile(new URL(`./fixtures/subtitle-archives/${name}`, import.meta.url)))
-const limits = { bytes: 64 * 1024 * 1024, files: 100 }
+const limits = { bytes: subtitleLimits.maxTotalBytes, files: subtitleLimits.maxSubtitleFiles }
 
 test('RAR4 and RAR5 compressed files are decoded, hashed and keep nested names', async () => {
   for (const version of [4, 5]) {
@@ -43,8 +44,8 @@ test('7z encrypted headers and encrypted data are both refused', async () => {
 
 test('corrupt archives, file/count budgets and incomplete streams are rejected', async () => {
   const normal = await fixture('normal.7z')
-  assert.throws(() => extractSubtitleArchive(normal, '7z', wasm, { bytes: 1, files: 100 }), /16 MiB/)
-  assert.throws(() => extractSubtitleArchive(normal, '7z', wasm, { bytes: limits.bytes, files: 0 }), /100/)
+  assert.throws(() => extractSubtitleArchive(normal, '7z', wasm, { bytes: 1, files: limits.files }), /总大小.*64 MiB/)
+  assert.throws(() => extractSubtitleArchive(normal, '7z', wasm, { bytes: limits.bytes, files: 0 }), /数量.*1000/)
   assert.throws(() => extractSubtitleArchive(normal.subarray(0, 20), '7z', wasm, limits), /损坏/)
   assert.throws(() => extractSubtitleArchive(new Uint8Array(40), 'rar', wasm, limits), /损坏/)
   const rar = await fixture('normal-v4.rar')

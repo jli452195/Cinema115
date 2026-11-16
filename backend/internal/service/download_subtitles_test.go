@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -12,6 +13,113 @@ import (
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/client/subshare"
 )
+
+func subtitleLimitPlan(count, languages int) (OrganizeJob, DownloadOrganizeInput) {
+	job := OrganizeJob{Download: &ResourceDownload{}, Items: make([]OrganizeItem, 0, (count+languages-1)/languages)}
+	input := DownloadOrganizeInput{Subtitles: make([]DownloadSubtitleSelection, 0, count)}
+	for i := 0; i < count; i++ {
+		video := fmt.Sprintf("video-%d", i/languages)
+		if i%languages == 0 {
+			name := fmt.Sprintf("Show.S01E%03d.mkv", i/languages+1)
+			job.Items = append(job.Items, OrganizeItem{File: OrganizeFile{ShareFile: p115.ShareFile{ID: video}, MediaType: "video"}, Name: name, TargetPath: "/Show/" + name})
+		}
+		sub := localDownloadSubtitle(video, fmt.Sprintf("Show.S01E%03d.ass", i/languages+1), []byte("subtitle"))
+		sub.LocalID = fmt.Sprintf("%032x", i+1)
+		if i%languages == 1 {
+			sub.Language = "zh-TW"
+		}
+		input.Subtitles = append(input.Subtitles, sub)
+	}
+	return job, input
+}
+
+func TestDownloadSubtitleLongSeriesLimits(t *testing.T) {
+	for _, tc := range []struct{ count, languages int }{{112, 1}, {224, 2}, {MaxSubtitleImportFiles, 1}, {MaxSubtitleImportFiles + 1, 1}} {
+		t.Run(fmt.Sprintf("%d", tc.count), func(t *testing.T) {
+			job, input := subtitleLimitPlan(tc.count, tc.languages)
+			jobs := []OrganizeJob{job}
+			s := &DownloadOrganize{SubtitleAttachments: t.TempDir()}
+			err := s.planSubtitles(context.Background(), jobs, []DownloadOrganizeInput{input})
+			if tc.count > MaxSubtitleImportFiles {
+				if !errors.Is(err, ErrOrganizeInput) || !strings.Contains(err.Error(), "1000 个") || len(jobs[0].Download.Subtitles) != 0 {
+					t.Fatalf("超限应在规划前拒绝：%v", err)
+				}
+				return
+			}
+			if err != nil || len(jobs[0].Download.Subtitles) != tc.count {
+				t.Fatalf("长篇字幕规划失败：%v", err)
+			}
+			for i, sub := range jobs[0].Download.Subtitles {
+				if sub.VideoIndex != i/tc.languages || sub.Language != input.Subtitles[i].Language {
+					t.Fatalf("字幕关联发生变化：%d %+v", i, sub)
+				}
+			}
+		})
+	}
+}
+
+func TestDownloadSubtitleSizeLimitsRemainIndependent(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		sizes []int64
+		want  string
+	}{
+		{"empty", []int64{0}, "不能为空"},
+		{"single", []int64{p115.MaxSubtitleBytes + 1}, "16 MiB"},
+		{"total", []int64{p115.MaxSubtitleBytes, p115.MaxSubtitleBytes, p115.MaxSubtitleBytes, p115.MaxSubtitleBytes, 1}, "64 MiB"},
+		{"boundary", []int64{p115.MaxSubtitleBytes, p115.MaxSubtitleBytes, p115.MaxSubtitleBytes, p115.MaxSubtitleBytes}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			job, input := subtitleLimitPlan(len(tc.sizes), 1)
+			for i, size := range tc.sizes {
+				input.Subtitles[i].Size = size
+			}
+			s := &DownloadOrganize{SubtitleAttachments: t.TempDir()}
+			err := s.planSubtitles(context.Background(), []OrganizeJob{job}, []DownloadOrganizeInput{input})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if !errors.Is(err, ErrOrganizeInput) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误未区分限制：%v", err)
+			}
+		})
+	}
+}
+
+func TestDownloadSubtitleLimitAcrossResources(t *testing.T) {
+	for _, second := range []int{500, 501} {
+		t.Run(fmt.Sprint(500+second), func(t *testing.T) {
+			firstJob, firstInput := subtitleLimitPlan(500, 1)
+			secondJob, secondInput := subtitleLimitPlan(second, 1)
+			for i := range secondJob.Items {
+				secondJob.Items[i].TargetPath = "/Second" + secondJob.Items[i].TargetPath
+			}
+			s := &DownloadOrganize{SubtitleAttachments: t.TempDir()}
+			err := s.planSubtitles(context.Background(), []OrganizeJob{firstJob, secondJob}, []DownloadOrganizeInput{firstInput, secondInput})
+			if second == 500 {
+				if err != nil || len(firstJob.Download.Subtitles)+len(secondJob.Download.Subtitles) != MaxSubtitleImportFiles {
+					t.Fatalf("有效批量字幕未完整规划：%v", err)
+				}
+			} else if !errors.Is(err, ErrOrganizeInput) || !strings.Contains(err.Error(), "1000 个") {
+				t.Fatalf("跨资源总数未受限：%v", err)
+			}
+		})
+	}
+}
+
+func BenchmarkDownloadSubtitlePlan1000(b *testing.B) {
+	job, input := subtitleLimitPlan(MaxSubtitleImportFiles, 1)
+	s := &DownloadOrganize{SubtitleAttachments: "attachments"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		job.Download = &ResourceDownload{}
+		if err := s.planSubtitles(context.Background(), []OrganizeJob{job}, []DownloadOrganizeInput{input}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
 
 type downloadSubtitleShareDrive struct {
 	*downloadShareFake

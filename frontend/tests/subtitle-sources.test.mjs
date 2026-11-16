@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import ts from 'typescript'
+import { subtitleLimits } from './helpers/subtitle-limits.mjs'
 
 const require = createRequire(import.meta.url)
 const loaded = new Map()
@@ -12,7 +13,7 @@ function compile(source, resolver = require) {
   new Function('require', 'module', 'exports', compiled)(resolver, module, module.exports)
   return module.exports
 }
-loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
+loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleLimits' ? subtitleLimits : name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
 const { readSubtitleResponse } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
 
 test('download streams enforce exact size, errors, progress and cancellation', async () => {

@@ -15,8 +15,15 @@ func RegisterDownloadOrganize(admin *gin.RouterGroup, s *service.DownloadOrganiz
 	r.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		limit := int64(512 << 10)
-		if c.Request.Method == http.MethodPost && c.FullPath() == "/api/admin/p115/download-organize/subtitles/attachments" {
-			limit = service.MaxSubtitleImportBytes + 1<<20
+		if c.Request.Method == http.MethodPost {
+			switch c.FullPath() {
+			case "/api/admin/p115/download-organize/subtitles/attachments":
+				// 为最多 1000 个字幕的 multipart 文件名与头部预留空间。
+				limit = service.MaxSubtitleImportBytes + 4<<20
+			case "/api/admin/p115/download-organize/preview", "/api/admin/p115/download-organize/batch/preview":
+				// 仅预览放宽元数据预算，容纳长篇剧集及多语言字幕选择。
+				limit = 8 << 20
+			}
 		}
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		c.Next()

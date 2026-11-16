@@ -5,12 +5,74 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"strm115/backend/internal/client/p115"
 )
+
+func TestDownloadSubtitleAttachmentLimitMessages(t *testing.T) {
+	oversized := make([]byte, p115.MaxSubtitleBytes+1)
+	tooMany := make(map[string][]byte, MaxSubtitleImportFiles+1)
+	for i := 0; i <= MaxSubtitleImportFiles; i++ {
+		tooMany[fmt.Sprint(i)] = []byte("subtitle")
+	}
+	for _, tc := range []struct {
+		name  string
+		files map[string][]byte
+		want  string
+	}{
+		{"none", nil, "请选择"},
+		{"count", tooMany, "1000 个"},
+		{"empty", map[string][]byte{"a": {}}, "不能为空"},
+		{"single", map[string][]byte{"a": oversized}, "16 MiB"},
+		{"total", map[string][]byte{"a": oversized[:p115.MaxSubtitleBytes], "b": oversized[:p115.MaxSubtitleBytes], "c": oversized[:p115.MaxSubtitleBytes], "d": oversized[:p115.MaxSubtitleBytes], "e": {1}}, "64 MiB"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &DownloadOrganize{}
+			err := s.SaveSubtitleAttachments(context.Background(), "unused", tc.files)
+			if !errors.Is(err, ErrOrganizeInput) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("错误未区分限制：%v", err)
+			}
+		})
+	}
+}
+
+func TestDownloadSubtitleAttachmentsLongSeriesPersist(t *testing.T) {
+	s, _, _, _, _, in := gardenFixture(t)
+	s.SubtitleAttachments = t.TempDir()
+	base, err := s.Preview(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, input := subtitleLimitPlan(MaxSubtitleImportFiles, 1)
+	job.ID, job.Config, job.CreatedAt = base.ID, base.Config, base.CreatedAt
+	if err = s.planSubtitles(context.Background(), []OrganizeJob{job}, []DownloadOrganizeInput{input}); err != nil {
+		t.Fatal(err)
+	}
+	s.Organize.plans[base.ID] = job
+	files := make(map[string][]byte, len(input.Subtitles))
+	for _, sub := range input.Subtitles {
+		files[sub.LocalID] = []byte("subtitle")
+	}
+	if err = s.SaveSubtitleAttachments(context.Background(), base.ID, files); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(s.SubtitleAttachments)
+	if err != nil || len(entries) != MaxSubtitleImportFiles {
+		t.Fatalf("附件保存不完整：%d %v", len(entries), err)
+	}
+	for _, sub := range job.Download.Subtitles {
+		data, err := s.readDownloadSubtitle(context.Background(), sub)
+		if err != nil || string(data) != "subtitle" {
+			t.Fatalf("附件无法读取：%v", err)
+		}
+	}
+}
 
 func localDownloadSubtitle(video, name string, data []byte) DownloadSubtitleSelection {
 	digest := sha256.Sum256(data)

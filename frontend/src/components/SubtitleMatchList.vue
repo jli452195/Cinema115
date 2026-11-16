@@ -1,26 +1,44 @@
 <script setup lang="ts">
 import SelectMenu from './SelectMenu.vue'
+import PaginationControl from './PaginationControl.vue'
 import { computed, ref, watch } from 'vue'
 import { subtitleLanguages, subtitleTargetName } from '../utils/subtitleLibrary'
 import type { SubtitleMatchRow } from '../utils/subtitleImport'
 
 const props = defineProps<{ rows: SubtitleMatchRow[]; videos: { id: string; name: string }[]; targetNames: Record<string, string>; disabled?: boolean }>()
 const language = ref('all')
-const visible = computed(() => props.rows.filter(row => language.value === 'all' || row.language === language.value))
+const page = ref(1), pageSize = 25
+const filtered = computed(() => props.rows.filter(row => language.value === 'all' || row.language === language.value))
+const pages = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize)))
+const visible = computed(() => filtered.value.slice((page.value - 1) * pageSize, page.value * pageSize))
+// 每页复用选项和文件名索引，避免字幕与视频数量相乘后反复创建相同数据。
+const videoOptions = computed(() => [{ value: '', label: '请选择对应视频' }, ...props.videos.map(video => ({ value: video.id, label: video.name }))])
+const videoNames = computed(() => new Map(props.videos.map(video => [video.id, video.name])))
+const languageOptions = subtitleLanguages.map(lang => ({ value: lang.value, label: lang.label }))
 const availableLanguages = computed(() => subtitleLanguages.filter(lang => props.rows.some(row => row.language === lang.value)))
+const filterOptions = computed(() => [{ value: 'all', label: '全部' }, ...availableLanguages.value.map(lang => ({ value: lang.value, label: lang.label }))])
+const pairs = computed(() => {
+  const index = new Map<string, SubtitleMatchRow[]>()
+  for (const row of props.rows) if (row.pairKey) { const group = index.get(row.pairKey) || []; group.push(row); index.set(row.pairKey, group) }
+  return index
+})
 watch(availableLanguages, options => { if (language.value !== 'all' && !options.some(option => option.value === language.value)) language.value = 'all' })
-function sync(row: SubtitleMatchRow) { if (row.pairKey) for (const other of props.rows) if (other !== row && other.pairKey === row.pairKey) Object.assign(other, { videoId: row.videoId, language: row.language, version: row.version, selected: row.selected }) }
-function selectVisible() { for (const row of visible.value) { row.selected = !!row.videoId; sync(row) } }
+watch(language, () => { page.value = 1 })
+watch(pages, value => { page.value = Math.min(page.value, value) })
+function sync(row: SubtitleMatchRow) { if (row.pairKey) for (const other of pairs.value.get(row.pairKey) || []) if (other !== row) Object.assign(other, { videoId: row.videoId, language: row.language, version: row.version, selected: row.selected }) }
+function selectFiltered() { for (const row of filtered.value) { row.selected = !!row.videoId; sync(row) } }
 </script>
 
 <template>
   <div class="subtitle-match">
-    <div class="match-filters"><label>语言 <SelectMenu v-model="language" label="筛选字幕语言" :disabled="disabled" :options="[{ value: 'all', label: '全部' }, ...availableLanguages.map(lang => ({ value: lang.value, label: (lang.label) }))]" /></label><button type="button" :disabled="disabled" @click="selectVisible">选择当前已匹配项</button><button type="button" :disabled="disabled" @click="rows.forEach(row => row.selected = false)">清空选择</button></div>
+    <div class="match-filters"><label>语言 <SelectMenu v-model="language" label="筛选字幕语言" :disabled="disabled" :options="filterOptions" /></label><button type="button" :disabled="disabled" @click="selectFiltered">选择当前语言全部已匹配项</button><button type="button" :disabled="disabled" @click="rows.forEach(row => row.selected = false)">清空选择</button></div>
+    <p v-if="pages > 1" class="match-target" role="status">共 {{ filtered.length }} 个字幕，每页 {{ pageSize }} 个；选择和编辑会保留。</p>
     <ul class="match-files"><li v-for="row in visible" :key="row.key">
       <label class="match-name"><input v-model="row.selected" type="checkbox" :disabled="disabled" :aria-label="`选择字幕 ${row.file.name}`" @change="sync(row)" /><span>{{ row.file.name }}<small v-if="row.sourceLabel">{{ row.sourceLabel }}</small></span></label>
-      <div class="match-mapping"><SelectMenu v-model="row.videoId" :label="`${row.file.name} 对应视频`" :disabled="disabled" @change="sync(row)" :options="[{ value: '', label: '请选择对应视频' }, ...videos.map(video => ({ value: video.id, label: (video.name) }))]" /><SelectMenu v-model="row.language" :label="`${row.file.name} 语言`" :disabled="disabled" @change="sync(row)" :options="subtitleLanguages.map(lang => ({ value: lang.value, label: (lang.label) }))" /><input v-if="row.version !== undefined" v-model="row.version" :aria-label="`${row.file.name} 版本`" :disabled="disabled" maxlength="30" placeholder="版本（可选）" @input="sync(row)" /></div>
-      <p v-if="row.videoId" class="match-target">整理后：{{ subtitleTargetName(targetNames[row.videoId] || videos.find(v => v.id === row.videoId)?.name || '', row.file.name, row.language, row.version) }}</p><p v-else class="match-target">{{ row.reason }}</p>
+      <div class="match-mapping"><SelectMenu v-model="row.videoId" :label="`${row.file.name} 对应视频`" :disabled="disabled" @change="sync(row)" :options="videoOptions" /><SelectMenu v-model="row.language" :label="`${row.file.name} 语言`" :disabled="disabled" @change="sync(row)" :options="languageOptions" /><input v-if="row.version !== undefined" v-model="row.version" :aria-label="`${row.file.name} 版本`" :disabled="disabled" maxlength="30" placeholder="版本（可选）" @input="sync(row)" /></div>
+      <p v-if="row.videoId" class="match-target">整理后：{{ subtitleTargetName(targetNames[row.videoId] || videoNames.get(row.videoId) || '', row.file.name, row.language, row.version) }}</p><p v-else class="match-target">{{ row.reason }}</p>
     </li></ul>
+    <PaginationControl v-if="pages > 1" :page="page" :pages="pages" :disabled="!!disabled" label="字幕列表分页" @change="page = $event" />
   </div>
 </template>
 

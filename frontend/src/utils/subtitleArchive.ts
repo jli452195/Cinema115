@@ -1,6 +1,7 @@
 import { ArchiveReader, type LibarchiveWasm } from 'libarchive-wasm'
 import { sha256 } from 'js-sha256'
 import type { LocalSubtitle } from './subtitleImport'
+import { maxFileBytes, subtitleLimitMessages } from './subtitleLimits'
 
 export type ArchiveKind = 'rar' | '7z' | 'zip'
 export interface ArchiveLimits { bytes: number; files: number }
@@ -9,7 +10,6 @@ export const archiveErrors = {
   encrypted: '不支持加密压缩包，请在电脑上解压后选择字幕。',
   split: '不支持分卷压缩包，请在电脑上解压后选择字幕。',
   invalid: '压缩包损坏或格式不受支持，请核对文件完整性。',
-  limit: '每次最多 100 个字幕，单个 16 MiB、合计 64 MiB。',
 }
 class ArchiveInputError extends Error {}
 const reject = (message = archiveErrors.invalid): never => { throw new ArchiveInputError(message) }
@@ -100,7 +100,11 @@ export function extractSubtitleArchive(bytes: Uint8Array, kind: Exclude<ArchiveK
       if (!name || name.length > 2048 || /^(?:\/|[a-z]:)/i.test(name) || name.split('/').includes('..') || /[\x00\r\n]/.test(name)) reject('压缩包中包含无效文件路径。')
       if (entry.getFiletype() !== 'File' || entry.getSymlinkTarget() || entry.getHardlinkTarget()) reject('压缩包中的字幕必须是普通文件。')
       const size = entry.getSize()
-      if (!Number.isSafeInteger(size) || size <= 0 || size > 16 * 1024 * 1024 || total + size > limits.bytes || files.length >= limits.files) reject(archiveErrors.limit)
+      if (!Number.isSafeInteger(size) || size < 0) reject('压缩包中的字幕文件大小无效。')
+      if (!size) reject(`${name}：${subtitleLimitMessages.empty}`)
+      if (size > maxFileBytes) reject(`${name}：${subtitleLimitMessages.file}`)
+      if (files.length >= limits.files) reject(subtitleLimitMessages.count)
+      if (total + size > limits.bytes) reject(subtitleLimitMessages.total)
       const data = new Uint8Array(size)
       let written = 0
       for (;;) {
