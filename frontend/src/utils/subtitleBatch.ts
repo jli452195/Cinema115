@@ -1,11 +1,12 @@
 import { analyzeSubtitle, episodeNumber, hasAmbiguousSubtitleEpisode, type SubtitleMatchRow, type SubtitleMatchVideo } from './subtitleImport'
 import { subtitleLanguages, subtitleTargetName } from './subtitleLibrary'
+import { subtitleScopeKey, subtitleVariantHints } from './subtitlePresentation'
 
 export type BatchSubtitleRow = SubtitleMatchRow & { versionId?: string; path?: string; file: { name: string; sourceKey?: string; sourceLabel?: string } }
 export interface SubtitleBatchGroup { key: string; label: string; rows: BatchSubtitleRow[] }
-export type SubtitleBatchMode = 'episode' | 'sequence' | 'language'
-export interface SubtitleBatchOptions { mode: SubtitleBatchMode; season: string; startVideoId: string; language: string; onlyUnknownLanguage: boolean; selectMatched: boolean; protectedKeys?: ReadonlySet<string> }
-export interface SubtitleBatchChange { key: string; videoId: string; language: string; selected: boolean }
+export type SubtitleBatchMode = 'episode' | 'sequence' | 'language' | 'version'
+export interface SubtitleBatchOptions { mode: SubtitleBatchMode; season: string; startVideoId: string; language: string; onlyUnknownLanguage: boolean; selectMatched: boolean; protectedKeys?: ReadonlySet<string>; version?: string; onlyEmptyVersion?: boolean; inferVersions?: boolean }
+export interface SubtitleBatchChange { key: string; videoId: string; language: string; version?: string; selected: boolean }
 export interface SubtitleBatchPreview { changes: SubtitleBatchChange[]; errors: string[]; warnings: string[]; skipped: number }
 const natural = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 const normalized = (name: string) => name.replace(/\\/g, '/')
@@ -15,13 +16,15 @@ const special = (name: string) => /(?:^|[ ._\[【(-])(?:SP|OVA|OAD|NCOP|NCED|OP|
 
 export function subtitleBatchGroups(rows: BatchSubtitleRow[]): SubtitleBatchGroup[] {
   const groups = new Map<string, SubtitleBatchGroup>()
+  const hints = subtitleVariantHints(rows)
   for (const row of rows) {
     const folder = directory(row.path || row.file.name)
-    const key = JSON.stringify([row.versionId ? `library:${row.versionId}` : row.file.sourceKey || 'local', folder, row.language, row.version || ''])
+    const hint = hints.get(row.key) || ''
+    const key = JSON.stringify([subtitleScopeKey(row), row.language, row.version || '', hint])
     let group = groups.get(key)
     if (!group) {
       const lang = subtitleLanguages.find(item => item.value === row.language)?.label || '未指定'
-      group = { key, label: [row.file.sourceLabel || row.sourceLabel || '本地导入', folder, lang, row.version].filter(Boolean).join(' · '), rows: [] }
+      group = { key, label: [row.file.sourceLabel || row.sourceLabel || '本地导入', folder.split('/').pop(), lang, row.version || hint].filter(Boolean).join(' · '), rows: [] }
       groups.set(key, group)
     }
     group.rows.push(row)
@@ -49,6 +52,7 @@ export function subtitleBatchVideos(videos: SubtitleMatchVideo[], season: string
 export function previewSubtitleBatch(rows: BatchSubtitleRow[], allRows: BatchSubtitleRow[], videos: SubtitleMatchVideo[], options: SubtitleBatchOptions): SubtitleBatchPreview {
   const result: SubtitleBatchPreview = { changes: [], errors: [], warnings: [], skipped: 0 }
   if (!rows.length) return result
+  const hints = subtitleVariantHints(allRows)
   const units = new Map<string, BatchSubtitleRow[]>()
   for (const row of rows) {
     const key = row.pairKey || row.key
@@ -63,7 +67,9 @@ export function previewSubtitleBatch(rows: BatchSubtitleRow[], allRows: BatchSub
     const list = targetIndex.get(episode) || []; list.push(video); targetIndex.set(episode, list)
   }
   const eligible = ordered.filter(unit => !special(unit[0].file.name))
-  if (options.mode !== 'language') {
+  const matchingMode = options.mode === 'episode' || options.mode === 'sequence'
+  if (options.mode === 'version' && !options.inferVersions && (Array.from(options.version || '').length > 30 || /[\\/:*?"<>|\x00-\x1f]/.test(options.version || '') || (options.version || '').trim() !== (options.version || '') || (options.version || '').endsWith('.'))) result.errors.push('版本最多 30 个字，不能包含路径符号、首尾空格或末尾句点。')
+  if (matchingMode) {
     if (!targets.length) result.errors.push('请选择有有效季集编号的目标季。')
     if (eligible.some(unit => hasAmbiguousSubtitleEpisode(unit[0].file.name))) result.errors.push('存在多集范围或小数集号，请逐项指定，不参与批量匹配。')
     if (options.mode === 'sequence') {
@@ -97,21 +103,26 @@ export function previewSubtitleBatch(rows: BatchSubtitleRow[], allRows: BatchSub
     const protectedUnit = unit.some(row => !!row.videoId || options.protectedKeys?.has(row.key))
     // 已有映射及用户手动清空的项目都保留；整对字幕必须一并保留。
     for (const row of unit) {
-      const videoId = options.mode === 'language' || excluded || protectedUnit ? row.videoId : candidate
+      const videoId = !matchingMode || excluded || protectedUnit ? row.videoId : candidate
       const language = options.language !== '__keep' && (!options.onlyUnknownLanguage || !row.language) ? options.language : row.language
-      const selected = options.selectMatched && !!videoId ? true : row.selected
-      if (videoId !== row.videoId || language !== row.language || selected !== row.selected) result.changes.push({ key: row.key, videoId, language, selected })
-      if (options.mode !== 'language' && (excluded || protectedUnit || !videoId)) result.skipped++
+      const version = options.mode === 'version' && (!(options.onlyEmptyVersion || options.inferVersions) || !row.version) ? options.inferVersions ? hints.get(row.key) || row.version || '' : options.version || '' : row.version
+      const selected = options.selectMatched && !!videoId && (!options.inferVersions || !!hints.get(row.key)) ? true : row.selected
+      if (videoId !== row.videoId || language !== row.language || version !== row.version || selected !== row.selected) result.changes.push({ key: row.key, videoId, language, version, selected })
+      if (matchingMode && (excluded || protectedUnit || !videoId)) result.skipped++
     }
     if (options.mode === 'sequence' && candidate && unit.some(row => row.videoId && row.videoId !== candidate)) result.errors.push('已有对应关系与本次顺序不一致，请调整起始视频或使用按集号匹配；原映射不会覆盖。')
   }
   // 只检查最终勾选且本次变更触及的目标；未选的候选版本不会写出文件，不应阻止操作。
   const updates = new Map(result.changes.map(change => [change.key, change]))
+  for (const unit of units.values()) if (unit[0].pairKey && unit.some(row => /\.idx$/i.test(row.file.name))) {
+    const future = unit.map(row => ({ ...row, ...updates.get(row.key) }))
+    if (future.some(row => row.selected) && future.some(row => row.videoId !== future[0].videoId || row.language !== future[0].language || (row.version || '') !== (future[0].version || '') || row.selected !== future[0].selected)) result.errors.push('IDX/SUB 必须使用相同视频、语言和版本，并且同时勾选。')
+  }
   const outputs = new Map<string, { key: string; changed: boolean }>()
   for (const row of allRows) {
     const change = updates.get(row.key), videoId = change?.videoId ?? row.videoId, language = change?.language ?? row.language
     if (!videoId || !(change?.selected ?? row.selected)) continue
-    const key = `${videoId}/${subtitleTargetName('', row.file.name, language, row.version)}`.toLowerCase()
+    const key = JSON.stringify([videoId, subtitleTargetName('', row.file.name, language, change?.version ?? row.version).toLowerCase()])
     const existing = outputs.get(key)
     if (existing && (change || existing.changed)) result.errors.push('本次操作会产生重复的字幕目标文件，请拆分语言或版本后再应用。')
     outputs.set(key, { key: row.key, changed: !!change })

@@ -79,17 +79,21 @@ function sequenceFixture() {
     const button = name=>page.getByRole('button',{name,exact:true})
     const combo = name=>page.getByRole('combobox',{name,exact:true})
     const check = name=>page.getByRole('checkbox',{name,exact:true})
-    const apply = ()=>panel().getByRole('button',{name:'应用批量设置',exact:true})
+    const task = name=>panel().getByRole('navigation',{name:'字幕批量任务',exact:true}).getByRole('button',{name,exact:true})
+    const apply = ()=>panel().getByRole('button',{name:'应用设置',exact:true})
     const snapshot = ()=>page.evaluate(()=>JSON.parse(JSON.stringify(window.fixture.rows)))
     async function mount(fixture) {
       await page.keyboard.press('Escape')
       return page.evaluate(f=>window.mountBatch(f),fixture)
     }
     async function open() {
-      await button('批量匹配 / 设置语言').click()
+      await button('批量处理').click()
       await panel().waitFor({state:'visible'})
+      assert.equal(await page.locator('.match-files').count(),0,'批量视图替换列表，避免两套控件同时操作')
+      assert.equal(await button('应用设置').count(),1,'独立面板只保留一个应用入口')
     }
     async function sequence(start = 'v1') {
+      await task('匹配视频').click()
       await panel().getByRole('button',{name:'按顺序匹配',exact:true}).click()
       await selectOption(combo('批量匹配目标季'),'1')
       await selectOption(combo('批量匹配起始视频'),start)
@@ -120,37 +124,43 @@ function sequenceFixture() {
       assert.equal((await mount(fixture)).unrecognized,35,'夹具名称必须均无法自动识别集号')
       const before = await snapshot()
       await open()
+      assert.equal(await task('匹配视频').getAttribute('aria-pressed'),'true')
       assert.equal(await panel().getByRole('button',{name:'按集号匹配',exact:true}).getAttribute('aria-pressed'),'true','电视剧默认按集号匹配')
+      assert.equal(await combo('批量设置字幕语言').count(),0,'匹配任务不暴露语言设置')
+      await task('设置语言').click()
       assert.equal(await inputValue(combo('批量设置字幕语言')),'__keep')
+      await selectOption(combo('批量设置字幕语言'),'zh-CN')
+      assert(await check('仅填写未指定语言').isChecked())
+      assert.equal(await combo('批量匹配目标季').count(),0)
+      await task('匹配视频').click()
       assert(await check('同时勾选本组已匹配项').isChecked())
       await panel().getByRole('button',{name:'按顺序匹配',exact:true}).click()
       assert.equal(await inputValue(combo('批量匹配起始视频')),'','顺序模式不得自动猜选起始视频')
       await assertDisabled(apply(),'尚未指定起始视频不得应用')
       await sequence()
       await assertDisabled(apply(),'顺序匹配未经确认不得应用')
-      await selectOption(combo('批量设置字幕语言'),'zh-CN')
-      assert(await check('仅填写未指定语言').isChecked())
-      assert.equal(await panel().locator('tbody > tr').count(),20,'预览第一页仅渲染 20 条')
+      assert.equal(await combo('批量设置字幕语言').count(),0)
+      assert.equal(await panel().locator('.batch-preview-row').count(),20,'预览第一页仅渲染 20 条')
       const nav = panel().getByRole('navigation',{name:'批量预览分页',exact:true})
       await nav.getByRole('button',{name:'下一页',exact:true}).click()
-      assert.equal(await panel().locator('tbody > tr').count(),15)
+      assert.equal(await panel().locator('.batch-preview-row').count(),15)
       await nav.getByRole('button',{name:'上一页',exact:true}).click()
       await check('我已核对对应关系，确认按当前预览应用').check()
       await assertEnabled(apply())
-      await selectOption(combo('批量设置字幕语言'),'__keep')
+      await check('同时勾选本组已匹配项').uncheck()
       assert(!(await check('我已核对对应关系，确认按当前预览应用').isChecked()),'变更预览必须清除先前确认')
       assert.deepEqual(await snapshot(),before,'预览不能提前修改响应式行数据')
-      await button('取消批量操作').click()
+      await panel().getByRole('button',{name:'取消',exact:true}).click()
       assert.equal(await panel().count(),0)
       assert.deepEqual(await snapshot(),before,'取消不能修改任何行')
-      assert.equal(await button('撤销本次批量操作').count(),0)
+      assert.equal(await button('撤销').count(),0)
     })
 
     await run('35 条自然排序顺序匹配覆盖全部分页，保留已映射和手动清空项', async()=>{
       const fixture = sequenceFixture()
       await mount(fixture); await open(); await sequence()
       await check('我已核对对应关系，确认按当前预览应用').check()
-      const preview = panel().locator('tbody > tr').filter({hasText:'opaqueasset1tail.ass'})
+      const preview = panel().locator('.batch-preview-row').filter({hasText:'opaqueasset1tail.ass'})
       assert.match(await preview.innerText(),/Regression\.S01E01\.ass/,'预览应使用 targetNames 命名')
       await apply().click()
       assert.equal(await panel().count(),0)
@@ -162,7 +172,7 @@ function sequenceFixture() {
         assert.equal(r.language,'','默认不得设置语言')
       }
       assert.equal(after.filter(r=>r.videoId).length,34)
-      await button('撤销本次批量操作').click()
+      await button('撤销').click()
       assert.deepEqual(await snapshot(),fixture.rows,'撤销应恢复应用前的完整组状态')
     })
 
@@ -213,14 +223,17 @@ function sequenceFixture() {
       ]}
       await mount(fixture); await open()
       await assertDisabled(apply(),'两种编号解释指向不同视频时不得直接匹配')
-      assert.match(await panel().locator('tbody').innerText(),/保持未匹配/)
+      assert.match((await panel().locator('.batch-preview-row').allInnerTexts()).join('\n'),/保持未匹配/)
       assert.deepEqual(await snapshot(),fixture.rows)
-      await button('取消批量操作').click()
+      await panel().getByRole('button',{name:'取消',exact:true}).click()
     })
 
     await run('不同来源的重复目标文件冲突被阻止', async()=>{
       const fixture = {rows:[row('new','Show.S01E01.ass'),row('existing','Show.S01E01.ass',{file:{name:'Show.S01E01.ass',sourceKey:'archive-b'},videoId:'v1',selected:true})],videos:[video(1)]}
       await mount(fixture); await open()
+      const incoming = (await selectOptions(combo('批量操作字幕组'))).find(option=>option.label.includes('压缩包 A'))
+      assert(incoming,'显式选择待匹配来源，不能依赖已匹配项排序后的默认组')
+      await selectOption(combo('批量操作字幕组'),incoming.value)
       assert.match((await panel().getByRole('alert').allTextContents()).join('\n'),/重复.*目标文件/)
       await assertDisabled(apply()); assert.deepEqual(await snapshot(),fixture.rows)
     })
@@ -239,9 +252,16 @@ function sequenceFixture() {
       assert.equal(new Set(options.map(o=>o.value)).size,5)
       for (const option of options) {
         await selectOption(combo('批量操作字幕组'),option.value)
-        assert.equal(await panel().locator('tbody > tr').count(),1)
+        assert.equal(await panel().locator('.batch-preview-row').count(),1)
       }
-      await selectOption(combo('批量操作字幕组'),options[0].value)
+      const sameUnknown = options.find(option=>/same.*未指定/.test(option.label) && !option.label.includes('导演版'))
+      assert(sameUnknown,'选择同目录、未指定语言和版本的首个来源组')
+      await selectOption(combo('批量操作字幕组'),sameUnknown.value)
+      await apply().click()
+      assert.equal((await snapshot())[0].videoId,'v1')
+      await open()
+      await task('设置语言').click()
+      await selectOption(combo('批量操作字幕组'),sameUnknown.value)
       await selectOption(combo('批量设置字幕语言'),'zh-CN')
       await apply().click()
       const after = await snapshot()
@@ -253,7 +273,10 @@ function sequenceFixture() {
       const fixture = sequenceFixture()
       fixture.rows.push(row('known','Known.S01E01.ass',{language:'en',videoId:'v1'}))
       await mount(fixture); await open()
-      await panel().getByRole('button',{name:'仅设置语言',exact:true}).click()
+      await task('设置语言').click()
+      const unknown = (await selectOptions(combo('批量操作字幕组'))).find(option=>option.label.includes('未知目录') && option.label.includes('未指定'))
+      assert(unknown,'显式选择覆盖全部 35 个字幕的未指定语言组')
+      await selectOption(combo('批量操作字幕组'),unknown.value)
       await selectOption(combo('批量设置字幕语言'),'zh-CN')
       assert(await check('仅填写未指定语言').isChecked())
       assert.equal(await combo('批量匹配目标季').count(),0)
@@ -267,7 +290,7 @@ function sequenceFixture() {
         assert.equal(r.selected,fixture.rows[i].selected,'关闭自动勾选须保留选择')
       })
       assert.deepEqual(after[35],fixture.rows[35],'默认不得修改其他语言组')
-      await open(); await panel().getByRole('button',{name:'仅设置语言',exact:true}).click()
+      await open(); await task('设置语言').click()
       const options = await selectOptions(combo('批量操作字幕组'))
       const known = options.find(o=>o.label.includes('英文'))
       assert(known,'应有独立英文组')
@@ -283,15 +306,19 @@ function sequenceFixture() {
     await run('撤销批量操作不覆盖之后通过真实下拉控件手动编辑的语言', async()=>{
       const fixture = {rows:[row('one','Show.S01E01.ass'),row('two','Show.S01E02.ass'),row('three','Show.S01E03.ass')],videos:[video(1),video(2),video(3)]}
       await mount(fixture); await open()
+      await apply().click()
+      const beforeLanguage = await snapshot()
+      await open(); await task('设置语言').click()
       await selectOption(combo('批量设置字幕语言'),'zh-CN')
       await apply().click()
+      await button('编辑字幕 Show.S01E01.ass').click()
       await selectOption(combo('Show.S01E01.ass 语言'),'en')
       const edited = (await snapshot())[0]
-      await button('撤销本次批量操作').click()
+      await button('撤销').click()
       const after = await snapshot()
       assert.deepEqual(after[0],edited,'后续手动语言编辑必须完整保留')
-      assert.deepEqual(after.slice(1),fixture.rows.slice(1),'其他未经手动编辑项应恢复')
-      assert.equal(await button('撤销本次批量操作').count(),0)
+      assert.deepEqual(after.slice(1),beforeLanguage.slice(1),'其他未经手动编辑项应完整恢复到本次语言任务之前')
+      assert.equal(await button('撤销').count(),0)
     })
 
     await run('多季必须明确选择目标季，按编辑后的季集匹配而非原名猜测', async()=>{
@@ -304,7 +331,7 @@ function sequenceFixture() {
       assert.equal((await snapshot())[0].videoId,'s2')
     })
 
-    await run('电影仅可设置语言，不暴露集号或顺序匹配，也不改变视频映射', async()=>{
+    await run('电影默认设置语言，不暴露集号或顺序匹配，也不改变视频映射', async()=>{
       const fixture = {kind:'movie',rows:[row('movie','Film.ass',{videoId:'film'}),row('extra','Extra.srt')],videos:[{id:'film',name:'Film.2026.mkv'}]}
       await mount(fixture); await open()
       for (const name of ['按集号匹配','按顺序匹配']) assert.equal(await panel().getByRole('button',{name,exact:true}).count(),0)
@@ -312,15 +339,38 @@ function sequenceFixture() {
       await selectOption(combo('批量设置字幕语言'),'zh-CN')
       await apply().click()
       assert.deepEqual((await snapshot()).map(r=>({videoId:r.videoId,language:r.language})),[{videoId:'film',language:'zh-CN'},{videoId:'',language:'zh-CN'}])
-      await button('撤销本次批量操作').click()
+      await button('撤销').click()
       assert.deepEqual(await snapshot(),fixture.rows)
+    })
+
+    await run('字幕库和本地版本任务校验路径符号，命名包含 HKG/KTXP 且可完整撤销', async()=>{
+      for (const [source, version] of [['local','HKG'],['library','KTXP']]) {
+        const fixture = {rows:[1,2].map(episode=>row(`r${episode}`,`Show.S01E0${episode}.ass`,{
+          videoId:`v${episode}`,language:'zh-CN',selected:true,
+          ...(source==='library'?{versionId:'library-version',path:`Show.S01E0${episode}.ass`}:{}),
+        })),videos:[video(1),video(2)]}
+        await mount(fixture); await open(); await task('版本标记').click()
+        for (const name of ['批量匹配目标季','批量匹配起始视频','批量设置字幕语言']) assert.equal(await combo(name).count(),0,'版本任务只展示版本设置')
+        const marker = panel().getByRole('textbox',{name:'批量设置版本标记',exact:true})
+        await marker.fill('../HKG')
+        assert.match((await panel().getByRole('alert').allTextContents()).join('\n'),/版本|路径/)
+        await assertDisabled(apply(),'非法版本不得应用')
+        assert.deepEqual(await snapshot(),fixture.rows)
+        await marker.fill(version)
+        assert.match((await panel().locator('.batch-preview-row').allInnerTexts()).join('\n'),new RegExp(`\\.${version}\\.zh-CN\\.ass`))
+        await assertEnabled(apply()); await apply().click()
+        const after = await snapshot()
+        assert(after.every(item=>item.version===version))
+        assert.deepEqual(after.map(item=>({...item,version:''})),fixture.rows,'版本任务不能改变视频、语言或选择')
+        await button('撤销').click()
+        assert.deepEqual(await snapshot(),fixture.rows)
+      }
     })
 
     await run('移动端 320/390px 无横向溢出，桌面与移动端浅深主题截图', async()=>{
       const fixture = sequenceFixture()
       fixture.rows.forEach(r=>{r.file.name='非常长的目录与字幕来源用于验证移动端换行/'.repeat(2)+r.file.name})
       await mount(fixture); await open(); await sequence()
-      await selectOption(combo('批量设置字幕语言'),'zh-CN')
       for (const width of [320,390,1280]) {
         await page.setViewportSize({width,height:960})
         for (const theme of ['light','dark']) {
@@ -343,7 +393,7 @@ function sequenceFixture() {
           const afterDropdown = await page.evaluate(()=>({client:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth}))
           assert(afterDropdown.scroll<=afterDropdown.client+1,'打开浮层不应撑宽页面')
           await combo('批量操作字幕组').press('Escape')
-          await panel().getByText('批量匹配与语言设置',{exact:true}).click()
+          await task('匹配视频').click()
           const file = path.join(artifacts,`batch-${width}-${theme}.png`)
           // 完整截取面板，移动端也能查看确认框与禁用的应用按钮，而非只截首屏。
           await panel().screenshot({path:file})

@@ -81,7 +81,7 @@ export interface OrganizeItem {
 export interface OrganizeJob {
 	naming?: NamingRecord
 	resumable?: boolean
-  download?: { hash: string; batchId?: string; batchSize?: number; directoryId?: string; cleanupDirs?: string[]; share?: { directory: string; handedOff?: boolean; leaderId?: string }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; status: string; message?: string }[] }
+  download?: { hash: string; batchId?: string; batchSize?: number; directoryId?: string; cleanupDirs?: string[]; share?: { directory: string; handedOff?: boolean; leaderId?: string }; subtitles?: { file: LibrarySubtitleFile; videoIndex: number; name: string; targetPath: string; language: string; version?: string; status: string; message?: string }[] }
   numbering?: NumberingInfo
   id: string
   config: OrganizeConfig

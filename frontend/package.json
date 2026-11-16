@@ -56,7 +56,7 @@
     "test:auth-ui": "node scripts/auth-ui.cjs",
     "test:organize-selection": "node --test tests/organize-selection.test.mjs",
     "test:organize-workflow": "node --test tests/organize-selection.test.mjs tests/organize-history.test.mjs",
-    "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs tests/subtitle-sources.test.mjs tests/subtitle-batch.test.mjs",
+    "test:subtitles": "node --test tests/subtitle-import.test.mjs tests/subtitle-archive.test.mjs tests/subtitle-sources.test.mjs tests/subtitle-batch.test.mjs tests/subtitle-presentation.test.mjs tests/subtitle-version.test.mjs",
     "test:subtitle-batch-ui": "node scripts/subtitle-batch-ui.cjs && node scripts/subtitle-list-ui.cjs",
     "test:subtitle-settings-ui": "node scripts/subtitle-settings-ui.cjs",
     "test:network-proxy-ui": "node scripts/network-proxy-ui.cjs",
@@ -80,7 +80,8 @@
     "test:follow-pending-ui": "node scripts/follow-pending-ui.cjs",
     "test:movie-follow-ui": "node scripts/movie-follow-ui.cjs",
     "test:notifications": "node --test tests/notifications.test.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:subtitle-design-ui": "node scripts/subtitle-design-ui.cjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",

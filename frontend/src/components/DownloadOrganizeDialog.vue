@@ -50,7 +50,7 @@ const assrtSubtitleCount = computed(() => selectedLocal.value.length - localSubt
 const allExternal = computed(() => [...externalSubtitles.value, ...localSubtitles.value])
 const selectedExternal = computed(() => [...selectedLibrary.value, ...selectedLocal.value])
 const externalIssue = computed(() => subtitleSelectionIssue(selectedExternal.value.length, selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0)))
-const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, 'version' in sub ? sub.version : '')
+const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, sub.version)
 function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion) {
   const ids = subtitleIDs.value
   externalSubtitles.value = [...externalSubtitles.value.filter(sub => !ids.has(sub.videoId)), ...library]
@@ -185,8 +185,8 @@ const signal = () => AbortSignal.any([lifecycle.signal, AbortSignal.timeout(1300
 function resourceSelections() {
   return preparation.resourceSelections(selected.value).map(resource => ({ ...resource,
     subtitles: selectedExternal.value.filter(sub => preparation.owners.get(sub.videoId)?.key === magnetKey(resource.magnet))
-      .map(sub => ({ language: sub.language, videoId: preparation.owners.get(sub.videoId)!.id, ...('localId' in sub
-        ? { localId: sub.localId, originalName: sub.file.name, sha256: sub.file.sha256, size: sub.file.data.length, version: sub.version }
+      .map(sub => ({ language: sub.language, version: sub.version, videoId: preparation.owners.get(sub.videoId)!.id, ...('localId' in sub
+        ? { localId: sub.localId, originalName: sub.file.name, sha256: sub.file.sha256, size: sub.file.data.length }
         : { versionId: sub.versionId, path: sub.path, sha: sub.file.sha }) })),
   }))
 }
