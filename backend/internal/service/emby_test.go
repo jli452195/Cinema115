@@ -485,7 +485,6 @@ func TestEmbyConfigEncryptionScopeAndRestart(t *testing.T) {
 	if got := f.match(t, "movie", "100"); got.State != "present" {
 		t.Fatal("切回历史范围应显示该范围最近一次完整索引", got)
 	}
-	f.sync(t)
 	f.event(t, "new-id", "upsert")
 	if err := f.db.EmbyProgress(ctx, embyScope(f.service.snapshot()), "running", 1, ""); err != nil {
 		t.Fatal(err)
@@ -591,9 +590,6 @@ func TestEmbyWorkerStopsWithContext(t *testing.T) {
 	f := newEmbyFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	if err := f.service.StartSync(ctx); err != nil {
-		t.Fatal(err)
-	}
 	go func() { done <- f.service.Run(ctx) }()
 	t.Cleanup(func() {
 		cancel()

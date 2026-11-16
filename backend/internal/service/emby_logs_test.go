@@ -31,6 +31,10 @@ func requireEmbyLog(t *testing.T, logs *GenerationLogs, level, message string) G
 
 func TestEmbyLogsSyncAndFailure(t *testing.T) {
 	f := newEmbyFixture(t)
+	// 首次保存已自动入队，先完成初始化，再验证新的手动同步日志。
+	if err := f.service.syncLibrary(context.Background(), f.service.snapshot()); err != nil {
+		t.Fatal(err)
+	}
 	logs := &GenerationLogs{}
 	f.service.Logs = logs
 	f.sync(t)
@@ -237,7 +241,7 @@ func TestEmbyLogsPublishFailureDoesNotReportSuccess(t *testing.T) {
 	ctx := context.Background()
 	c := f.service.snapshot()
 	scope := embyScope(c)
-	// Simulate a completed checkpoint whose snapshot cannot be published.
+	// 模拟已完成但无法发布的暂存快照。
 	if err := f.db.EmbyBeginSync(ctx, scope, "missing-snapshot", 0); err != nil {
 		t.Fatal(err)
 	}
