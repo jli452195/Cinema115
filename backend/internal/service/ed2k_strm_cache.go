@@ -14,6 +14,8 @@ import (
 	"strm115/backend/internal/strm"
 )
 
+const ed2kSTRMCacheDirectoryName = "Cinema115-ED2K缓存目录"
+
 var errED2KDirectoryPending = errors.New("ED2K 缓存目录创建结果尚待确认")
 
 func (s *ED2KSTRMService) cacheDirectoryPending(ctx context.Context, v model.ED2KSTRMResource) (bool, error) {
@@ -23,7 +25,7 @@ func (s *ED2KSTRMService) cacheDirectoryPending(ctx context.Context, v model.ED2
 	if v.CacheTargetCID != "" || v.CacheParentCID != "" {
 		return false, nil
 	}
-	// 自动根创建意图保存在账号级记录，不能只检查资源子目录的创建意图。
+	// 默认根目录的创建意图保存在账号级记录，不能只检查资源子目录。
 	cache, err := s.Store.GetED2KSTRMCache(ctx, v.AccountID)
 	if errors.Is(err, storage.ErrNotFound) {
 		return false, nil
@@ -34,8 +36,8 @@ func (s *ED2KSTRMService) cacheDirectoryPending(ctx context.Context, v model.ED2
 	return cache.Pending, nil
 }
 
-// 已选择或已开始使用的根目录不可随设置变化，也不能在缺失时改投自动目录。
-func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string, a P115Account, automatic bool) (model.ED2KSTRMCache, error) {
+// 已选择或已开始使用的根目录不可随设置变化，也不能在缺失时改投专用目录。
+func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string, a P115Account, requireRoot bool) (model.ED2KSTRMCache, error) {
 	dir, err := s.Client.ReadDirectory(ctx, cid, a.Cookie)
 	if err != nil {
 		missing, checkErr := s.Client.DirectoryMissing(ctx, cid, a.Cookie)
@@ -47,7 +49,7 @@ func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string
 		}
 		return model.ED2KSTRMCache{}, err
 	}
-	if dir.CID != cid || automatic && dir.ParentCID != "0" {
+	if dir.CID != cid || requireRoot && dir.ParentCID != "0" {
 		return model.ED2KSTRMCache{}, generationInputError("缓存根目录身份或位置已变化，请重新选择")
 	}
 	return model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, CID: cid, Name: dir.Name}, nil
@@ -85,8 +87,9 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 		}
 	} else {
 		cache, err = s.Store.GetED2KSTRMCache(ctx, a.ID)
-		if errors.Is(err, storage.ErrNotFound) {
-			cache = model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, Name: "Cinema115-ED2K-" + strconv.FormatInt(time.Now().UnixNano(), 36)}
+		// 已发出的创建请求仍核对原结果；历史目录不再覆盖新任务的固定默认目录。
+		if errors.Is(err, storage.ErrNotFound) || err == nil && cache.Name != ed2kSTRMCacheDirectoryName && !cache.Pending {
+			cache = model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, Name: ed2kSTRMCacheDirectoryName}
 		} else if err != nil {
 			return err
 		}
@@ -112,16 +115,22 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 			}
 		}
 		if cache.CID == "" {
-			if cache.Pending {
-				cid, err := s.directoryByName(ctx, "0", cache.Name, a.Cookie)
+			// 固定目录名先查后建；创建结果未知时只核对原结果，不重复写入。
+			cid, err := s.directoryByName(ctx, "0", cache.Name, a.Cookie)
+			if err != nil {
+				return err
+			}
+			if cid != "" {
+				dir, err := s.selectedCacheDirectory(ctx, cid, a, true)
 				if err != nil {
 					return err
 				}
-				if cid == "" {
-					v.Status = "uncertain"
-					return errED2KDirectoryPending
+				if dir.Name != cache.Name {
+					return generationInputError("专用缓存目录名称已变化，请重新选择")
 				}
-				cache.CID, cache.Pending = cid, false
+			} else if cache.Pending {
+				v.Status = "uncertain"
+				return errED2KDirectoryPending
 			} else {
 				cache.Pending = true
 				if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
@@ -130,13 +139,13 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 				if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
 					return err
 				}
-				cid, err := s.Client.CreateDirectory(ctx, "0", cache.Name, a.Cookie)
+				cid, err = s.Client.CreateDirectory(ctx, "0", cache.Name, a.Cookie)
 				if err != nil {
 					v.Status = "uncertain"
 					return err
 				}
-				cache.CID, cache.Pending = cid, false
 			}
+			cache.CID, cache.Pending = cid, false
 			if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
 				return err
 			}

@@ -2,7 +2,7 @@ package model
 
 import "time"
 
-// ED2KSTRMSettings 保存输出地址和主账号缓存根目录，空 CID 表示使用自动目录。
+// ED2KSTRMSettings 保存输出地址和自定义缓存根目录，空 CID 使用 /Cinema115-ED2K缓存目录。
 type ED2KSTRMSettings struct {
 	BaseURL        string `json:"baseUrl"`
 	CacheAccountID string `json:"cacheAccountId,omitempty"`
@@ -41,7 +41,7 @@ type ED2KSTRMImportResult struct {
 	Tasks     []ED2KSTRMTask     `json:"tasks"`
 }
 
-// ED2KSTRMCache 只记录本模块创建的主账号缓存目录及创建意图。
+// ED2KSTRMCache 只记录本模块创建或复用的主账号专用缓存目录及创建意图。
 type ED2KSTRMCache struct {
 	AccountID string `json:"accountId"`
 	UID       string `json:"uid"`

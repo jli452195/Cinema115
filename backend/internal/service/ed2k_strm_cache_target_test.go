@@ -315,11 +315,11 @@ func TestED2KSTRMUncertainDirectoryRestartKeepsOriginalParentAndName(t *testing.
 			v := f.imported(t)
 			if selected {
 				v.CacheTargetCID, v.CacheTargetPath = "42", "/原缓存"
-			} else if err := f.store.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: v.AccountID, UID: v.UID, CID: "42", Name: "Cinema115-ED2K-original"}); err != nil {
+			} else if err := f.store.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: v.AccountID, UID: v.UID, CID: "42", Name: ed2kSTRMCacheDirectoryName}); err != nil {
 				t.Fatal(err)
 			}
 			child := "ed2k-" + v.Hash + "-1234"
-			f.client.dirs = map[string]p115.DriveDirectory{"42": {CID: "42", ParentCID: "0", Name: "Cinema115-ED2K-original"}}
+			f.client.dirs = map[string]p115.DriveDirectory{"42": {CID: "42", ParentCID: "0", Name: ed2kSTRMCacheDirectoryName}}
 			f.client.create = func(parent, name, _ string) (string, error) {
 				stored, err := f.store.GetED2KSTRMResource(ctx, v.Hash, v.Size)
 				if err != nil || parent != "42" || name != child || stored.CacheParentCID != "42" || !stored.DirectoryPending {
@@ -376,6 +376,12 @@ func TestED2KSTRMUncertainAutomaticRootRestoreDoesNotSwitchToSelectedDirectory(t
 	f := newED2KSTRMFixture(t)
 	v := f.imported(t)
 	originalName := ""
+	f.client.listing = func(parent, _ string) (p115.DriveDirectory, []p115.ShareFile, error) {
+		if parent != "0" {
+			t.Fatalf("专用目录必须在主账号根目录查找：%s", parent)
+		}
+		return p115.DriveDirectory{CID: "0"}, nil, nil
+	}
 	f.client.create = func(parent, name, _ string) (string, error) {
 		cache, err := f.store.GetED2KSTRMCache(ctx, v.AccountID)
 		if err != nil || parent != "0" || cache.Name != name || !cache.Pending {
@@ -412,5 +418,97 @@ func TestED2KSTRMUncertainAutomaticRootRestoreDoesNotSwitchToSelectedDirectory(t
 	cache, err := f.store.GetED2KSTRMCache(ctx, v.AccountID)
 	if err != nil || cache.Name != originalName || !cache.Pending || restored.CacheTargetCID != "" || !slices.Equal(f.client.calls, []string{"listing"}) || f.cloud.calls != 0 {
 		t.Fatalf("未知自动根目录被重建或改投：cache=%+v calls=%v err=%v", cache, f.client.calls, err)
+	}
+}
+
+func TestED2KSTRMDefaultCacheRootCreationAndReuse(t *testing.T) {
+	for _, mode := range []string{"create", "reuse", "recorded", "legacy", "legacy-reuse", "pinned-legacy", "file-conflict", "duplicate", "read-error"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			f := newED2KSTRMFixture(t)
+			v := f.imported(t)
+			a, err := f.accounts.Primary(v.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rootName := "Cinema115-ED2K缓存目录"
+			if mode == "pinned-legacy" {
+				rootName = "Cinema115-ED2K-existing"
+				v.CacheParentCID = "10"
+			}
+			if mode == "recorded" || mode == "pinned-legacy" {
+				if err := f.store.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, CID: "10", Name: rootName}); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "legacy" || mode == "legacy-reuse" {
+				if err := f.store.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, CID: "90", Name: "Cinema115-ED2K-existing"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			childName := "ed2k-" + v.Hash + "-1234"
+			f.client.dirs = map[string]p115.DriveDirectory{
+				"10": {CID: "10", ParentCID: "0", Name: rootName},
+				"11": {CID: "11", ParentCID: "10", Name: childName},
+			}
+			f.client.listing = func(parent, _ string) (p115.DriveDirectory, []p115.ShareFile, error) {
+				if parent != "0" || mode == "recorded" || mode == "pinned-legacy" {
+					t.Fatalf("已知目录应按记录复用，首次查找只能访问根目录：%s", parent)
+				}
+				files := []p115.ShareFile{}
+				switch mode {
+				case "reuse", "legacy-reuse", "file-conflict", "duplicate":
+					files = append(files, p115.ShareFile{ID: "10", Name: rootName, Directory: mode != "file-conflict"})
+					if mode == "duplicate" {
+						files = append(files, p115.ShareFile{ID: "12", Name: rootName, Directory: true})
+					}
+				case "read-error":
+					return p115.DriveDirectory{}, nil, context.DeadlineExceeded
+				}
+				return p115.DriveDirectory{CID: "0"}, files, nil
+			}
+			created := 0
+			f.client.create = func(parent, name, _ string) (string, error) {
+				created++
+				if parent == "0" {
+					cache, err := f.store.GetED2KSTRMCache(ctx, a.ID)
+					if mode != "create" && mode != "legacy" || name != rootName || err != nil || cache.Name != name || !cache.Pending {
+						t.Fatalf("创建目录前未固定名称和创建意图：%+v name=%s err=%v", cache, name, err)
+					}
+					return "10", nil
+				}
+				if parent != "10" || name != childName {
+					t.Fatalf("资源目录位置错误：%s/%s", parent, name)
+				}
+				return "11", nil
+			}
+			err = f.service.ensureDirectory(ctx, &v, a)
+			if mode == "file-conflict" || mode == "duplicate" || mode == "read-error" {
+				wantErr := ErrGenerationInput
+				if mode == "read-error" {
+					wantErr = context.DeadlineExceeded
+				}
+				if !errors.Is(err, wantErr) || created != 0 {
+					t.Fatalf("目录冲突或读取失败后产生写入：created=%d err=%v", created, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			cache, err := f.store.GetED2KSTRMCache(ctx, a.ID)
+			if err != nil || cache.CID != "10" || cache.Name != rootName || cache.Pending || v.CacheCID != "11" || v.CacheParentCID != "10" {
+				t.Fatalf("缓存位置未保存：root=%+v resource=%+v err=%v", cache, v, err)
+			}
+			if err := f.service.ensureDirectory(ctx, &v, a); err != nil {
+				t.Fatal(err)
+			}
+			wantCreates := 1
+			if mode == "create" || mode == "legacy" {
+				wantCreates = 2
+			}
+			if created != wantCreates || f.cloud.calls != 0 {
+				t.Fatalf("重复创建缓存目录或触发离线：created=%d cloud=%d", created, f.cloud.calls)
+			}
+		})
 	}
 }

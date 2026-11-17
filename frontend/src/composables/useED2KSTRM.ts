@@ -91,7 +91,7 @@ export function useED2KSTRM(token: () => string) {
     }
     draft.value = { ...draft.value, cacheAccountId: accountId, cacheCID: directory.id, cachePath: directory.path }
   }
-  function useAutomaticCacheDirectory() {
+  function clearCacheDirectory() {
     if (!busy.value && draft.value) draft.value = { ...draft.value, cacheAccountId: '', cacheCID: '', cachePath: '' }
   }
   function editTarget(target?: ED2KSTRMTarget) {
@@ -161,5 +161,5 @@ export function useED2KSTRM(token: () => string) {
   async function visible() { window.clearTimeout(timer); if (!document.hidden) await refresh(); poll() }
   onMounted(async () => { document.addEventListener('visibilitychange', visible); await refresh(); poll() })
   onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
-  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, useAutomaticCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, taskAction }
+  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, clearCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, taskAction }
 }

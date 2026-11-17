@@ -223,6 +223,17 @@ func (s *ShareTasks) prepareDownloadShare(ctx context.Context, task *model.Share
 		if err := checkGenerationAccount(ctx); err != nil {
 			return ctx, err
 		}
+		if req.Settings.FixedSharePassword == "" {
+			password, err := newSharePassword("")
+			if err != nil {
+				return ctx, err
+			}
+			// 随机码只生成一次，设置分享前持久保存，重试继续使用同一码。
+			req.Settings.FixedSharePassword = password
+			if err := s.save(ctx, task, *req); err != nil {
+				return ctx, &shareCheckpointError{err}
+			}
+		}
 		if err = s.OwnClient.ConfigureShare(ctx, share, req.Settings.FixedSharePassword, cookie); err != nil {
 			return ctx, fmt.Errorf("设置分享有效期与提取码: %w", err)
 		}

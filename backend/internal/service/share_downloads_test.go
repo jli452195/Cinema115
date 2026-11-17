@@ -22,6 +22,7 @@ type downloadShareFake struct {
 	shares                   map[string][]p115.ShareFile
 	sends, configures, reads int
 	sendErr, configureErr    error
+	configuredPassword       string
 	pending, review          bool
 }
 
@@ -54,6 +55,7 @@ func (f *downloadShareFake) SendShare(_ context.Context, ids []string, _ string)
 
 func (f *downloadShareFake) ConfigureShare(_ context.Context, share *p115.ShareInfo, password, _ string) error {
 	f.configures++
+	f.configuredPassword = password
 	if password != "" {
 		share.Password = password
 	}
@@ -192,6 +194,13 @@ func TestDownloadShareReviewAndGenerationRetryReuseLink(t *testing.T) {
 	for _, mode := range []string{"pending", "configure", "generate"} {
 		t.Run(mode, func(t *testing.T) {
 			s, tasks, db, client, in := downloadShareFixture(t)
+			if mode == "configure" {
+				settings := tasks.Settings.ShareValue()
+				settings.FixedSharePassword = ""
+				if err := tasks.Settings.Save(settings); err != nil {
+					t.Fatal(err)
+				}
+			}
 			job := completeDownloadShare(t, s, in)
 			client.pending = mode == "pending"
 			if mode == "configure" {
@@ -215,9 +224,19 @@ func TestDownloadShareReviewAndGenerationRetryReuseLink(t *testing.T) {
 			if reason := tasks.RetryReason(record); reason != "" {
 				t.Fatal(reason)
 			}
+			password := client.configuredPassword
+			if mode == "configure" {
+				var saved shareTaskRequest
+				if err := json.Unmarshal(record.Request, &saved); err != nil {
+					t.Fatal(err)
+				}
+				if !sharePasswordPattern.MatchString(password) || saved.Settings.FixedSharePassword != password || tasks.Settings.ShareValue().FixedSharePassword != "" {
+					t.Fatal("随机提取码未固定到任务，或改写了全局设置")
+				}
+			}
 			client.review, client.pending, client.configureErr = false, false, nil
 			tasks.Generator = generateFunc(func(_ context.Context, input GenerateInput) (*GenerationResult, error) {
-				if input.Mode != "direct" || !strings.Contains(input.URL, "ownedabc") {
+				if input.Mode != "direct" || !strings.Contains(input.URL, "ownedabc") || input.Password != password {
 					t.Fatal(input)
 				}
 				return &GenerationResult{Written: 1, Files: make([]GeneratedSTRM, 1)}, nil

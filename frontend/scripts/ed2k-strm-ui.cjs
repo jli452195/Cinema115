@@ -18,10 +18,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const page = await context.newPage(); page.setDefaultTimeout(10000)
   const hash = '0123456789abcdef0123456789abcdef', sha1 = 'A'.repeat(40), filename = '影片.S01E01.mkv'
   const link = `ed2k://|file|${filename}|104857600|${hash}|/`
-  const state = { settings: { baseUrl: 'http://localhost:8080' }, settingsSaved: false, accountReady: true, primaryAccountId: 'main', cacheCID: '', cachePath: '', cacheReady: true, cacheSetupHint: '', targets: [], tasks: [], resources: [] }
+  const state = { settings: { baseUrl: 'http://localhost:8080' }, settingsSaved: false, accountReady: true, primaryAccountId: 'main', cacheReady: true, cacheSetupHint: '', targets: [], tasks: [], resources: [] }
   function updateCacheReadiness() {
     state.cacheReady = state.accountReady && (!state.settings.cacheCID || state.settings.cacheAccountId === state.primaryAccountId)
-    state.cacheSetupHint = !state.accountReady ? '请先登录主账号' : !state.cacheReady ? '主账号已变化，请重新选择缓存目录，或使用自动目录。' : ''
+    state.cacheSetupHint = !state.accountReady ? '请先登录主账号' : !state.cacheReady ? '主账号已变化，请重新选择或清除缓存目录。' : ''
   }
   let rejectSettings = false, rejectImport = true, nextTarget = 0, nextTask = 0, holdSettings = false, releaseSettings, settingsHeld
   await context.route('**/api/**', async route => {
@@ -39,7 +39,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         if (body.cacheCID) { assert.equal(body.cacheAccountId, state.primaryAccountId); assert.equal(state.accountReady, true) }
         else { assert.equal(body.cacheAccountId, ''); assert.equal(body.cachePath, '') }
         state.settings = { ...body, baseUrl: body.baseUrl.replace(/\/+$/, '') }; state.settingsSaved = true
-        state.cacheCID = body.cacheCID; state.cachePath = body.cachePath; updateCacheReadiness(); data = state.settings
+        updateCacheReadiness(); data = state.settings
       }
     } else if (url.pathname === endpoint + '/targets' && method === 'POST') {
       data = { id: `target-${++nextTarget}`, ...body }; state.targets.push(data)
@@ -107,7 +107,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '刷新状态', exact: true }).click()
     await response; await page.getByRole('button', { name: '刷新状态', exact: true }).waitFor()
   }
-  const screenshotDir = path.resolve(process.env.ED2K_STRM_UI_ARTIFACTS || 'test-results/ed2k-strm'); await fs.mkdir(screenshotDir, { recursive: true })
+  const screenshotDir = process.env.ED2K_STRM_UI_ARTIFACTS && path.resolve(process.env.ED2K_STRM_UI_ARTIFACTS)
+  if (screenshotDir) await fs.mkdir(screenshotDir, { recursive: true })
+  async function screenshot(name) {
+    if (screenshotDir) await page.screenshot({ path: path.join(screenshotDir, name), fullPage: true, animations: 'disabled' })
+  }
   try {
     await page.goto(base, { waitUntil: 'networkidle' }); await imports.waitFor(); await selectedTab('generate')
     assert.equal(await settings.isVisible(), false); assert.equal(await resources.isVisible(), false)
@@ -119,13 +123,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 
     // 页签和历史切换共用一个页面实例，链接与基础设置草稿都必须保留。
     await page.getByRole('button', { name: '前往基础设置', exact: true }).click(); await selectedTab('settings')
+    assert.equal(await cacheLocation.textContent(), '/Cinema115-ED2K缓存目录')
+    assert.equal(await cache.getByRole('button', { name: '清除选择', exact: true }).count(), 0, '空配置直接使用固定目录，无需选择操作')
     assert.equal(await cards.count(), 0)
     assert.equal(await directories.getByRole('button', { name: '添加目录', exact: true }).count(), 0)
     const emptyAdd = directories.getByRole('button', { name: '添加输出目录', exact: true })
     await emptyAdd.focus(); await emptyAdd.press('Enter')
     const emptyEditor = page.getByRole('dialog', { name: '添加输出目录', exact: true })
     await emptyEditor.waitFor(); await page.keyboard.press('Escape'); await emptyEditor.waitFor({ state: 'hidden' })
-    await page.screenshot({ path: path.join(screenshotDir, 'settings-0-1440-light.png'), fullPage: true, animations: 'disabled' })
+    await screenshot('settings-0-1440-light.png')
     await address.fill('http://cinema.example:8080/')
     await openTab('resources'); assert.equal(await imports.isVisible(), false); assert.equal(await settings.isVisible(), false)
     await page.goBack(); await selectedTab('settings'); assert.equal(await address.inputValue(), 'http://cinema.example:8080/')
@@ -137,7 +143,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     rejectSettings = true
     await settings.getByRole('button', { name: '保存设置', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '模拟设置保存失败' }).waitFor()
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
+    assert.equal(await settings.getByRole('button', { name: '保存设置', exact: true }).count(), 0, '未修改时使用状态文字，不保留禁用主按钮')
 
     // 缓存目录使用主账号浏览，选择只改草稿，统一保存且允许显式根目录。
     const beforeCacheDraft = writeCalls().length
@@ -150,13 +157,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await cacheLocation.textContent(), '/媒体缓存', '切页及刷新保留缓存目录草稿')
     assert.equal(writeCalls().length, beforeCacheDraft, '浏览和选择缓存目录不能自动保存或提交任务')
     await settings.getByRole('button', { name: '还原修改', exact: true }).click()
-    assert.match(await cacheLocation.textContent(), /自动目录/)
+    assert.match(await cacheLocation.textContent(), /Cinema115-ED2K缓存目录/)
     await selectCache()
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
     assert.deepEqual(calls.filter(call => call.path === endpoint + '/settings').at(-1).body, { baseUrl: 'http://cinema.example:8080', cacheAccountId: 'main', cacheCID: 'cache-selected', cachePath: '/媒体缓存' })
     await selectCache(true)
     assert.equal(await cacheLocation.textContent(), '/', 'CID 0 明确表示主网盘根目录')
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
     assert.equal(state.settings.cacheCID, '0')
 
     await openTab('generate'); assert.equal(await submit.isDisabled(), true, '没有输出目录不能导入')
@@ -169,7 +176,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await cards.count(), 1)
     assert.equal(await cards.first().getByText(/默认/).count(), 0, '首个目录不代表默认目录')
     assert.equal(await cards.first().getByText('未分配 Bot', { exact: true }).count(), 1)
-    await page.screenshot({ path: path.join(screenshotDir, 'settings-1-1440-light.png'), fullPage: true, animations: 'disabled' })
+    await screenshot('settings-1-1440-light.png')
     await page.getByRole('button', { name: '添加目录', exact: true }).click()
     const editor = page.getByRole('dialog', { name: '添加输出目录', exact: true })
     await editor.getByLabel('目录名称').fill('剧集'); await editor.getByLabel('本地输出目录').fill('ed2k/剧集')
@@ -180,7 +187,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await editTarget.focus(); await editTarget.press('Enter')
     const editing = page.getByRole('dialog', { name: '编辑输出目录', exact: true })
     await editing.getByLabel('目录名称').fill('电视剧'); await editing.getByRole('button', { name: '保存目录', exact: true }).click(); await editing.waitFor({ state: 'hidden' })
-    await page.screenshot({ path: path.join(screenshotDir, 'settings-2-1440-light.png'), fullPage: true, animations: 'disabled' })
+    await screenshot('settings-2-1440-light.png')
     await openTab('generate'); await selectOption(targetSelect, 'target-1')
     await submit.click(); await page.getByRole('alert').filter({ hasText: '模拟响应丢失' }).waitFor()
     assert.equal(await textarea.inputValue(), link)
@@ -198,7 +205,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(importCalls()[1].body.targetId, 'target-1')
 
     Object.assign(state.resources[0], { sha1, status: 'ready', cacheState: 'ready', message: 'STRM 已生成，缓存可用' }); state.tasks = []
-    state.cacheCID = '12345'; state.cachePath = '/Cinema115-ED2K'
     await refresh(); await openTab('settings')
 
     // 账号变化使旧目录失效，并关闭已打开的选择器；只读核验仍可执行。
@@ -207,7 +213,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     state.primaryAccountId = 'main-replaced'
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     await cachePicker.waitFor({ state: 'hidden' })
-    await cache.getByText('主账号已变化，请重新选择缓存目录，或使用自动目录。', { exact: true }).waitFor()
+    await cache.getByText('主账号已变化，请重新选择或清除缓存目录。', { exact: true }).waitFor()
     await address.fill('http://cannot-save-old-directory.example')
     assert.equal(await settings.getByRole('button', { name: '保存设置', exact: true }).isDisabled(), true, '旧账号目录不能随地址修改沿用')
     await settings.getByRole('button', { name: '还原修改', exact: true }).click()
@@ -220,20 +226,29 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(writeCalls().length, beforeAccountChange, '账号变化不会自动改投目录或提交恢复')
     await openTab('settings'); await selectCache(true)
     assert.equal(await settings.getByRole('button', { name: '保存设置', exact: true }).isEnabled(), true, '重新选择目录可修复旧配置的不可用状态')
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
     assert.equal(state.settings.cacheAccountId, 'main-replaced')
     state.primaryAccountId = 'main'; await refresh()
-    const beforeAutomaticReset = writeCalls().length
-    await cache.getByRole('button', { name: '使用自动目录', exact: true }).click()
-    assert.match(await cacheLocation.textContent(), /自动目录/)
-    assert.equal(writeCalls().length, beforeAutomaticReset, '使用自动目录也需明确保存')
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    const clearCache = cache.getByRole('button', { name: '清除选择', exact: true })
+    for (const width of [375, 320]) {
+      await page.setViewportSize({ width, height: 844 })
+      assert.equal(await clearCache.evaluate(element => {
+        const bounds = element.getBoundingClientRect(), group = element.closest('.es-cache').getBoundingClientRect()
+        return bounds.left >= group.left && bounds.right <= group.right && bounds.height >= 44 && element.scrollWidth <= element.clientWidth + 1
+      }), true, `${width}px 清除选择按钮完整显示且具备触控区域`)
+    }
+    await page.setViewportSize({ width: 1440, height: 1100 })
+    const beforeClear = writeCalls().length
+    await clearCache.click()
+    assert.equal(await cacheLocation.textContent(), '/Cinema115-ED2K缓存目录')
+    assert.equal(await clearCache.count(), 0, '清除后立即显示固定目录，无需再次选择')
+    assert.equal(writeCalls().length, beforeClear, '清除只修改草稿，保存后生效')
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
     assert.equal(state.settings.cacheCID, ''); assert.equal(state.settings.cacheAccountId, ''); assert.equal(state.settings.cachePath, '')
-    state.cacheCID = 'auto-cache'; state.cachePath = '/Cinema115-ED2K'
-    await refresh(); assert.equal(await cacheLocation.textContent(), '自动目录 · /Cinema115-ED2K')
+    await refresh(); assert.equal(await cacheLocation.textContent(), '/Cinema115-ED2K缓存目录')
     await address.fill('http://cache-tested.example:8080')
-    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
-    assert.equal(state.settings.cacheCID, '', '保存其他设置不能将自动生成的有效目录误存为手选目录')
+    await settings.getByRole('button', { name: '保存设置', exact: true }).click(); await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
+    assert.equal(state.settings.cacheCID, '', '保存其他设置时继续保留空配置，使用固定目录')
     assert.equal(state.resources.length, 1, '目录和账号配置变化不删除已有资源')
     await openTab('generate')
 
@@ -321,9 +336,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const buttons = directories.getByRole('button')
       for (const button of await buttons.all()) assert.equal(await button.isDisabled(), true, '保存过程中添加、编辑、删除均禁用')
     } finally { holdSettings = false; releaseSettings?.(); settingsHeld = undefined }
-    await settings.getByRole('button', { name: '已保存', exact: true }).waitFor()
+    await settings.getByRole('status', { name: '基础设置保存状态', exact: true }).waitFor()
     assert.equal(await directories.getByRole('button', { name: '添加目录', exact: true }).isEnabled(), true)
-    state.cacheCID = 'long-auto-cache'; state.cachePath = '/Cinema115-ED2K/' + '缓存完整路径'.repeat(12)
+    Object.assign(state.settings, { cacheAccountId: 'main', cacheCID: 'long-cache', cachePath: '/媒体缓存/' + '缓存完整路径'.repeat(12) })
     await refresh()
 
     const beforeScreenshots = writeCalls().length
@@ -332,10 +347,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: width === 1440 ? 1100 : 844 })
         await page.waitForFunction(() => {
-          const nav = document.querySelector('nav[aria-label="ED2K STRM 功能视图"]'), selected = nav?.querySelector('[aria-current="page"]')
-          if (!selected) return false
-          const bounds = nav.getBoundingClientRect(), item = selected.getBoundingClientRect()
-          return item.left >= bounds.left - 1 && item.right <= bounds.right + 1
+          const nav = document.querySelector('nav[aria-label="ED2K STRM 功能视图"]')
+          if (!nav) return false
+          const bounds = nav.getBoundingClientRect()
+          return [...nav.querySelectorAll('button')].every(button => {
+            const item = button.getBoundingClientRect(), label = button.querySelector('span').getBoundingClientRect()
+            return item.left >= bounds.left - 1 && item.right <= bounds.right + 1 && label.left >= item.left && label.right <= item.right
+          })
         }, undefined, { timeout: 2000 })
         for (const dark of [false, true]) {
           await page.evaluate(value => { document.documentElement.classList.toggle('dark', value); window.scrollTo({ top: 0, behavior: 'instant' }) }, dark)
@@ -352,7 +370,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
               assert.equal(await text.evaluate(element => element.scrollHeight <= element.clientHeight + 1), true, '长文本未被固定高度裁切')
             }
           }
-          await page.screenshot({ path: path.join(screenshotDir, `${key}-${width}-${dark ? 'dark' : 'light'}.png`), fullPage: true, animations: 'disabled' })
+          await screenshot(`${key}-${width}-${dark ? 'dark' : 'light'}.png`)
         }
       }
     }
@@ -367,11 +385,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       assert.equal(count, columns, `${width}px 设置页应有 ${columns} 列目录卡片`)
       for (const dark of [false, true]) {
         await page.evaluate(value => document.documentElement.classList.toggle('dark', value), dark)
-        await page.screenshot({ path: path.join(screenshotDir, `settings-5-${width}-${dark ? 'dark' : 'light'}.png`), fullPage: true, animations: 'disabled' })
+        await screenshot(`settings-5-${width}-${dark ? 'dark' : 'light'}.png`)
       }
     }
     assert.equal(writeCalls().length, beforeScreenshots, '响应式布局与主题切换不产生写请求')
     assert.deepEqual(errors, [])
-    console.log('ED2K STRM UI：三页签/深链接/历史、缓存目录草稿/选择/保存/根目录/自动重置/账号变化、只读核验与恢复边界、幂等保留、0/1/2/5目录卡片及键盘CRUD、处理中禁用、任务与缓存操作、跨页预填、筛选、长文本换行及深浅色2139/960/390/320布局通过。')
+    console.log('ED2K STRM UI：三页签/深链接/历史、固定缓存目录与自定义目录选择/保存/清除/账号变化、只读核验与恢复边界、幂等保留、0/1/2/5目录卡片及键盘CRUD、处理中禁用、任务与缓存操作、跨页预填、筛选、长文本换行及深浅色2139/960/390/320布局通过。')
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

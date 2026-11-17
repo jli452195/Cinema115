@@ -40,8 +40,6 @@ export interface ED2KSTRMState {
   settingsSaved: boolean
   accountReady: boolean
   primaryAccountId: string
-  cacheCID?: string
-  cachePath?: string
   cacheReady?: boolean
   cacheSetupHint?: string
   targets: ED2KSTRMTarget[]

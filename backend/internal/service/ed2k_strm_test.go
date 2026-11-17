@@ -244,7 +244,7 @@ func TestED2KSTRMUncertainSubmissionSurvivesRestartWithoutResubmitting(t *testin
 	ctx := context.Background()
 	f := newED2KSTRMFixture(t)
 	v := f.imported(t)
-	v.CacheCID = "11"
+	v.CacheCID, v.CacheParentCID = "11", "10"
 	if err := f.service.save(ctx, v); err != nil {
 		t.Fatal(err)
 	}

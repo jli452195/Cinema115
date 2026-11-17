@@ -44,24 +44,12 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 			return
 		}
 		a, accountErr := s.Accounts.Primary("")
-		cacheCID, cachePath := "", ""
-		if settings.CacheCID != "" {
-			cacheCID, cachePath = settings.CacheCID, settings.CachePath
-		} else if accountErr == nil {
-			cache, err := s.Store.GetED2KSTRMCache(c.Request.Context(), a.ID)
-			if err == nil {
-				cacheCID, cachePath = cache.CID, "/"+cache.Name
-			} else if !errors.Is(err, storage.ErrNotFound) {
-				fail(c, err)
-				return
-			}
-		}
 		cacheErr := s.CheckCacheReady(settings)
 		cacheHint := ""
 		if cacheErr != nil {
 			cacheHint = cacheErr.Error()
 		}
-		c.JSON(http.StatusOK, gin.H{"settings": settings, "settingsSaved": saved, "primaryAccountId": s.Accounts.PrimaryID(), "accountReady": accountErr == nil && a.Cookie != "", "cacheReady": cacheErr == nil, "cacheSetupHint": cacheHint, "cacheCID": cacheCID, "cachePath": cachePath, "resources": s.List(), "targets": s.Targets(), "tasks": s.Tasks()})
+		c.JSON(http.StatusOK, gin.H{"settings": settings, "settingsSaved": saved, "primaryAccountId": s.Accounts.PrimaryID(), "accountReady": accountErr == nil && a.Cookie != "", "cacheReady": cacheErr == nil, "cacheSetupHint": cacheHint, "resources": s.List(), "targets": s.Targets(), "tasks": s.Tasks()})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
 		var in model.ED2KSTRMSettings

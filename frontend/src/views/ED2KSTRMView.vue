@@ -77,7 +77,7 @@ const {
   saveSettings,
   resetSettings,
   selectCacheDirectory,
-  useAutomaticCacheDirectory,
+  clearCacheDirectory,
   editTarget,
   closeEditor,
   saveTarget,
@@ -89,7 +89,6 @@ const {
   taskAction,
 } = useED2KSTRM(() => props.token)
 
-const tabBar = ref<HTMLElement>()
 const directoryOpen = ref(false)
 const cacheDirectoryAccountId = ref('')
 const importPanel = ref<HTMLElement>()
@@ -97,13 +96,12 @@ const baseUrlInput = ref<HTMLInputElement>()
 const resourceFilter = ref<ResourceFilter>('all')
 const cacheDirectoryLabel = computed(() => {
   if (draft.value?.cacheCID) return draft.value.cachePath || (draft.value.cacheCID === '0' ? '/' : `目录 ${draft.value.cacheCID}`)
-  if (!state.value?.settings.cacheCID && state.value?.cachePath) return `自动目录 · ${state.value.cachePath}`
-  return '自动目录（主账号根目录）'
+  return '/Cinema115-ED2K缓存目录'
 })
 const cacheDirectoryHint = computed(() => {
-  if (!state.value?.accountReady) return '请先在 115 助手中登录主账号，再选择缓存目录。'
-  if (cacheDirectoryInvalid.value) return '主账号已变化，请重新选择缓存目录，或使用自动目录。'
-  if (!settingsDirty.value && state.value.cacheReady === false) return state.value.cacheSetupHint || '缓存目录不可用，请重新选择目录，或使用自动目录。'
+  if (!state.value?.accountReady) return '请先在 115 助手中登录主账号。'
+  if (cacheDirectoryInvalid.value) return '主账号已变化，请重新选择或清除缓存目录。'
+  if (!settingsDirty.value && state.value.cacheReady === false) return state.value.cacheSetupHint || '缓存目录不可用，请重新选择或清除目录。'
   return ''
 })
 
@@ -185,25 +183,6 @@ async function goToSettingsAddress() {
   baseUrlInput.value?.focus()
 }
 
-// 只滚动页签栏以展示当前入口，避免切页或窗口缩小时选中项留在屏幕外。
-function revealSelectedTab() {
-  const bar = tabBar.value, selected = bar?.querySelector<HTMLButtonElement>('[aria-current="page"]')
-  if (!bar || !selected) return
-  const bounds = bar.getBoundingClientRect(), selectedBounds = selected.getBoundingClientRect()
-  const left = bounds.left + bar.clientLeft, right = left + bar.clientWidth
-  if (selectedBounds.left < left) bar.scrollLeft += selectedBounds.left - left
-  else if (selectedBounds.right > right) bar.scrollLeft += selectedBounds.right - right
-}
-watch(activeTab, revealSelectedTab, { flush: 'post' })
-watch(tabBar, (bar, _previous, onCleanup) => {
-  if (!bar) return
-  const observer = new ResizeObserver(revealSelectedTab)
-  observer.observe(bar)
-  bar.querySelectorAll('button').forEach(button => observer.observe(button))
-  onCleanup(() => observer.disconnect())
-  revealSelectedTab()
-}, { flush: 'post' })
-
 // 当筛选分类下无数据且总资源清空时自动复位分段筛选
 watch(
   () => state.value?.resources.length,
@@ -245,7 +224,7 @@ onMounted(() => {
 
     <template v-else-if="state && draft">
       <!-- 顶部模块页签导航：对齐 115 分享 STRM 页签风格 -->
-      <nav ref="tabBar" class="es-tabs" aria-label="ED2K STRM 功能视图">
+      <nav class="es-tabs" aria-label="ED2K STRM 功能视图">
         <button
           type="button"
           class="es-tab"
@@ -313,7 +292,7 @@ onMounted(() => {
             <IconAlertTriangle :size="17" aria-hidden="true" />
             <span v-if="!state.settingsSaved">尚未保存 STRM 播放地址，完成设置后即可导入生成。</span>
             <span v-else-if="settingsDirty">基础设置有未保存的修改，请先保存或还原。</span>
-            <span v-else-if="state.cacheReady === false">{{ state.cacheSetupHint || '主网盘缓存目录不可用，请前往基础设置重新选择。' }}</span>
+            <span v-else-if="state.cacheReady === false">{{ state.cacheSetupHint || '主网盘缓存目录不可用，请前往基础设置检查。' }}</span>
             <span v-else>尚未配置本地输出目录，请先添加一个输出目录。</span>
           </div>
           <div class="es-actions">
@@ -662,39 +641,18 @@ onMounted(() => {
             <span v-if="settingsDirty" class="es-draft">未保存</span>
           </header>
 
-          <div class="es-address-row">
-            <label class="es-field">
-              <span>STRM 播放地址</span>
-              <input
-                ref="baseUrlInput"
-                v-model="draft.baseUrl"
-                type="url"
-                required
-                :disabled="!!busy"
-                placeholder="http://NAS_IP:8080"
-              />
-              <small>填写播放器或 Emby 能访问的 Cinema115 服务地址。</small>
-            </label>
-            <div class="es-actions">
-              <button
-                v-if="settingsDirty"
-                type="button"
-                class="es-text-button"
-                :disabled="!!busy"
-                @click="resetSettings"
-              >
-                还原修改
-              </button>
-              <button
-                type="submit"
-                class="es-button es-primary"
-                :disabled="!!busy || !settingsValid || !needsSettingsSave"
-              >
-                <IconCheck v-if="!needsSettingsSave" :size="16" aria-hidden="true" />
-                {{ busy === 'settings' ? '保存中…' : needsSettingsSave ? '保存设置' : '已保存' }}
-              </button>
-            </div>
-          </div>
+          <label class="es-field es-settings-address">
+            <span>STRM 播放地址</span>
+            <input
+              ref="baseUrlInput"
+              v-model="draft.baseUrl"
+              type="url"
+              required
+              :disabled="!!busy"
+              placeholder="http://NAS_IP:8080"
+            />
+            <small>填写播放器或 Emby 能访问的 Cinema115 服务地址。</small>
+          </label>
 
           <div class="es-cache es-field" role="group" aria-labelledby="es-cache-label">
             <label id="es-cache-label" for="es-cache-directory"><IconCloud :size="16" aria-hidden="true" />主网盘缓存目录</label>
@@ -704,12 +662,33 @@ onMounted(() => {
                 <button type="button" class="es-button" :disabled="!!busy || !state.accountReady || !state.primaryAccountId" @click="openCacheDirectory">
                   <IconFolder :size="16" aria-hidden="true" />选择目录
                 </button>
-                <button v-if="draft.cacheCID" type="button" class="es-text-button" :disabled="!!busy" @click="useAutomaticCacheDirectory">使用自动目录</button>
+                <button v-if="draft.cacheCID" type="button" class="es-text-button" :disabled="!!busy" @click="clearCacheDirectory">清除选择</button>
               </div>
             </div>
-            <small>用于新缓存和后续恢复，保存后生效。已有文件不移动，已有 STRM 继续可用；未指定时在主账号根目录自动创建专用目录。</small>
+            <small>未选择时使用 /Cinema115-ED2K缓存目录，按需创建。修改保存后生效，已有文件不移动。</small>
             <p v-if="cacheDirectoryHint" role="status" class="es-cache-hint">{{ cacheDirectoryHint }}</p>
           </div>
+
+          <footer class="es-settings-actions">
+            <button
+              v-if="settingsDirty"
+              type="button"
+              class="es-text-button"
+              :disabled="!!busy"
+              @click="resetSettings"
+            >
+              还原修改
+            </button>
+            <button
+              v-if="needsSettingsSave"
+              type="submit"
+              class="es-button es-primary"
+              :disabled="!!busy || !settingsValid"
+            >
+              {{ busy === 'settings' ? '保存中…' : '保存设置' }}
+            </button>
+            <span v-else role="status" aria-label="基础设置保存状态" class="es-settings-saved"><IconCheck :size="16" aria-hidden="true" />已保存</span>
+          </footer>
         </form>
 
         <ED2KSTRMTargetCards
@@ -813,11 +792,6 @@ onMounted(() => {
   gap: 6px;
   margin-bottom: 18px;
   border-bottom: 1px solid rgb(var(--line-default));
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.es-tabs::-webkit-scrollbar {
-  display: none;
 }
 .es-tab {
   position: relative;
@@ -869,7 +843,7 @@ onMounted(() => {
   height: 19px;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgb(var(--surface-hover));
+  background: rgb(var(--surface-elevated));
   color: rgb(var(--content-secondary));
   font-size: 11px;
   font-weight: 500;
@@ -927,7 +901,6 @@ onMounted(() => {
 .es-heading,
 .es-actions,
 .es-form-actions,
-.es-address-row,
 .es-task {
   display: flex;
   align-items: center;
@@ -1020,16 +993,24 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.7;
 }
-.es-address-row {
-  align-items: flex-start;
+.es-settings-address {
   margin-top: 15px;
 }
-.es-address-row > .es-field {
-  flex: 1;
+.es-settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-height: 36px;
+  margin-top: 16px;
 }
-.es-address-row > .es-actions {
-  padding-top: 27px;
-  flex: none;
+.es-settings-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--content-secondary));
+  font-size: 12px;
 }
 .es-cache {
   padding-top: 12px;
@@ -1427,6 +1408,21 @@ summary:focus-visible {
 
 /* ==================== 响应式断点：平板与移动端（<= 767px） ==================== */
 @media (max-width: 767px) {
+  .es-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+  }
+  .es-tab {
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 9px 4px 11px;
+    font-size: 12px;
+  }
+  .es-tab-badge {
+    display: none;
+  }
   .es-panel {
     padding: 16px;
   }
@@ -1488,28 +1484,12 @@ summary:focus-visible {
 
 /* ==================== 响应式断点：小屏手机（<= 479px，覆盖 390px / 320px） ==================== */
 @media (max-width: 479px) {
-  .es-tab {
-    padding: 8px 11px 10px;
-    font-size: 12px;
-    gap: 6px;
-  }
   .es-heading {
     flex-wrap: wrap;
     gap: 8px;
   }
   .es-heading h2 {
     font-size: 13px;
-  }
-  .es-address-row {
-    flex-direction: column;
-    gap: 10px;
-  }
-  .es-address-row > .es-field {
-    width: 100%;
-  }
-  .es-address-row > .es-actions {
-    padding: 0;
-    align-self: flex-end;
   }
   .es-button,
   .es-icon-button {
@@ -1543,6 +1523,24 @@ summary:focus-visible {
   }
   .es-directory-input .es-button {
     margin-left: auto;
+  }
+  .es-cache-selection > .es-actions {
+    width: 100%;
+  }
+}
+
+/* 设置操作在手机和触控设备上保留足够的点击区域。 */
+@media (max-width: 767px), (pointer: coarse) {
+  .es-settings-actions {
+    min-height: 44px;
+  }
+  .es-settings-actions > button,
+  .es-cache-selection .es-text-button {
+    min-height: 44px;
+  }
+  .es-settings-actions .es-text-button,
+  .es-cache-selection .es-text-button {
+    padding-inline: 8px;
   }
 }
 

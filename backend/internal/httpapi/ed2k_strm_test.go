@@ -75,7 +75,7 @@ func TestED2KSTRMManagementSeparatesTargetsTasksAndResources(t *testing.T) {
 }
 
 func TestED2KSTRMManagementCacheReadinessDoesNotUseNetwork(t *testing.T) {
-	for _, mode := range []string{"selected", "root", "automatic", "stale-account", "missing-primary"} {
+	for _, mode := range []string{"selected", "root", "default", "default-uncreated", "stale-account", "missing-primary"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
 			db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "ed2k.db"))
@@ -85,15 +85,16 @@ func TestED2KSTRMManagementCacheReadinessDoesNotUseNetwork(t *testing.T) {
 			defer db.Close()
 			accounts, accountID := proxyTestAccounts(t)
 			settings := model.ED2KSTRMSettings{BaseURL: "https://cinema.example", CacheAccountID: accountID, CacheCID: "42", CachePath: "/媒体缓存"}
-			wantReady, wantCID, wantPath := true, "42", "/媒体缓存"
+			wantReady := true
 			switch mode {
 			case "root":
-				settings.CacheCID, settings.CachePath, wantCID, wantPath = "0", "/", "0", "/"
-			case "automatic":
+				settings.CacheCID, settings.CachePath = "0", "/"
+			case "default", "default-uncreated":
 				settings.CacheCID, settings.CachePath, settings.CacheAccountID = "", "", ""
-				wantCID, wantPath = "10", "/Cinema115-ED2K-existing"
-				if err := db.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: accountID, UID: "123", CID: wantCID, Name: "Cinema115-ED2K-existing"}); err != nil {
-					t.Fatal(err)
+				if mode == "default" {
+					if err := db.SaveED2KSTRMCache(ctx, model.ED2KSTRMCache{AccountID: accountID, UID: "123", CID: "10", Name: "Cinema115-ED2K-existing"}); err != nil {
+						t.Fatal(err)
+					}
 				}
 			case "stale-account":
 				settings.CacheAccountID, wantReady = "previous-primary", false
@@ -124,14 +125,19 @@ func TestED2KSTRMManagementCacheReadinessDoesNotUseNetwork(t *testing.T) {
 					Settings       model.ED2KSTRMSettings `json:"settings"`
 					CacheReady     bool                   `json:"cacheReady"`
 					CacheSetupHint string                 `json:"cacheSetupHint"`
-					CacheCID       string                 `json:"cacheCID"`
-					CachePath      string                 `json:"cachePath"`
 				}
 				if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil || w.Code != http.StatusOK {
 					t.Fatalf("读取页面状态失败：status=%d err=%v", w.Code, err)
 				}
-				if state.Settings != settings || state.CacheReady != wantReady || state.CacheCID != wantCID || state.CachePath != wantPath || wantReady != (state.CacheSetupHint == "") {
+				if state.Settings != settings || state.CacheReady != wantReady || wantReady != (state.CacheSetupHint == "") {
 					t.Fatalf("本地目录状态错误：%+v", state)
+				}
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(w.Body.Bytes(), &fields); err != nil {
+					t.Fatal(err)
+				}
+				if fields["cacheCID"] != nil || fields["cachePath"] != nil || strings.Contains(w.Body.String(), "Cinema115-ED2K-existing") {
+					t.Fatal("页面状态不应返回历史目录或重复的有效目录字段", w.Body.String())
 				}
 				if strings.Contains(w.Body.String(), "UID=") || strings.Contains(w.Body.String(), "SEID=") {
 					t.Fatal("目录状态返回凭据")
