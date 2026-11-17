@@ -20,6 +20,24 @@ import (
 
 type batchGeneratorFunc func(context.Context, service.GenerateInput) (*service.GenerationResult, error)
 
+// 本地替身显式提供批次凭据准备接口，生产入口不为测试保留无凭据的回退路径。
+type preparedTestShareGenerator struct {
+	ShareGenerator
+}
+
+func (g *preparedTestShareGenerator) PrepareTelegramGeneration(service.AutomationSettings) (func(context.Context) context.Context, error) {
+	return func(ctx context.Context) context.Context { return ctx }, nil
+}
+
+type preparedTestBatchGenerator struct {
+	*preparedTestShareGenerator
+	batch service.BatchGenerator
+}
+
+func (g *preparedTestBatchGenerator) GenerateBatch(ctx context.Context, inputs []service.GenerateInput) ([]service.BatchOutcome, error) {
+	return g.batch.GenerateBatch(ctx, inputs)
+}
+
 func TestBatchReviewStopsOnlyCurrentLink(t *testing.T) {
 	calls := 0
 	logs := &service.GenerationLogs{}
@@ -30,7 +48,7 @@ func TestBatchReviewStopsOnlyCurrentLink(t *testing.T) {
 		}
 		return &service.GenerationResult{Written: 8}, nil
 	})})
-	state := telegramState{Batch: &messageBatch{UpdateID: 1, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/review"}, {URL: "https://115.com/s/normal"}}}}
+	state := telegramState{Batch: &messageBatch{Mode: "direct", ShareSettings: shareTestSnapshot(t, b), UpdateID: 1, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/review"}, {URL: "https://115.com/s/normal"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +90,42 @@ func newBatchTestBot(t *testing.T, generator ShareGenerator) *Telegram {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store.ValidateAccount = func(string) error { return nil }
+	store.ValidateBot = func(string, bool) error { return nil }
+	settings := store.Value()
+	settings.AccountID, settings.BotID, settings.TelegramEnabled = "primary", "bot-a", true
+	settings.Generation.OutputDir = "share-strm"
+	if err := store.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	if generator == nil {
+		generator = batchGeneratorFunc(func(context.Context, service.GenerateInput) (*service.GenerationResult, error) {
+			return &service.GenerationResult{Written: 1}, nil
+		})
+	}
+	if _, ok := generator.(telegramGenerationPreparer); !ok {
+		prepared := &preparedTestShareGenerator{ShareGenerator: generator}
+		if batch, ok := generator.(service.BatchGenerator); ok {
+			generator = &preparedTestBatchGenerator{preparedTestShareGenerator: prepared, batch: batch}
+		} else {
+			generator = prepared
+		}
+	}
 	b, err := NewTelegram("123:test", "42", dir, generator, store)
 	if err != nil {
 		t.Fatal(err)
 	}
+	b.BotID = "bot-a"
 	return b
+}
+
+func shareTestSnapshot(t *testing.T, b *Telegram) *service.AutomationSettings {
+	t.Helper()
+	settings, err := b.Settings.TelegramShareSettings(b.BotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &settings
 }
 
 func TestPollingReadsTextAndCaptionHiddenLinks(t *testing.T) {
@@ -195,7 +244,7 @@ func TestBatchContinuesAfterFailureAndProcessesLaterMessages(t *testing.T) {
 	}
 }
 
-func TestBatchRestartSkipsStartedItemAndResumesRemaining(t *testing.T) {
+func TestBatchRestartStopsUnstartedItemsAfterCredentialsAreLost(t *testing.T) {
 	for _, allowed := range []bool{true, false} {
 		t.Run(map[bool]string{true: "继续剩余链接", false: "白名单移除"}[allowed], func(t *testing.T) {
 			var generated []string
@@ -206,7 +255,7 @@ func TestBatchRestartSkipsStartedItemAndResumesRemaining(t *testing.T) {
 			if !allowed {
 				delete(b.AllowedChats, 42)
 			}
-			state := telegramState{Offset: 11, Batch: &messageBatch{UpdateID: 11, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/already-started"}, {URL: "https://115.com/s/remaining"}}, Next: 1}, Pending: &pendingReply{UpdateID: 11, ChatID: 42, Text: "前一个链接已开始，不自动重做"}}
+			state := telegramState{Offset: 11, Batch: &messageBatch{Mode: "direct", ShareSettings: shareTestSnapshot(t, b), UpdateID: 11, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/already-started"}, {URL: "https://115.com/s/remaining"}}, Next: 1}, Pending: &pendingReply{UpdateID: 11, ChatID: 42, Text: "前一个链接已开始，不自动重做"}}
 			if err := b.save(state); err != nil {
 				t.Fatal(err)
 			}
@@ -233,8 +282,8 @@ func TestBatchRestartSkipsStartedItemAndResumesRemaining(t *testing.T) {
 				t.Fatal(err)
 			}
 			if allowed {
-				if !reflect.DeepEqual(generated, []string{"https://115.com/s/remaining"}) || replies != 2 {
-					t.Fatal("重复执行或丢失剩余链接", generated, replies)
+				if len(generated) != 0 || replies != 2 {
+					t.Fatal("凭据快照已丢失仍然继续生成，或停止回执丢失", generated, replies)
 				}
 			} else if len(generated) != 0 || replies != 0 {
 				t.Fatal("白名单移除后继续了批次")
@@ -259,7 +308,7 @@ func TestBatchCheckpointPrecedesGeneration(t *testing.T) {
 		}
 		return &service.GenerationResult{Written: 1}, nil
 	}))
-	state := telegramState{Batch: &messageBatch{UpdateID: 1, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/a"}, {URL: "https://115.com/s/b"}}}}
+	state := telegramState{Batch: &messageBatch{Mode: "direct", ShareSettings: shareTestSnapshot(t, b), UpdateID: 1, ChatID: 42, Items: []messageShare{{URL: "https://115.com/s/a"}, {URL: "https://115.com/s/b"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}

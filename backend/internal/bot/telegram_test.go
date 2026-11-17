@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,16 +37,8 @@ func TestTelegramMessageParsing(t *testing.T) {
 func TestTelegramAllowlistAndDurablePendingReply(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(map[bool]string{false: "正常消息", true: "重启回复"}[resume], func(t *testing.T) {
-			dir := t.TempDir()
-			store, err := service.NewAutomationStore(filepath.Join(dir, "settings.json"), dir, "http://nas:8115")
-			if err != nil {
-				t.Fatal(err)
-			}
 			generator := &generatorFake{}
-			bot, err := NewTelegram("123:test", "42", dir, generator, store)
-			if err != nil {
-				t.Fatal(err)
-			}
+			bot := newBatchTestBot(t, generator)
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
 			var replies atomic.Int32

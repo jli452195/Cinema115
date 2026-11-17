@@ -50,8 +50,8 @@ func TestMergedBatchCheckpointAndRepliesSurviveRestart(t *testing.T) {
 			if err := json.Unmarshal(data, &checkpoint); err != nil {
 				t.Fatal(err)
 			}
-			if checkpoint.Batch.Next != 3 || checkpoint.Pending == nil || len(checkpoint.Replies) != 0 {
-				t.Fatal("云端操作之前未保存全部中断回复")
+			if checkpoint.Batch.Next != 3 || checkpoint.Pending == nil || len(checkpoint.Replies) != 1 || checkpoint.Replies[0].Text != "等待另一条资源选择" {
+				t.Fatal("云端操作之前未保存全部中断回复，或丢弃了无关消息的选择提示")
 			}
 			if len(inputs) != 3 || inputs[0].Mode != "reshare" {
 				t.Fatal("未统一提交转存输入")
@@ -65,11 +65,17 @@ func TestMergedBatchCheckpointAndRepliesSurviveRestart(t *testing.T) {
 		},
 	}
 	b = newBatchTestBot(t, gen)
-	state := telegramState{Offset: 4, Batch: &messageBatch{Mode: "reshare", UpdateID: 1, ChatID: 42, MessageID: 101, ThreadID: 7, StatusMessageID: 900, SourceMessageIDs: []int64{101, 102, 103}, Items: []messageShare{{URL: "https://115.com/s/a"}, {URL: "https://115.com/s/review"}, {URL: "https://115.com/s/b"}}}}
+	settings := b.Settings.Value()
+	settings.ReshareEnabled = true
+	if err := b.Settings.Save(settings); err != nil {
+		t.Fatal(err)
+	}
+	state := telegramState{Offset: 4, Batch: &messageBatch{Mode: "reshare", ShareSettings: shareTestSnapshot(t, b), UpdateID: 1, ChatID: 42, MessageID: 101, ThreadID: 7, StatusMessageID: 900, SourceMessageIDs: []int64{101, 102, 103}, Items: []messageShare{{URL: "https://115.com/s/a"}, {URL: "https://115.com/s/review"}, {URL: "https://115.com/s/b"}}}}
+	state.Replies = []*pendingReply{{UpdateID: 5, ChatID: 42, MessageID: 105, Text: "等待另一条资源选择"}}
 	if err := b.save(state); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Run(ctx); err != nil {
+	if err := b.processBatchLink(ctx, &state); err != nil {
 		t.Fatal(err)
 	}
 	restartCtx, stop := context.WithTimeout(context.Background(), 3*time.Second)
@@ -107,7 +113,7 @@ func TestMergedBatchCheckpointAndRepliesSurviveRestart(t *testing.T) {
 	if err := b.Run(restartCtx); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 1 || !reflect.DeepEqual(methods, []string{"editMessageText"}) || !reflect.DeepEqual(refs, []int64{0}) {
+	if calls != 1 || !reflect.DeepEqual(methods, []string{"editMessageText", "sendMessage"}) || !reflect.DeepEqual(refs, []int64{0, 105}) || len(texts) != 2 || texts[1] != "等待另一条资源选择" {
 		t.Fatal("重启重复转存、丢失结果或引用错误", calls, methods, refs)
 	}
 	if !strings.Contains(texts[0], "已安排审核重试") || strings.Count(texts[0], "https://115.com/s/own") != 1 || !strings.Contains(texts[0], "成功 2 个，失败 1 个") || !strings.Contains(texts[0], "成功 3 个，失败 0 个") {

@@ -156,21 +156,23 @@ func (s *DriveSTRMService) SaveWithSchedule(ctx context.Context, value model.Dri
 		return value, err
 	}
 	if reader, ok := s.Store.(interface {
-		GetED2KSTRMSettings(context.Context) (model.ED2KSTRMSettings, error)
-		ListED2KSTRMResources(context.Context) ([]model.ED2KSTRMResource, error)
+		ListED2KSTRMTargets(context.Context) ([]model.ED2KSTRMTarget, error)
+		ListED2KSTRMTasks(context.Context) ([]model.ED2KSTRMTask, error)
 	}); ok {
-		settings, err := reader.GetED2KSTRMSettings(ctx)
-		if err != nil && !errors.Is(err, storage.ErrNotFound) {
-			return value, err
-		}
-		resources, err := reader.ListED2KSTRMResources(ctx)
+		targets, err := reader.ListED2KSTRMTargets(ctx)
 		if err != nil {
 			return value, err
 		}
-		protected := make(map[string]bool, len(resources)+1)
-		protected[settings.OutputDir] = true
-		for _, resource := range resources {
-			protected[resource.Settings.OutputDir] = true
+		tasks, err := reader.ListED2KSTRMTasks(ctx)
+		if err != nil {
+			return value, err
+		}
+		protected := make(map[string]bool, len(targets)+len(tasks))
+		for _, target := range targets {
+			protected[target.OutputDir] = true
+		}
+		for _, task := range tasks {
+			protected[task.OutputDir] = true
 		}
 		for directory := range protected {
 			if directory == "" {

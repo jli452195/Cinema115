@@ -32,8 +32,8 @@ func TestCollectionWindowIsolationAndDirectBypass(t *testing.T) {
 	}
 	now := time.Now()
 	state := telegramState{}
-	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(1, 42, 7, "https://115.com/s/a")}, now)
-	b.enqueueUpdates(&state, []telegramUpdate{
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(1, 42, 7, "https://115.com/s/a")}, now)
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{
 		collectionUpdate(2, 43, 7, "https://115.com/s/b"),
 		collectionUpdate(3, 42, 8, "https://115.com/s/c"),
 		collectionUpdate(4, 42, 7, "https://115.com/s/d"),
@@ -50,7 +50,7 @@ func TestCollectionWindowIsolationAndDirectBypass(t *testing.T) {
 	if err := b.Settings.Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(7, 42, 7, "https://115.com/s/direct")}, now.Add(4*time.Second))
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(7, 42, 7, "https://115.com/s/direct")}, now.Add(4*time.Second))
 	if !b.startReadyBatch(&state, now.Add(4*time.Second)) || state.Batch.Mode != "direct" || state.Batch.Items[0].URL != "https://115.com/s/direct" {
 		t.Fatal("直接生成被转存等待阻塞")
 	}
@@ -79,7 +79,7 @@ func TestCollectionZeroWaitAndNormalMode(t *testing.T) {
 		}
 		now := time.Now()
 		state := telegramState{}
-		b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(1, 42, 0, "https://115.com/s/a")}, now)
+		b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(1, 42, 0, "https://115.com/s/a")}, now)
 		if !b.startReadyBatch(&state, now) {
 			t.Fatal("普通模式或零等待没有立即执行")
 		}
@@ -97,17 +97,17 @@ func TestCollectionSlidingWindowHasNoMaximumAndDuplicatesDoNotDelay(t *testing.T
 	state := telegramState{}
 	for i := int64(0); i < 12; i++ {
 		at := now.Add(time.Duration(i) * 4 * time.Second)
-		b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(i+1, 42, 7, fmt.Sprintf("https://115.com/s/item%d", i))}, at)
+		b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(i+1, 42, 7, fmt.Sprintf("https://115.com/s/item%d", i))}, at)
 		if len(state.Queue) != 1 || !state.Queue[0].ReadyAt.Equal(at.Add(5*time.Second)) {
 			t.Fatal("new resources did not extend same batch beyond 30 seconds")
 		}
 	}
 	deadline := state.Queue[0].ReadyAt // 49 seconds after first input.
-	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Second))
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Second))
 	if !state.Queue[0].ReadyAt.Equal(deadline) {
 		t.Fatal("duplicate link extended deadline")
 	}
-	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Millisecond))
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(13, 42, 7, "https://115.com/s/item0")}, deadline.Add(-time.Millisecond))
 	if len(state.Queue[0].Items) != 13 {
 		t.Fatal("update retry duplicated resources")
 	}
@@ -125,7 +125,7 @@ func TestCollectionSlidingWindowHasNoMaximumAndDuplicatesDoNotDelay(t *testing.T
 	if !restored.Queue[0].ReadyAt.Equal(deadline) {
 		t.Fatal("extended deadline did not persist")
 	}
-	b.enqueueUpdates(&restored, []telegramUpdate{collectionUpdate(14, 42, 7, "https://115.com/s/next")}, deadline)
+	b.enqueueUpdates(context.Background(), &restored, []telegramUpdate{collectionUpdate(14, 42, 7, "https://115.com/s/next")}, deadline)
 	if len(restored.Queue) != 2 || !restored.Queue[1].ReadyAt.Equal(deadline.Add(5*time.Second)) {
 		t.Fatal("expired window accepted new resource")
 	}
@@ -212,7 +212,7 @@ func TestCollectionSurvivesRestartWithoutRewindingOffset(t *testing.T) {
 	if err := b.Settings.Save(settings); err != nil {
 		t.Fatal(err)
 	}
-	b.enqueueUpdates(&state, []telegramUpdate{
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{
 		collectionUpdate(1, 42, 7, "https://115.com/s/a"),
 		collectionUpdate(2, 42, 8, "https://115.com/s/b"),
 	}, time.Now().Add(-time.Minute))
@@ -265,7 +265,7 @@ func TestCollectionCancellationKeepsWaitingDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := telegramState{}
-	b.enqueueUpdates(&state, []telegramUpdate{collectionUpdate(1, 42, 7, "https://115.com/s/a")}, time.Now())
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(1, 42, 7, "https://115.com/s/a")}, time.Now())
 	deadline := state.Queue[0].ReadyAt
 	if err := b.save(state); err != nil {
 		t.Fatal(err)
@@ -294,5 +294,28 @@ func TestCollectionCancellationKeepsWaitingDeadline(t *testing.T) {
 	}
 	if saved.Offset != 2 || len(saved.Queue) != 1 || !saved.Queue[0].ReadyAt.Equal(deadline) || saved.Batch != nil {
 		t.Fatal("停止期间丢失队列或重置等待时间")
+	}
+}
+
+func TestCollectionReshareMergesOnlyMatchingSettingsSnapshots(t *testing.T) {
+	b := newBatchTestBot(t, nil)
+	changeShareTestSettings(t, b, func(settings *service.AutomationSettings) {
+		settings.ReshareEnabled, settings.TGBatchWaitSeconds = true, 5
+	})
+	now := time.Now()
+	state := telegramState{}
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(1, 42, 7, "https://115.com/s/first")}, now)
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(2, 42, 7, "https://115.com/s/second")}, now.Add(time.Second))
+	if len(state.Queue) != 1 || len(state.Queue[0].Items) != 2 || state.Queue[0].ShareSettings == nil {
+		t.Fatalf("同配置分享没有合并到等待批次：%+v", state)
+	}
+	oldSettings, oldDeadline := *state.Queue[0].ShareSettings, state.Queue[0].ReadyAt
+	changeShareTestSettings(t, b, func(settings *service.AutomationSettings) {
+		settings.Generation.OutputDir = "new-share-output"
+	})
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(3, 42, 7, "https://115.com/s/third")}, now.Add(2*time.Second))
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{collectionUpdate(4, 42, 7, "https://115.com/s/fourth")}, now.Add(3*time.Second))
+	if len(state.Queue) != 2 || len(state.Queue[0].Items) != 2 || len(state.Queue[1].Items) != 2 || *state.Queue[0].ShareSettings != oldSettings || !state.Queue[0].ReadyAt.Equal(oldDeadline) || state.Queue[1].ShareSettings == nil || state.Queue[1].ShareSettings.Generation.OutputDir != "new-share-output" {
+		t.Fatalf("配置变化后跨快照合并或改写了旧批次：%+v", state)
 	}
 }

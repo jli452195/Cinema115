@@ -22,11 +22,58 @@ type telegramEntity struct {
 	URL    string `json:"url"`
 }
 
-func parseTelegramMessage(message *telegramMessage) []messageShare {
-	if message.Text != "" {
-		return ParseMessages(expandTelegramLinks(message.Text, message.Entities))
+type telegramResources struct {
+	CloudLinks []string
+	Shares     []messageShare
+	HasMagnet  bool
+}
+
+// 整条消息只展开一次真实链接，再统一识别资源，避免各入口重复解析或静默丢弃混合输入。
+func parseTelegramResources(message *telegramMessage) telegramResources {
+	text, entities := message.Text, message.Entities
+	if text == "" {
+		text, entities = message.Caption, message.CaptionEntities
 	}
-	return ParseMessages(expandTelegramLinks(message.Caption, message.CaptionEntities))
+	text = expandTelegramLinkTargets(text, entities)
+	positions := append(magnetLinkPattern.FindAllStringIndex(text, -1), ed2kLinkPattern.FindAllStringIndex(text, -1)...)
+	positions = append(positions, shareLinkPattern.FindAllStringIndex(text, -1)...)
+	sort.SliceStable(positions, func(i, j int) bool { return positions[i][0] < positions[j][0] })
+	resources := telegramResources{CloudLinks: make([]string, 0, len(positions))}
+	seen := make(map[string]bool, len(positions))
+	var shareText strings.Builder
+	shareText.Grow(len(text))
+	lastEnd, lastCloudEnd := 0, 0
+	for _, position := range positions {
+		if position[0] < lastEnd {
+			continue
+		}
+		link := text[position[0]:position[1]]
+		// 最外层资源的参数和文件名中的协议文字不再作为另一条资源。
+		if strings.HasPrefix(link, "http://") || strings.HasPrefix(link, "https://") {
+			lastEnd = position[1]
+			continue
+		}
+		normalized, err := p115.ValidateCloudURL(link)
+		if err != nil {
+			continue
+		}
+		lastEnd = position[1]
+		shareText.WriteString(text[lastCloudEnd:position[0]])
+		shareText.WriteByte(' ')
+		lastCloudEnd = position[1]
+		if seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		resources.CloudLinks = append(resources.CloudLinks, normalized)
+		if strings.EqualFold(normalized[:7], "magnet:") {
+			resources.HasMagnet = true
+		}
+	}
+	// 屏蔽云下载链接后复用分享提取码的相邻匹配与去重规则。
+	shareText.WriteString(text[lastCloudEnd:])
+	resources.Shares = ParseMessages(shareText.String())
+	return resources
 }
 
 var magnetLinkPattern = regexp.MustCompile(`(?i)magnet:\?xt=urn:btih:[A-Z0-9]{32,40}(?:&[^\s<>"，。；、（）\[\]{},;]+)*`)
@@ -37,21 +84,6 @@ func telegramMessageText(message *telegramMessage) string {
 		return message.Text
 	}
 	return message.Caption
-}
-
-func parseCloudLinks(text string) []string {
-	positions := append(magnetLinkPattern.FindAllStringIndex(text, -1), ed2kLinkPattern.FindAllStringIndex(text, -1)...)
-	sort.SliceStable(positions, func(i, j int) bool { return positions[i][0] < positions[j][0] })
-	links := make([]string, 0, len(positions))
-	seen := make(map[string]bool, len(positions))
-	for _, position := range positions {
-		link := text[position[0]:position[1]]
-		if normalized, err := p115.ValidateCloudURL(link); err == nil && !seen[normalized] {
-			seen[normalized] = true
-			links = append(links, normalized)
-		}
-	}
-	return links
 }
 
 func isCloudCommand(text string) bool {
@@ -68,9 +100,25 @@ func isCloudCommand(text string) bool {
 	}
 }
 
-// 将文字超链接按原位置展开，复用多链接排序、相邻提取码和去重逻辑。
-// Telegram 的偏移量按 UTF-16 计数，不能直接当作 Go 字节下标，特别是含 emoji 的图文说明。
-func expandTelegramLinks(text string, entities []telegramEntity) string {
+func telegramResourceLink(link string) string {
+	if normalized, err := p115.ValidateCloudURL(link); err == nil {
+		return normalized
+	}
+	parsed, err := url.Parse(link)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil {
+		return ""
+	}
+	if _, err := p115.ParseShareURL(link); err != nil {
+		return ""
+	}
+	if match := shareLinkPattern.FindString(link); strings.TrimSuffix(link, "#") != match {
+		return ""
+	}
+	return link
+}
+
+// 隐藏链接的显示文字先按 UTF-16 区间替换，再解析真实目标，避免将伪装文字当资源。
+func expandTelegramLinkTargets(text string, entities []telegramEntity) string {
 	if len(entities) == 0 {
 		return text
 	}
@@ -98,16 +146,7 @@ func expandTelegramLinks(text string, entities []telegramEntity) string {
 		if !startOK || !endOK {
 			continue
 		}
-		link := strings.TrimSpace(entity.URL)
-		parsed, err := url.Parse(link)
-		// 只解析直接指向 115 的 HTTP 链接，不跟随外站跳转，也不把伪装的显示文字当作目标。
-		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil {
-			link = ""
-		} else if _, err := p115.ParseShareURL(link); err != nil {
-			link = ""
-		} else if match := shareLinkPattern.FindString(link); strings.TrimSuffix(link, "#") != match {
-			link = ""
-		}
+		link := telegramResourceLink(strings.TrimSpace(entity.URL))
 		spans = append(spans, linkSpan{start: start, end: end, url: link})
 	}
 	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start < spans[j].start })

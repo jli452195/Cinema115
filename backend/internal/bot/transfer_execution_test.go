@@ -39,6 +39,30 @@ type preparedShareTransferer struct {
 	used     []int
 }
 
+type telegramGenerationTestCredentialKey struct{}
+
+type preparedShareGenerator struct {
+	prepares int
+	version  int
+	used     []int
+	inputs   []service.GenerateInput
+}
+
+func (g *preparedShareGenerator) PrepareTelegramGeneration(service.AutomationSettings) (func(context.Context) context.Context, error) {
+	g.prepares++
+	version := g.version
+	return func(ctx context.Context) context.Context {
+		return context.WithValue(ctx, telegramGenerationTestCredentialKey{}, version)
+	}, nil
+}
+
+func (g *preparedShareGenerator) Generate(ctx context.Context, input service.GenerateInput) (*service.GenerationResult, error) {
+	version, _ := ctx.Value(telegramGenerationTestCredentialKey{}).(int)
+	g.used = append(g.used, version)
+	g.inputs = append(g.inputs, input)
+	return &service.GenerationResult{Written: 1}, nil
+}
+
 func (s *preparedShareTransferer) PrepareTransfer(target service.ShareTransferTarget) (service.ShareLinkTransferExecution, error) {
 	s.prepares++
 	version := s.version
@@ -64,12 +88,50 @@ func TestCloudBatchPinsOneExecutionForAllLinks(t *testing.T) {
 	}
 }
 
+func TestShareSTRMBatchPinsCredentialsAndSettingsBetweenReplies(t *testing.T) {
+	generator := &preparedShareGenerator{version: 1}
+	b := newBatchTestBot(t, generator)
+	state := telegramState{}
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(1, 42, "private", "https://115.com/s/first 提取码：aaaa\nhttps://115.com/s/second 提取码：bbbb")}, time.Now())
+	if len(state.Queue) != 1 || state.Queue[0].ShareSettings == nil {
+		t.Fatalf("分享 STRM 没有固定批次设置：%+v", state)
+	}
+	state.Batch, state.Queue = state.Queue[0], nil
+	original := state.Batch.ShareSettings.Generation.OutputDir
+	if err := b.processBatchLink(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	generator.version = 2
+	changeShareTestSettings(t, b, func(settings *service.AutomationSettings) {
+		settings.Generation.OutputDir = "changed-output"
+	})
+	state.Pending = nil
+	if err := b.processBatchLink(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if generator.prepares != 1 || !reflect.DeepEqual(generator.used, []int{1, 1}) || len(generator.inputs) != 2 || generator.inputs[0].OutputDir != original || generator.inputs[1].OutputDir != original || generator.inputs[0].Password != "aaaa" || generator.inputs[1].Password != "bbbb" {
+		t.Fatalf("已启动分享批次在两次回复间重新加载凭据或设置：%+v", generator)
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored telegramState
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Batch.generationContext != nil {
+		t.Fatal("凭据装饰器进入了持久任务")
+	}
+}
+
 func TestShareTransferBatchPinsExecutionBetweenReplies(t *testing.T) {
 	b := newBatchTestBot(t, nil)
 	transfer := &preparedShareTransferer{version: 1}
 	b.ShareTransfers = transfer
+	b.ShareTransferTargets = []TelegramTransferTarget{testShareTransferTarget("target", "电影", "/电影", b.BotID)}
 	state := telegramState{Batch: &messageBatch{Mode: "share_transfer", UpdateID: 1, ChatID: 42,
-		ShareTarget: service.ShareTransferTarget{ID: "target", AccountID: "primary", TargetCID: "88", TargetPath: "/电影"},
+		ShareTarget: service.ShareTransferTarget{ID: "target", Name: "电影", AccountID: "account-1", TargetCID: "88", TargetPath: "/电影", AssignedBotID: b.BotID},
 		Items:       []messageShare{{URL: "https://115.com/s/first"}, {URL: "https://115.com/s/second"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
@@ -88,8 +150,10 @@ func TestShareTransferRestartStopsUnstartedItems(t *testing.T) {
 	b := newBatchTestBot(t, nil)
 	transfer := &preparedShareTransferer{version: 1}
 	b.ShareTransfers = transfer
+	b.ShareTransferTargets = []TelegramTransferTarget{testShareTransferTarget("target", "电影", "/电影", b.BotID)}
 	state := telegramState{Batch: &messageBatch{Mode: "share_transfer", UpdateID: 1, ChatID: 42,
-		Items: []messageShare{{URL: "https://115.com/s/first"}, {URL: "https://115.com/s/second"}}}}
+		ShareTarget: service.ShareTransferTarget{ID: "target", Name: "电影", AccountID: "account-1", TargetCID: "88", TargetPath: "/电影", AssignedBotID: b.BotID},
+		Items:       []messageShare{{URL: "https://115.com/s/first"}, {URL: "https://115.com/s/second"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +211,7 @@ func TestCloudBatchCancellationKeepsRemainingItemsUnstarted(t *testing.T) {
 	}
 }
 
-func TestCloudDownloadUsesOnlyReadyDirectoryWithoutPrompt(t *testing.T) {
+func TestCloudDownloadUnavailableDirectoryDoesNotChooseAnotherDirectory(t *testing.T) {
 	b := newBatchTestBot(t, nil)
 	b.CloudDownloads = &cloudSubmitterStub{}
 	ready := testCloudTarget("ready", "电影", "/电影")
@@ -155,9 +219,14 @@ func TestCloudDownloadUsesOnlyReadyDirectoryWithoutPrompt(t *testing.T) {
 	unavailable.Ready = false
 	b.CloudDownloadTargets = []TelegramTransferTarget{unavailable, ready}
 	state := telegramState{}
-	b.enqueueUpdates(&state, []telegramUpdate{cloudUpdate(1, 42, "private", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")}, time.Now())
-	if len(state.Queue) != 1 || state.Queue[0].CloudTargetID != ready.ID || len(state.CloudSelections) != 0 || len(state.Replies) != 0 {
-		t.Fatalf("only ready destination should be selected automatically: %+v", state)
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(1, 42, "private", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")}, time.Now())
+	if len(state.Queue) != 0 || len(state.ResourceSelections) != 1 || len(state.ResourceSelections[0].Choices) != 2 || len(state.Replies) != 1 {
+		t.Fatalf("失效目录被自动替换为另一个可用目录：%+v", state)
+	}
+	state.ResourceSelections[0].PromptMessageID = 500
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{{ID: 2, CallbackQuery: resourceTestCallback(1, 7, 500, "1")}}, time.Now())
+	if len(state.Queue) != 1 || state.Queue[0].CloudTargetID != ready.ID || len(state.ResourceSelections) != 0 {
+		t.Fatalf("未按显式选择固定可用目录：%+v", state)
 	}
 }
 
@@ -167,7 +236,7 @@ func TestCloudDownloadQueuedBatchStopsWhenDestinationChanges(t *testing.T) {
 	b.CloudDownloads = submit
 	b.CloudDownloadTargets = []TelegramTransferTarget{testCloudTarget("movies", "电影", "/电影")}
 	state := telegramState{}
-	b.enqueueUpdates(&state, []telegramUpdate{cloudUpdate(1, 42, "private", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")}, time.Now())
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(1, 42, "private", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")}, time.Now())
 	b.CloudDownloadTargets[0].TargetPath = "/新电影"
 	if !b.startReadyBatch(&state, time.Now()) {
 		t.Fatal("queued cloud message did not become ready")

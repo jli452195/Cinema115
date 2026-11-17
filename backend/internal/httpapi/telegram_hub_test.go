@@ -72,7 +72,7 @@ func TestTelegramHubProfileAPI(t *testing.T) {
 	}
 }
 
-func TestTelegramModuleAssignmentIsExclusiveAndDeleteReleases(t *testing.T) {
+func TestTelegramModuleOwnershipAndSharedBotDeleteReleases(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	dir := t.TempDir()
 	settings, err := service.NewAutomationStore(filepath.Join(dir, "automation.json"), dir, "http://nas:8115")
@@ -154,15 +154,13 @@ func TestTelegramModuleAssignmentIsExclusiveAndDeleteReleases(t *testing.T) {
 	telegramHubRequest(t, router, http.MethodPut, transferPath, `{"botId":"`+first.ID+`","expectedBotId":""}`, http.StatusOK)
 	for _, assignment := range []struct{ path, body string }{
 		{modulePath, `{"botId":"` + first.ID + `","expectedBotId":"` + second.ID + `"}`},
+		{modulePath, `{"botId":"` + second.ID + `","expectedBotId":"` + first.ID + `"}`},
 		{transferPath, `{"botId":"` + second.ID + `","expectedBotId":"` + first.ID + `"}`},
 	} {
-		raw := telegramHubRequest(t, router, http.MethodPut, assignment.path, assignment.body, http.StatusConflict)
-		if !strings.Contains(string(raw), service.ErrTelegramModuleConflict.Error()) {
-			t.Fatalf("missing module conflict explanation: %s", raw)
-		}
+		telegramHubRequest(t, router, http.MethodPut, assignment.path, assignment.body, http.StatusOK)
 	}
-	if current, _ := transfers.Target(target.ID); current.AssignedBotID != first.ID || settings.Value().BotID != second.ID {
-		t.Fatal("a conflicting assignment changed an existing feature owner")
+	if current, _ := transfers.Target(target.ID); current.AssignedBotID != second.ID || settings.Value().BotID != second.ID {
+		t.Fatal("share STRM and share transfer should both be assigned to the same Bot")
 	}
 
 	profile, err := hub.Profiles().Get(second.ID)
@@ -184,5 +182,8 @@ func TestTelegramModuleAssignmentIsExclusiveAndDeleteReleases(t *testing.T) {
 	}
 	if settings.Value().TelegramEnabled {
 		t.Fatal("deleting the assigned Bot did not disable share handling")
+	}
+	if current, _ := transfers.Target(target.ID); current.AssignedBotID != "" {
+		t.Fatal("deleting the assigned Bot left a transfer target binding")
 	}
 }

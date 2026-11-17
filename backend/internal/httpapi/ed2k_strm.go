@@ -14,7 +14,7 @@ import (
 	"strm115/backend/internal/strm"
 )
 
-func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaultBaseURL func() string) {
+func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaultBaseURL func() string, refreshBots func()) {
 	g := admin.Group("/p115/ed2k-strm")
 	g.Use(func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
@@ -38,14 +38,16 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 		settings, err := s.Store.GetED2KSTRMSettings(c.Request.Context())
 		saved := err == nil
 		if errors.Is(err, storage.ErrNotFound) {
-			settings = model.ED2KSTRMSettings{BaseURL: defaultBaseURL(), OutputDir: "ed2k-strm"}
+			settings = model.ED2KSTRMSettings{BaseURL: defaultBaseURL()}
 		} else if err != nil {
 			fail(c, err)
 			return
 		}
 		a, accountErr := s.Accounts.Primary("")
 		cacheCID, cachePath := "", ""
-		if accountErr == nil {
+		if settings.CacheCID != "" {
+			cacheCID, cachePath = settings.CacheCID, settings.CachePath
+		} else if accountErr == nil {
 			cache, err := s.Store.GetED2KSTRMCache(c.Request.Context(), a.ID)
 			if err == nil {
 				cacheCID, cachePath = cache.CID, "/"+cache.Name
@@ -54,7 +56,12 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 				return
 			}
 		}
-		c.JSON(http.StatusOK, gin.H{"settings": settings, "settingsSaved": saved, "primaryAccountId": s.Accounts.PrimaryID(), "accountReady": accountErr == nil && a.Cookie != "", "cacheCID": cacheCID, "cachePath": cachePath, "resources": s.List()})
+		cacheErr := s.CheckCacheReady(settings)
+		cacheHint := ""
+		if cacheErr != nil {
+			cacheHint = cacheErr.Error()
+		}
+		c.JSON(http.StatusOK, gin.H{"settings": settings, "settingsSaved": saved, "primaryAccountId": s.Accounts.PrimaryID(), "accountReady": accountErr == nil && a.Cookie != "", "cacheReady": cacheErr == nil, "cacheSetupHint": cacheHint, "cacheCID": cacheCID, "cachePath": cachePath, "resources": s.List(), "targets": s.Targets(), "tasks": s.Tasks()})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
 		var in model.ED2KSTRMSettings
@@ -71,18 +78,70 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 	})
 	g.POST("/imports", func(c *gin.Context) {
 		var in struct {
-			Links []string `json:"links"`
+			Links     []string `json:"links"`
+			TargetID  string   `json:"targetId"`
+			RequestID string   `json:"requestId"`
 		}
 		if c.ShouldBindJSON(&in) != nil {
 			c.JSON(400, gin.H{"error": "请提供 ED2K 链接列表"})
 			return
 		}
-		rows, err := s.Import(c.Request.Context(), in.Links)
+		result, err := s.ImportTo(c.Request.Context(), in.TargetID, in.Links, in.RequestID)
 		if err != nil {
 			fail(c, err)
 			return
 		}
-		c.JSON(http.StatusAccepted, gin.H{"resources": rows})
+		c.JSON(http.StatusAccepted, result)
+	})
+	g.GET("/targets", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"targets": s.Targets()}) })
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		endpoint := "/targets"
+		if method == http.MethodPut {
+			endpoint += "/:id"
+		}
+		g.Handle(method, endpoint, func(c *gin.Context) {
+			var in struct {
+				Name      string `json:"name"`
+				OutputDir string `json:"outputDir"`
+			}
+			if c.ShouldBindJSON(&in) != nil {
+				c.JSON(400, gin.H{"error": "输出目录格式无效"})
+				return
+			}
+			v, err := s.SaveTarget(c.Request.Context(), model.ED2KSTRMTarget{ID: c.Param("id"), Name: in.Name, OutputDir: in.OutputDir})
+			if err != nil {
+				fail(c, err)
+				return
+			}
+			if refreshBots != nil {
+				refreshBots()
+			}
+			c.JSON(http.StatusOK, v)
+		})
+	}
+	g.DELETE("/targets/:id", func(c *gin.Context) {
+		if err := s.DeleteTarget(c.Request.Context(), c.Param("id")); err != nil {
+			fail(c, err)
+			return
+		}
+		if refreshBots != nil {
+			refreshBots()
+		}
+		c.Status(http.StatusNoContent)
+	})
+	g.POST("/tasks/:id/retry", func(c *gin.Context) {
+		if err := s.RetryTask(c.Request.Context(), c.Param("id")); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"accepted": true})
+	})
+	g.DELETE("/tasks/:id", func(c *gin.Context) {
+		if err := s.DeleteTask(c.Request.Context(), c.Param("id")); err != nil {
+			fail(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
 	})
 	for _, action := range []string{"check", "restore"} {
 		g.POST("/resources/:hash/"+action, func(c *gin.Context) {

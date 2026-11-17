@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
@@ -11,6 +12,35 @@ import (
 
 type CloudDownloadSubmitter interface {
 	Submit(context.Context, service.CloudDownloadConfig, string) (service.CloudDownloadReceipt, error)
+}
+
+func (b *Telegram) enqueueCloudBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target TelegramTransferTarget, now time.Time) {
+	batch := &messageBatch{
+		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
+		Mode: "cloud", ReadyAt: now, CloudTargetID: target.ID, CloudTargetName: target.Name,
+		CloudTarget: service.CloudDownloadConfig{AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath},
+		Items:       make([]messageShare, 0, len(links)),
+	}
+	for _, link := range links {
+		batch.Items = append(batch.Items, messageShare{URL: link})
+	}
+	state.Queue = append(state.Queue, batch)
+}
+
+func sameCloudTarget(a, b TelegramTransferTarget) bool {
+	return a.ID == b.ID && a.Name == b.Name && a.AccountID == b.AccountID && a.TargetCID == b.TargetCID && a.TargetPath == b.TargetPath
+}
+
+func (b *Telegram) currentCloudTarget(id string) (TelegramTransferTarget, bool) {
+	if b.CurrentCloudTarget != nil {
+		return b.CurrentCloudTarget(id)
+	}
+	for _, target := range b.CloudDownloadTargets {
+		if target.ID == id {
+			return target, true
+		}
+	}
+	return TelegramTransferTarget{}, false
 }
 
 type cloudBatchOutcome struct {
@@ -53,7 +83,7 @@ func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramStat
 		}
 
 		taskCtx, cancel := context.WithTimeout(ctx, service.CloudDownloadTimeout)
-		// 旧批次的 CloudRedo 标记不再控制策略，所有入口默认安全重提。
+		// 所有入口统一使用默认安全重提，批次固定本次准备的账号和目录。
 		receipt, err := submission(taskCtx, item.URL)
 		cancel()
 		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), removed: receipt.RemovedOldTask, err: err})

@@ -202,6 +202,7 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
         <button type="button" :disabled="loading || adding || assignmentBusy || !!draggingModuleId || bots.length >= 20" class="bot-action inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-medium text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-40" @click="add"><IconPlus :size="16" aria-hidden="true" />{{ adding ? '添加中' : '新增 Bot' }}</button>
       </div>
     </section>
+    <p role="note" aria-label="Bot 链接接收规则" class="mb-5 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" /><span>私聊直接发送链接。115 分享可选网盘转存或分享 STRM，纯 ED2K 按分配的用途和目录处理；仅一个适用目标且可用时自动处理，多个目标一次选择用途和目录。磁力及与 ED2K 的混合消息整批走云下载；115 分享请与磁力、ED2K 分开发送。</span></p>
     <p v-if="loading" role="status" class="py-8 text-sm text-slate-500 dark:text-slate-400">正在读取 Bot 和功能配置…</p>
     <div v-else class="bot-workspace grid items-start gap-5">
       <section aria-labelledby="bot-list-title" class="bot-primary min-w-0">

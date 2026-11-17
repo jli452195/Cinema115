@@ -304,7 +304,7 @@ func TestCloudTargetTransferConflictKeepsSingleOwner(t *testing.T) {
 	}
 }
 
-func TestShareTransferModuleHasExclusiveBotAssignment(t *testing.T) {
+func TestShareTransferAndSTRMModulesCanShareBot(t *testing.T) {
 	dir := t.TempDir()
 	hub, err := NewHub(dir, "test-secret", nil, nil)
 	if err != nil {
@@ -326,11 +326,14 @@ func TestShareTransferModuleHasExclusiveBotAssignment(t *testing.T) {
 	if err := hub.SetModule(context.Background(), shareTransferModuleID(secondTarget.ID), "", second); err != nil {
 		t.Fatalf("a Bot should hold more than one receive target: %v", err)
 	}
-	if err := hub.SetModule(context.Background(), "share_notifications", "", second); !errors.Is(err, service.ErrTelegramModuleConflict) {
-		t.Fatalf("same Bot accepted two handlers for the same share URL: %v", err)
+	if err := hub.SetModule(context.Background(), "share_notifications", "", second); err != nil {
+		t.Fatalf("share STRM should coexist with transfer targets: %v", err)
 	}
-	if err := hub.SetModule(context.Background(), "share_notifications", "", first); err != nil {
+	if err := hub.SetModule(context.Background(), "share_notifications", second, first); err != nil {
 		t.Fatal(err)
+	}
+	if err := hub.SetModule(context.Background(), shareTransferModuleID(firstTarget.ID), second, first); err != nil {
+		t.Fatalf("a transfer target should also join the share STRM Bot: %v", err)
 	}
 	modules, err := hub.Modules(context.Background())
 	if err != nil {
@@ -340,11 +343,17 @@ func TestShareTransferModuleHasExclusiveBotAssignment(t *testing.T) {
 	for _, module := range modules {
 		owners[module.ID] = module.AssignedBotID
 	}
-	if owners[shareTransferModuleID(firstTarget.ID)] != second || owners[shareTransferModuleID(secondTarget.ID)] != second || owners["share_notifications"] != first {
+	if owners[shareTransferModuleID(firstTarget.ID)] != first || owners[shareTransferModuleID(secondTarget.ID)] != second || owners["share_notifications"] != first {
 		t.Fatalf("share features did not persist separate Bot ownership: %+v", owners)
 	}
-	if err := hub.SetModule(context.Background(), "share_notifications", first, second); !errors.Is(err, service.ErrTelegramModuleConflict) {
-		t.Fatalf("share notification transfer bypassed target exclusivity: %v", err)
+	if err := hub.SetModule(context.Background(), "share_notifications", second, ""); !errors.Is(err, ErrModuleChanged) {
+		t.Fatalf("stale module owner should be rejected: %v", err)
+	}
+	if err := hub.SetModule(context.Background(), "share_notifications", first, second); err != nil {
+		t.Fatalf("share notification assignment should remain independent: %v", err)
+	}
+	if current, _ := hub.ShareTransferSettings.Target(firstTarget.ID); current.AssignedBotID != first {
+		t.Fatal("moving share STRM changed the transfer target owner")
 	}
 }
 
@@ -395,16 +404,16 @@ func TestPoolNotificationsAreDisabledByUnassigning(t *testing.T) {
 }
 
 func TestCloudOnlyBotStartsMessagePollingWithoutShareProcessing(t *testing.T) {
-	if !pollsMessages(BotProfile{ID: "cloud-bot"}, "", true, false) {
+	if !pollsMessages(BotProfile{ID: "cloud-bot"}, "", true, false, false) {
 		t.Fatal("cloud-only Bot must start getUpdates")
 	}
-	if pollsMessages(BotProfile{ID: "notifications-only"}, "", false, false) {
+	if pollsMessages(BotProfile{ID: "notifications-only"}, "", false, false, false) {
 		t.Fatal("notification-only Bot must not start a getUpdates consumer")
 	}
-	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot", false, false) {
+	if !pollsMessages(BotProfile{ID: "share-bot"}, "share-bot", false, false, false) {
 		t.Fatal("share Bot must start getUpdates")
 	}
-	if !pollsMessages(BotProfile{ID: "transfer-bot"}, "", false, true) {
+	if !pollsMessages(BotProfile{ID: "transfer-bot"}, "", false, true, false) {
 		t.Fatal("share-transfer Bot must start getUpdates")
 	}
 }

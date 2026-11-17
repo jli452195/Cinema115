@@ -5,6 +5,7 @@ import {
   IconCloudDownload,
   IconDownload,
   IconExternalLink,
+  IconFile,
   IconGripVertical,
   IconHeartbeat,
   IconPlus,
@@ -38,15 +39,12 @@ const singleBot = computed(() => (availableBots.value.length === 1 ? availableBo
 const moduleKind = computed(
   () =>
     props.module.kind ||
-    (props.module.id.startsWith('cloud_download:')
-      ? 'cloud_download'
-      : props.module.id.startsWith('share_transfer:')
-        ? 'share_transfer'
-        : props.module.id),
+    (['cloud_download', 'share_transfer', 'ed2k_strm'].find(kind => props.module.id.startsWith(kind + ':')) || props.module.id),
 )
 
 const isCloudDownload = computed(() => moduleKind.value === 'cloud_download')
 const isShareTransfer = computed(() => moduleKind.value === 'share_transfer')
+const isED2KSTRM = computed(() => moduleKind.value === 'ed2k_strm')
 
 const icon = computed(
   () =>
@@ -54,6 +52,7 @@ const icon = computed(
       share_notifications: IconShare,
       share_transfer: IconDownload,
       cloud_download: IconCloudDownload,
+      ed2k_strm: IconFile,
       follow_notifications: IconBell,
       pool_notifications: IconHeartbeat,
       anime_notifications: IconBell,
@@ -62,6 +61,7 @@ const icon = computed(
         | 'share_notifications'
         | 'share_transfer'
         | 'cloud_download'
+        | 'ed2k_strm'
         | 'follow_notifications'
         | 'pool_notifications'
         | 'anime_notifications'
@@ -76,8 +76,10 @@ const setupHint = computed(() => {
   if (!bot.enabled) return 'Bot 已停用'
   if (isCloudDownload.value) {
     return props.module.setupHint || (props.module.ready === false ? '待配置转存目标' : '')
-  } else if (isShareTransfer.value) {
+  } else if (isShareTransfer.value || isED2KSTRM.value) {
     return props.module.setupHint || ''
+  } else if (moduleKind.value === 'share_notifications' && props.module.setupHint) {
+    return props.module.setupHint
   } else if (!bot.notificationChatID) return '待配置通知聊天 ID'
   return ''
 })

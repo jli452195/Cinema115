@@ -10,7 +10,11 @@ import (
 
 func (b *Telegram) processMergedBatch(ctx context.Context, state *telegramState, generator service.BatchGenerator) error {
 	batch := state.Batch
-	settings := b.Settings.ShareValue()
+	decorate, err := b.shareGenerationContext(batch)
+	if err != nil {
+		return b.stopShareGeneration(state, err)
+	}
+	settings := *batch.ShareSettings
 	inputs := make([]service.GenerateInput, len(batch.Items))
 	for i, item := range batch.Items {
 		inputs[i] = settings.Generation
@@ -19,13 +23,13 @@ func (b *Telegram) processMergedBatch(ctx context.Context, state *telegramState,
 	reply := &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, EditMessageID: batch.StatusMessageID, Text: fmt.Sprintf("⚠️ 【115网盘】合并转存任务被中断（%d 个链接）\n请核对任务记录和临时目录，本批次不自动重复转存。", len(inputs))}
 	// 云端变更前一次保存整个批次的中断检查点，避免重启重复转存其中任何来源。
 	batch.Next = len(batch.Items)
-	state.Pending, state.Replies = reply, nil
+	state.Pending = reply
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("记录 Telegram 合并任务: %w", err)
 	}
 	taskCtx, cancel := context.WithTimeout(ctx, service.ShareGenerationTimeout)
 	defer cancel()
-	taskCtx = service.WithGenerationBatch(service.WithGenerationSource(taskCtx, "Telegram"), batch.UpdateID, 1, len(inputs))
+	taskCtx = service.WithGenerationBatch(service.WithGenerationSource(decorate(taskCtx), "Telegram"), batch.UpdateID, 1, len(inputs))
 	taskCtx = service.WithShareReplyManaged(taskCtx)
 	outcomes, batchErr := generator.GenerateBatch(taskCtx, inputs)
 	if len(outcomes) != len(inputs) {

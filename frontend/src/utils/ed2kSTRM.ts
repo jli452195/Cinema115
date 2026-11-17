@@ -2,6 +2,15 @@ import type { ED2KSTRMResource } from '../types/ed2kSTRM'
 
 export const ED2K_IMPORT_LIMIT = 50
 
+// 局域网 HTTP 页面也可使用，UUID 中不包含资源或账号信息。
+export function ed2kRequestID(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6]! & 15) | 64
+  bytes[8] = (bytes[8]! & 63) | 128
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 export function ed2kLinks(text: string): string[] {
   return [...new Set(text.match(/ed2k:\/\/\|file\|[^\r\n<>]+?\|\//gi) || [])]
 }
@@ -19,7 +28,11 @@ export function ed2kResourceAttention(resource: ED2KSTRMResource): boolean {
 }
 
 export function ed2kResourceStatus(resource: ED2KSTRMResource): string {
-  return ({ queued: '等待处理', pending: '等待处理', submitting: '提交下载中', downloading: '云下载中', verifying: '核验文件中', generating: '生成 STRM 中', recovering: '恢复缓存中', restoring: '恢复缓存中', running: '处理中', ready: '已生成', completed: '已生成', failed: '处理失败', error: '处理失败', blocked: '需检查', uncertain: '待确认', conflict: '资料冲突', interrupted: '已中断', missing: '缓存缺失', stopped: '已停止' } as Record<string, string>)[resource.status] || '待检查'
+  return ({ queued: '等待缓存', downloading: '云下载中', recovering: '恢复缓存中', ready: '缓存就绪', failed: '缓存失败', blocked: '需检查', uncertain: '待确认' } as Record<string, string>)[resource.status] || '待检查'
+}
+
+export function ed2kResourceLink(resource: ED2KSTRMResource): string {
+  return `ed2k://|file|${encodeURIComponent(resource.name)}|${resource.size}|${resource.hash}|/`
 }
 
 export function ed2kCacheStatus(resource: ED2KSTRMResource): string {

@@ -428,6 +428,11 @@ func (s *ShareRuns) Submit(ctx context.Context, id string, inputs []GenerateInpu
 	if settings, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
 		base = context.WithValue(base, automationContextKey{}, settings)
 	}
+	if pinned, _ := ctx.Value(telegramGenerationPinnedKey{}).(bool); pinned {
+		cookie, _ := ctx.Value(generationCookieKey{}).(string)
+		base = context.WithValue(base, generationCookieKey{}, cookie)
+		base = context.WithValue(base, telegramGenerationPinnedKey{}, true)
+	}
 	if batch, ok := ctx.Value(generationBatchKey{}).(generationBatch); ok {
 		base = context.WithValue(base, generationBatchKey{}, batch)
 	}
@@ -701,7 +706,8 @@ func (s *ShareRuns) execute(run *shareRun) {
 	}
 	s.mu.Unlock()
 	itemCtx, cancel := context.WithTimeout(run.ctx, ShareGenerationTimeout)
-	if s.tasks.AccountCookie != nil && len(run.requests) > 0 {
+	pinned, _ := run.ctx.Value(telegramGenerationPinnedKey{}).(bool)
+	if !pinned && s.tasks.AccountCookie != nil && len(run.requests) > 0 {
 		// Queueing pins ownership and options; execution takes the latest login
 		// for that same account, then keeps it fixed until this attempt ends.
 		itemCtx = context.WithValue(itemCtx, generationCookieKey{}, s.tasks.AccountCookie(run.requests[0].Settings.AccountID))

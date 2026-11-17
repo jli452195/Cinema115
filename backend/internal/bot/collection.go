@@ -4,113 +4,61 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
-
-	"strm115/backend/internal/service"
 )
 
 func (b *Telegram) queueTextReply(state *telegramState, update telegramUpdate, message *telegramMessage, text string) {
 	state.Replies = append(state.Replies, &pendingReply{UpdateID: update.ID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID, Text: text})
 }
 
-// 每次新增资源重置等待时间；不同聊天和话题各自收集，不设最长收集时间。
-func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate, now time.Time) {
-	state.CloudSelections = pruneCloudSelections(state.CloudSelections, now)
-	state.ShareTransferSelections = pruneShareTransferSelections(state.ShareTransferSelections, now)
-	settings := b.Settings.ShareValue()
+// 所有资源对整条消息只作一次用途和目录决策，选择后才进入业务队列。
+func (b *Telegram) enqueueUpdates(ctx context.Context, state *telegramState, updates []telegramUpdate, now time.Time) {
 	for _, update := range updates {
 		if update.ID < state.Offset {
 			continue
 		}
 		state.Offset = update.ID + 1
 		if update.CallbackQuery != nil {
-			if strings.HasPrefix(update.CallbackQuery.Data, "share:") {
-				b.enqueueShareTransferCallback(state, update.CallbackQuery, now)
-			} else {
-				b.enqueueCloudCallback(state, update, update.CallbackQuery, now)
-			}
+			b.enqueueResourceCallback(ctx, state, update.CallbackQuery, now)
 			continue
 		}
 		m := update.Message
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
 		}
+		resources := parseTelegramResources(m)
+		kind := ""
 		if isED2KSTRMCommand(telegramMessageText(m)) {
-			b.enqueueED2KSTRMMessage(state, update, m, now)
+			kind = "ed2k_strm"
+		} else if isCloudCommand(telegramMessageText(m)) {
+			kind = "cloud"
+		}
+		if len(resources.Shares) > 0 && (len(resources.CloudLinks) > 0 || kind != "") {
+			b.queueTextReply(state, update, m, "115 分享链接与磁力、ED2K 请分开发送，本条消息尚未提交任务。")
 			continue
 		}
-		var items []messageShare
-		if b.ShareEnabled || len(b.ShareTransferTargets) > 0 {
-			items = parseTelegramMessage(m)
+		if kind == "ed2k_strm" && resources.HasMagnet {
+			b.queueTextReply(state, update, m, "ED2K STRM 仅支持 ED2K 文件链接，磁力不能生成 ED2K STRM，本条消息尚未提交任务。")
+			continue
 		}
-		if len(b.ShareTransferTargets) > 0 && len(items) > 0 {
-			if b.ShareEnabled {
-				b.queueTextReply(state, update, m, "此 Bot 同时分配了分享 STRM 与 115 链接转存，处理方式冲突，请先解除其中一个功能。")
-			} else {
-				b.enqueueShareTransferMessage(state, update, m, items, now)
-			}
-			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "115 转存", "INFO", fmt.Sprintf("收到分享转存消息，识别 %d 个链接", len(items)))
-			items = nil
+		if resources.HasMagnet {
+			// 磁力和 ED2K 可共用一批云下载，不将其中部分链接拆出生成 STRM。
+			kind = "cloud"
 		}
-		text := telegramMessageText(m)
-		cloudItems := parseCloudLinks(text)
-		if len(cloudItems) > 0 || isCloudCommand(text) {
-			b.enqueueCloudMessage(state, update, m, cloudItems, now)
+		if len(resources.CloudLinks) > 0 || kind != "" {
+			items := make([]messageShare, len(resources.CloudLinks))
+			for i, link := range resources.CloudLinks {
+				items[i] = messageShare{URL: link}
+			}
+			b.enqueueResourceMessage(ctx, state, update, m, items, kind, now)
+			continue
 		}
-		if len(items) > 0 {
-			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "Bot", "INFO", fmt.Sprintf("收到分享消息，识别 %d 个链接并加入队列", len(items)))
-		}
-		if len(cloudItems) > 0 {
-			b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", m.ID), "云下载", "INFO", fmt.Sprintf("收到磁力转存消息，识别 %d 个链接并加入队列", len(cloudItems)))
-			// Cloud download is administrator-only, so every new input uses the
-			// safe smart-redo path: exact terminal tasks are removed while files
-			// are kept; running or unverifiable tasks are untouched.
-		}
-		for _, item := range items {
-			mode := telegramShareMode(settings, item)
-			wait := time.Duration(0)
-			if mode == "reshare" {
-				wait = time.Duration(settings.TGBatchWaitSeconds) * time.Second
-			}
-			var target *messageBatch
-			for _, queued := range state.Queue {
-				if queued.ChatID != m.Chat.ID || queued.ThreadID != m.ThreadID || queued.Mode != mode {
-					continue
-				}
-				// 不等待的消息仍保留原来的单消息批次，跨消息不去重。
-				if (wait > 0 && now.Before(queued.ReadyAt)) || queued.UpdateID == update.ID {
-					target = queued
-					break
-				}
-			}
-			if target == nil {
-				target = &messageBatch{UpdateID: update.ID, ChatID: m.Chat.ID, MessageID: m.ID, ThreadID: m.ThreadID, Mode: mode, ReadyAt: now.Add(wait)}
-				state.Queue = append(state.Queue, target)
-			}
-			if wait > 0 {
-				duplicate := false
-				for _, existing := range target.Items {
-					if existing == item {
-						duplicate = true
-						break
-					}
-				}
-				if !duplicate {
-					target.ReadyAt = now.Add(wait)
-				}
-			}
-			target.Items = append(target.Items, item)
-			target.SourceMessageIDs = append(target.SourceMessageIDs, m.ID)
+		if len(resources.Shares) > 0 && (b.ShareEnabled || len(b.ShareTransferTargets) > 0) {
+			b.enqueueResourceMessage(ctx, state, update, m, resources.Shares, "share", now)
 		}
 	}
-}
-
-func telegramShareMode(settings service.AutomationSettings, _ messageShare) string {
-	if !settings.ReshareEnabled {
-		return "direct"
-	}
-	return "reshare"
+	// 先让本轮过期回调清除原键盘，再清理其余已过期的选择记录。
+	state.ResourceSelections = pruneResourceSelections(state.ResourceSelections, now)
 }
 
 // 普通分享可越过尚未到期的转存批次，执行中的云端操作仍保持串行。
@@ -187,7 +135,7 @@ func (b *Telegram) collectUpdates(ctx context.Context, state *telegramState) err
 		}
 		return nil
 	}
-	b.enqueueUpdates(state, updates, time.Now())
+	b.enqueueUpdates(ctx, state, updates, time.Now())
 	if err := b.save(*state); err != nil {
 		return fmt.Errorf("保存 Telegram 接收队列: %w", err)
 	}

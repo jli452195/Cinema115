@@ -20,7 +20,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       { id: 'bot-two', name: 'Bot Two', configured: false, enabled: false, allowedChatIDs: '', notificationChatID: '', identity: { id: 0, first_name: '', username: '' }, revision: 1, running: false, connected: false, lastError: '' },
     ]
     const modules = [
-      { id: 'share_notifications', name: '115 分享 STRM', description: '接收分享链接并发送处理结果。', assignedBotId: '' },
+      { id: 'share_notifications', name: '115 分享 STRM', description: '接收 115 分享链接，生成 STRM 并发送处理结果。', assignedBotId: '' },
       { id: 'cloud_download:target-xx', kind: 'cloud_download', name: '磁力/ED2K 转存：转存 XX', description: '将白名单用户提交的链接转存到指定目录。', assignedBotId: '' },
       { id: 'cloud_download:target-xc', kind: 'cloud_download', name: '磁力/ED2K 转存：转存 XC', description: '将白名单用户提交的链接转存到指定目录。', assignedBotId: '' },
       { id: 'follow_notifications', name: '追更通知', description: '通知管理员新的追更申请与处理结果。', assignedBotId: '' },
@@ -110,6 +110,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/telegram/bot')
     await page.getByRole('heading', { name: '待分配功能', exact: true }).waitFor()
+    const receiveRules = page.getByRole('note', { name: 'Bot 链接接收规则', exact: true })
+    await receiveRules.waitFor()
+    const receiveRulesText = await receiveRules.textContent()
+    assert.match(receiveRulesText, /私聊直接发送链接/)
+    assert.match(receiveRulesText, /115 分享可选网盘转存或分享 STRM/)
+    assert.match(receiveRulesText, /仅一个适用目标且可用时自动处理，多个目标一次选择用途和目录/)
+    assert.match(receiveRulesText, /磁力及与 ED2K 的混合消息整批走云下载/)
+    assert.match(receiveRulesText, /115 分享请与磁力、ED2K 分开发送/)
+    assert.equal(calls.filter(call => !['GET', 'HEAD', 'OPTIONS'].includes(call.method)).length, 0, '阅读接收规则不创建任务或修改分配')
     assert.equal(await page.locator('.telegram-bot-card').count(), 2)
     assert.equal(await page.locator('.telegram-module-card').count(), 8)
     assert.equal(await page.locator('.telegram-module-card[draggable="true"]').count(), 0, '功能卡片统一使用 Sortable 回退拖拽')
@@ -189,19 +198,49 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await botCard('Bot One').getByRole('link', { name: '编辑动漫通知模板', exact: true }).count(), 1, '通知模板入口随功能保留在行内')
     await assign('115 链接转存：动画', 'bot-two')
     await assign('115 链接转存：电影', 'bot-two')
+    const beforeShareAssignment = putCalls().length
+    await assign('115 分享 STRM', 'bot-two')
+    assert.equal(putCalls().length, beforeShareAssignment + 1, '已有分享转存目录的 Bot 可以直接分配分享 STRM')
+    assert.deepEqual(await listNames(botCard('Bot Two')), ['115 链接转存：动画', '115 链接转存：电影', '115 分享 STRM'])
+    assert.equal(modules[0].assignedBotId, modules[5].assignedBotId, '分享 STRM 与分享转存保留同一 Bot 归属')
+    const shareSetupHint = '请先保存分享 STRM 播放地址和输出目录'
+    modules[0].setupHint = shareSetupHint
+    await refresh()
+    assert.equal(await moduleCard('115 分享 STRM').getByText('待配置', { exact: true }).getAttribute('title'), '待配置 Token', '未连接 Bot 先提示凭据配置')
+    bots[1].configured = true; bots[1].enabled = true
+    await refresh()
+    await moduleCard('115 分享 STRM').getByText('待配置', { exact: true }).waitFor()
+    assert.equal(await moduleCard('115 分享 STRM').getByText('待配置', { exact: true }).getAttribute('title'), shareSetupHint, '优先显示分享 STRM 自身就绪提示')
+    assert.equal(modules[5].assignedBotId, 'bot-two', 'STRM 暂未就绪不解除另一个用途的分配')
+    delete modules[0].setupHint
+    bots[1].configured = false; bots[1].enabled = false
+    await moduleCard('115 分享 STRM').getByRole('button', { name: '解除115 分享 STRM分配', exact: true }).click()
+    await moduleCard('115 分享 STRM').getByRole('combobox').waitFor()
     await assign('追更通知', 'bot-two')
     assert.equal(await botCard('Bot Two').locator('.telegram-module-card').count(), 3, '一个 Bot 可使用多个独立转存目标和通知功能')
 
     // 新增动态功能追加到本容器末尾，不打乱已保存的顺序。
     const beforeDynamic = await listNames(poolList)
     modules.push({ id: 'share_transfer:new', kind: 'share_transfer', name: '115 链接转存：新目录', description: '接收到 /新目录。', assignedBotId: '' })
+    const ed2kDescription = '输出目录：电影'
+    modules.push({ id: 'ed2k_strm:movie', kind: 'ed2k_strm', name: 'ED2K STRM：电影', description: ed2kDescription, assignedBotId: '', ready: true })
     await refresh()
-    assert.deepEqual(await listNames(poolList), [...beforeDynamic, '115 链接转存：新目录'])
+    assert.deepEqual(await listNames(poolList), [...beforeDynamic, '115 链接转存：新目录', 'ED2K STRM：电影'])
+    assert.equal(await moduleCard('ED2K STRM：电影').getByText(ed2kDescription, { exact: true }).count(), 1)
+    await assign('ED2K STRM：电影', 'bot-one')
+    assert.equal(await moduleCard('ED2K STRM：电影').getByText(ed2kDescription, { exact: true }).count(), 1, '分配后仍展示输出目录，发送链接无需命令前缀')
+    bots[0].notificationChatID = ''
+    await refresh()
+    assert.equal(await moduleCard('ED2K STRM：电影').getByText('待配置通知聊天 ID', { exact: true }).count(), 0, 'ED2K 接收模块不要求通知聊天 ID')
+    await moduleCard('ED2K STRM：电影').getByRole('button', { name: '解除ED2K STRM：电影分配', exact: true }).click()
+    await moduleCard('ED2K STRM：电影').getByRole('combobox').waitFor()
+    bots[0].notificationChatID = '42'
+    await refresh()
     await page.reload()
     await page.getByRole('heading', { name: '待分配功能', exact: true }).waitFor()
     assert.deepEqual(await listNames(botCard('Bot One')), ['磁力/ED2K 转存：转存 XX', '动漫订阅通知'])
 
-    const artifacts = path.join(__dirname, '../test-results')
+    const artifacts = process.env.TELEGRAM_BOT_UI_ARTIFACTS || path.join(__dirname, '../test-results')
     await fs.mkdir(artifacts, { recursive: true })
     await closeToasts()
     await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.module-pool-content').scrollTop = 0 })
@@ -229,7 +268,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     // 拖到独立滚动区边缘时自动滚动，避免长列表只能手动滚动后再拖。
     await page.evaluate(() => window.scrollTo(0, 0))
     await poolList.evaluate(list => { list.scrollTop = 0 })
-    await poolList.scrollIntoViewIfNeeded()
+    await poolPanel.scrollIntoViewIfNeeded()
+    await page.waitForFunction(() => {
+      const list = document.querySelector('.module-pool-content').getBoundingClientRect()
+      return list.top >= 80 && list.bottom <= innerHeight
+    })
     const autoScrollSource = poolList.locator('.telegram-module-card').first().locator('[data-drag-handle]')
     const sourceBounds = await autoScrollSource.boundingBox(), poolBounds = await poolList.boundingBox(), beforeAutoScroll = putCalls().length
     await page.mouse.move(sourceBounds.x + sourceBounds.width / 2, sourceBounds.y + sourceBounds.height / 2)
@@ -238,7 +281,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.mouse.move(poolBounds.x + poolBounds.width / 2, poolBounds.y + poolBounds.height - 5, { steps: 15 })
     await page.waitForTimeout(100)
     await page.mouse.move(poolBounds.x + poolBounds.width / 2 + 1, poolBounds.y + poolBounds.height - 5)
-    await page.waitForFunction(() => document.querySelector('.module-pool-content').scrollTop > 100)
+    await page.waitForFunction(() => document.querySelector('.module-pool-content').scrollTop > 100).catch(async error => {
+      error.message += '\n拖拽滚动几何：' + JSON.stringify({ sourceBounds, poolBounds, viewport: page.viewportSize(), scroll: await poolList.evaluate(list => ({ top: list.scrollTop, height: list.clientHeight, full: list.scrollHeight })) })
+      throw error
+    })
     await page.mouse.up()
     await page.waitForTimeout(350)
     assert.equal(putCalls().length, beforeAutoScroll, '待分配池内自动滚动排序不触发分配请求')
@@ -305,7 +351,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.waitForTimeout(3600)
     assert.equal(await page.locator('[data-sonner-toast]').count(), 0, '操作反馈自动消失')
     assert.deepEqual(errors, [], `浏览器异常：${errors.join('; ')}`)
-    console.log('PASS: 整卡/手柄/键盘排序持久化、跨容器单次提交、冲突与刷新失败恢复、模板入口、零/单/多 Bot 分配、动态功能追加、边缘自动滚动、触摸快滑/长按及深浅色响应式截图。')
+    console.log('PASS: 私聊链接分流提示、同 Bot 分享转存与分享 STRM 双分配、就绪提示、整卡/手柄/键盘排序持久化、跨容器单次提交、冲突与刷新失败恢复、模板入口、零/单/多 Bot 分配、动态功能追加、边缘自动滚动、触摸快滑/长按及深浅色响应式截图。')
     await context.close()
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

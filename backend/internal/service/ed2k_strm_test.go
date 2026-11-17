@@ -23,14 +23,16 @@ const ed2kSTRMTestSHA1 = "0123456789ABCDEF0123456789ABCDEF01234567"
 const ed2kSTRMTestSize int64 = 1234
 
 type ed2kSTRMClientStub struct {
-	t        *testing.T
-	calls    []string
-	expected []p115.DrivePlaybackFile
-	dirs     map[string]p115.DriveDirectory
-	find     func(string, string) (*p115.DrivePlaybackFile, error)
-	info     func(string, string) (*p115.DownloadInfo, error)
-	listing  func(string, string) (p115.DriveDirectory, []p115.ShareFile, error)
-	create   func(string, string, string) (string, error)
+	t         *testing.T
+	calls     []string
+	expected  []p115.DrivePlaybackFile
+	dirs      map[string]p115.DriveDirectory
+	directory func(string, string) (p115.DriveDirectory, error)
+	missing   func(string, string) (bool, error)
+	find      func(string, string) (*p115.DrivePlaybackFile, error)
+	info      func(string, string) (*p115.DownloadInfo, error)
+	listing   func(string, string) (p115.DriveDirectory, []p115.ShareFile, error)
+	create    func(string, string, string) (string, error)
 }
 
 func (c *ed2kSTRMClientStub) unexpected(method string) {
@@ -45,8 +47,11 @@ func (c *ed2kSTRMClientStub) CreateDirectory(_ context.Context, parent, name, co
 	c.unexpected("CreateDirectory")
 	return "", nil
 }
-func (c *ed2kSTRMClientStub) ReadDirectory(_ context.Context, cid, _ string) (p115.DriveDirectory, error) {
+func (c *ed2kSTRMClientStub) ReadDirectory(_ context.Context, cid, cookie string) (p115.DriveDirectory, error) {
 	c.calls = append(c.calls, "directory")
+	if c.directory != nil {
+		return c.directory(cid, cookie)
+	}
 	if v, ok := c.dirs[cid]; ok {
 		return v, nil
 	}
@@ -61,8 +66,11 @@ func (c *ed2kSTRMClientStub) ReadDirectoryFiles(_ context.Context, cid, cookie s
 	c.unexpected("ReadDirectoryFiles")
 	return p115.DriveDirectory{}, nil, nil
 }
-func (c *ed2kSTRMClientStub) DirectoryMissing(context.Context, string, string) (bool, error) {
+func (c *ed2kSTRMClientStub) DirectoryMissing(_ context.Context, cid, cookie string) (bool, error) {
 	c.calls = append(c.calls, "directory-missing")
+	if c.missing != nil {
+		return c.missing(cid, cookie)
+	}
 	c.unexpected("DirectoryMissing")
 	return false, nil
 }
@@ -123,6 +131,7 @@ type ed2kSTRMFixture struct {
 	accounts *P115Accounts
 	client   *ed2kSTRMClientStub
 	cloud    *ed2kSTRMTaskStub
+	target   model.ED2KSTRMTarget
 }
 
 func newED2KSTRMFixture(t *testing.T) *ed2kSTRMFixture {
@@ -144,7 +153,11 @@ func newED2KSTRMFixture(t *testing.T) *ed2kSTRMFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.service.SaveSettings(ctx, model.ED2KSTRMSettings{BaseURL: "https://cinema.example", OutputDir: "ed2k"}); err != nil {
+	if _, err := f.service.SaveSettings(ctx, model.ED2KSTRMSettings{BaseURL: "https://cinema.example"}); err != nil {
+		t.Fatal(err)
+	}
+	f.target, err = f.service.SaveTarget(ctx, model.ED2KSTRMTarget{Name: "默认输出", OutputDir: "ed2k"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -152,9 +165,13 @@ func newED2KSTRMFixture(t *testing.T) *ed2kSTRMFixture {
 
 func (f *ed2kSTRMFixture) imported(t *testing.T) model.ED2KSTRMResource {
 	t.Helper()
-	rows, err := f.service.Import(context.Background(), []string{ed2kSTRMTestLink("Film.mkv", ed2kSTRMTestHash, ed2kSTRMTestSize)})
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("import=%+v err=%v", rows, err)
+	_, err := f.service.ImportTo(context.Background(), f.target.ID, []string{ed2kSTRMTestLink("Film.mkv", ed2kSTRMTestHash, ed2kSTRMTestSize)}, "initial-import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := f.service.List()
+	if len(rows) != 1 {
+		t.Fatalf("import=%+v", rows)
 	}
 	return rows[0]
 }
@@ -166,10 +183,11 @@ func ed2kSTRMTestLink(name, hash string, size int64) string {
 func TestED2KSTRMImportDeduplicatesContentAcrossNames(t *testing.T) {
 	f := newED2KSTRMFixture(t)
 	original := f.imported(t)
-	rows, err := f.service.Import(context.Background(), []string{
+	_, err := f.service.ImportTo(context.Background(), f.target.ID, []string{
 		ed2kSTRMTestLink("另一个名字.mkv", strings.ToUpper(ed2kSTRMTestHash), ed2kSTRMTestSize),
 		ed2kSTRMTestLink("重复名字.mkv", ed2kSTRMTestHash, ed2kSTRMTestSize),
-	})
+	}, "alias-import")
+	rows := f.service.List()
 	if err != nil || len(rows) != 1 || rows[0].Hash != original.Hash || rows[0].Name != original.Name {
 		t.Fatalf("duplicate import=%+v err=%v", rows, err)
 	}
@@ -191,7 +209,7 @@ func TestED2KSTRMImportDeduplicatesContentAcrossNames(t *testing.T) {
 	if !slices.Contains(stored[0].Aliases, "另一个名字.mkv") || !slices.Contains(stored[0].Aliases, "重复名字.mkv") {
 		t.Fatalf("same-batch aliases were not persisted: %+v", stored[0])
 	}
-	if _, err := f.service.Import(context.Background(), []string{ed2kSTRMTestLink("Different-size.mkv", ed2kSTRMTestHash, ed2kSTRMTestSize+1)}); err != nil {
+	if _, err := f.service.ImportTo(context.Background(), f.target.ID, []string{ed2kSTRMTestLink("Different-size.mkv", ed2kSTRMTestHash, ed2kSTRMTestSize+1)}, "different-size"); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.service.List()) != 2 {
@@ -201,15 +219,20 @@ func TestED2KSTRMImportDeduplicatesContentAcrossNames(t *testing.T) {
 
 func TestED2KSTRMSettingsAndListingDoNotContact115(t *testing.T) {
 	f := newED2KSTRMFixture(t)
-	v := f.imported(t)
-	settings := model.ED2KSTRMSettings{BaseURL: "https://new.example", OutputDir: "new-ed2k"}
+	_ = f.imported(t)
+	settings := model.ED2KSTRMSettings{BaseURL: "https://new.example"}
 	if _, err := f.service.SaveSettings(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
 		rows := f.service.List()
-		if len(rows) != 1 || rows[0].Settings != v.Settings {
-			t.Fatalf("queued task settings changed: %+v", rows)
+		if len(rows) != 1 {
+			t.Fatalf("resource listing changed: %+v", rows)
+		}
+	}
+	for _, task := range f.service.tasks {
+		if task.BaseURL != "https://cinema.example" || task.OutputDir != "ed2k" {
+			t.Fatalf("accepted export snapshot followed current settings: %+v", task)
 		}
 	}
 	if len(f.client.calls) != 0 || f.cloud.calls != 0 {
@@ -381,7 +404,7 @@ func TestED2KSTRMSHA1ConflictCannotReplaceRecordedIdentity(t *testing.T) {
 	if err := f.service.ready(context.Background(), &v, a, fresh); !errors.Is(err, ErrGenerationInput) {
 		t.Fatalf("SHA1 conflict accepted: %+v err=%v", v, err)
 	}
-	if v.SHA1 != ed2kSTRMTestSHA1 || v.Status != "blocked" || v.STRMPath != "" {
+	if v.SHA1 != ed2kSTRMTestSHA1 || v.Status != "blocked" {
 		t.Fatalf("conflicting restoration replaced identity: %+v", v)
 	}
 	files, err := os.ReadDir(f.service.Root)
@@ -429,8 +452,11 @@ func TestED2KSTRMAccountChangesStopQueuedTasksBeforeNetwork(t *testing.T) {
 func TestED2KSTRMGenerationPreservesUnrelatedFiles(t *testing.T) {
 	f := newED2KSTRMFixture(t)
 	v := f.imported(t)
-	v.SHA1 = ed2kSTRMTestSHA1
-	destination := filepath.Join(f.service.Root, "ed2k", v.Hash+"-1234", "Film.strm")
+	v.SHA1, v.Status, v.CacheState = ed2kSTRMTestSHA1, "ready", "missing"
+	if err := f.service.save(context.Background(), v); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(f.service.Root, "ed2k", "Film.strm")
 	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -438,34 +464,422 @@ func TestED2KSTRMGenerationPreservesUnrelatedFiles(t *testing.T) {
 	if err := os.WriteFile(destination, []byte(unrelated), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.write(context.Background(), &v); !errors.Is(err, ErrGenerationInput) {
-		t.Fatalf("unrelated output was overwritten: %v", err)
-	}
+	f.finishExports(t)
 	got, err := os.ReadFile(destination)
-	if err != nil || string(got) != unrelated || v.STRMPath != "" {
-		t.Fatalf("output changed: %q resource=%+v err=%v", got, v, err)
+	if err != nil || string(got) != unrelated {
+		t.Fatalf("unrelated output changed: %q err=%v", got, err)
 	}
-	if err := os.Remove(destination); err != nil {
+	if len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("known identity export contacted cloud")
+	}
+	want, err := strm.ED2KURL("https://cinema.example", strm.ED2K{Hash: v.Hash, SHA1: v.SHA1, Size: v.Size, Name: v.Name})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.service.write(context.Background(), &v); err != nil {
+	files, err := os.ReadDir(filepath.Dir(destination))
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err = os.ReadFile(destination)
-	want, linkErr := strm.ED2KURL(v.Settings.BaseURL, strm.ED2K{Hash: v.Hash, SHA1: v.SHA1, Size: v.Size, Name: v.Name})
-	if err != nil || linkErr != nil || string(got) != want+"\n" || v.STRMPath != "ed2k/"+v.Hash+"-1234/Film.strm" {
-		t.Fatalf("output=%q path=%s err=%v linkErr=%v", got, v.STRMPath, err, linkErr)
+	if len(files) != 1 || len(f.service.Tasks()) != 1 || f.service.Tasks()[0].Status != "failed" {
+		t.Fatalf("collision should preserve original file and report failed output: files=%v tasks=%+v", files, f.service.Tasks())
+	}
+	for _, file := range files {
+		if file.Name() == "Film.strm" {
+			continue
+		}
+		got, err := os.ReadFile(filepath.Join(filepath.Dir(destination), file.Name()))
+		if err != nil || string(got) != want+"\n" {
+			t.Fatalf("collision output invalid: name=%s content=%q err=%v", file.Name(), got, err)
+		}
+	}
+}
+
+func (f *ed2kSTRMFixture) finishExports(t *testing.T) {
+	t.Helper()
+	for range 100 {
+		progress, err := f.service.advanceExport(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !progress {
+			return
+		}
+	}
+	t.Fatal("export worker kept reporting progress without reaching idle")
+}
+
+func (f *ed2kSTRMFixture) knownResource(t *testing.T) model.ED2KSTRMResource {
+	t.Helper()
+	v := f.imported(t)
+	v.SHA1, v.Status, v.CacheState, v.Stage = ed2kSTRMTestSHA1, "ready", "missing", "ready"
+	if err := f.service.save(context.Background(), v); err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func (f *ed2kSTRMFixture) restart(t *testing.T) {
+	t.Helper()
+	root, downloads := f.service.Root, f.service.Downloads
+	if err := f.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.store, err = storage.Open(context.Background(), f.filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.service, err = NewED2KSTRMService(context.Background(), f.store, f.accounts, f.client, f.cloud, downloads, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestED2KSTRMMovedOutputIsNeverMaintainedByCacheOrRestart(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	v := f.knownResource(t)
+	f.finishExports(t)
+	if len(f.service.Tasks()) != 0 {
+		t.Fatalf("completed task remained visible: %+v", f.service.Tasks())
+	}
+	original := filepath.Join(f.service.Root, "ed2k", "Film.strm")
+	moved := filepath.Join(t.TempDir(), "organized.strm")
+	if err := os.Rename(original, moved); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.client.find = func(string, string) (*p115.DrivePlaybackFile, error) {
+		return &p115.DrivePlaybackFile{ID: "123", PickCode: "pick123", SHA1: v.SHA1, Size: v.Size, Name: v.Name}, nil
+	}
+	f.client.info = func(string, string) (*p115.DownloadInfo, error) {
+		return &p115.DownloadInfo{FileID: "123", SHA1: v.SHA1, Size: v.Size, Name: v.Name}, nil
+	}
+	for _, check := range []bool{true, false} {
+		queued, err := f.service.Request(ctx, v.Hash, v.Size, check)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := f.service.advance(ctx, &queued); err != nil {
+			t.Fatal(err)
+		}
+		f.finishExports(t)
+		if _, err := os.Stat(original); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("cache check/restore recreated moved STRM: %v", err)
+		}
+	}
+	f.restart(t)
+	f.finishExports(t)
+	if len(f.service.Tasks()) != 0 {
+		t.Fatal("restart returned completed outputs to pending state")
+	}
+	if _, err := os.Stat(original); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("restart recreated moved STRM: %v", err)
+	}
+	after, err := os.ReadFile(moved)
+	if err != nil || string(after) != string(content) {
+		t.Fatalf("organized file changed: %q err=%v", after, err)
+	}
+	stored, err := f.store.ListED2KSTRMTasks(ctx)
+	if err != nil || len(stored) != 1 {
+		t.Fatalf("missing replay receipt: %+v err=%v", stored, err)
+	}
+	for _, task := range stored {
+		if task.Status != "completed" || task.OutputDir != "" || task.BaseURL != "" || task.Name != "" || task.TargetID != "" || task.TargetName != "" {
+			t.Fatalf("completed receipt retained output location: %+v", task)
+		}
+	}
+}
+
+func TestED2KSTRMRequestReplayDoesNotReExportButNewRequestDoes(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	v := f.knownResource(t)
+	links := []string{ed2kSTRMTestLink(v.Name, v.Hash, v.Size)}
+	pending, err := f.service.ImportTo(ctx, f.target.ID, links, "initial-import")
+	if err != nil || len(pending.Tasks) != 1 || len(f.service.Tasks()) != 1 {
+		t.Fatalf("pending replay created tasks: %+v err=%v", pending, err)
+	}
+	f.finishExports(t)
+	filename := filepath.Join(f.service.Root, "ed2k", "Film.strm")
+	if err := os.Remove(filename); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	replay, err := f.service.ImportTo(ctx, f.target.ID, links, "initial-import")
+	if err != nil || len(replay.Tasks) != 1 || replay.Tasks[0].ID != pending.Tasks[0].ID {
+		t.Fatalf("completed replay lost its receipt: %+v err=%v", replay, err)
+	}
+	f.finishExports(t)
+	if _, err := os.Stat(filename); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("same request recreated removed output: %v", err)
+	}
+	other, err := f.service.SaveTarget(ctx, model.ED2KSTRMTarget{Name: "另一个目录", OutputDir: "other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.ImportTo(ctx, other.ID, links, "initial-import"); !errors.Is(err, ErrGenerationInput) {
+		t.Fatalf("same request ID accepted a different target: %v", err)
+	}
+	explicit, err := f.service.ImportTo(ctx, f.target.ID, links, "explicit-new-request")
+	if err != nil || len(explicit.Tasks) != 1 || explicit.Tasks[0].ID == pending.Tasks[0].ID {
+		t.Fatalf("explicit new request did not create output work: %+v err=%v", explicit, err)
+	}
+	f.finishExports(t)
+	if _, err := os.Stat(filename); err != nil {
+		t.Fatalf("explicit request did not re-export: %v", err)
+	}
+	if len(f.service.List()) != 1 || len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("re-export added resources or contacted 115")
+	}
+}
+
+func TestED2KSTRMOneResourceExportsToMultipleTargetsWithoutCloudReads(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	v := f.knownResource(t)
+	other, err := f.service.SaveTarget(ctx, model.ED2KSTRMTarget{Name: "第二目录", OutputDir: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.service.ImportTo(ctx, other.ID, []string{ed2kSTRMTestLink("另一名称.mkv", v.Hash, v.Size)}, "other-target")
+	if err != nil || len(result.Resources) != 1 || len(result.Tasks) != 1 || len(f.service.List()) != 1 || len(f.service.Tasks()) != 2 {
+		t.Fatalf("multi-target import duplicated content: %+v err=%v", result, err)
+	}
+	f.finishExports(t)
+	for directory, name := range map[string]string{"ed2k": "Film.strm", "second": "另一名称.strm"} {
+		data, err := os.ReadFile(filepath.Join(f.service.Root, directory, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "/"+v.SHA1+"/") {
+			t.Fatalf("wrong exported content: %q", data)
+		}
+		files, err := os.ReadDir(filepath.Join(f.service.Root, directory))
+		if err != nil || len(files) != 1 || files[0].IsDir() {
+			t.Fatalf("output was not flat: %v err=%v", files, err)
+		}
+	}
+	if len(f.service.Tasks()) != 0 || len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("known SHA1 export retained tasks or accessed 115")
+	}
+}
+
+func TestED2KSTRMAcceptedOutputKeepsTargetAndAddressSnapshot(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	_ = f.knownResource(t)
+	f.target.Name, f.target.OutputDir = "修改后目录", "new-ed2k"
+	if _, err := f.service.SaveTarget(ctx, f.target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.service.SaveSettings(ctx, model.ED2KSTRMSettings{BaseURL: "https://changed.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.DeleteTarget(ctx, f.target.ID); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	f.finishExports(t)
+	data, err := os.ReadFile(filepath.Join(f.service.Root, "ed2k", "Film.strm"))
+	if err != nil || !strings.HasPrefix(string(data), "https://cinema.example/api/ed2k-strm/") {
+		t.Fatalf("accepted output followed edited or deleted target: %q err=%v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(f.service.Root, "new-ed2k")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("accepted output wrote current target: %v", err)
+	}
+	if len(f.service.Targets()) != 0 || len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("target deletion did not remain independent from accepted local output")
+	}
+}
+
+func TestED2KSTRMInterruptedOutputNeverRecreatesMissingFileOnRestart(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	_ = f.knownResource(t)
+	tasks := f.service.Tasks()
+	if len(tasks) != 1 {
+		t.Fatal(tasks)
+	}
+	task := tasks[0]
+	task.Status = "writing"
+	if err := f.service.saveExport(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	f.finishExports(t)
+	if _, err := os.Stat(filepath.Join(f.service.Root, "ed2k", "Film.strm")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("uncertain output was silently repeated: %v", err)
+	}
+	tasks = f.service.Tasks()
+	if len(tasks) != 1 || tasks[0].Status != "failed" {
+		t.Fatalf("uncertain output did not become reviewable failure: %+v", tasks)
+	}
+	if err := f.service.RetryTask(ctx, tasks[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	f.finishExports(t)
+	if _, err := os.Stat(filepath.Join(f.service.Root, "ed2k", "Film.strm")); err != nil {
+		t.Fatalf("explicit retry did not output STRM: %v", err)
+	}
+	if len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("local retry accessed 115")
+	}
+}
+
+func TestED2KSTRMSameNameDifferentContentDoesNotOverwrite(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	first := f.knownResource(t)
+	otherHash := strings.Repeat("b", 32)
+	if _, err := f.service.ImportTo(ctx, f.target.ID, []string{ed2kSTRMTestLink("Film.mkv", otherHash, ed2kSTRMTestSize)}, "different-content"); err != nil {
+		t.Fatal(err)
+	}
+	other := f.service.resources[ed2kResourceKey(otherHash, ed2kSTRMTestSize)]
+	other.SHA1, other.Status, other.Stage = strings.Repeat("F", 40), "ready", "ready"
+	if err := f.service.save(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	f.finishExports(t)
+	data, err := os.ReadFile(filepath.Join(f.service.Root, "ed2k", "Film.strm"))
+	if err != nil || !strings.Contains(string(data), "/"+first.Hash+"/"+first.SHA1+"/") {
+		t.Fatalf("later same-name content overwrote earlier output: %q err=%v", data, err)
+	}
+	tasks := f.service.Tasks()
+	if len(tasks) != 1 || tasks[0].Hash != otherHash || tasks[0].Status != "failed" {
+		t.Fatalf("collision did not expose failed task: %+v", tasks)
+	}
+	if len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("collision handling accessed 115")
+	}
+}
+
+func TestED2KSTRMTargetRejectsExistingDirectorySTRMOverlapLocally(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	client := &driveSTRMTestClient{paths: map[string]string{"100": "/library"}}
+	drive := NewDriveSTRMService(f.store, f.accounts, client, f.service.Root)
+	settings := model.DefaultDriveSTRMSettings()
+	settings.BaseURL, settings.VideoExtensions = "https://cinema.example", "mkv"
+	if _, err := drive.SaveSettings(ctx, settings); err != nil {
+		t.Fatal(err)
+	}
+	a, err := f.accounts.Primary("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drive.Save(ctx, model.DriveSTRM{Name: "existing", AccountID: a.ID, SourceCID: "100", OutputDir: "library/movies"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, directory := range []string{"library/movies", "library/movies/child", "library", "."} {
+		if _, err := f.service.SaveTarget(ctx, model.ED2KSTRMTarget{Name: "重叠目录", OutputDir: directory}); !errors.Is(err, ErrGenerationInput) {
+			t.Fatalf("overlapping ED2K target accepted: %s err=%v", directory, err)
+		}
+	}
+	if len(f.service.Targets()) != 1 || len(f.client.calls) != 0 || f.cloud.calls != 0 {
+		t.Fatal("rejected targets changed state or accessed 115")
+	}
+}
+
+func TestED2KSTRMImportRejectsResourceOwnedByPreviousPrimary(t *testing.T) {
+	for _, knownSHA1 := range []bool{false, true} {
+		t.Run(strconv.FormatBool(knownSHA1), func(t *testing.T) {
+			ctx := context.Background()
+			f := newED2KSTRMFixture(t)
+			v := f.imported(t)
+			if knownSHA1 {
+				v.SHA1, v.Status, v.Stage = ed2kSTRMTestSHA1, "ready", "ready"
+				if err := f.service.save(ctx, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			a, err := f.accounts.Primary(v.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cookie := "UID=999_A; CID=new-primary"
+			if err := f.accounts.Update(a.ID, a.Revision, a.Name, &cookie); err != nil {
+				t.Fatal(err)
+			}
+			links := []string{ed2kSTRMTestLink("Film.mkv", v.Hash, v.Size)}
+			if _, err := f.service.ImportTo(ctx, f.target.ID, links, "new-primary-output"); !errors.Is(err, ErrGenerationInput) {
+				t.Fatalf("old-primary content accepted as current-primary output: %v", err)
+			}
+			resources := f.service.List()
+			if len(resources) != 1 || resources[0].AccountID != v.AccountID || resources[0].UID != v.UID || resources[0].CredentialScope != v.CredentialScope || resources[0].SHA1 != v.SHA1 || len(f.service.Tasks()) != 1 {
+				t.Fatalf("rejected import changed resource or output tasks: resources=%+v tasks=%+v", resources, f.service.Tasks())
+			}
+			if _, err := f.service.ImportTo(ctx, f.target.ID, links, "initial-import"); err != nil {
+				t.Fatalf("safe old-request replay did not return original receipt: %v", err)
+			}
+			if len(f.client.calls) != 0 || f.cloud.calls != 0 {
+				t.Fatal("primary ownership rejection or request replay contacted 115")
+			}
+		})
+	}
+}
+
+func TestED2KSTRMRetryAndDeleteTaskCannotBothSucceed(t *testing.T) {
+	for _, knownSHA1 := range []bool{false, true} {
+		t.Run(strconv.FormatBool(knownSHA1), func(t *testing.T) {
+			ctx := context.Background()
+			f := newED2KSTRMFixture(t)
+			v := f.imported(t)
+			if knownSHA1 {
+				v.SHA1 = ed2kSTRMTestSHA1
+			}
+			v.Status, v.Stage = "failed", "locate"
+			task := f.service.Tasks()[0]
+			task.Status, task.Message = "failed", "首次输出失败"
+			for range 48 {
+				if err := f.service.save(ctx, v); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.service.saveExport(ctx, task); err != nil {
+					t.Fatal(err)
+				}
+				start := make(chan struct{})
+				retried, deleted := make(chan error, 1), make(chan error, 1)
+				go func() { <-start; retried <- f.service.RetryTask(ctx, task.ID) }()
+				go func() { <-start; deleted <- f.service.DeleteTask(ctx, task.ID) }()
+				close(start)
+				retryErr, deleteErr := <-retried, <-deleted
+				if (retryErr == nil) == (deleteErr == nil) {
+					t.Fatalf("retry and cleanup must serialize to one accepted operation: retry=%v delete=%v", retryErr, deleteErr)
+				}
+				current := f.service.tasks[task.ID]
+				if deleteErr == nil {
+					if current.Status != "completed" || current.OutputDir != "" || current.Name != "" || current.TargetID != "" || current.BaseURL != "" {
+						t.Fatalf("successful cleanup was revived by concurrent retry: %+v", current)
+					}
+					if f.service.List()[0].Status != "failed" {
+						t.Fatal("successful cleanup allowed delayed cloud recovery to queue")
+					}
+				} else if current.Status != "queued" || current.OutputDir != task.OutputDir || current.Name != task.Name {
+					t.Fatalf("successful retry lost its accepted output snapshot: %+v", current)
+				}
+			}
+			if len(f.client.calls) != 0 || f.cloud.calls != 0 {
+				t.Fatal("task controls performed network I/O")
+			}
+		})
 	}
 }
 
 func TestED2KSTRMOutputsCannotBeCoveredByDirectorySTRM(t *testing.T) {
 	ctx := context.Background()
 	f := newED2KSTRMFixture(t)
-	if _, err := f.service.SaveSettings(ctx, model.ED2KSTRMSettings{BaseURL: "https://cinema.example", OutputDir: "exports/ed2k-history"}); err != nil {
+	f.target.OutputDir = "exports/ed2k-history"
+	var err error
+	if f.target, err = f.service.SaveTarget(ctx, f.target); err != nil {
 		t.Fatal(err)
 	}
 	_ = f.imported(t)
-	if _, err := f.service.SaveSettings(ctx, model.ED2KSTRMSettings{BaseURL: "https://cinema.example", OutputDir: "exports/ed2k-current"}); err != nil {
+	f.target.OutputDir = "exports/ed2k-current"
+	if f.target, err = f.service.SaveTarget(ctx, f.target); err != nil {
 		t.Fatal(err)
 	}
 	client := &driveSTRMTestClient{paths: map[string]string{"100": "/library"}}
@@ -551,16 +965,16 @@ func TestED2KSTRMObservationUsesExactResultSubtreeWithoutTargetCID(t *testing.T)
 			}
 			err := f.service.advance(ctx, &v)
 			if success {
-				if err != nil || v.Status != "ready" || v.FileID != good.ID || v.SHA1 != good.SHA1 || v.STRMPath == "" {
+				if err != nil || v.Status != "ready" || v.FileID != good.ID || v.SHA1 != good.SHA1 {
 					t.Fatalf("valid task result rejected: resource=%+v err=%v", v, err)
 				}
-				content, err := os.ReadFile(filepath.Join(f.service.Root, filepath.FromSlash(v.STRMPath)))
-				if err != nil || !strings.Contains(string(content), "/"+good.SHA1+"/") {
-					t.Fatalf("generated STRM=%q err=%v", content, err)
+				files, err := os.ReadDir(f.service.Root)
+				if err != nil || len(files) != 0 {
+					t.Fatalf("cache completion wrote STRM without processing its output task: %v err=%v", files, err)
 				}
 				return
 			}
-			if err == nil || v.FileID != "" || v.SHA1 != "" || v.STRMPath != "" || slices.Contains(f.client.calls, "info") {
+			if err == nil || v.FileID != "" || v.SHA1 != "" || slices.Contains(f.client.calls, "info") {
 				t.Fatalf("outside/missing result accepted: resource=%+v calls=%v err=%v", v, f.client.calls, err)
 			}
 			files, readErr := os.ReadDir(f.service.Root)

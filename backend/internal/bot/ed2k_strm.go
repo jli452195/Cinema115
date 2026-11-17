@@ -2,17 +2,27 @@ package bot
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 )
 
 // ED2KSTRMImporter 只持久保存导入请求，云端缓存及 STRM 输出由后台任务处理。
 type ED2KSTRMImporter interface {
-	Import(context.Context, []string) ([]model.ED2KSTRMResource, error)
+	ImportToTarget(context.Context, model.ED2KSTRMTarget, []string, string) (model.ED2KSTRMImportResult, error)
+}
+
+// ED2KSTRMModule 将 Bot 的目标分配与持久导入入口集中在同一模块。
+type ED2KSTRMModule interface {
+	ED2KSTRMImporter
+	Targets() []model.ED2KSTRMTarget
+	Target(string) (model.ED2KSTRMTarget, bool)
+	AssignTarget(context.Context, string, string) error
 }
 
 func isED2KSTRMCommand(text string) bool {
@@ -24,58 +34,43 @@ func isED2KSTRMCommand(text string) bool {
 	return command == "/ed2k_strm" || command == "/ed2kstrm"
 }
 
-func parseED2KSTRMMessage(message *telegramMessage) []string {
-	text, entities := message.Text, message.Entities
-	if text == "" {
-		text, entities = message.Caption, message.CaptionEntities
-	}
-	links := ed2kLinkPattern.FindAllString(text, -1)
-	// 隐藏链接只读取明确的 ED2K 目标，不跟随跳转或使用显示名称猜测目标。
-	for _, entity := range entities {
-		if entity.Type == "text_link" && strings.HasPrefix(strings.ToLower(entity.URL), "ed2k://") {
-			links = append(links, entity.URL)
+func (b *Telegram) currentED2KSTRMTarget(id string) (model.ED2KSTRMTarget, bool) {
+	var target model.ED2KSTRMTarget
+	ok := false
+	if b.CurrentED2KSTRMTarget != nil {
+		target, ok = b.CurrentED2KSTRMTarget(id)
+	} else {
+		for _, configured := range b.ED2KSTRMTargets {
+			if configured.ID == id {
+				target, ok = configured, true
+				break
+			}
 		}
 	}
-	result := make([]string, 0, len(links))
-	seen := make(map[string]bool, len(links))
-	for _, link := range links {
-		normalized, err := p115.ValidateCloudURL(link)
-		if err != nil || seen[normalized] {
-			continue
-		}
-		seen[normalized] = true
-		result = append(result, normalized)
-	}
-	return result
+	return target, ok && b.BotID != "" && target.AssignedBotID == b.BotID
 }
 
-func (b *Telegram) enqueueED2KSTRMMessage(state *telegramState, update telegramUpdate, message *telegramMessage, now time.Time) {
-	if b.ED2KSTRM == nil {
-		b.queueTextReply(state, update, message, "ED2K STRM 模块尚未启用，请先在管理页配置。")
-		return
-	}
-	links := parseED2KSTRMMessage(message)
-	if len(links) == 0 {
-		b.queueTextReply(state, update, message, "请使用 /ed2k_strm 或 /ed2kstrm，后面附上 ED2K 文件链接。每条消息最多导入 50 个链接。")
-		return
-	}
-	if len(links) > 50 {
-		b.queueTextReply(state, update, message, "每条消息最多导入 50 个 ED2K 链接，请拆分后发送。")
-		return
-	}
-	if len(state.Queue) >= 100 {
-		b.queueTextReply(state, update, message, "ED2K STRM 接收队列已满，请稍后重试。")
-		return
-	}
+func sameED2KSTRMTarget(a, b model.ED2KSTRMTarget) bool {
+	return a.ID == b.ID && a.Name == b.Name && a.OutputDir == b.OutputDir && a.AssignedBotID == b.AssignedBotID
+}
+
+func (b *Telegram) enqueueED2KSTRMBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target model.ED2KSTRMTarget, now time.Time) {
 	items := make([]messageShare, 0, len(links))
 	for _, link := range links {
 		items = append(items, messageShare{URL: link})
 	}
 	state.Queue = append(state.Queue, &messageBatch{
-		UpdateID: update.ID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
-		Mode: "ed2k_strm", ReadyAt: now, Items: items,
+		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
+		Mode: "ed2k_strm", ReadyAt: now, Items: items, ED2KSTRMTarget: target, ED2KRequestID: b.ed2kSTRMRequestID(updateID, target.ID),
 	})
-	b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", message.ID), "ED2K STRM", "INFO", fmt.Sprintf("收到 ED2K STRM 导入请求，识别 %d 个链接并加入队列", len(items)))
+	b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", message.ID), "ED2K STRM", "INFO", fmt.Sprintf("收到 ED2K STRM 导入请求，识别 %d 个链接并加入输出目录队列", len(items)))
+}
+
+// 令牌的数字前缀是 Bot 身份；更换同一 Bot 的令牌不改变消息的幂等请求编号。
+func (b *Telegram) ed2kSTRMRequestID(updateID int64, targetID string) string {
+	identity := strings.SplitN(b.Token, ":", 2)[0]
+	sum := sha256.Sum256([]byte("cinema115-ed2k-strm-telegram\x00" + identity + "\x00" + strconv.FormatInt(updateID, 10) + "\x00" + targetID))
+	return hex.EncodeToString(sum[:])
 }
 
 func (b *Telegram) processED2KSTRM(ctx context.Context, state *telegramState) error {
@@ -83,48 +78,26 @@ func (b *Telegram) processED2KSTRM(ctx context.Context, state *telegramState) er
 		return err
 	}
 	batch := state.Batch
-	links := make([]string, 0, len(batch.Items)-batch.Next)
-	for _, item := range batch.Items[batch.Next:] {
+	links := make([]string, 0, len(batch.Items))
+	for _, item := range batch.Items {
 		links = append(links, item.URL)
 	}
 	text := "ED2K STRM 模块当前不可用，请到管理页检查配置后重新发送。"
-	if b.ED2KSTRM != nil {
-		// Import 按内容身份幂等入队；取消或保存结果前重启时可以安全重试。
-		resources, err := b.ED2KSTRM.Import(ctx, links)
+	current, assigned := b.currentED2KSTRMTarget(batch.ED2KSTRMTarget.ID)
+	if !assigned || !sameED2KSTRMTarget(current, batch.ED2KSTRMTarget) || batch.ED2KRequestID == "" || batch.ED2KRequestID != b.ed2kSTRMRequestID(batch.UpdateID, current.ID) {
+		text = "ED2K STRM 输出目录或 Bot 分配已变化，本批次未提交，请重新发送链接。"
+	} else if b.ED2KSTRM != nil {
+		// 固定目标与消息请求编号；取消或结果落盘前重启时复用原输出任务。
+		result, err := b.ED2KSTRM.ImportToTarget(ctx, batch.ED2KSTRMTarget, links, batch.ED2KRequestID)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
-			text = "ED2K STRM 导入未完成，请到管理页检查主账号、输出设置和资源记录后重新发送。"
+			text = "ED2K STRM 导入未完成，请到管理页检查主账号、输出目录和任务记录后重新发送。"
 			b.Logs.Append("Telegram", fmt.Sprintf("导入-%d", batch.UpdateID), "ED2K STRM", "ERROR", "ED2K STRM 导入未完成，请检查管理页资源记录及模块配置")
 		} else {
-			ready, pending, attention := 0, 0, 0
-			type resourceKey struct {
-				hash string
-				size int64
-			}
-			seen := make(map[resourceKey]bool, len(resources))
-			for _, resource := range resources {
-				key := resourceKey{hash: strings.ToLower(resource.Hash), size: resource.Size}
-				if seen[key] {
-					continue
-				}
-				seen[key] = true
-				switch resource.Status {
-				case "ready":
-					ready++
-				case "queued", "downloading", "recovering":
-					pending++
-				default:
-					attention++
-				}
-			}
-			text = fmt.Sprintf("ED2K STRM 导入已接收：%d 个资源。\n已生成：%d 个；后台处理：%d 个。", len(seen), ready, pending)
-			if attention > 0 {
-				text += fmt.Sprintf("\n另有 %d 个资源需要检查状态。", attention)
-			}
-			text += "\n生成状态和输出文件请查看管理页。"
-			b.Logs.Append("Telegram", fmt.Sprintf("导入-%d", batch.UpdateID), "ED2K STRM", "INFO", fmt.Sprintf("ED2K STRM 导入已接收，%d 个资源，%d 个已生成", len(seen), ready))
+			text = fmt.Sprintf("ED2K STRM 输出任务已接收：%d 个。\n目标：%s\n输出目录：%s\n处理进度请查看管理页的任务记录。", len(result.Tasks), current.Name, current.OutputDir)
+			b.Logs.Append("Telegram", fmt.Sprintf("导入-%d", batch.UpdateID), "ED2K STRM", "INFO", fmt.Sprintf("ED2K STRM 已接收 %d 个输出任务", len(result.Tasks)))
 		}
 	}
 	batch.Next = len(batch.Items)

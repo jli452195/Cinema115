@@ -16,6 +16,43 @@ import (
 
 var errED2KDirectoryPending = errors.New("ED2K 缓存目录创建结果尚待确认")
 
+func (s *ED2KSTRMService) cacheDirectoryPending(ctx context.Context, v model.ED2KSTRMResource) (bool, error) {
+	if v.DirectoryPending {
+		return true, nil
+	}
+	if v.CacheTargetCID != "" || v.CacheParentCID != "" {
+		return false, nil
+	}
+	// 自动根创建意图保存在账号级记录，不能只检查资源子目录的创建意图。
+	cache, err := s.Store.GetED2KSTRMCache(ctx, v.AccountID)
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return cache.Pending, nil
+}
+
+// 已选择或已开始使用的根目录不可随设置变化，也不能在缺失时改投自动目录。
+func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string, a P115Account, automatic bool) (model.ED2KSTRMCache, error) {
+	dir, err := s.Client.ReadDirectory(ctx, cid, a.Cookie)
+	if err != nil {
+		missing, checkErr := s.Client.DirectoryMissing(ctx, cid, a.Cookie)
+		if checkErr != nil {
+			return model.ED2KSTRMCache{}, checkErr
+		}
+		if missing {
+			return model.ED2KSTRMCache{}, generationInputError("本次缓存目录已删除，请核对任务后重新选择目录并恢复")
+		}
+		return model.ED2KSTRMCache{}, err
+	}
+	if dir.CID != cid || automatic && dir.ParentCID != "0" {
+		return model.ED2KSTRMCache{}, generationInputError("缓存根目录身份或位置已变化，请重新选择")
+	}
+	return model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, CID: cid, Name: dir.Name}, nil
+}
+
 func (s *ED2KSTRMService) directoryByName(ctx context.Context, parent, name, cookie string) (string, error) {
 	_, files, err := s.Client.ReadDirectoryFiles(ctx, parent, cookie)
 	if err != nil {
@@ -35,82 +72,107 @@ func (s *ED2KSTRMService) directoryByName(ctx context.Context, parent, name, coo
 }
 
 func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRMResource, a P115Account) error {
-	cache, err := s.Store.GetED2KSTRMCache(ctx, a.ID)
-	if errors.Is(err, storage.ErrNotFound) {
-		cache = model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, Name: "Cinema115-ED2K-" + strconv.FormatInt(time.Now().UnixNano(), 36)}
-	} else if err != nil {
-		return err
-	}
-	if cache.UID != a.UID {
-		return generationInputError("缓存目录不属于当前主账号")
-	}
-	if cache.CID != "" {
-		dir, err := s.Client.ReadDirectory(ctx, cache.CID, a.Cookie)
-		if err == nil {
-			if dir.CID != cache.CID || dir.ParentCID != "0" || dir.Name != cache.Name {
-				return generationInputError("主缓存目录归属或位置已变化")
-			}
-		} else {
-			missing, checkErr := s.Client.DirectoryMissing(ctx, cache.CID, a.Cookie)
-			if checkErr != nil {
-				return checkErr
-			}
-			if !missing {
-				return err
-			}
-			cache.CID = ""
-			cache.Pending = false
+	cache := model.ED2KSTRMCache{}
+	var err error
+	if v.CacheParentCID != "" || v.CacheTargetCID != "" {
+		cid := v.CacheParentCID
+		if cid == "" {
+			cid = v.CacheTargetCID
 		}
-	}
-	if cache.CID == "" {
-		if cache.Pending {
-			cid, err := s.directoryByName(ctx, "0", cache.Name, a.Cookie)
-			if err != nil {
-				return err
+		cache, err = s.selectedCacheDirectory(ctx, cid, a, v.CacheTargetCID == "")
+		if err != nil {
+			return err
+		}
+	} else {
+		cache, err = s.Store.GetED2KSTRMCache(ctx, a.ID)
+		if errors.Is(err, storage.ErrNotFound) {
+			cache = model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, Name: "Cinema115-ED2K-" + strconv.FormatInt(time.Now().UnixNano(), 36)}
+		} else if err != nil {
+			return err
+		}
+		if cache.UID != a.UID {
+			return generationInputError("缓存目录不属于当前主账号")
+		}
+		if cache.CID != "" {
+			dir, err := s.Client.ReadDirectory(ctx, cache.CID, a.Cookie)
+			if err == nil {
+				if dir.CID != cache.CID || dir.ParentCID != "0" || dir.Name != cache.Name {
+					return generationInputError("主缓存目录归属或位置已变化")
+				}
+			} else {
+				missing, checkErr := s.Client.DirectoryMissing(ctx, cache.CID, a.Cookie)
+				if checkErr != nil {
+					return checkErr
+				}
+				if !missing {
+					return err
+				}
+				cache.CID = ""
+				cache.Pending = false
 			}
-			if cid == "" {
-				v.Status = "uncertain"
-				return errED2KDirectoryPending
+		}
+		if cache.CID == "" {
+			if cache.Pending {
+				cid, err := s.directoryByName(ctx, "0", cache.Name, a.Cookie)
+				if err != nil {
+					return err
+				}
+				if cid == "" {
+					v.Status = "uncertain"
+					return errED2KDirectoryPending
+				}
+				cache.CID, cache.Pending = cid, false
+			} else {
+				cache.Pending = true
+				if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
+					return err
+				}
+				if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
+					return err
+				}
+				cid, err := s.Client.CreateDirectory(ctx, "0", cache.Name, a.Cookie)
+				if err != nil {
+					v.Status = "uncertain"
+					return err
+				}
+				cache.CID, cache.Pending = cid, false
 			}
-			cache.CID, cache.Pending = cid, false
-		} else {
-			cache.Pending = true
 			if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
 				return err
 			}
-			if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
-				return err
-			}
-			cid, err := s.Client.CreateDirectory(ctx, "0", cache.Name, a.Cookie)
-			if err != nil {
-				v.Status = "uncertain"
-				return err
-			}
-			cache.CID, cache.Pending = cid, false
-		}
-		if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
-			return err
 		}
 	}
 	name := "ed2k-" + v.Hash + "-" + strconv.FormatInt(v.Size, 10)
 	if v.CacheCID != "" {
 		dir, err := s.Client.ReadDirectory(ctx, v.CacheCID, a.Cookie)
 		if err == nil {
-			if dir.CID != v.CacheCID || dir.ParentCID != cache.CID || dir.Name != name {
+			if dir.CID != v.CacheCID || dir.Name != name {
 				return generationInputError("资源缓存目录身份已变化")
 			}
-			return nil
-		}
-		missing, checkErr := s.Client.DirectoryMissing(ctx, v.CacheCID, a.Cookie)
-		if checkErr != nil {
-			return checkErr
-		}
-		if !missing {
-			return err
+			if dir.ParentCID == cache.CID {
+				if v.CacheParentCID == "" {
+					v.CacheParentCID = cache.CID
+					return s.save(ctx, *v)
+				}
+				return nil
+			}
+			if v.CacheParentCID != "" || v.DirectoryPending {
+				return generationInputError("资源缓存目录位置已变化")
+			}
+			// 新恢复任务已选择其他根目录，原文件缺失后只在新目录准备缓存。
+		} else {
+			missing, checkErr := s.Client.DirectoryMissing(ctx, v.CacheCID, a.Cookie)
+			if checkErr != nil {
+				return checkErr
+			}
+			if !missing {
+				return err
+			}
 		}
 		v.CacheCID = ""
 		v.DirectoryPending = false
 	}
+	v.CacheParentCID = cache.CID
 	if v.DirectoryPending {
 		cid, err := s.directoryByName(ctx, cache.CID, name, a.Cookie)
 		if err != nil {

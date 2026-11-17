@@ -15,11 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"strm115/backend/internal/model"
 	"strm115/backend/internal/netproxy"
 	"strm115/backend/internal/service"
 )
 
 type Telegram struct {
+	BotID                      string
 	Token                      string
 	AllowedChats               map[int64]bool
 	HTTP                       *http.Client
@@ -33,6 +35,8 @@ type Telegram struct {
 	CloudDownloads             CloudDownloadSubmitter
 	ShareTransfers             ShareLinkTransferer
 	ED2KSTRM                   ED2KSTRMImporter
+	ED2KSTRMTargets            []model.ED2KSTRMTarget
+	CurrentED2KSTRMTarget      func(string) (model.ED2KSTRMTarget, bool)
 	CloudDownloadTargets       []TelegramTransferTarget
 	CurrentCloudTarget         func(string) (TelegramTransferTarget, bool)
 	ShareTransferTargets       []TelegramTransferTarget
@@ -110,19 +114,24 @@ type telegramCallbackMessage struct {
 		Type string `json:"type"`
 	} `json:"chat"`
 }
+
+type pendingCallbackAnswer struct {
+	ID   string `json:"id"`
+	Text string `json:"text,omitempty"`
+}
+
 type pendingReply struct {
-	UpdateID                       int64  `json:"updateID"`
-	ChatID                         int64  `json:"chatID"`
-	Text                           string `json:"text"`
-	ParseMode                      string `json:"parseMode,omitempty"`
-	MessageID                      int64  `json:"messageID,omitempty"`
-	ThreadID                       int64  `json:"threadID,omitempty"`
-	PreviewURL                     string `json:"previewURL,omitempty"`
-	EditMessageID                  int64  `json:"editMessageID,omitempty"`
-	ReplyMarkup                    any    `json:"replyMarkup,omitempty"`
-	CaptureMessageID               bool   `json:"captureMessageID,omitempty"`
-	CloudSelectionUpdateID         int64  `json:"cloudSelectionUpdateID,omitempty"`
-	ShareTransferSelectionUpdateID int64  `json:"shareTransferSelectionUpdateID,omitempty"`
+	UpdateID         int64  `json:"updateID"`
+	ChatID           int64  `json:"chatID"`
+	Text             string `json:"text"`
+	ParseMode        string `json:"parseMode,omitempty"`
+	MessageID        int64  `json:"messageID,omitempty"`
+	ThreadID         int64  `json:"threadID,omitempty"`
+	PreviewURL       string `json:"previewURL,omitempty"`
+	EditMessageID    int64  `json:"editMessageID,omitempty"`
+	OptionalEdit     bool   `json:"optionalEdit,omitempty"`
+	ReplyMarkup      any    `json:"replyMarkup,omitempty"`
+	CaptureMessageID bool   `json:"captureMessageID,omitempty"`
 }
 
 // 引用当前聊天收到的原消息，转发来源的消息编号不能用于当前聊天的回复。
@@ -172,14 +181,13 @@ func telegramPhotoBadRequest(description string) error {
 }
 
 type telegramState struct {
-	CloudSelections         []*pendingCloudSelection         `json:"cloudSelections,omitempty"`
-	ShareTransferSelections []*pendingShareTransferSelection `json:"shareTransferSelections,omitempty"`
-	CallbackAnswers         []*pendingCallbackAnswer         `json:"callbackAnswers,omitempty"`
-	Replies                 []*pendingReply                  `json:"replies,omitempty"`
-	Queue                   []*messageBatch                  `json:"queue,omitempty"`
-	Offset                  int64                            `json:"offset"`
-	Pending                 *pendingReply                    `json:"pending,omitempty"`
-	Batch                   *messageBatch                    `json:"batch,omitempty"`
+	ResourceSelections []*pendingResourceSelection `json:"resourceSelections,omitempty"`
+	CallbackAnswers    []*pendingCallbackAnswer    `json:"callbackAnswers,omitempty"`
+	Replies            []*pendingReply             `json:"replies,omitempty"`
+	Queue              []*messageBatch             `json:"queue,omitempty"`
+	Offset             int64                       `json:"offset"`
+	Pending            *pendingReply               `json:"pending,omitempty"`
+	Batch              *messageBatch               `json:"batch,omitempty"`
 }
 
 func (b *Telegram) call(ctx context.Context, method string, input, output any) error {
@@ -356,6 +364,15 @@ func (b *Telegram) Run(ctx context.Context) error {
 				output = &sent
 			}
 			if err := b.call(ctx, method, pending.request(), output); err != nil {
+				if pending.OptionalEdit && pending.EditMessageID > 0 {
+					// 选择已和业务队列一起落盘，清理按钮失败不能阻塞已接收任务或重复执行选择。
+					b.Logs.Append("Telegram", "", "Bot", "DEBUG", "选择提示未能更新，已保存的选择结果仍然有效")
+					state.Pending = nil
+					if err := b.save(state); err != nil {
+						return fmt.Errorf("保存 Telegram 选择提示状态: %w", err)
+					}
+					continue
+				}
 				if errors.Is(err, errTelegramEditMessageMissing) {
 					b.Logs.Append("Telegram", "", "Bot", "WARNING", "原状态消息已删除，将补发已保存结果")
 					// 提示被用户删除时补发已保存结果，不重新生成或转存。
@@ -394,16 +411,10 @@ func (b *Telegram) Run(ctx context.Context) error {
 			}
 			if pending.CaptureMessageID {
 				if sent.ID <= 0 {
-					return fmt.Errorf("Telegram 未返回转存选择消息 ID")
+					return fmt.Errorf("Telegram 未返回用途选择消息 ID")
 				}
-				for _, selection := range state.CloudSelections {
-					if selection != nil && selection.UpdateID == pending.CloudSelectionUpdateID {
-						selection.PromptMessageID = sent.ID
-						break
-					}
-				}
-				for _, selection := range state.ShareTransferSelections {
-					if selection != nil && selection.UpdateID == pending.ShareTransferSelectionUpdateID {
+				for _, selection := range state.ResourceSelections {
+					if selection != nil && selection.UpdateID == pending.UpdateID {
 						selection.PromptMessageID = sent.ID
 						break
 					}

@@ -110,7 +110,7 @@ func TestBatchResultKeepsOriginalMessageReference(t *testing.T) {
 	b := newBatchTestBot(t, batchGeneratorFunc(func(context.Context, service.GenerateInput) (*service.GenerationResult, error) {
 		return &service.GenerationResult{Written: 1}, nil
 	}))
-	state := telegramState{Batch: &messageBatch{UpdateID: 10, ChatID: 42, MessageID: 700, ThreadID: 99, Items: []messageShare{{URL: "https://115.com/s/a"}}}}
+	state := telegramState{Batch: &messageBatch{Mode: "direct", ShareSettings: shareTestSnapshot(t, b), UpdateID: 10, ChatID: 42, MessageID: 700, ThreadID: 99, Items: []messageShare{{URL: "https://115.com/s/a"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}

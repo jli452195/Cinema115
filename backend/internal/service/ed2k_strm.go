@@ -5,9 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"path"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -30,6 +28,13 @@ type ED2KSTRMStore interface {
 	SaveED2KSTRMCache(context.Context, model.ED2KSTRMCache) error
 	SaveED2KSTRMResource(context.Context, model.ED2KSTRMResource) error
 	ListED2KSTRMResources(context.Context) ([]model.ED2KSTRMResource, error)
+	ListED2KSTRMTargets(context.Context) ([]model.ED2KSTRMTarget, error)
+	SaveED2KSTRMTarget(context.Context, model.ED2KSTRMTarget) error
+	DeleteED2KSTRMTarget(context.Context, string) error
+	ListED2KSTRMTasks(context.Context) ([]model.ED2KSTRMTask, error)
+	SaveED2KSTRMTask(context.Context, model.ED2KSTRMTask) error
+	DeleteED2KSTRMTask(context.Context, string) error
+	SaveED2KSTRMImport(context.Context, []model.ED2KSTRMResource, []model.ED2KSTRMTask) error
 }
 
 type ED2KSTRMClient interface {
@@ -61,6 +66,8 @@ type ED2KSTRMService struct {
 	Logs      *GenerationLogs
 	mu        sync.Mutex
 	resources map[string]model.ED2KSTRMResource
+	targets   map[string]model.ED2KSTRMTarget
+	tasks     map[string]model.ED2KSTRMTask
 	pinned    map[string]P115Account
 	active    string
 	wake      chan struct{}
@@ -72,9 +79,25 @@ func NewED2KSTRMService(ctx context.Context, store ED2KSTRMStore, accounts *P115
 	if err != nil {
 		return nil, err
 	}
+	targets, err := store.ListED2KSTRMTargets(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tasks, err := store.ListED2KSTRMTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
 	s := &ED2KSTRMService{Store: store, Accounts: accounts, Client: client, Cloud: cloud, Downloads: downloads, Root: root, resources: make(map[string]model.ED2KSTRMResource, len(rows)), pinned: make(map[string]P115Account), wake: make(chan struct{}, 1)}
 	for _, v := range rows {
 		s.resources[ed2kResourceKey(v.Hash, v.Size)] = v
+	}
+	s.targets = make(map[string]model.ED2KSTRMTarget, len(targets))
+	for _, v := range targets {
+		s.targets[v.ID] = v
+	}
+	s.tasks = make(map[string]model.ED2KSTRMTask, len(tasks))
+	for _, v := range tasks {
+		s.tasks[v.ID] = v
 	}
 	return s, nil
 }
@@ -119,34 +142,62 @@ func (s *ED2KSTRMService) SaveSettings(ctx context.Context, v model.ED2KSTRMSett
 		return v, err
 	}
 	v.BaseURL = base
-	v.OutputDir = strings.TrimSpace(v.OutputDir)
-	output, err := ResolveOutputDirectory(s.Root, v.OutputDir)
-	if err != nil {
-		return v, err
-	}
-	if v.OutputDir == "." {
-		return v, generationInputError("请为 ED2K STRM 设置独立的相对输出目录")
-	}
-	if reader, ok := s.Store.(interface {
-		ListDriveSTRM(context.Context) ([]model.DriveSTRM, error)
-	}); ok {
-		mappings, err := reader.ListDriveSTRM(ctx)
+	v.CacheCID = strings.TrimSpace(v.CacheCID)
+	if v.CacheCID == "" {
+		v.CacheAccountID, v.CachePath = "", ""
+	} else {
+		a, err := s.account()
 		if err != nil {
 			return v, err
 		}
-		for _, m := range mappings {
-			otherOutput, err := ResolveOutputDirectory(s.Root, m.OutputDir)
-			if err != nil {
-				return v, err
-			}
-			if mediaWithin(output, otherOutput) || mediaWithin(otherOutput, output) {
-				return v, generationInputError("ED2K STRM 输出目录不能与网盘目录 STRM 重叠")
-			}
+		if err := validateED2KCacheSettings(v, a); err != nil {
+			return v, err
+		}
+		if s.Client == nil {
+			return v, generationInputError("主网盘目录服务尚未就绪")
+		}
+		checkCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		dir, err := s.Client.ReadDirectory(checkCtx, v.CacheCID, a.Cookie)
+		cancel()
+		if err != nil {
+			return v, fmt.Errorf("核验主网盘缓存目录: %w", err)
+		}
+		if dir.CID != v.CacheCID || validateP115TargetDirectory(dir.CID, dir.Path) != nil {
+			return v, generationInputError("无法确认所选缓存目录，请刷新目录后重新选择")
+		}
+		v.CachePath = dir.Path
+		current, err := s.account()
+		if err != nil {
+			return v, err
+		}
+		if ed2kCredentialScope(current) != ed2kCredentialScope(a) {
+			return v, generationInputError("主账号或登录凭据已变化，请重新选择缓存目录")
 		}
 	}
 	return v, s.Store.SaveED2KSTRMSettings(ctx, v)
 }
 
+// CheckCacheReady 只检查本地配置，不因刷新管理页面访问网盘。
+func (s *ED2KSTRMService) CheckCacheReady(settings model.ED2KSTRMSettings) error {
+	a, err := s.account()
+	if err != nil {
+		return err
+	}
+	return validateED2KCacheSettings(settings, a)
+}
+
+func validateED2KCacheSettings(settings model.ED2KSTRMSettings, a P115Account) error {
+	if settings.CacheCID == "" {
+		return nil
+	}
+	if settings.CacheAccountID != a.ID {
+		return generationInputError("主账号已变化，请重新选择 ED2K 缓存目录")
+	}
+	if err := validateP115TargetDirectory(settings.CacheCID, settings.CachePath); err != nil {
+		return generationInputError("ED2K 缓存目录无效，请重新选择")
+	}
+	return nil
+}
 func (s *ED2KSTRMService) List() []model.ED2KSTRMResource {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -180,68 +231,6 @@ func (s *ED2KSTRMService) sourceAccount(ctx context.Context) (P115Account, error
 	return s.account()
 }
 
-func (s *ED2KSTRMService) Import(ctx context.Context, links []string) ([]model.ED2KSTRMResource, error) {
-	if len(links) < 1 || len(links) > 50 {
-		return nil, generationInputError("一次可导入 1 至 50 条 ED2K 链接")
-	}
-	claims := make([]strm.ED2K, 0, len(links))
-	for _, raw := range links {
-		v, err := parseED2KImport(raw)
-		if err != nil {
-			return nil, err
-		}
-		claims = append(claims, v)
-	}
-	settings, err := s.Store.GetED2KSTRMSettings(ctx)
-	if errors.Is(err, storage.ErrNotFound) {
-		return nil, generationInputError("请先保存 ED2K STRM 基础设置")
-	}
-	if err != nil {
-		return nil, err
-	}
-	a, err := s.account()
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]model.ED2KSTRMResource, 0, len(claims))
-	seen := make(map[string]bool, len(claims))
-	for _, claim := range claims {
-		key := ed2kResourceKey(claim.Hash, claim.Size)
-		v, exists := s.resources[key]
-		if !exists {
-			now := time.Now().UTC()
-			v = model.ED2KSTRMResource{Hash: claim.Hash, Size: claim.Size, Name: claim.Name, AccountID: a.ID, UID: a.UID, AccountRevision: a.Revision, CredentialScope: ed2kCredentialScope(a), Settings: settings, Status: "queued", CacheState: "unknown", Stage: "locate", Message: "已排队，等待创建缓存并下载", CreatedAt: now, UpdatedAt: now}
-		}
-		if claim.Name != v.Name && !slices.Contains(v.Aliases, claim.Name) && len(v.Aliases) < 16 {
-			v.Aliases = append(v.Aliases, claim.Name)
-		}
-		if !exists || len(v.Aliases) != len(s.resources[key].Aliases) {
-			if err := s.Store.SaveED2KSTRMResource(ctx, v); err != nil {
-				return out, err
-			}
-			s.resources[key] = v
-		}
-		if !exists {
-			s.pinned[key] = a
-		}
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, v)
-		} else {
-			for i := range out {
-				if ed2kResourceKey(out[i].Hash, out[i].Size) == key {
-					out[i] = v
-					break
-				}
-			}
-		}
-	}
-	s.notify()
-	return out, nil
-}
-
 func (s *ED2KSTRMService) notify() {
 	select {
 	case s.wake <- struct{}{}:
@@ -250,9 +239,13 @@ func (s *ED2KSTRMService) notify() {
 }
 
 func (s *ED2KSTRMService) Request(ctx context.Context, hash string, size int64, check bool) (model.ED2KSTRMResource, error) {
-	key := ed2kResourceKey(hash, size)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.requestLocked(ctx, hash, size, check)
+}
+
+func (s *ED2KSTRMService) requestLocked(ctx context.Context, hash string, size int64, check bool) (model.ED2KSTRMResource, error) {
+	key := ed2kResourceKey(hash, size)
 	v, ok := s.resources[key]
 	if !ok {
 		return v, storage.ErrNotFound
@@ -269,11 +262,24 @@ func (s *ED2KSTRMService) Request(ctx context.Context, hash string, size int64, 
 	}
 	// 仅显式操作允许接受同一账号的新凭据；已经执行的未知写入仍只核对原结果。
 	v.AccountRevision, v.CredentialScope = a.Revision, ed2kCredentialScope(a)
-	s.pinned[key] = a
 	if v.Stage != "submit_pending" && v.Stage != "upload_pending" && v.Stage != "waiting" {
 		if check {
 			v.Stage = "check"
 		} else {
+			pending, err := s.cacheDirectoryPending(ctx, v)
+			if err != nil {
+				return v, err
+			}
+			if !pending {
+				settings, err := s.Store.GetED2KSTRMSettings(ctx)
+				if err != nil {
+					return v, err
+				}
+				if err := validateED2KCacheSettings(settings, a); err != nil {
+					return v, err
+				}
+				v.CacheTargetCID, v.CacheTargetPath, v.CacheParentCID = settings.CacheCID, settings.CachePath, ""
+			}
 			v.Stage = "locate"
 		}
 	}
@@ -285,6 +291,7 @@ func (s *ED2KSTRMService) Request(ctx context.Context, hash string, size int64, 
 		return v, err
 	}
 	s.resources[key] = v
+	s.pinned[key] = a
 	s.notify()
 	return v, nil
 }
@@ -310,6 +317,11 @@ func (s *ED2KSTRMService) Run(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
+		}
+		if progress, err := s.advanceExport(ctx); err != nil {
+			return err
+		} else if progress {
+			continue
 		}
 		v, ok := s.pick()
 		if ok {
@@ -455,6 +467,9 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 		}
 	}
 	if err := s.ensureDirectory(ctx, v, a); err != nil {
+		if errors.Is(err, ErrGenerationInput) {
+			v.Status = "blocked"
+		}
 		return err
 	}
 	if v.SHA1 != "" && s.Playback != nil {
@@ -467,7 +482,11 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 	if err := s.save(ctx, *v); err != nil {
 		return err
 	}
-	_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: a.ID, TargetCID: v.CacheCID, TargetPath: "/ED2K缓存"}, a, ed2kLink(*v))
+	targetPath := "/ED2K缓存"
+	if v.CacheTargetPath != "" {
+		targetPath = path.Join(v.CacheTargetPath, "ed2k-"+v.Hash+"-"+strconv.FormatInt(v.Size, 10))
+	}
+	_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: a.ID, TargetCID: v.CacheCID, TargetPath: targetPath}, a, ed2kLink(*v))
 	if err != nil {
 		if CloudDownloadUncertain(err) {
 			v.Status = "uncertain"
@@ -479,7 +498,7 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 		return s.save(ctx, *v)
 	}
 	v.Stage = "waiting"
-	v.Message = "115 云下载中，文件可读取后自动生成 STRM"
+	v.Message = "115 云下载中，等待核验文件资料"
 	v.NextRunAt = time.Now().UTC().Add(5 * time.Second)
 	return s.save(ctx, *v)
 }
@@ -574,11 +593,7 @@ func (s *ED2KSTRMService) ready(ctx context.Context, v *model.ED2KSTRMResource, 
 			return err
 		}
 	}
-	if err := s.write(ctx, v); err != nil {
-		v.Stage = "locate"
-		return err
-	}
-	v.Status, v.Stage, v.Message = "ready", "ready", "STRM 已生成，缓存可用"
+	v.Status, v.Stage, v.Message = "ready", "ready", "上次核验缓存可用"
 	v.Attempts = 0
 	v.NextRunAt = time.Time{}
 	if err := s.save(ctx, *v); err != nil {
@@ -587,40 +602,5 @@ func (s *ED2KSTRMService) ready(ctx context.Context, v *model.ED2KSTRMResource, 
 	if s.Logs != nil {
 		s.Logs.Append("STRM", "ED2K "+v.Hash[:8], "ED2K STRM", "INFO", "资源已就绪："+safeSTRMName(v.Name))
 	}
-	return nil
-}
-
-func (s *ED2KSTRMService) write(ctx context.Context, v *model.ED2KSTRMResource) error {
-	directory, err := ResolveOutputDirectory(s.Root, v.Settings.OutputDir)
-	if err != nil {
-		return err
-	}
-	link, err := strm.ED2KURL(v.Settings.BaseURL, strm.ED2K{Hash: v.Hash, SHA1: v.SHA1, Size: v.Size, Name: v.Name})
-	if err != nil {
-		return err
-	}
-	rel := path.Join(v.Hash+"-"+strconv.FormatInt(v.Size, 10), safeSTRMName(strings.TrimSuffix(v.Name, path.Ext(v.Name)))+".strm")
-	destination := filepath.Join(directory, filepath.FromSlash(rel))
-	if err := ensureSTRMDirectory(filepath.Dir(destination)); err != nil {
-		return err
-	}
-	content := link + "\n"
-	if info, err := os.Lstat(destination); err == nil {
-		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			return generationInputError("STRM 输出路径被其他文件占用")
-		}
-		if v.STRMPath != path.Join(v.Settings.OutputDir, rel) {
-			old, err := os.ReadFile(destination)
-			if err != nil || string(old) != content {
-				return generationInputError("不会覆盖其他来源的 STRM 文件")
-			}
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := writeSTRM(ctx, destination, content); err != nil {
-		return err
-	}
-	v.STRMPath = path.Join(v.Settings.OutputDir, rel)
 	return nil
 }

@@ -60,7 +60,7 @@ func TestTelegramHiddenLinks(t *testing.T) {
 				if caption {
 					message = &telegramMessage{Caption: tc.text, CaptionEntities: entities}
 				}
-				if got := parseTelegramMessage(message); !reflect.DeepEqual(got, tc.want) {
+				if got := parseTelegramResources(message).Shares; !reflect.DeepEqual(got, tc.want) {
 					t.Fatalf("caption=%v, 提取结果不正确：%+v", caption, got)
 				}
 			}
@@ -79,12 +79,63 @@ func TestInvalidTelegramEntityOffsets(t *testing.T) {
 		{Type: "text_link", Offset: int(^uint(0) >> 1), Length: int(^uint(0) >> 1)},
 	} {
 		entity.URL = "https://115.com/s/invalid"
-		if got := parseTelegramMessage(&telegramMessage{Caption: text, CaptionEntities: []telegramEntity{entity}}); len(got) != 0 {
+		if got := parseTelegramResources(&telegramMessage{Caption: text, CaptionEntities: []telegramEntity{entity}}).Shares; len(got) != 0 {
 			t.Fatal("非法偏移量被当作链接", got)
 		}
 	}
 	valid := testLinkEntity(text, "获取链接", "https://115.com/s/a")
-	if got := parseTelegramMessage(&telegramMessage{Caption: text, CaptionEntities: []telegramEntity{valid, valid}}); len(got) != 1 {
+	if got := parseTelegramResources(&telegramMessage{Caption: text, CaptionEntities: []telegramEntity{valid, valid}}).Shares; len(got) != 1 {
 		t.Fatal("重叠实体被重复提取", got)
+	}
+}
+
+func TestTelegramResourcesRespectOuterLinkAndIndependentNeighbors(t *testing.T) {
+	const share = "https://115.com/s/abc"
+	magnetShare := resourceMagnetLink + "&dn=" + share + "&tr=" + share
+	magnetED2K := resourceMagnetLink + "&dn=" + botED2KLink
+	ed2kShare := "ed2k://|file|" + share + ".mkv|123|0123456789abcdef0123456789abcdef|/"
+	ed2kMagnet := "ed2k://|file|" + resourceMagnetLink + ".mkv|123|0123456789abcdef0123456789abcdef|/"
+	shareMagnet := share + "?next=" + resourceMagnetLink
+	shareED2K := share + "?next=" + botED2KLink
+	for _, tc := range []struct {
+		name, text string
+		cloud      []string
+		shares     []messageShare
+		hasMagnet  bool
+	}{
+		{name: "磁力名称和tracker内含分享", text: magnetShare, cloud: []string{magnetShare}, hasMagnet: true},
+		{name: "磁力名称内含ED2K", text: magnetED2K, cloud: []string{magnetED2K}, hasMagnet: true},
+		{name: "ED2K文件名内含分享", text: ed2kShare, cloud: []string{ed2kShare}},
+		{name: "ED2K文件名内含磁力", text: ed2kMagnet, cloud: []string{ed2kMagnet}},
+		{name: "分享查询内含磁力", text: shareMagnet, shares: []messageShare{{URL: shareMagnet}}},
+		{name: "分享查询内含ED2K", text: shareED2K, shares: []messageShare{{URL: shareED2K}}},
+		{name: "磁力后独立分享", text: resourceMagnetLink + "\n" + share, cloud: []string{resourceMagnetLink}, shares: []messageShare{{URL: share}}, hasMagnet: true},
+		{name: "分享后独立磁力", text: share + "\n" + resourceMagnetLink, cloud: []string{resourceMagnetLink}, shares: []messageShare{{URL: share}}, hasMagnet: true},
+		{name: "嵌套分享不吞掉独立分享和提取码", text: ed2kShare + "\n" + share + " 提取码：aaaa", cloud: []string{ed2kShare}, shares: []messageShare{{URL: share, Password: "aaaa"}}},
+		{name: "嵌套磁力不吞掉独立磁力", text: shareMagnet + "\n" + resourceMagnetLink, cloud: []string{resourceMagnetLink}, shares: []messageShare{{URL: shareMagnet}}, hasMagnet: true},
+		{name: "独立云资源保留消息顺序", text: botED2KLink + "\n" + resourceMagnetLink, cloud: []string{botED2KLink, resourceMagnetLink}, hasMagnet: true},
+	} {
+		for _, caption := range []bool{false, true} {
+			t.Run(tc.name+map[bool]string{false: "/文本", true: "/图文"}[caption], func(t *testing.T) {
+				message := &telegramMessage{Text: tc.text}
+				if caption {
+					message.Text, message.Caption = "", tc.text
+				}
+				got := parseTelegramResources(message)
+				if len(got.CloudLinks) != len(tc.cloud) || len(got.Shares) != len(tc.shares) || got.HasMagnet != tc.hasMagnet {
+					t.Fatalf("嵌套协议被当作独立资源或相邻资源被遗漏：got=%+v wantCloud=%v wantShares=%v hasMagnet=%t", got, tc.cloud, tc.shares, tc.hasMagnet)
+				}
+				for i, link := range tc.cloud {
+					if got.CloudLinks[i] != link {
+						t.Fatalf("云资源内容或顺序错误：got=%v want=%v", got.CloudLinks, tc.cloud)
+					}
+				}
+				for i, item := range tc.shares {
+					if got.Shares[i] != item {
+						t.Fatalf("分享地址或相邻提取码错误：got=%v want=%v", got.Shares, tc.shares)
+					}
+				}
+			})
+		}
 	}
 }

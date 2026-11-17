@@ -1,5 +1,6 @@
 // End-to-end interaction with mocked APIs: never sends Telegram messages or writes to 115.
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
+const { selectOption } = require('./select-menu-helpers.cjs')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async () => {
  const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
@@ -7,11 +8,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   page.setDefaultTimeout(10000)
   await page.addInitScript(() => { localStorage.setItem('admin_token', 'mock'); localStorage.setItem('cinema115-theme', 'light') })
-  const errors = [], searches = [], writes = []
+  const errors = [], searches = [], writes = [], ed2kRequests = []
   page.on('pageerror', e => errors.push(e.message))
   page.on('console', m => { if (m.text().includes('[Vue warn]')) errors.push(m.text()) })
   const channels = [{ id: '11', title: '115网盘热更频道' }, { id: '12', title: '爱影热更频道' }]
   const ed2k = 'ed2k://|file|Movie.mkv|123|0123456789abcdef0123456789abcdef|/'
+  let ed2kTargets = [{ id: 'ed2k-movie', name: '电影', outputDir: 'ed2k/电影' }, { id: 'ed2k-tv', name: '剧集', outputDir: 'ed2k/剧集' }]
   const first = { id: '11:10', title: '测试电影', metadata: { episode: 'S01E13', specs: ['2160p', 'HDR', 'HEVC'], size: '18.1 GB' }, text: '测试电影 2160p\n4K HDR\nhttps://115.com/s/example?password=abcd', channel: channels[0], sourceUrl: 'https://t.me/c/11/10', postedAt: '2026-10-27T01:00:00Z', links: [{ type: '115', url: 'https://115.com/s/example?password=abcd' }] }
   const second = { id: '12:20', title: '测试电影', text: '测试电影 1080p\n' + ed2k, channel: channels[1], sourceUrl: 'https://t.me/c/12/20', postedAt: '2026-10-26T01:00:00Z', links: [{ type: 'ed2k', url: ed2k, metadata: { specs: ['1080p', 'HEVC'], size: '1.2 GiB' } }] }
   let failMore = false, expired = false, holdSearch = false, releaseSearch, uncertainDownload = true, configReady = true, rejectED2K = true
@@ -36,11 +38,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     if (uncertainDownload) return route.fulfill({ status: 504, body: '', contentType: 'text/plain' })
     return route.fulfill({ json: { accepted: true } })
    }
+   if (p === '/api/admin/p115/ed2k-strm') return route.fulfill({ json: { settings: { baseUrl: 'http://nas' }, settingsSaved: true, accountReady: true, primaryAccountId: 'main', targets: ed2kTargets, tasks: [], resources: [] } })
    if (p === '/api/admin/p115/ed2k-strm/imports') {
-    assert.deepEqual(req.postDataJSON(), { links: [ed2k] })
+    const body = req.postDataJSON(); ed2kRequests.push(body)
+    assert.deepEqual(body.links, [ed2k]); assert.ok(ed2kTargets.some(target => target.id === body.targetId)); assert.match(body.requestId, /^[a-f0-9-]{36}$/)
     if (rejectED2K) return route.fulfill({ status: 409, json: { error: '请先保存 ED2K STRM 基础设置' } })
     writes.push({ path: p, body: req.postDataJSON() })
-    return route.fulfill({ status: 202, json: { resources: [{ hash: '0123456789abcdef0123456789abcdef', size: 123, name: 'Movie.mkv', status: 'queued' }] } })
+    return route.fulfill({ status: 202, json: { resources: [{ hash: '0123456789abcdef0123456789abcdef', size: 123, name: 'Movie.mkv', status: 'queued' }], tasks: [] } })
    }
    if (p === '/api/admin/p115/share/automation-config') return route.fulfill({ json: { settings: { accountId: 'main', generation: { baseUrl: 'http://nas', outputDir: '/strm', videoExtensions: '.mkv', recursive: true } } } })
    if (p === '/api/admin/p115/share/generation-runs' && req.method() === 'POST') {
@@ -90,13 +94,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByRole('button', { name: '已生成', exact: true }).waitFor()
   assert.equal(writes[1].body.inputs[0].url, first.links[0].url.replace('115.com', '115cdn.com'))
   await ed.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
+  await ed.getByText('请选择输出目录，然后提交 ED2K STRM。', { exact: false }).waitFor()
+  assert.equal(ed2kRequests.length, 0, '多个目录不能静默选择写入目标')
+  await selectOption(ed.getByRole('combobox', { name: 'ED2K STRM 输出目录', exact: true }), 'ed2k-tv')
+  await ed.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
   await ed.getByText('请先保存 ED2K STRM 基础设置', { exact: false }).waitFor()
   assert.equal(await ed.getByRole('link', { name: '前往 ED2K STRM 配置', exact: true }).getAttribute('href'), '/115/ed2k-strm')
   rejectED2K = false
   await ed.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
   await ed.getByRole('button', { name: '已接收', exact: true }).waitFor()
   assert.equal(await ed.getByRole('button', { name: '已接收', exact: true }).isDisabled(), true)
-  assert.deepEqual(writes[2], { path: '/api/admin/p115/ed2k-strm/imports', body: { links: [ed2k] } })
+  assert.equal(writes[2].path, '/api/admin/p115/ed2k-strm/imports'); assert.equal(writes[2].body.targetId, 'ed2k-tv')
+  assert.equal(ed2kRequests[0].requestId, ed2kRequests[1].requestId, '失败重试应复用请求编号')
   await dialog.getByRole('searchbox', { name: '筛选频道资源' }).fill('1080p')
   assert.equal(await dialog.locator('.tg-resource').count(), 1)
   await dialog.getByRole('searchbox').fill('')
@@ -108,6 +117,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
   assert.equal(await trigger.evaluate(el => document.activeElement === el), true)
   await open()
+  ed2kTargets = [ed2kTargets[0]]
+  await dialog.getByRole('button', { name: '加载更多资源' }).click()
+  const singleED2K = dialog.locator('.tg-resource').filter({ hasText: '1080p' })
+  await singleED2K.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
+  await singleED2K.getByRole('button', { name: '已接收', exact: true }).waitFor()
+  assert.equal(ed2kRequests.at(-1).targetId, 'ed2k-movie', '单目录应自动选中')
+  assert.notEqual(ed2kRequests.at(-1).requestId, ed2kRequests[0].requestId)
+  await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' }); await open()
   expired = true
   await dialog.getByRole('button', { name: '加载更多资源' }).click()
   await dialog.getByRole('button', { name: '重新搜索', exact: true }).waitFor()

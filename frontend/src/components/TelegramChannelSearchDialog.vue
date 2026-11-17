@@ -4,12 +4,15 @@ import { IconCopy, IconDownload, IconExternalLink, IconFile, IconRefresh, IconSe
 import FloatingDialog from './AnimeFloatingDialog.vue'
 import ShareTransferDirectory from './ShareTransferDirectory.vue'
 import ShareTransferButton from './ShareTransferButton.vue'
+import SelectMenu from './SelectMenu.vue'
 import { useShareTransfer } from '../composables/useShareTransfer'
 import { telegramUserRequest, TelegramSearchError, type TelegramChannelConfig, type TelegramChannelLink, type TelegramChannelResource, type TelegramChannelSearchResult } from '../types/telegramUser'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
 import { createED2KSTRMAPI } from '../lib/ed2k-strm-api'
+import type { ED2KSTRMTarget } from '../types/ed2kSTRM'
+import { ed2kRequestID } from '../utils/ed2kSTRM'
 import { copyText } from '../utils/clipboard'
 import telegramIcon from '../assets/telegram/telegram.svg'
 
@@ -22,7 +25,10 @@ const transfers = useShareTransfer(props.token, lifecycle.signal)
 const shares = useShareSTRMRun(props.token, lifecycle.signal, { scope: `tg-channel/${props.kind}/${props.tmdbId}` })
 const cloudPending = ref<Record<string, boolean>>({}), cloudStatus = ref<Record<string, { message: string; blocked: boolean; success: boolean; needsConfig?: boolean }>>({})
 const ed2kSTRM = createED2KSTRMAPI(() => props.token, lifecycle.signal)
-const ed2kPending = ref<Record<string, boolean>>({}), ed2kStatus = ref<Record<string, { message: string; success: boolean }>>({})
+const ed2kPending = ref<Record<string, boolean>>({}), ed2kStatus = ref<Record<string, { message: string; success: boolean; needsSelection?: boolean }>>({})
+const ed2kTargets = ref<ED2KSTRMTarget[]>([]), ed2kTargetIDs = ref<Record<string, string>>({})
+const ed2kAttempts = new Map<string, { targetId: string; requestId: string }>()
+const ed2kTargetOptions = computed(() => ed2kTargets.value.map(target => ({ value: target.id, label: target.name })))
 const retryAt = ref(0), clock = ref(Date.now())
 let retryTimer: ReturnType<typeof setInterval> | undefined
 const retrySeconds = computed(() => Math.max(0, Math.ceil((retryAt.value - clock.value) / 1000)))
@@ -92,11 +98,31 @@ async function generateED2K(item: TelegramChannelResource, link: TelegramChannel
   if (link.type !== 'ed2k' || ed2kPending.value[id] || ed2kStatus.value[id]?.success) return
   ed2kPending.value[id] = true; delete ed2kStatus.value[id]
   try {
-    const value = await ed2kSTRM.imports([link.url])
-    if (!lifecycle.signal.aborted) ed2kStatus.value[id] = { message: value.resources.every(resource => !!resource.strmPath) ? '已复用资源的 STRM，可在 ED2K STRM 查看。' : '已接收 ED2K，后台核验文件后生成 STRM。', success: true }
+    const state = await ed2kSTRM.state()
+    if (lifecycle.signal.aborted) return
+    ed2kTargets.value = state.targets
+    if (!state.accountReady) throw new Error('请先在 115 助手登录主账号')
+    if (!state.settingsSaved) throw new Error('请先保存 ED2K STRM 播放地址')
+    if (!state.targets.length) throw new Error('请先添加 ED2K STRM 输出目录')
+    const targetId = state.targets.length === 1 ? state.targets[0]!.id : ed2kTargetIDs.value[id]
+    if (!targetId || !state.targets.some(target => target.id === targetId)) {
+      ed2kStatus.value[id] = { message: '请选择输出目录，然后提交 ED2K STRM。', success: false, needsSelection: true }
+      return
+    }
+    ed2kTargetIDs.value[id] = targetId
+    let attempt = ed2kAttempts.get(id)
+    if (attempt?.targetId !== targetId) { attempt = { targetId, requestId: ed2kRequestID() }; ed2kAttempts.set(id, attempt) }
+    await ed2kSTRM.imports({ targetId, requestId: attempt.requestId, links: [link.url] })
+    ed2kAttempts.delete(id)
+    if (!lifecycle.signal.aborted) ed2kStatus.value[id] = { message: '已接收生成任务，文件资料就绪后写入所选目录。', success: true }
   } catch (reason) {
     if (!lifecycle.signal.aborted) ed2kStatus.value[id] = { message: reason instanceof Error ? reason.message : '提交 ED2K STRM 失败', success: false }
   } finally { delete ed2kPending.value[id] }
+}
+function chooseED2KTarget(id: string, targetId: string) {
+  if (ed2kPending.value[id]) return
+  ed2kTargetIDs.value[id] = targetId
+  delete ed2kStatus.value[id]
 }
 async function copy(link: TelegramChannelLink) {
   try { await copyText(link.url); copied.value = link.url }
@@ -132,8 +158,9 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
             <div v-if="link.metadata" class="tg-link-specs"><span v-if="link.metadata.episode" class="tg-episode" aria-label="发布季集">{{ link.metadata.episode }}</span><p v-if="link.metadata.specs?.length || link.metadata.size" class="tg-specs" aria-label="资源规格"><span v-for="spec in link.metadata.specs" :key="spec">{{ spec }}</span><span v-if="link.metadata.size" class="tg-size">{{ link.metadata.size }}</span></p></div>
             <div class="tg-link-heading"><span>{{ link.type === '115' ? '115 分享' : 'ED2K' }}{{ item.links.length > 1 ? ` ${index + 1}` : '' }}</span><button class="tg-copy" :aria-label="`复制${link.type === '115' ? '分享' : 'ED2K'}链接`" @click="copy(link)"><IconCopy :size="15" aria-hidden="true"/>{{ copied === link.url ? '已复制' : '复制' }}</button><a v-if="link.type === '115'" :href="link.url" target="_blank" rel="noopener noreferrer" class="tg-copy">打开分享<IconExternalLink :size="13" aria-hidden="true" /></a></div>
             <div class="tg-actions"><template v-if="link.type === '115'"><ShareTransferButton :transfer="transfers" :resource="{ load: async () => [{ url: link.url }] }" /><button class="resource-action-button resource-primary-button" :disabled="shares.pending.value[linkID(item, link)] || shares.statuses.value[linkID(item, link)]?.success" :aria-busy="!!shares.pending.value[linkID(item, link)]" :title="shares.statuses.value[linkID(item, link)]?.message" @click="shares.submit(shareResource(item, link))"><IconFile :size="16" aria-hidden="true"/><span class="resource-strm-label">{{ shares.pending.value[linkID(item, link)] ? '处理中…' : shares.statuses.value[linkID(item, link)]?.success ? '已生成' : '分享 STRM' }}</span></button></template><template v-else><button class="tg-button" :disabled="cloudPending[linkID(item, link)] || cloudStatus[linkID(item, link)]?.blocked" @click="download(item, link)"><IconDownload :size="16" aria-hidden="true"/>{{ cloudPending[linkID(item, link)] ? '提交中…' : cloudStatus[linkID(item, link)]?.success ? '已提交' : cloudStatus[linkID(item, link)]?.blocked ? '待核对' : '115 云下载' }}</button><button class="tg-button tg-primary" :disabled="ed2kPending[linkID(item, link)] || ed2kStatus[linkID(item, link)]?.success" :aria-busy="!!ed2kPending[linkID(item, link)]" @click="generateED2K(item, link)"><IconFile :size="16" aria-hidden="true"/>{{ ed2kPending[linkID(item, link)] ? '提交中…' : ed2kStatus[linkID(item, link)]?.success ? '已接收' : 'ED2K STRM' }}</button></template></div>
+            <div v-if="link.type === 'ed2k' && ed2kTargets.length > 1" class="tg-ed2k-output"><span>STRM 输出目录</span><SelectMenu :model-value="ed2kTargetIDs[linkID(item, link)] || ''" :options="ed2kTargetOptions" label="ED2K STRM 输出目录" placeholder="选择输出目录" :disabled="ed2kPending[linkID(item, link)]" @update:model-value="value => chooseED2KTarget(linkID(item, link), value)" /></div>
             <p v-if="cloudStatus[linkID(item, link)]" role="status" class="tg-task-status">{{ cloudStatus[linkID(item, link)]?.message }} <RouterLink v-if="cloudStatus[linkID(item, link)]?.needsConfig" to="/115/cloud-download" @click="emit('close')">前往配置</RouterLink></p>
-            <p v-if="ed2kStatus[linkID(item, link)]" role="status" class="tg-task-status">{{ ed2kStatus[linkID(item, link)]?.message }} <RouterLink to="/115/ed2k-strm" @click="emit('close')">{{ ed2kStatus[linkID(item, link)]?.success ? '查看 ED2K STRM' : '前往 ED2K STRM 配置' }}</RouterLink></p>
+            <p v-if="ed2kStatus[linkID(item, link)]" role="status" class="tg-task-status">{{ ed2kStatus[linkID(item, link)]?.message }} <RouterLink v-if="!ed2kStatus[linkID(item, link)]?.needsSelection" to="/115/ed2k-strm" @click="emit('close')">{{ ed2kStatus[linkID(item, link)]?.success ? '查看 ED2K STRM' : '前往 ED2K STRM 配置' }}</RouterLink></p>
           </div>
           <details class="tg-message"><summary>消息内容</summary><p>{{ item.text }}</p></details>
         </li>
@@ -151,6 +178,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 .tg-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 7px 12px; border-radius: 9px; background: var(--search-dialog-secondary-background); color: var(--search-dialog-text); font-size: 12px; font-weight: 500; text-decoration: none; white-space: nowrap; }.tg-button.tg-primary { background: #2563eb; color: white; }.tg-button:disabled { opacity: .45; cursor: default; }.tg-button:focus-visible, .tg-copy:focus-visible, .tg-text:focus-visible, .tg-filter:focus-within, summary:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
 .tg-notice { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 12px; padding: 12px; border-radius: 10px; background: var(--search-dialog-card); font-size: 12px; line-height: 1.7; }.tg-error { color: #b91c1c; background: rgb(239 68 68 / .08); }.dark .tg-error { color: #fca5a5; }
 .tg-text { color: #2563eb; font-size: 12px; text-decoration: underline; }.dark .tg-text { color: #93c5fd; }.tg-results-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 12px; font-size: 12px; color: var(--search-dialog-muted); }
+.tg-ed2k-output { display: grid; gap: 5px; width: min(260px, 100%); flex-basis: 100%; margin-top: 8px; font-size: 12px; color: var(--search-dialog-muted); }
 .tg-results { display: grid; gap: 12px; }.tg-resource { min-width: 0; padding: 16px; border-radius: 14px; background: var(--search-dialog-card); }.tg-resource h4 { font-size: 14px; font-weight: 600; line-height: 1.7; overflow-wrap: anywhere; }.tg-resource-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 5px; font-size: 11px; color: var(--search-dialog-muted); }.tg-resource-meta a { display: inline-flex; gap: 4px; align-items: center; overflow-wrap: anywhere; }.tg-resource-meta a:hover { text-decoration: underline; }
 .tg-resource-title { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }.tg-resource-title h4 { flex: 1 1 180px; min-width: 0; }.tg-episode { display: inline-flex; padding: 3px 8px; border-radius: 6px; background: var(--search-dialog-tonal); color: var(--search-dialog-on-tonal); font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; max-width: 100%; }.tg-specs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px; margin-top: 7px; font-size: 12px; line-height: 1.7; color: var(--search-dialog-text); }.tg-specs span { overflow-wrap: anywhere; }.tg-size { color: var(--search-dialog-muted); font-variant-numeric: tabular-nums; }.tg-link-specs { flex-basis: 100%; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }.tg-link-specs .tg-specs { margin: 0; }
 .tg-link-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; margin-top: 12px; }.tg-link-heading { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--search-dialog-muted); }.tg-copy { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 6px; border-radius: 6px; font-size: 11px; }.tg-actions { display: flex; flex-wrap: wrap; gap: 8px; }.tg-task-status { flex-basis: 100%; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; color: var(--search-dialog-muted); }.tg-task-status a { text-decoration: underline; }

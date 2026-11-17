@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 72
+const schemaVersion = 73
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -589,6 +589,16 @@ PRAGMA user_version=30;`); err != nil {
 	}
 	if _, err := tx.ExecContext(ctx, ed2kSTRMSchema); err != nil {
 		return fmt.Errorf("创建 ED2K STRM 存储: %w", err)
+	}
+	if version < 73 {
+		// 输出目录从资源资料拆为独立配置，既有 STRM 文件不移动、不重新生成。
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO ed2k_strm_targets(id,record)
+SELECT 'default',json_object('id','default','name','默认目录','outputDir',json_extract(record,'$.outputDir'))
+FROM ed2k_strm_settings WHERE json_extract(record,'$.outputDir') IS NOT NULL AND json_extract(record,'$.outputDir')!='';
+UPDATE ed2k_strm_settings SET record=json_remove(record,'$.outputDir');
+UPDATE ed2k_strm_resources SET record=json_remove(record,'$.settings','$.resource.strmPath');`); err != nil {
+			return fmt.Errorf("拆分 ED2K 输出目录: %w", err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)

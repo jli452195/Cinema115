@@ -18,8 +18,7 @@ type shareTransferPreparer interface {
 
 var errTransferBatchResumed = errors.New("服务已恢复，但本批次启动时的凭据快照已丢失；未开始的链接已停止，请检查已提交结果后重新发送剩余链接")
 
-// Prepared executions hold credentials only in memory, never in the JSON state.
-// After a restart, started batches must not continue with newly read credentials.
+// 执行闭包仅在内存中固定凭据；重启后不得为已开始批次重新读取凭据。
 func (b *Telegram) cloudBatchSubmission(batch *messageBatch) (service.CloudDownloadSubmission, error) {
 	if batch.cloudSubmission != nil {
 		return batch.cloudSubmission, nil
@@ -34,7 +33,7 @@ func (b *Telegram) cloudBatchSubmission(batch *messageBatch) (service.CloudDownl
 		current, ok := b.currentCloudTarget(batch.CloudTargetID)
 		expected := TelegramTransferTarget{ID: batch.CloudTargetID, Name: batch.CloudTargetName,
 			AccountID: batch.CloudTarget.AccountID, TargetCID: batch.CloudTarget.TargetCID, TargetPath: batch.CloudTarget.TargetPath}
-		if !ok || !current.Ready || !sameCloudTarget(current, expected) {
+		if !ok || current.AssignedBotID != b.BotID || !current.Ready || !sameCloudTarget(current, expected) {
 			return nil, errors.New("转存目标已变化或不可用，请重新发送链接")
 		}
 	}
@@ -64,6 +63,11 @@ func (b *Telegram) shareBatchExecution(batch *messageBatch) (service.ShareLinkTr
 	}
 	if b.ShareTransfers == nil {
 		return nil, errors.New("115 分享转存服务尚未初始化")
+	}
+	expected := TelegramTransferTarget{ID: batch.ShareTarget.ID, Name: batch.ShareTarget.Name, AccountID: batch.ShareTarget.AccountID,
+		TargetCID: batch.ShareTarget.TargetCID, TargetPath: batch.ShareTarget.TargetPath, AssignedBotID: batch.ShareTarget.AssignedBotID}
+	if hint := b.resourceChoiceHint(resourceChoice{Kind: "share_transfer", ShareTarget: &expected}, ""); hint != "" {
+		return nil, errors.New(hint)
 	}
 	var execution service.ShareLinkTransferExecution
 	if preparer, ok := b.ShareTransfers.(shareTransferPreparer); ok {

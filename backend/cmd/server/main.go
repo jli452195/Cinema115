@@ -468,7 +468,6 @@ func main() {
 	}
 	ed2kSTRM.Playback, ed2kSTRM.Logs = playbackCache, generationLogs
 	shareAPI.ED2K = ed2kSTRM
-	httpapi.RegisterED2KSTRM(admin, ed2kSTRM, shareAPI.BaseURL)
 	httpapi.RegisterED2KPlayback(r, ed2kSTRM, shareAPI.MediaHTTP, generationLogs)
 	memberPlayback.Cache = playbackCache
 	auth.Members = memberPlayback
@@ -518,6 +517,7 @@ func main() {
 	}
 	telegram.CloudDownloads = cloudDownloads
 	telegram.ED2KSTRM = ed2kSTRM
+	httpapi.RegisterED2KSTRM(admin, ed2kSTRM, shareAPI.BaseURL, telegram.Refresh)
 	telegram.ShareTransfers = shareTransfers
 	telegram.CloudDownloadSettings = cloudDownloadSettings
 	telegram.ShareTransferSettings = shareTransferSettings

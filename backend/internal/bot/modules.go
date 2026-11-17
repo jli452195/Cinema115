@@ -14,6 +14,7 @@ var ErrModuleChanged = errors.New("功能模块分配已变化，请刷新后重
 var ErrModuleAssigned = errors.New("功能模块已分配给其他 Bot，请先解除分配")
 
 type TelegramModuleView struct {
+	Kind          string `json:"kind,omitempty"`
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Description   string `json:"description"`
@@ -39,6 +40,16 @@ func (h *Hub) Modules(ctx context.Context) ([]TelegramModuleView, error) {
 	if h.settings != nil {
 		settings := h.settings.Value()
 		setStaticModuleOwner(modules, "share_notifications", settings.BotID)
+		if settings.BotID != "" {
+			if _, err := h.settings.TelegramShareSettings(settings.BotID); err != nil {
+				for i := range modules {
+					if modules[i].ID == "share_notifications" {
+						modules[i].SetupHint = err.Error()
+						break
+					}
+				}
+			}
+		}
 	}
 	if h.Playback != nil && h.Playback.Pool != nil {
 		settings := h.Playback.Pool.Settings()
@@ -69,6 +80,11 @@ func (h *Hub) Modules(ctx context.Context) ([]TelegramModuleView, error) {
 			modules = append(modules, module)
 		}
 	}
+	if h.ED2KSTRM != nil {
+		for _, target := range h.ED2KSTRM.Targets() {
+			modules = append(modules, TelegramModuleView{ID: ed2kSTRMModuleID(target.ID), Kind: "ed2k_strm", Name: "ED2K STRM：" + target.Name, Description: "输出目录：" + target.OutputDir, AssignedBotID: target.AssignedBotID})
+		}
+	}
 	return modules, nil
 }
 
@@ -85,6 +101,13 @@ func cloudDownloadModuleID(targetID string) string { return "cloud_download:" + 
 
 func shareTransferModuleID(targetID string) string { return "share_transfer:" + targetID }
 
+func ed2kSTRMModuleID(targetID string) string { return "ed2k_strm:" + targetID }
+
+func ed2kSTRMTargetID(moduleID string) (string, bool) {
+	id, ok := strings.CutPrefix(moduleID, "ed2k_strm:")
+	return id, ok && id != ""
+}
+
 func cloudDownloadTargetID(moduleID string) (string, bool) {
 	id, ok := strings.CutPrefix(moduleID, "cloud_download:")
 	return id, ok && id != ""
@@ -93,25 +116,6 @@ func cloudDownloadTargetID(moduleID string) (string, bool) {
 func shareTransferTargetID(moduleID string) (string, bool) {
 	id, ok := strings.CutPrefix(moduleID, "share_transfer:")
 	return id, ok && id != ""
-}
-
-func (h *Hub) shareNotificationBotID() string {
-	if h.settings == nil {
-		return ""
-	}
-	return h.settings.Value().BotID
-}
-
-func (h *Hub) hasShareTransferTarget(botID string) bool {
-	if h.ShareTransferSettings == nil {
-		return false
-	}
-	for _, target := range h.ShareTransferSettings.Targets() {
-		if target.AssignedBotID == botID {
-			return true
-		}
-	}
-	return false
 }
 
 func (h *Hub) SetModule(ctx context.Context, moduleID, expectedBotID, botID string) error {
@@ -153,10 +157,6 @@ func (h *Hub) setModuleLocked(ctx context.Context, moduleID, expectedBotID, botI
 		if err != nil {
 			return false, err
 		}
-		_, isShareTransfer := shareTransferTargetID(moduleID)
-		if moduleID == "share_notifications" && h.hasShareTransferTarget(botID) || isShareTransfer && h.shareNotificationBotID() == botID {
-			return false, service.ErrTelegramModuleConflict
-		}
 	}
 
 	var bindErr error
@@ -185,7 +185,12 @@ func (h *Hub) setModuleLocked(ctx context.Context, moduleID, expectedBotID, botI
 		}
 		bindErr = h.Playback.Pool.BindNotificationBot(ctx, expectedBotID, botID)
 	default:
-		if targetID, ok := shareTransferTargetID(moduleID); ok {
+		if targetID, ok := ed2kSTRMTargetID(moduleID); ok {
+			if h.ED2KSTRM == nil {
+				return false, fmt.Errorf("%w：ED2K STRM 尚未初始化", ErrConfig)
+			}
+			bindErr = h.ED2KSTRM.AssignTarget(ctx, targetID, botID)
+		} else if targetID, ok := shareTransferTargetID(moduleID); ok {
 			if h.ShareTransferSettings == nil {
 				return false, fmt.Errorf("%w：115 分享转存设置尚未初始化", ErrConfig)
 			}

@@ -12,8 +12,6 @@ import (
 	"sync"
 )
 
-var ErrTelegramModuleConflict = errors.New("同一 Bot 不能同时处理分享 STRM 和 115 链接转存")
-
 // AutomationSettings 在服务端持久保存，网页和机器人读取同一份开关。
 type AutomationSettings struct {
 	AccountID          string        `json:"accountId"`
@@ -82,6 +80,33 @@ func (s *AutomationStore) ShareValue() AutomationSettings {
 	value := s.Value()
 	value.ParentCID, value.ParentPath = "0", "/"
 	return value
+}
+
+// TelegramShareSettings 仅检查本地配置，选择处理方式前不查询或写入网盘。
+// 即使暂不可用也返回当前快照，供选择入口展示目标并拒绝过期选择。
+func (s *AutomationStore) TelegramShareSettings(botID string) (AutomationSettings, error) {
+	if s == nil {
+		return AutomationSettings{}, generationInputError("分享 STRM 设置尚未初始化")
+	}
+	value := s.ShareValue()
+	value.Generation.URL, value.Generation.Password = "", ""
+	value.Generation.CID, value.Generation.Mode = "", ""
+	if botID == "" || value.BotID != botID || !value.TelegramEnabled {
+		return value, generationInputError("分享 STRM 的 Bot 分配已变化，请刷新后重试")
+	}
+	if s.ValidateAccount == nil {
+		return value, generationInputError("115 账号校验服务尚未初始化")
+	}
+	if value.AccountID == "" {
+		return value, generationInputError("请先配置并登录 115 主账号")
+	}
+	if err := s.ValidateAccount(value.AccountID); err != nil {
+		return value, fmt.Errorf("分享 STRM 主账号不可用: %w", err)
+	}
+	if err := ValidateGenerationOptions(s.root, value.Generation); err != nil {
+		return value, err
+	}
+	return value, nil
 }
 
 // ValidateCurrentAccount 校验当前主账号，不回退到小号。

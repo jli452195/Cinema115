@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"strm115/backend/internal/model"
 )
@@ -15,7 +16,10 @@ CREATE TABLE IF NOT EXISTS ed2k_strm_settings(id INTEGER PRIMARY KEY CHECK(id=1)
 CREATE TABLE IF NOT EXISTS ed2k_strm_cache(account_id TEXT PRIMARY KEY, record TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ed2k_strm_resources(hash TEXT NOT NULL, size INTEGER NOT NULL CHECK(size>0), sha1 TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, record TEXT NOT NULL, PRIMARY KEY(hash,size));
 CREATE INDEX IF NOT EXISTS ed2k_strm_content ON ed2k_strm_resources(sha1,size);
-CREATE INDEX IF NOT EXISTS ed2k_strm_status ON ed2k_strm_resources(status);`
+CREATE INDEX IF NOT EXISTS ed2k_strm_status ON ed2k_strm_resources(status);
+CREATE TABLE IF NOT EXISTS ed2k_strm_targets(id TEXT PRIMARY KEY, record TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS ed2k_strm_tasks(id TEXT PRIMARY KEY, status TEXT NOT NULL, updated_at TEXT NOT NULL, record TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ed2k_strm_task_status ON ed2k_strm_tasks(status,updated_at);`
 
 // 持久记录单独封装，避免任务凭据快照等内部字段出现在管理 API。
 type ed2kSTRMStored struct {
@@ -24,7 +28,9 @@ type ed2kSTRMStored struct {
 	UID              string                 `json:"uid"`
 	AccountRevision  uint64                 `json:"accountRevision"`
 	CredentialScope  string                 `json:"credentialScope"`
-	Settings         model.ED2KSTRMSettings `json:"settings"`
+	CacheTargetCID   string                 `json:"cacheTargetCID,omitempty"`
+	CacheTargetPath  string                 `json:"cacheTargetPath,omitempty"`
+	CacheParentCID   string                 `json:"cacheParentCID,omitempty"`
 	DirectoryPending bool                   `json:"directoryPending"`
 	FileID           string                 `json:"fileId"`
 	PickCode         string                 `json:"pickCode"`
@@ -78,7 +84,8 @@ func (s *Store) SaveED2KSTRMCache(ctx context.Context, v model.ED2KSTRMCache) er
 }
 
 func encodeED2KSTRM(v model.ED2KSTRMResource) (string, error) {
-	w := ed2kSTRMStored{Resource: v, AccountID: v.AccountID, UID: v.UID, AccountRevision: v.AccountRevision, CredentialScope: v.CredentialScope, Settings: v.Settings, DirectoryPending: v.DirectoryPending, FileID: v.FileID, PickCode: v.PickCode, Stage: v.Stage, Attempts: v.Attempts, NextRunAt: v.NextRunAt.Format("2006-01-02T15:04:05.999999999Z07:00")}
+	w := ed2kSTRMStored{Resource: v, AccountID: v.AccountID, UID: v.UID, AccountRevision: v.AccountRevision, CredentialScope: v.CredentialScope, DirectoryPending: v.DirectoryPending, FileID: v.FileID, PickCode: v.PickCode, Stage: v.Stage, Attempts: v.Attempts, NextRunAt: v.NextRunAt.Format(time.RFC3339Nano)}
+	w.CacheTargetCID, w.CacheTargetPath, w.CacheParentCID = v.CacheTargetCID, v.CacheTargetPath, v.CacheParentCID
 	raw, err := json.Marshal(w)
 	return string(raw), err
 }
@@ -90,7 +97,8 @@ func decodeED2KSTRM(raw string) (model.ED2KSTRMResource, error) {
 	}
 	v := w.Resource
 	v.AccountID, v.UID, v.AccountRevision, v.CredentialScope = w.AccountID, w.UID, w.AccountRevision, w.CredentialScope
-	v.Settings, v.DirectoryPending, v.FileID, v.PickCode = w.Settings, w.DirectoryPending, w.FileID, w.PickCode
+	v.CacheTargetCID, v.CacheTargetPath, v.CacheParentCID = w.CacheTargetCID, w.CacheTargetPath, w.CacheParentCID
+	v.DirectoryPending, v.FileID, v.PickCode = w.DirectoryPending, w.FileID, w.PickCode
 	v.Stage, v.Attempts = w.Stage, w.Attempts
 	if w.NextRunAt != "" {
 		if err := v.NextRunAt.UnmarshalText([]byte(w.NextRunAt)); err != nil {

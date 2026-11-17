@@ -29,7 +29,7 @@ type Hub struct {
 	Notifications         NotificationStore
 	CloudDownloads        *service.CloudDownloadService
 	ShareTransfers        *service.ShareLinkTransferService
-	ED2KSTRM              *service.ED2KSTRMService
+	ED2KSTRM              ED2KSTRMModule
 	Follows               *service.FollowService
 	Playback              *service.MemberPlaybackService
 	Anime                 *service.AnimeAdminService
@@ -55,17 +55,21 @@ func (h *Hub) Refresh() {
 func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
 	cloudTargets := h.cloudTargets(profile.ID)
 	shareTargets := h.shareTransferTargets(profile.ID)
-	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || len(cloudTargets) > 0 || len(shareTargets) > 0, Identity: profile.Identity}
+	ed2kTargets := h.ed2kSTRMTargets(profile.ID)
+	cfg := BotConfig{Token: profile.Token, AllowedChatIDs: profile.AllowedChatIDs, NotificationChatID: profile.NotificationChatID, Enabled: receiveShare || len(cloudTargets) > 0 || len(shareTargets) > 0 || len(ed2kTargets) > 0, Identity: profile.Identity}
 	m := &Manager{config: cfg, source: "web", wake: make(chan struct{}, 1)}
 	m.newWorker = func(value BotConfig) (*Telegram, error) {
 		worker, err := NewTelegram(value.Token, value.AllowedChatIDs, h.dataDir, h.generator, h.settings)
 		if worker != nil {
+			worker.BotID = profile.ID
 			worker.ShareEnabled = receiveShare
 			worker.CloudDownloads = h.CloudDownloads
 			worker.ShareTransfers = h.ShareTransfers
-			if h.ED2KSTRM != nil {
+			if h.ED2KSTRM != nil && len(ed2kTargets) > 0 {
 				worker.ED2KSTRM = h.ED2KSTRM
 			}
+			worker.ED2KSTRMTargets = append([]model.ED2KSTRMTarget(nil), ed2kTargets...)
+			worker.CurrentED2KSTRMTarget = func(id string) (model.ED2KSTRMTarget, bool) { return h.ed2kSTRMTarget(profile.ID, id) }
 			worker.CloudDownloadTargets = append([]TelegramTransferTarget{}, cloudTargets...)
 			worker.CurrentCloudTarget = func(id string) (TelegramTransferTarget, bool) { return h.cloudTarget(profile.ID, id) }
 			worker.ShareTransferTargets = append([]TelegramTransferTarget{}, shareTargets...)
@@ -75,6 +79,28 @@ func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
 	}
 	m.Logs, m.Notifications = h.Logs, h.Notifications
 	return m
+}
+
+func (h *Hub) ed2kSTRMTargets(botID string) []model.ED2KSTRMTarget {
+	if h.ED2KSTRM == nil || botID == "" {
+		return nil
+	}
+	targets := h.ED2KSTRM.Targets()
+	result := make([]model.ED2KSTRMTarget, 0, len(targets))
+	for _, target := range targets {
+		if target.AssignedBotID == botID {
+			result = append(result, target)
+		}
+	}
+	return result
+}
+
+func (h *Hub) ed2kSTRMTarget(botID, targetID string) (model.ED2KSTRMTarget, bool) {
+	if h.ED2KSTRM == nil || botID == "" {
+		return model.ED2KSTRMTarget{}, false
+	}
+	target, ok := h.ED2KSTRM.Target(targetID)
+	return target, ok && target.AssignedBotID == botID
 }
 
 func (h *Hub) cloudTargets(botID string) []TelegramTransferTarget {
@@ -299,7 +325,7 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 		wg.Add(1)
 		go func(m *Manager) { defer wg.Done(); m.RunNotifications(workerCtx) }(runtime)
 		profile, _ := h.profiles.Get(id)
-		if pollsMessages(profile, receiverID, len(h.cloudTargets(id)) > 0, len(h.shareTransferTargets(id)) > 0) {
+		if pollsMessages(profile, receiverID, len(h.cloudTargets(id)) > 0, len(h.shareTransferTargets(id)) > 0, len(h.ed2kSTRMTargets(id)) > 0) {
 			wg.Add(1)
 			go func(m *Manager) {
 				defer wg.Done()
@@ -320,8 +346,8 @@ func (h *Hub) runSnapshot(ctx context.Context) error {
 	}
 }
 
-func pollsMessages(profile BotProfile, receiverID string, cloudDownloadEnabled, shareTransferEnabled bool) bool {
-	return profile.ID == receiverID || cloudDownloadEnabled || shareTransferEnabled
+func pollsMessages(profile BotProfile, receiverID string, cloudDownloadEnabled, shareTransferEnabled, ed2kSTRMEnabled bool) bool {
+	return profile.ID == receiverID || cloudDownloadEnabled || shareTransferEnabled || ed2kSTRMEnabled
 }
 
 func (h *Hub) Run(ctx context.Context) error {
