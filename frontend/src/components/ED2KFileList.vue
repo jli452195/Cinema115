@@ -5,6 +5,7 @@ import SelectMenu from './SelectMenu.vue'
 import SegmentedControl from './SegmentedControl.vue'
 import ED2KFileRow from './ED2KFileRow.vue'
 import { filterTelegramFiles, groupTelegramFiles, type TelegramFile } from '../utils/telegramFiles'
+import { defaultTelegramFileFilters, resolveTelegramFileFilters, type TelegramFileFilterField } from '../utils/telegramFileFilters'
 import { useTelegramFileActions } from '../composables/useTelegramFileActions'
 import { copyText } from '../utils/clipboard'
 import { useToast } from '../composables/useToast'
@@ -12,15 +13,14 @@ import { useToast } from '../composables/useToast'
 const props = defineProps<{ files: TelegramFile[]; query: string; token: string; signal: AbortSignal }>()
 const emit = defineEmits<{ settings: [] }>()
 const actions = useTelegramFileActions(props.token, props.signal), toast = useToast()
-const season = ref('all'), resolution = ref('all'), range = ref('all'), platform = ref('all'), releaseGroup = ref('all')
+const filterValues = ref(defaultTelegramFileFilters())
 const sort = ref<'episode' | 'size' | 'latest'>('episode'), view = ref<'files' | 'versions'>('files')
 const selected = ref(new Set<string>())
 const filtersOpen = ref(false), outputOpen = ref(false), filtersID = useId(), outputID = useId()
-const filterCount = computed(() => [season, resolution, range, platform, releaseGroup].filter(value => value.value !== 'all').length)
+const filtering = computed(() => resolveTelegramFileFilters(props.files, filterValues.value, props.query))
+const filterCount = computed(() => filtering.value.facets.filter(facet => facet.value !== 'all').length)
 const outputLabel = computed(() => actions.targets.value.find(target => target.value === actions.targetID.value)?.label)
-const options = (field: 'resolution' | 'dynamicRange' | 'platform' | 'releaseGroup', label: string) => [{ value: 'all', label }, ...[...new Set(props.files.map(file => file.metadata[field]).filter((value): value is string => !!value))].sort().map(value => ({ value, label: value }))]
-const seasons = computed(() => [{ value: 'all', label: '全部季' }, ...[...new Set(props.files.map(file => file.season).filter((value): value is number => value !== undefined))].sort((a, b) => a - b).map(value => ({ value: String(value), label: value === 0 ? '特别篇' : `第 ${value} 季` }))])
-const visible = computed(() => filterTelegramFiles(props.files, { query: props.query, season: season.value, resolution: resolution.value, dynamicRange: range.value, sort: sort.value }).filter(file => (platform.value === 'all' || file.metadata.platform === platform.value) && (releaseGroup.value === 'all' || file.metadata.releaseGroup === releaseGroup.value)))
+const visible = computed(() => filterTelegramFiles(filtering.value.files, { sort: sort.value }))
 const groups = computed(() => view.value === 'versions' ? groupTelegramFiles(visible.value) : [{ id: 'files', title: '', files: visible.value }])
 const chosen = computed(() => props.files.filter(file => selected.value.has(file.id)))
 const selectedVisibleCount = computed(() => visible.value.reduce((count, file) => count + Number(selected.value.has(file.id)), 0))
@@ -28,13 +28,12 @@ const hiddenCount = computed(() => chosen.value.length - selectedVisibleCount.va
 const allSelected = computed(() => !!visible.value.length && selectedVisibleCount.value === visible.value.length)
 const partiallySelected = computed(() => selectedVisibleCount.value > 0 && !allSelected.value)
 let requestedTargets = false
+watch(() => filtering.value.values, values => {
+  if (filtering.value.facets.some(facet => filterValues.value[facet.key] !== facet.value)) filterValues.value = values
+}, { immediate: true })
 watch(() => props.files, files => {
   const ids = new Set(files.map(file => file.id))
   selected.value = new Set([...selected.value].filter(id => ids.has(id)))
-  if (season.value !== 'all' && !files.some(file => String(file.season) === season.value)) season.value = 'all'
-  for (const [filter, field] of [[resolution, 'resolution'], [range, 'dynamicRange'], [platform, 'platform'], [releaseGroup, 'releaseGroup']] as const) {
-    if (filter.value !== 'all' && !files.some(file => file.metadata[field] === filter.value)) filter.value = 'all'
-  }
   if (files.length && !requestedTargets) { requestedTargets = true; void actions.loadTargets() }
 }, { immediate: true })
 function toggle(file: TelegramFile) {
@@ -53,7 +52,8 @@ async function copy(files: TelegramFile[]) {
   try { await copyText(files.map(file => file.url).join('\n')); toast.success(`已复制 ${files.length} 条 ED2K 链接`) }
   catch { toast.error('复制失败，请再次尝试') }
 }
-function reset() { season.value = resolution.value = range.value = platform.value = releaseGroup.value = 'all' }
+function setFilter(field: TelegramFileFilterField, value: string) { filterValues.value = { ...filtering.value.values, [field]: value } }
+function reset() { filterValues.value = defaultTelegramFileFilters() }
 async function generate(files: TelegramFile[]) {
   if (!actions.targetID.value) outputOpen.value = true
   await actions.generate(files)
@@ -68,11 +68,9 @@ async function generate(files: TelegramFile[]) {
       <SegmentedControl v-model="view" :options="[{ value: 'files', label: '文件列表' }, { value: 'versions', label: '按版本' }]" label="ED2K 展示方式" density="compact" appearance="neutral"><template #option="{ option }">{{ option.value === 'files' ? '文件' : '版本' }}</template></SegmentedControl>
     </div>
     <div v-if="filtersOpen" :id="filtersID" class="ed-filterbar">
-      <SelectMenu v-if="seasons.length > 1" v-model="season" :options="seasons" label="筛选季" density="compact" />
-      <SelectMenu v-if="options('resolution', '').length > 1" v-model="resolution" :options="options('resolution', '全部清晰度')" label="筛选清晰度" density="compact" />
-      <SelectMenu v-if="options('dynamicRange', '').length > 1" v-model="range" :options="options('dynamicRange', '全部动态范围')" label="筛选动态范围" density="compact" />
-      <SelectMenu v-if="options('platform', '').length > 1" v-model="platform" :options="options('platform', '全部平台')" label="筛选平台" density="compact" />
-      <SelectMenu v-if="options('releaseGroup', '').length > 1" v-model="releaseGroup" :options="options('releaseGroup', '全部发布组')" label="筛选发布组" density="compact" />
+      <template v-for="facet in filtering.facets" :key="facet.key">
+        <SelectMenu v-if="facet.options.length > 1" :model-value="facet.value" :options="facet.options" :label="facet.label" density="compact" @update:model-value="setFilter(facet.key, $event)"><template #trigger><span class="ed-facet-label">{{ facet.selectedLabel }}</span></template></SelectMenu>
+      </template>
       <button v-if="filterCount" type="button" class="ed-reset" @click="reset">重置</button>
     </div>
     <div class="ed-selection">
@@ -108,6 +106,7 @@ async function generate(files: TelegramFile[]) {
 </template>
 
 <style scoped>
+.ed-facet-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .ed-workspace { min-width: 0; }.ed-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 8px; }.ed-filterbar :deep(.select-menu) { max-width: 170px; }.ed-filterbar :deep(.segmented-control) { margin-left: auto; }.ed-selection { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-height: 40px; font-size: 12px; color: var(--search-dialog-muted); }.ed-selection label { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; }.ed-selection input { width: 15px; height: 15px; accent-color: var(--search-dialog-primary); }.ed-selected-count { color: var(--search-dialog-primary); }.ed-selection button { font-size: 11px; }.ed-batch-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-left: auto; }.ed-batch-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 9px; border-radius: 7px; background: var(--search-dialog-secondary-background); color: var(--search-dialog-text); }.ed-batch-actions button.ed-primary { background: var(--search-dialog-action-background); color: var(--search-dialog-primary); }button:disabled { opacity: .45; cursor: default; }
 .ed-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }.ed-toolbar > :deep(.select-menu) { max-width: 150px; }.ed-toolbar > :deep(.segmented-control) { margin-left: auto; }.ed-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 6px 10px; border-radius: 8px; background: var(--search-dialog-secondary-background); font-size: 12px; }.ed-tool-button.is-active { color: var(--search-dialog-primary); background: var(--search-dialog-action-background); }.ed-output-toggle { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; min-width: 0; max-width: 160px; min-height: 36px; margin-left: auto; color: var(--search-dialog-primary); }.ed-output-toggle span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.ed-output-toggle svg { flex: none; }.ed-filterbar { margin-top: 8px; padding: 8px; border-radius: 8px; background: var(--search-dialog-card); }.ed-reset { min-height: 36px; padding-inline: 8px; font-size: 12px; color: var(--search-dialog-primary); }
 .ed-output { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 40px; margin-bottom: 8px; font-size: 11px; color: var(--search-dialog-muted); }.ed-output :deep(.select-menu) { max-width: 220px; }.ed-output a, .ed-output button, .ed-notice a { color: var(--search-dialog-primary); }.ed-files { min-width: 0; border: 1px solid var(--search-dialog-card-border); border-radius: 10px; background: var(--search-dialog-card); overflow: clip; }.ed-group { min-width: 0; margin-top: 8px; }.ed-group-title { display: flex; align-items: center; gap: 12px; padding: 10px 4px; cursor: pointer; font-size: 12px; }.ed-group-title strong { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }.ed-group-title span { flex: none; color: var(--search-dialog-muted); }.ed-notice { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 10px; margin-bottom: 8px; border-radius: 8px; background: var(--search-dialog-tonal); font-size: 12px; overflow-wrap: anywhere; }.ed-empty { text-align: center; padding: 24px 12px; color: var(--search-dialog-muted); font-size: 12px; }.ed-empty button { margin-top: 8px; color: var(--search-dialog-primary); }

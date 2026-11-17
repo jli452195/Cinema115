@@ -1,6 +1,6 @@
 // 所有接口均使用模拟数据；不发送 Telegram 消息，也不向 115 写入真实任务。
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict'), fs = require('node:fs')
-const { selectOption } = require('./select-menu-helpers.cjs')
+const { selectOption, inputValue, selectOptions } = require('./select-menu-helpers.cjs')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 
 ;(async () => {
@@ -9,7 +9,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
   page.setDefaultTimeout(10000)
   await page.addInitScript(() => { localStorage.setItem('admin_token', 'mock'); localStorage.setItem('cinema115-theme', 'light') })
-  const errors = [], searches = [], writes = [], ed2kRequests = [], resolves = [], abortedResolves = []
+  const errors = [], searches = [], writes = [], ed2kRequests = [], resolves = [], abortedResolves = [], apiRequests = []
   page.on('pageerror', error => errors.push(error.message))
   page.on('console', message => { if (message.text().includes('[Vue warn]')) errors.push(message.text()) })
   const channels = [{ id: '11', title: '115网盘热更频道' }, { id: '12', title: '爱影热更频道' }]
@@ -34,8 +34,27 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const appendedSelectionLinks = [makeLink('546', 1545), makeLink('547', 1546, '1080p')]
   const selectionMessage = message('11:50', channels[0], selectionLinks)
   const selectionCandidate = message('11:51', channels[0], [], { sources: [{ id: 'selection-page', type: 'telegraph', url: `${pageURL}-selection`, label: 'ED2K链接' }] })
+  const makeFilterLink = (index, keyword, season, episode, resolution, dynamicRange, platform, releaseGroup) => {
+   const coordinate = `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
+   const name = ['Filter', keyword, coordinate, resolution, dynamicRange, platform, releaseGroup].filter(Boolean).join('.') + '.mkv'
+   const hash = (2000 + index).toString(16).padStart(32, '0'), sizeBytes = String(1000002000 + index)
+   return { type: 'ed2k', url: `ed2k://|file|${encodeURIComponent(name)}|${sizeBytes}|${hash}|/`, file: { name, hash, sizeBytes }, metadata: { episode: coordinate, season, episodeNumber: episode, resolution, dynamicRange, platform, releaseGroup, specs: [resolution, dynamicRange].filter(Boolean) } }
+  }
+  const filterLinks = [
+   makeFilterLink(0, 'River', 1, 1, '2160p', 'HDR', 'NF', 'ALPHA'),
+   makeFilterLink(1, 'River', 1, 2, '2160p', 'HDR', 'NF', 'ALPHA'),
+   makeFilterLink(2, 'River', 1, 3, '2160p', 'SDR', 'NF', 'BETA'),
+   makeFilterLink(3, 'Lake', 1, 4, '1080p', 'SDR', 'NF', 'ALPHA'),
+   makeFilterLink(4, 'Lake', 1, 5, '1080p', 'SDR', 'AMZN', 'GAMMA'),
+   makeFilterLink(5, 'River', 2, 1, '2160p', 'HDR', 'NF', 'ALPHA'),
+   makeFilterLink(6, 'Lake', 2, 2, '1080p', 'SDR', 'AMZN', 'GAMMA'),
+   makeFilterLink(7, 'Bare', 3, 1),
+  ]
+  const appendedFilterLinks = [makeFilterLink(8, 'River', 1, 6, '2160p', 'HDR', 'NF', 'ALPHA'), makeFilterLink(9, 'Future', 4, 1, '4320p', 'DV', 'DSNP', 'DELTA')]
+  const filterMessage = message('11:60', channels[0], filterLinks)
+  const filterCandidate = message('11:61', channels[0], [], { sources: [{ id: 'filter-page', type: 'telegraph', url: `${pageURL}-filters`, label: 'ED2K链接' }] })
   let ed2kTargets = [{ id: 'ed2k-movie', name: '电影', outputDir: 'ed2k/电影' }, { id: 'ed2k-tv', name: '剧集', outputDir: 'ed2k/剧集' }]
-  let failMore = false, expired = false, holdSearch = false, releaseSearch, rejectED2K = true, resolveFailure = true, uncertainSTRM = false, moreLoaded = false, queueMode = false, selectionMode = false, holdResolves = false, maximumResolves = 0
+  let failMore = false, expired = false, holdSearch = false, releaseSearch, rejectED2K = true, resolveFailure = true, uncertainSTRM = false, moreLoaded = false, queueMode = false, selectionMode = false, filterMode = false, holdResolves = false, maximumResolves = 0
   const resolvedPages = new Set(), heldResolves = new Map(), activeResolves = new Set()
   page.on('requestfailed', request => {
    if (new URL(request.url()).pathname.endsWith('/telegram-user/channels/resolve')) { abortedResolves.push(request.postDataJSON()); activeResolves.delete(request) }
@@ -46,9 +65,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    while (!condition()) { assert.ok(Date.now() < deadline, message); await page.waitForTimeout(25) }
   }
   let run
-  const baseResult = () => ({ items: selectionMode ? [selectionMessage, selectionCandidate] : queueMode ? [multi, ...queueCandidates] : [share, multi, duplicate, candidate], warnings: queueMode || selectionMode ? [] : [{ channel: channels[1], error: '频道读取超时，可加载更多重试' }], hasMore: !queueMode && !selectionMode, cursor: queueMode || selectionMode ? '' : 'page2', partial: !queueMode && !selectionMode, cached: false, expiresAt: '2099-11-17T02:00:00Z' })
+  const baseResult = () => {
+   const standalone = queueMode || selectionMode || filterMode
+   const items = filterMode ? [filterMessage, filterCandidate] : selectionMode ? [selectionMessage, selectionCandidate] : queueMode ? [multi, ...queueCandidates] : [share, multi, duplicate, candidate]
+   return { items, warnings: standalone ? [] : [{ channel: channels[1], error: '频道读取超时，可加载更多重试' }], hasMore: !standalone, cursor: standalone ? '' : 'page2', partial: !standalone, cached: false, expiresAt: '2099-11-17T02:00:00Z' }
+  }
   await page.route('**/api/**', async route => {
    const req = route.request(), url = new URL(req.url()), endpoint = url.pathname
+   apiRequests.push({ endpoint, method: req.method() })
    if (endpoint === '/api/auth/me') return route.fulfill({ json: { user: { id: 'admin', role: 'admin', username: 'admin' } } })
    if (endpoint.endsWith('/telegram-user/channels')) return route.fulfill({ json: { account: { configured: true, hasSession: true, botConfigured: false }, channels } })
    if (endpoint.endsWith('/telegram-user/config')) return route.fulfill({ json: { configured: true, hasSession: true, botConfigured: false, bot: '' } })
@@ -64,12 +88,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    }
    if (endpoint.endsWith('/telegram-user/channels/resolve')) {
     const body = req.postDataJSON(); resolves.push(body)
-    const record = [candidate, duplicateCandidate, selectionCandidate, ...queueCandidates].find(item => item.id === body.resourceId && item.sources.some(source => source.id === body.sourceId))
+    const record = [candidate, duplicateCandidate, selectionCandidate, filterCandidate, ...queueCandidates].find(item => item.id === body.resourceId && item.sources.some(source => source.id === body.sourceId))
     assert.ok(record, '解析只接受搜索结果中的已有候选')
     assert.deepEqual(Object.keys(body).sort(), ['kind', 'resourceId', 'sourceId', 'tmdbId'])
     assert.equal(body.kind, 'movie'); assert.equal(body.tmdbId, '42')
     if (!queueMode) {
-     const expected = selectionMode ? selectionCandidate : candidate
+     const expected = filterMode ? filterCandidate : selectionMode ? selectionCandidate : candidate
      assert.deepEqual(body, { resourceId: expected.id, sourceId: expected.sources[0].id, kind: 'movie', tmdbId: '42' }, '同URL固定首个服务端候选，并携带作品身份')
     }
     const sourceURL = record.sources[0].url
@@ -81,7 +105,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      const cached = resolvedPages.has(sourceURL)
      resolvedPages.add(sourceURL)
      const queueIndex = queueCandidates.indexOf(record)
-     const groups = record === selectionCandidate ? [{ id: 'selection-extra', title: '自动追加文件', links: appendedSelectionLinks }] : queueIndex < 0 ? [{ id: 'nf', title: 'Where.the.Mask.Ends.S01.1080p.NF.WEB-DL.H265.AAC-HHWEB', links: pageLinks }, { id: 'same', title: 'Where.the.Mask.Ends.S01.2160p.YK.WEB-DL.H265.AAC-ADWeb', links: [links[0]] }] : [{ id: 'same-title', title: '相同版本标题', links: [makeLink(String(31 + queueIndex), 31 + queueIndex)] }]
+     const groups = record === filterCandidate ? [{ id: 'filter-extra', title: '异步追加的筛选样本', links: appendedFilterLinks }] : record === selectionCandidate ? [{ id: 'selection-extra', title: '自动追加文件', links: appendedSelectionLinks }] : queueIndex < 0 ? [{ id: 'nf', title: 'Where.the.Mask.Ends.S01.1080p.NF.WEB-DL.H265.AAC-HHWEB', links: pageLinks }, { id: 'same', title: 'Where.the.Mask.Ends.S01.2160p.YK.WEB-DL.H265.AAC-ADWeb', links: [links[0]] }] : [{ id: 'same-title', title: '相同版本标题', links: [makeLink(String(31 + queueIndex), 31 + queueIndex)] }]
      return await route.fulfill({ json: { sourceId: record.sources[0].id, pageTitle: '测试电影 (2026) {tmdbid-42}', groups, cached, expiresAt: '2099-11-17T02:00:00Z' } })
     } finally { activeResolves.delete(req) }
    }
@@ -421,7 +445,151 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.deepEqual((await page.evaluate(() => navigator.clipboard.readText())).split(/\r?\n/).sort(), [...selectionLinks, ...appendedSelectionLinks].map(link => link.url).sort(), '追加后复制全部547个文件')
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
 
-  selectionMode = false; moreLoaded = true
+  // 用独立样本验证关键词和五级规格联动，避免改变既有大列表及密度用例。
+  selectionMode = false; filterMode = true; moreLoaded = false; holdResolves = true
+  const filterStart = resolves.length
+  const filterLabels = { season: '筛选季', resolution: '筛选清晰度', dynamicRange: '筛选动态范围', platform: '筛选平台', releaseGroup: '筛选发布组' }
+  const filterAllLabels = { season: '全部季', resolution: '全部清晰度', dynamicRange: '全部动态范围', platform: '全部平台', releaseGroup: '全部发布组' }
+  const filterControl = field => dialog.getByRole('combobox', { name: filterLabels[field], exact: true })
+  const filterRow = link => dialog.locator('.ed-file').filter({ has: page.getByTitle(link.file.name, { exact: true }) })
+  const assertFilterOptions = async (field, entries, reason) => {
+   const normalize = options => options.map(option => ({ value: option.value, label: option.label.replace(/\s/g, '') })).sort((left, right) => left.value.localeCompare(right.value))
+   const expected = [{ value: 'all', label: filterAllLabels[field] }, ...entries.map(([value, count]) => ({ value, label: `${field === 'season' ? `第 ${value} 季` : value}（${count}）` }))]
+   assert.deepEqual(normalize(await selectOptions(filterControl(field))), normalize(expected), reason)
+  }
+  const assertFilterValues = async expected => {
+   for (const [field, value] of Object.entries(expected)) {
+    assert.equal(await inputValue(filterControl(field)), value, `${filterLabels[field]}应保留或恢复为${value}`)
+    assert.doesNotMatch(await filterControl(field).innerText(), /[（(]\d+[）)]/, '触发按钮保持短标签，数量只展示在展开选项中')
+   }
+  }
+  const clearFilterValues = Object.fromEntries(Object.keys(filterLabels).map(field => [field, 'all']))
+  const assertVisibleFiles = async (visible, total = 8) => {
+   await dialog.getByText(`显示 ${visible} / ${total} 个文件`, { exact: true }).waitFor()
+   assert.equal(await dialog.locator('.ed-file').count(), visible)
+  }
+  await open()
+  await waitUntil(() => resolves.length === filterStart + 1, '联动场景先保留一条在途清单，稍后异步追加规格')
+  await page.waitForFunction(() => !document.querySelector('dialog[open] input[aria-label="选择当前筛选文件"]').disabled)
+  const requestsBeforeFilters = apiRequests.length
+  await dialog.getByRole('button', { name: '规格筛选', exact: true }).click()
+  assert.deepEqual(await dialog.locator('.ed-filterbar [role="combobox"]').evaluateAll(elements => elements.map(element => element.getAttribute('aria-label'))), Object.values(filterLabels), '规格从左到右按季、清晰度、动态范围、平台、发布组排列')
+  await assertVisibleFiles(8)
+  await assertFilterValues(clearFilterValues)
+  await assertFilterOptions('season', [['1', 5], ['2', 2], ['3', 1]], '季选项统计关键词匹配的所有文件')
+  await assertFilterOptions('resolution', [['1080p', 3], ['2160p', 4]], '无清晰度的文件不生成空选项')
+  await assertFilterOptions('dynamicRange', [['HDR', 3], ['SDR', 4]], '动态范围选项显示真实数量')
+  await assertFilterOptions('platform', [['AMZN', 2], ['NF', 5]], '平台选项显示真实数量')
+  await assertFilterOptions('releaseGroup', [['ALPHA', 4], ['BETA', 1], ['GAMMA', 2]], '发布组选项显示真实数量')
+
+  await selectOption(filterControl('season'), '1')
+  await assertFilterOptions('resolution', [['1080p', 2], ['2160p', 3]], '选择季后清晰度数量只统计该季')
+  await selectOption(filterControl('resolution'), '2160p')
+  await assertFilterOptions('dynamicRange', [['HDR', 2], ['SDR', 1]], '选择清晰度后动态范围只保留上游有文件的值')
+  const filterScreenshotDark = await page.evaluate(() => document.documentElement.classList.contains('dark'))
+  await page.evaluate(() => document.documentElement.classList.remove('dark'))
+  await page.evaluate(async () => { const { useToast } = await import('/src/composables/useToast.ts'); useToast().clear() })
+  for (const width of [1440, 390]) {
+   await page.setViewportSize({ width, height: width === 1440 ? 1000 : 860 })
+   await filterControl('dynamicRange').click()
+   const panel = page.locator(`[id=${JSON.stringify(await filterControl('dynamicRange').getAttribute('aria-controls'))}]`)
+   await panel.waitFor()
+   await page.waitForTimeout(350)
+   const fits = await panel.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth + 1 && element.scrollWidth <= element.clientWidth + 1 })
+   assert.equal(fits, true, `${width}px联动下拉菜单不超出视口`)
+   await page.screenshot({ path: path.join(screenshotDir, `telegram-filters-${width}-light.png`), animations: 'disabled' })
+   await filterControl('dynamicRange').press('Escape')
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), filterScreenshotDark)
+  await selectOption(filterControl('dynamicRange'), 'HDR')
+  await assertFilterOptions('platform', [['NF', 2]], 'HDR下不显示零文件的AMZN组合')
+  await selectOption(filterControl('platform'), 'NF')
+  await assertFilterOptions('releaseGroup', [['ALPHA', 2]], '发布组根据全部上游条件排除零文件组合')
+  await selectOption(filterControl('releaseGroup'), 'ALPHA')
+  await assertVisibleFiles(2)
+  await assertFilterOptions('resolution', [['1080p', 2], ['2160p', 3]], '下游HDR、平台和发布组不能反向缩小上游清晰度选项')
+  await assertFilterOptions('platform', [['NF', 2]], '唯一有效且已选的平台仍保留全部平台取消入口')
+  await assertFilterOptions('releaseGroup', [['ALPHA', 2]], '唯一有效且已选的发布组仍保留全部发布组取消入口')
+  await selectOption(filterControl('season'), '2')
+  await assertFilterValues({ season: '2', resolution: '2160p', dynamicRange: 'HDR', platform: 'NF', releaseGroup: 'ALPHA' })
+  await assertVisibleFiles(1)
+  await selectOption(filterControl('resolution'), '1080p')
+  await assertFilterValues({ season: '2', resolution: '1080p', dynamicRange: 'all', platform: 'all', releaseGroup: 'all' })
+  await assertVisibleFiles(1)
+  await assertFilterOptions('platform', [['AMZN', 1]], '上游变化后不显示失效的平台，同时不自动选中唯一平台')
+  await assertFilterOptions('releaseGroup', [['GAMMA', 1]], '无效的多级下游条件逐级恢复all')
+
+  await selectOption(filterControl('season'), '1')
+  await selectOption(filterControl('dynamicRange'), 'SDR')
+  await selectOption(filterControl('platform'), 'NF')
+  await selectOption(filterControl('releaseGroup'), 'ALPHA')
+  await selectOption(filterControl('platform'), 'AMZN')
+  await assertFilterValues({ season: '1', resolution: '1080p', dynamicRange: 'SDR', platform: 'AMZN', releaseGroup: 'all' })
+  await assertFilterOptions('releaseGroup', [['GAMMA', 1]], '切换平台只清除不兼容的发布组')
+  await selectOption(filterControl('platform'), 'NF')
+  await selectOption(filterControl('releaseGroup'), 'ALPHA')
+  await selectOption(filterControl('resolution'), '2160p')
+  await assertFilterValues({ season: '1', resolution: '2160p', dynamicRange: 'SDR', platform: 'NF', releaseGroup: 'all' })
+  await assertFilterOptions('releaseGroup', [['BETA', 1]], '切换清晰度时保留兼容的SDR和NF，只清除不兼容的ALPHA')
+  await assertVisibleFiles(1)
+  await selectOption(filterControl('releaseGroup'), 'BETA')
+  await selectOption(filterControl('dynamicRange'), 'HDR')
+  await assertFilterValues({ season: '1', resolution: '2160p', dynamicRange: 'HDR', platform: 'NF', releaseGroup: 'all' })
+  await assertFilterOptions('releaseGroup', [['ALPHA', 2]], '切换动态范围后保留兼容平台并清除失效发布组')
+  await assertVisibleFiles(2)
+  await dialog.getByRole('button', { name: '重置', exact: true }).click()
+  await query.fill('River')
+  await assertVisibleFiles(4)
+  await assertFilterValues(clearFilterValues)
+  await assertFilterOptions('season', [['1', 3], ['2', 1]], '关键词先约束季选项和数量')
+  await assertFilterOptions('resolution', [['2160p', 4]], '关键词只剩一种清晰度时仍保持all，不自动选中')
+  await assertFilterOptions('dynamicRange', [['HDR', 3], ['SDR', 1]], '关键词先约束动态范围计数')
+  await assertFilterOptions('platform', [['NF', 4]], '关键词不显示无匹配文件的平台')
+  await assertFilterOptions('releaseGroup', [['ALPHA', 3], ['BETA', 1]], '关键词不显示零文件发布组')
+
+  await query.fill('Bare')
+  await assertVisibleFiles(1)
+  for (const field of ['resolution', 'dynamicRange', 'platform', 'releaseGroup']) assert.equal(await filterControl(field).count(), 0, '没有有效规格值时隐藏整个下拉项')
+  await assertFilterOptions('season', [['3', 1]], '只有一个有效季仍可显示其数量')
+  await selectOption(filterControl('season'), '3')
+  await assertFilterValues({ season: '3' })
+  await assertFilterOptions('season', [['3', 1]], '唯一且已选的季仍保留全部季取消入口')
+  await selectOption(filterControl('season'), 'all')
+  await filterRow(filterLinks[7]).getByRole('checkbox').click()
+  await query.fill('nothing-matches-this-fixture')
+  await assertSelection({ checked: false, indeterminate: false, visible: 0, total: 8, selectedVisible: 0, selected: 1, hidden: 1 }, '关键词无结果时仍保留隐藏文件的选择')
+  for (const field of Object.keys(filterLabels)) assert.equal(await filterControl(field).count(), 0, '关键词无结果时不保留没有有效值的规格下拉')
+  assert.equal(await headerSelection.isDisabled(), true)
+  await query.fill('River')
+  await assertSelection({ checked: false, indeterminate: false, visible: 4, total: 8, selectedVisible: 0, selected: 1, hidden: 1 }, '切换关键词不会清除隐藏的文件选择或自动勾选新结果')
+  await assertFilterValues(clearFilterValues)
+  await query.fill('')
+  await assertSelection({ checked: false, indeterminate: true, visible: 8, total: 8, selectedVisible: 1, selected: 1, hidden: 0 }, '清空关键词后恢复原文件的勾选')
+  for (const [field, value] of Object.entries({ season: '1', resolution: '2160p', dynamicRange: 'HDR', platform: 'NF', releaseGroup: 'ALPHA' })) await selectOption(filterControl(field), value)
+  await assertSelection({ checked: false, indeterminate: false, visible: 2, total: 8, selectedVisible: 0, selected: 1, hidden: 1 }, '规格筛选不把隐藏选择计入当前全选')
+  await headerSelection.click()
+  await assertSelection({ checked: true, indeterminate: false, visible: 2, total: 8, selectedVisible: 2, selected: 3, hidden: 1 }, '全选当前规格时保留其他规格中已选的文件')
+  assert.equal(apiRequests.length, requestsBeforeFilters, '关键词、联动选项、规格切换及勾选只在本地处理，不发起API请求')
+
+  holdResolves = false; releaseHeldResolves()
+  await assertSelection({ checked: false, indeterminate: true, visible: 3, total: 10, selectedVisible: 2, selected: 3, hidden: 1 }, '异步追加后保留隐藏和可见勾选，新匹配文件不自动选中')
+  await assertFilterValues({ season: '1', resolution: '2160p', dynamicRange: 'HDR', platform: 'NF', releaseGroup: 'ALPHA' })
+  await assertFilterOptions('season', [['1', 6], ['2', 2], ['3', 1], ['4', 1]], '异步追加只更新上游选项和数量，不自动切换到新季')
+  await assertFilterOptions('resolution', [['1080p', 2], ['2160p', 4]], '新季的4320p不混入当前第1季的清晰度选项')
+  await assertFilterOptions('dynamicRange', [['HDR', 3], ['SDR', 1]], '追加后动态范围计数按当前上游更新')
+  await assertFilterOptions('releaseGroup', [['ALPHA', 3]], '追加后发布组计数按全部上游更新')
+  assert.equal(await filterRow(appendedFilterLinks[0]).getByRole('checkbox').isChecked(), false)
+  assert.equal(await filterRow(appendedFilterLinks[1]).count(), 0, '新增不兼容规格的文件保持在当前筛选之外')
+  await dialog.getByRole('button', { name: '重置', exact: true }).click()
+  await assertFilterValues(clearFilterValues)
+  await assertSelection({ checked: false, indeterminate: true, visible: 10, total: 10, selectedVisible: 3, selected: 3, hidden: 0 }, '重置规格只恢复可见文件，保留原勾选')
+  for (const link of appendedFilterLinks) assert.equal(await filterRow(link).getByRole('checkbox').isChecked(), false, '所有新加载文件保持未选中')
+  for (const link of [filterLinks[0], filterLinks[1], filterLinks[7]]) assert.equal(await filterRow(link).getByRole('checkbox').isChecked(), true, '重置规格后原有可见及隐藏勾选仍然保留')
+  assert.equal(apiRequests.length, requestsBeforeFilters, '异步追加后的筛选恢复和重置不触发额外API请求')
+  await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
+
+  filterMode = false; moreLoaded = true
   await open(); await row('01', '1080p').waitFor()
   assert.equal(await dialog.locator('.ed-file').count(), 7, '关闭大样本并重开后恢复小样本，不残留大列表或选择')
   assert.equal(await dialog.locator('.ed-selected-count').count(), 0)
@@ -432,6 +600,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   releaseSearch(); holdSearch = false
   assert.deepEqual(errors, [])
   assert.ok(searches.every(search => search.tmdbId === '42' && search.kind === 'movie'))
-  console.log('TG 文件列表 UI 通过：自动清单恢复、2路队列/暂停继续、失败手动重试、跨帖分页去重来源、关闭/刷新取消、文件筛选与版本、545文件全选/混合/隐藏选择/整包STRM和云下载、追加547文件复制、单文件/批量/504原包重放、分页失败/过期、分享STRM及320/390/1440深浅主题。')
+  console.log('TG 文件列表 UI 通过：自动清单恢复、2路队列/暂停继续、失败手动重试、跨帖分页去重来源、关闭/刷新取消、五级规格联动/计数/关键词/隐藏维度/异步追加、545文件全选/混合/隐藏选择/整包STRM和云下载、追加547文件复制、单文件/批量/504原包重放、分页失败/过期、分享STRM及320/390/1440深浅主题。')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })
