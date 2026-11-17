@@ -193,7 +193,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     role = 'user'
     await go('/movie/123'); await open(); await personalMenu(true)
     assert.equal(await menu().getByText('普通用户', { exact: true }).count(), 1)
-    assert.equal(await menu().locator('.account-row:visible').count(), 4)
+    assert.equal(await menu().locator('.account-row:visible').count(), 5)
+    assert.equal(await menu().getByRole('button', { name: '外观设置', exact: true }).count(), 1)
     await close()
     await page.locator('.brand-link').click(); await drawer.waitFor()
     assert.deepEqual(await drawer.getByRole('link').allTextContents(), ['我的播放', '我的追更'])

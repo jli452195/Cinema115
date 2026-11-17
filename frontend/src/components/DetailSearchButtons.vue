@@ -15,7 +15,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="detail-search-buttons flex flex-wrap items-center gap-3">
+  <div class="detail-search-buttons">
     <SearchPill
       v-for="source in sources"
       :key="source.id"
@@ -42,13 +42,14 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.is-preview {
-  cursor: default !important;
-  pointer-events: none !important;
-  transform: none !important;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%) !important;
+.detail-search-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.search-pill.is-preview {
+  cursor: default;
+  pointer-events: none;
+  transform: none;
+  opacity: 1;
 }
 .detail-muted {
-  color: var(--md-sys-color-on-surface-variant, rgb(var(--content-secondary, 100 116 139)));
+  color: var(--glass-muted);
 }
 </style>

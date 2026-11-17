@@ -61,11 +61,11 @@ function moveFocus(event: KeyboardEvent) {
 .segmented-control-compact .segmented-control-option { min-height: 36px; padding: 6px 12px; font-size: 13px; }
 .dark .segmented-control { background: rgb(var(--color-slate-800) / .6); }
 .dark .segmented-control-indicator { background: rgb(var(--color-slate-700)); box-shadow: 0 2px 8px rgb(0 0 0 / .2); }
-.segmented-control-neutral { border: 1px solid rgb(226 232 240 / .9); background: rgb(241 245 249 / .9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+/* 嵌套分段控件沿用玻璃底色和高光，不重复采样父表面。 */
+.segmented-control.segmented-control-neutral { border: 1px solid var(--glass-inset-border); background: var(--glass-inset-surface); box-shadow: var(--glass-rim-shadow); }
 .segmented-control-neutral .segmented-control-option { padding-inline: 18px; color: #64748b; border-radius: 9px; }
 .segmented-control-neutral .segmented-control-option[aria-pressed=true] { color: #0f172a; font-weight: 600; }
 .segmented-control-neutral .segmented-control-indicator { border-radius: 9px; background: #fff; box-shadow: 0 1px 3px rgb(15 23 42 / .08); }
-.dark .segmented-control-neutral { border-color: rgb(30 41 59 / .9); background: rgb(15 23 42 / .65); }
 .dark .segmented-control-neutral .segmented-control-option { color: #94a3b8; }
 .dark .segmented-control-neutral .segmented-control-option[aria-pressed=true] { color: #f8fafc; }
 .dark .segmented-control-neutral .segmented-control-indicator { background: #1e293b; box-shadow: 0 1px 3px rgb(0 0 0 / .35); }

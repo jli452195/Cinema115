@@ -298,7 +298,8 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .dark .pool-icon-button, .dark .pool-card .account-menu-trigger, .dark .pool-card .pool-login { border-color:rgb(var(--color-slate-700)); background:rgb(var(--color-slate-800) / 55%); }
 .dark .pool-icon-button { color:rgb(var(--color-slate-400)); }
 .dark .pool-icon-button:hover:not(:disabled) { background:rgb(var(--color-slate-700)); color:rgb(var(--color-slate-200)); }
-.primary-card { display:flex; flex-wrap:wrap; align-items:center; gap:24px; min-height:104px; padding:20px 24px; border-color:rgb(var(--color-slate-300) / 65%); background:rgb(255 255 255 / 72%); box-shadow:inset 0 1px 0 rgb(255 255 255 / 70%), 0 2px 8px rgb(15 23 42 / 2%); -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); }
+.primary-card { display:flex; flex-wrap:wrap; align-items:center; gap:24px; min-height:104px; padding:20px 24px; }
+.account-card.primary-card { border-color:var(--glass-edge); background:var(--glass-panel-background); box-shadow:var(--glass-card-shadow); -webkit-backdrop-filter:var(--glass-panel-filter); backdrop-filter:var(--glass-panel-filter); }
 .primary-card .account-heading { flex:none; gap:14px; }
 .primary-icon { box-shadow:inset 0 1px 0 rgb(255 255 255 / 50%); }
 .primary-card .primary-status { padding:2px 6px; background:transparent; line-height:18px; box-shadow:inset 0 0 0 1px rgb(148 163 184 / 18%); }
@@ -317,7 +318,6 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .primary-card .account-button:hover:not(:disabled), .primary-card .account-menu-trigger:hover { background:rgb(148 163 184 / 10%); }
 .primary-card .account-button:focus-visible, .account-menu-trigger:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:3px; }
 .primary-card .account-feedback { flex-basis:100%; margin-top:0; }
-.dark .primary-card { border-color:rgb(var(--color-slate-600) / 45%); background:rgb(var(--color-slate-800) / 55%); box-shadow:inset 0 1px 0 rgb(255 255 255 / 3%), 0 2px 8px rgb(0 0 0 / 8%); }
 .dark .primary-icon { box-shadow:inset 0 1px 0 rgb(255 255 255 / 4%); }
 .dark .primary-meta-field dt { color:rgb(var(--color-slate-400)); }
 .dark .primary-vip { background:rgb(var(--color-slate-700) / 30%); border-color:rgb(var(--color-slate-500) / 35%); color:rgb(var(--color-slate-300)); }

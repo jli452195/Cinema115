@@ -53,8 +53,6 @@
   --search-dialog-edge: var(--floating-surface-edge);
   --search-dialog-shadow: var(--floating-surface-shadow);
   --search-dialog-scrim: var(--floating-surface-scrim);
-  --search-pill-background: rgb(248 250 252 / 72%);
-  --search-pill-hover: rgb(255 255 255 / 90%);
 }
 
 .dark .media-search-dialog,
@@ -74,8 +72,6 @@
   --search-dialog-secondary-background: rgb(255 255 255 / 6%);
   --search-dialog-secondary-hover: rgb(255 255 255 / 10%);
   --search-dialog-secondary-pressed: rgb(255 255 255 / 14%);
-  --search-pill-background: rgb(30 37 49 / 68%);
-  --search-pill-hover: rgb(45 55 70 / 82%);
 }
 
 dialog.media-search-dialog :is(.re0-search-field, .bot-search-field, .mikan-input) {
@@ -122,26 +118,18 @@ dialog.media-search-dialog .mikan-batch-footer {
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   .media-search-dialog, .media-detail {
     --search-dialog-card: #fff;
-    --search-pill-background: #f1f5f9;
-    --search-pill-hover: #fff;
   }
   .dark .media-search-dialog, .dark .media-detail {
     --search-dialog-card: #1e2531;
-    --search-pill-background: #1e2531;
-    --search-pill-hover: #2d3746;
   }
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .media-search-dialog, .media-detail {
     --search-dialog-card: #fff;
-    --search-pill-background: #f1f5f9;
-    --search-pill-hover: #fff;
   }
   .dark .media-search-dialog, .dark .media-detail {
     --search-dialog-card: #1e2531;
-    --search-pill-background: #1e2531;
-    --search-pill-hover: #2d3746;
   }
 }
 

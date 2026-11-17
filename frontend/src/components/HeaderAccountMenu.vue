@@ -8,7 +8,7 @@ import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTe
 import { websiteUnread } from '../composables/useWebsiteNotifications'
 import { isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
 
-const emit = defineEmits<{ close: []; logout: [] }>()
+const emit = defineEmits<{ close: []; logout: []; appearance: [] }>()
 defineProps<{
   beforeThemeChange?: () => void | Promise<void>
 }>()
@@ -62,6 +62,13 @@ function logout() {
         <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
           <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
           <span>服务连通性</span>
+        </button>
+      </div>
+
+      <div class="account-group">
+        <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('appearance')">
+          <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--floating-surface-container)" /><circle cx="15" cy="17" r="3" fill="var(--floating-surface-container)" /></svg>
+          <span>外观设置</span>
         </button>
       </div>
 

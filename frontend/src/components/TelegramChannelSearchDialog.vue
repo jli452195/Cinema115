@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { IconCopy, IconExternalLink, IconFile, IconRefresh, IconSearch, IconSettings } from '@tabler/icons-vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { IconCopy, IconExternalLink, IconFile, IconInfoCircle, IconRefresh, IconSearch, IconSettings } from '@tabler/icons-vue'
 import FloatingDialog from './AnimeFloatingDialog.vue'
 import ShareTransferDirectory from './ShareTransferDirectory.vue'
 import ShareTransferButton from './ShareTransferButton.vue'
@@ -20,6 +20,7 @@ const config = ref<TelegramChannelConfig>(), result = ref<TelegramChannelSearchR
 const phase = ref('config'), error = ref(''), errorCode = ref(''), query = ref(''), copied = ref('')
 const tab = ref<'ed2k' | '115'>('ed2k')
 const tabChosen = ref(false)
+const helpOpen = ref(false), helpID = useId()
 let searchRevision = 0
 const lifecycle = new AbortController()
 const transfers = useShareTransfer(props.token, lifecycle.signal)
@@ -94,10 +95,12 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 </script>
 
 <template>
-  <FloatingDialog title="TG 频道搜索" close-label="关闭 TG 频道搜索" size="config" class="tg-channel-search media-search-dialog" @close="emit('close')">
+  <FloatingDialog title="TG 频道搜索" close-label="关闭 TG 频道搜索" size="config" mobile-presentation="sheet" class="tg-channel-search media-search-dialog" @close="emit('close')">
+    <template #title><span class="tg-window-title"><img :src="telegramIcon" width="22" height="22" alt="" /><span>{{ title }}</span><small>TG 频道搜索</small></span></template>
+    <template #toolbar-actions><button class="tg-help-toggle" type="button" aria-label="搜索说明" :aria-expanded="helpOpen" :aria-controls="helpID" @click="helpOpen = !helpOpen"><IconInfoCircle :size="19" aria-hidden="true" /></button></template>
     <template #header>
-      <div class="tg-heading"><img :src="telegramIcon" width="28" height="28" alt="" /><h3>{{ title }}</h3><span>频道资源</span></div>
-      <div class="tg-toolbar"><label class="tg-filter"><IconSearch :size="17" aria-hidden="true" /><input v-model="query" type="search" aria-label="筛选频道资源" :placeholder="tab === 'ed2k' ? '筛选文件名、季集或规格' : '筛选分享资源'" /></label><button class="tg-button tg-refresh" aria-label="刷新搜索" :disabled="!!phase || !enabled || retrySeconds > 0" @click="search(false, true)"><IconRefresh :size="16" aria-hidden="true" /><span>刷新搜索</span></button><RouterLink to="/resources/telegram" class="tg-button" aria-label="Telegram 搜索配置" @click="emit('close')"><IconSettings :size="17" aria-hidden="true" /></RouterLink></div>
+      <div v-if="helpOpen" :id="helpID" class="tg-help"><p>ED2K 按文件去重；点击文件信息可查看完整文件名与来源。</p><div><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志<IconExternalLink :size="13" aria-hidden="true" /></RouterLink><RouterLink to="/resources/telegram" aria-label="Telegram 搜索配置" @click="emit('close')"><IconSettings :size="15" aria-hidden="true" />配置频道</RouterLink></div></div>
+      <div class="tg-toolbar"><label class="tg-filter"><IconSearch :size="17" aria-hidden="true" /><input v-model="query" type="search" aria-label="筛选频道资源" :placeholder="tab === 'ed2k' ? '筛选文件名、季集或规格' : '筛选分享资源'" /></label><button class="tg-button tg-refresh" aria-label="刷新搜索" :disabled="!!phase || !enabled || retrySeconds > 0" @click="search(false, true)"><IconRefresh :size="16" aria-hidden="true" /><span>刷新搜索</span></button></div>
       <div v-if="result" class="tg-tabs"><SegmentedControl :model-value="tab" :options="tabs" label="资源类型" density="compact" appearance="underline" @update:model-value="tab = $event; tabChosen = true" /><span v-if="result.cached">频道搜索缓存</span></div>
     </template>
     <p v-if="phase === 'config'" role="status" class="tg-notice">正在读取频道配置…</p>
@@ -152,7 +155,6 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
       </div>
       <div class="tg-list-end"><button v-if="canContinue" class="tg-button" :disabled="!!phase || retrySeconds > 0" @click="search(true)">{{ phase === 'more' ? '正在加载…' : '加载更多资源' }}</button><span v-else-if="!phase && !error && !result.partial && !result.truncated">{{ tab === 'ed2k' && sourceProgress.loaded < sourceProgress.total ? '频道结果已加载，清单尚未全部载入' : '已加载全部频道结果' }}</span></div>
     </template>
-    <template #footer><div class="search-log-footer"><span>ED2K 按文件去重；点击文件信息可查看完整文件名与来源。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></div></template>
   </FloatingDialog>
 </template>
 
@@ -161,8 +163,12 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 .tg-tabs { border-bottom: 1px solid var(--search-dialog-card-border); }
 .tg-tabs > :deep(.segmented-control) { margin-bottom: -1px; }
 .tg-tabs > span { align-self: center; white-space: nowrap; }
-:global(dialog.anime-floating.tg-channel-search) { width: min(1100px, calc(100vw - 32px)); max-width: calc(100vw - 32px); height: min(860px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); color: var(--search-dialog-text); }
-.tg-heading { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }.tg-heading h3 { min-width: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }.tg-heading > span { margin-left: auto; font-size: 11px; color: var(--search-dialog-muted); }
+:global(dialog.anime-floating.tg-channel-search) { color: var(--search-dialog-text); }
+@media (min-width: 640px) { :global(dialog.anime-floating.tg-channel-search) { width: min(1100px, calc(100vw - 32px)); max-width: calc(100vw - 32px); height: min(860px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); } }
+.tg-window-title { display: flex; align-items: center; gap: 8px; min-width: 0; }.tg-window-title img { flex: none; }.tg-window-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }.tg-window-title small { flex: none; font-size: 11px; font-weight: 400; color: var(--search-dialog-muted); }
+.tg-help-toggle { display: grid; flex: none; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--search-dialog-muted); }.tg-help-toggle[aria-expanded='true'] { color: var(--search-dialog-primary); background: var(--search-dialog-action-background); }
+.tg-help-toggle:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 2px; }
+.tg-help { margin-bottom: 8px; padding: 8px 10px; border-radius: 8px; background: var(--search-dialog-card); font-size: 12px; line-height: 1.7; color: var(--search-dialog-muted); }.tg-help > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }.tg-help a { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; color: var(--search-dialog-primary); }
 .tg-toolbar { display: flex; align-items: center; gap: 8px; }.tg-filter { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; border-radius: 9px; padding: 0 10px; background: var(--search-dialog-card); color: var(--search-dialog-muted); }.tg-filter input { min-width: 0; width: 100%; padding: 9px 0; background: transparent; outline: none; font-size: 13px; color: var(--search-dialog-text); }
 .tg-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 7px 10px; border-radius: 8px; background: var(--search-dialog-secondary-background); color: var(--search-dialog-text); font-size: 12px; text-decoration: none; white-space: nowrap; }.tg-button.tg-primary { background: var(--search-dialog-action-background); color: var(--search-dialog-primary); }.tg-button:disabled { opacity: .45; cursor: default; }
 .tg-tabs { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }.tg-tabs > span { font-size: 11px; color: var(--search-dialog-muted); }.tg-notice { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding: 10px; border-radius: 9px; background: var(--search-dialog-card); font-size: 12px; line-height: 1.7; }.tg-error { color: #b91c1c; background: rgb(239 68 68 / .08); }.dark .tg-error { color: #fca5a5; }.tg-text { color: var(--search-dialog-primary); text-decoration: underline; }
@@ -173,6 +179,6 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 .tg-empty { padding: 24px 12px; text-align: center; font-size: 12px; line-height: 1.8; color: var(--search-dialog-muted); }.tg-empty p { margin-bottom: 10px; }.tg-list-end { display: flex; justify-content: center; margin-top: 14px; font-size: 12px; color: var(--search-dialog-muted); }.search-log-footer { padding: 0; }
 .tg-button:focus-visible, .tg-copy:focus-visible, .tg-text:focus-visible, .tg-filter:focus-within, summary:focus-visible, a:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 2px; }
 @media (hover: hover) { .tg-button:hover:not(:disabled), .tg-copy:hover { background: var(--search-dialog-secondary-hover); } }
-@media (max-width: 639px) { :global(dialog.anime-floating.tg-channel-search) { width: calc(100vw - 12px); max-width: calc(100vw - 12px); height: calc(100dvh - 20px); max-height: calc(100dvh - 20px); }.tg-heading h3 { font-size: 15px; }.tg-filter input { font-size: 16px; }.tg-button { min-height: 44px; }.tg-toolbar > .tg-button { flex: none; min-width: 44px; padding-inline: 10px; }.tg-refresh span { display: none; }.tg-tabs { margin-top: 6px; }.tg-actions { flex: 1 0 100%; }.tg-actions > * { flex: 1; }.tg-copy { min-height: 44px; } }
+@media (max-width: 639px) { .tg-window-title { font-size: 15px; }.tg-window-title small { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }.tg-help-toggle { width: 44px; height: 44px; }.tg-help a { min-height: 44px; }.tg-filter input { font-size: 16px; }.tg-button { min-height: 44px; }.tg-toolbar > .tg-button { flex: none; min-width: 44px; padding-inline: 10px; }.tg-refresh span { display: none; }.tg-tabs { margin-top: 6px; }.tg-actions { flex: 1 0 100%; }.tg-actions > * { flex: 1; }.tg-copy { min-height: 44px; } }
 @media (max-width: 639px) { .tg-tabs > span, .tg-merged-hint { display: none; }.tg-load-actions button { min-height: 44px; }.tg-more-hint { margin-left: 0; } }
 </style>

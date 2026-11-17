@@ -6,6 +6,7 @@ import ThemeSwitcher from './ThemeSwitcher.vue'
 import { vTooltip } from '../directives/tooltip'
 import { isPortalAdmin } from '../composables/usePortalAuth'
 import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTest'
+import { openAppearanceSettings } from '../composables/useAppearanceSettings'
 import HeaderAccountMenu from './HeaderAccountMenu.vue'
 import ManagementSidebar from './ManagementSidebar.vue'
 import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
@@ -103,12 +104,12 @@ const headerStyle = computed(() => {
   if (isStandalone.value) return {
     backgroundColor: 'rgb(var(--header-bg))',
     backdropFilter: 'none',
+    opacity: 1,
     borderColor: 'rgb(var(--header-border))',
   }
   const opacity = Math.min(Math.max(scrollY.value / 100, 0), 1)
   return {
-    backgroundColor: `rgb(var(--header-bg) / ${opacity * 0.85})`,
-    backdropFilter: `blur(${opacity * 12}px)`,
+    opacity,
     borderColor: `rgb(var(--header-border) / ${opacity})`
   }
 })
@@ -144,6 +145,11 @@ function completeAccountLeave() {
   finishAccountLeave?.()
   finishAccountLeave = undefined
   accountLeave = undefined
+}
+async function showAppearanceSettings() {
+  // 先完整关闭菜单并恢复到稳定入口，再让原生弹窗记录返回焦点。
+  await prepareThemeChange()
+  if (header.value?.isConnected) openAppearanceSettings()
 }
 onBeforeUnmount(completeAccountLeave)
 
@@ -185,7 +191,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 <template>
   <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
-    <span v-else class="header-background pointer-events-none absolute inset-0 transition-[background-color,backdrop-filter] duration-200" :style="headerStyle" aria-hidden="true"></span>
+    <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
       <button v-if="!desktopSidebar" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" v-tooltip="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
@@ -215,7 +221,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         </button>
       </div>
       <Transition name="account-menu-motion" :css="!closingForTheme" @before-enter="activateAccountMenu" @before-leave="deactivateAccountMenu" @after-leave="completeAccountLeave" @leave-cancelled="completeAccountLeave">
-        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" @close="closePanels" @logout="emit('logout')" />
+        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" @close="closePanels" @appearance="showAppearanceSettings" @logout="emit('logout')" />
       </Transition>
     </div>
   </header>
@@ -246,7 +252,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 .dark .workbench-header.immersive-surface { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
 .workbench-header.tonal-surface {
   --header-tonal-bg: var(--app-chrome-color);
-  --header-tonal-alpha: 0.9;
+  --header-tonal-alpha: var(--glass-header-alpha);
   --header-surface-progress: 1;
   --header-edge-progress: 1;
   --header-active-opacity: 1;
@@ -256,7 +262,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 .dark .workbench-header.tonal-surface {
   --header-tonal-bg: var(--app-chrome-color);
-  --header-tonal-alpha: 0.88;
+  --header-tonal-alpha: var(--glass-header-alpha);
 }
 .workbench-header.immersive-surface {
   --header-surface-progress: 0;
@@ -265,10 +271,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 }
 .header-surface {
   background: rgb(var(--header-tonal-bg) / var(--header-tonal-alpha));
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
+  box-shadow: var(--glass-rim-shadow);
+  -webkit-backdrop-filter: var(--glass-header-filter);
+  backdrop-filter: var(--glass-header-filter);
   opacity: var(--header-surface-progress);
 }
+.header-background { background: var(--glass-header-background); box-shadow: var(--glass-rim-shadow); -webkit-backdrop-filter: var(--glass-header-filter); backdrop-filter: var(--glass-header-filter); }
 .workbench-header.tonal-surface::after {
   content: '';
   position: absolute;
@@ -336,7 +344,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .account-menu-motion-enter-active :deep(.account-surface), .account-menu-motion-leave-active :deep(.account-surface) { transition: none; }
   .account-menu-motion-enter-from, .account-menu-motion-leave-to { transform: none; }
   .workbench-header.tonal-surface,
-  .dark .workbench-header.tonal-surface { --header-tonal-alpha: 0.95; }
+  .dark .workbench-header.tonal-surface { --header-tonal-alpha: max(.95, var(--glass-header-alpha)); }
   .header-surface { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .workbench-header.tonal-surface :is(.top-link, .icon-button) { transition: none; }
 }

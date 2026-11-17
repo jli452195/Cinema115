@@ -174,7 +174,7 @@ onBeforeUnmount(() => {
   </P115ActionDialog>
 </template>
 <style scoped>
-.pool-dashboard { position:relative; min-width:0; margin-bottom:16px; border:1px solid rgb(var(--color-slate-300) / 45%); border-radius:14px; padding:16px 20px 10px; background:rgb(255 255 255 / 58%); box-shadow:inset 0 1px 0 rgb(255 255 255 / 70%), 0 3px 14px rgb(15 23 42 / 2%); -webkit-backdrop-filter:blur(16px); backdrop-filter:blur(16px); }
+.pool-dashboard { position:relative; min-width:0; margin-bottom:16px; border:1px solid var(--glass-edge); border-radius:14px; padding:16px 20px 10px; background:var(--glass-panel-background); box-shadow:var(--glass-card-shadow); -webkit-backdrop-filter:var(--glass-panel-filter); backdrop-filter:var(--glass-panel-filter); }
 .pool-dashboard:focus-within { z-index:20; }
 .dashboard-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; }
 .dashboard-heading-copy { display:flex; flex:1 1 280px; min-width:0; flex-wrap:wrap; align-items:center; gap:10px 12px; }
@@ -220,7 +220,6 @@ onBeforeUnmount(() => {
 .dashboard-help .dashboard-tooltip { top:auto; right:0; bottom:calc(100% + 8px); left:auto; }
 .dashboard-help .dashboard-tooltip::before { top:100%; bottom:auto; }
 .pool-button:focus-visible, .dashboard-more:focus-visible, .dashboard-help-trigger:focus-visible, .dashboard-warning:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:3px; }
-.dark .pool-dashboard { border-color:rgb(var(--color-slate-600) / 30%); background:rgb(var(--color-slate-800) / 40%); box-shadow:inset 0 1px 0 rgb(255 255 255 / 3%), 0 3px 14px rgb(0 0 0 / 5%); }
 .dark .dashboard-title-row h2, .dark .metric-value { color:rgb(var(--color-slate-100)); }
 .dark .dashboard-account-count, .dark .metric-label, .dark .metric-note, .dark .metric-unit, .dark .dashboard-inactive, .dark .dashboard-refresh, .dark .dashboard-more, .dark .dashboard-help-trigger { color:rgb(var(--color-slate-400)); }
 .dark .metric-empty { color:rgb(var(--color-slate-500)); }

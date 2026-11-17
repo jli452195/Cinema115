@@ -163,7 +163,7 @@
 .invite-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 18px; }
 .invite-pagination > div { display: flex; gap: 8px; }
 .invite-dialog { position: fixed; inset: 0; width: calc(100% - 24px); max-width: 680px; max-height: min(88dvh, 800px); margin: auto; padding: 0; overflow: hidden; border: 1px solid var(--invite-outline); border-radius: 20px; background: var(--invite-surface); box-shadow: 0 20px 70px rgb(0 0 0 / 18%); }
-.invite-dialog::backdrop { background: rgb(15 20 28 / 32%); backdrop-filter: blur(3px); }
+.invite-dialog::backdrop { background: var(--glass-scrim); }
 .invite-dialog[open] { animation: invite-dialog-enter 200ms cubic-bezier(0.2, 0, 0, 1); }
 .invite-dialog-form { display: flex; flex-direction: column; max-height: min(calc(88dvh - 2px), 798px); }
 .invite-dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-shrink: 0; gap: 10px; padding: 20px 16px 14px 22px; }

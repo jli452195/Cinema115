@@ -9,12 +9,17 @@ import ManagementSidebar from './components/ManagementSidebar.vue'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
 import { networkConnectionTest, closeNetworkConnectionTest } from './composables/useNetworkConnectionTest'
+import { appearanceSettingsOpen, closeAppearanceSettings } from './composables/useAppearanceSettings'
+import GlassFilterDefs from './components/GlassFilterDefs.vue'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
 useFollowPendingCountSync()
 const router = useRouter()
 const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
+const AppearanceSettingsDialog = defineAsyncComponent(() => import('./components/AppearanceSettingsDialog.vue'))
+watch(() => route.path, closeAppearanceSettings)
+watch([token, portalUser], () => { if (!token.value || !portalUser.value) closeAppearanceSettings() })
 watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
   const request = networkConnectionTest.value
   if (request && (request.token !== token.value || portalUser.value?.role !== 'admin' || portalAuthError.value || route.meta.public)) closeNetworkConnectionTest()
@@ -73,6 +78,7 @@ document.addEventListener('visibilitychange', resumeLogin)
 const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true, { background: true }) }, 60000)
 onBeforeUnmount(() => {
   closeNetworkConnectionTest()
+  closeAppearanceSettings()
   window.clearInterval(authTimer)
   window.removeEventListener('storage', syncLogin)
   document.removeEventListener('visibilitychange', resumeLogin)
@@ -94,9 +100,11 @@ onBeforeUnmount(() => {
       <component :is="Component" v-bind="viewProps" @logout="logout" />
     </RouterView>
     <NetworkConnectionTestDialog v-if="networkConnectionTest && portalUser.role === 'admin'" :request="networkConnectionTest" @close="closeNetworkConnectionTest" />
+    <AppearanceSettingsDialog v-if="appearanceSettingsOpen" @close="closeAppearanceSettings" />
   </div>
   <ReloadPrompt />
   <GlobalToast />
+  <GlassFilterDefs />
 </template>
 
 <style scoped>

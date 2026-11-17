@@ -7,9 +7,11 @@ import './styles/dashboardFilters.css'
 import App from './App.vue'
 import { router } from './router'
 import { useTheme } from './composables/useTheme'
+import { useGlassSettings } from './composables/useGlassSettings'
 import { installAutoHideScrollbars } from './lib/auto-hide-scrollbar'
 
 useTheme()
+useGlassSettings()
 installAutoHideScrollbars()
 
 

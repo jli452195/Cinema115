@@ -59,7 +59,7 @@ const dateLabel = computed(() => {
         </div>
       </div>
       <p class="mt-3 text-[11px] text-slate-400 dark:text-slate-500">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
-      <button v-if="item.note" type="button" aria-label="查看处理说明" class="mt-3 rounded-lg bg-white/60 dark:bg-slate-900/60 backdrop-blur-md px-3 py-2 text-left text-xs leading-5 text-slate-600 dark:text-slate-400 ring-1 ring-slate-200/50 dark:ring-slate-700/50 hover:bg-white/80 dark:hover:bg-slate-800/80" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
+      <button v-if="item.note" type="button" aria-label="查看处理说明" class="follow-note mt-3 rounded-lg px-3 py-2 text-left text-xs leading-5 text-slate-600 dark:text-slate-400" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
       <div class="mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
         <template v-if="admin"><button type="button" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="emit('edit')">处理申请</button><RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="text-blue-600">搜索资源</RouterLink></template>
         <RouterLink :to="path" class="text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600">查看详情</RouterLink>
@@ -69,3 +69,9 @@ const dateLabel = computed(() => {
     </div>
   </article>
 </template>
+
+<style scoped>
+/* 列表里的说明只复用材质色与边缘，避免随卡片数量增加背景采样。 */
+.follow-note { background: var(--glass-inset-surface); box-shadow: inset 0 0 0 1px var(--glass-inset-border); }
+.follow-note:hover { background: var(--glass-pill-hover); }
+</style>

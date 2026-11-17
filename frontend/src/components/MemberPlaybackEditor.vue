@@ -305,7 +305,7 @@ onBeforeUnmount(() => {
 .member-message-success { background: var(--member-success-bg); color: var(--member-success); }
 .member-summary-warning { min-width: 0; color: var(--member-warning); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .member-dialog { width: min(560px, calc(100% - 24px)); max-width: none; max-height: calc(100dvh - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin: auto; padding: 0; border: 1px solid var(--member-outline); border-radius: 22px; overflow: hidden; background: var(--member-bg); box-shadow: 0 24px 90px #02061735; }
-.member-dialog::backdrop { background: #0b15275c; backdrop-filter: blur(3px); }
+.member-dialog::backdrop { background: var(--glass-scrim); }
 .member-dialog[open] { animation: member-dialog-enter 200ms cubic-bezier(.2, 0, 0, 1); }
 .member-dialog-form { display: flex; flex-direction: column; max-height: inherit; }
 .member-dialog-heading { display: flex; align-items: flex-start; flex-shrink: 0; gap: 16px; padding: 20px 18px 16px 24px; }

@@ -1,49 +1,55 @@
 <template>
-  <button 
-    type="button" 
-    class="search-pill inline-flex items-center justify-center gap-1.5 rounded-full border-0 px-4 py-2 text-xs font-medium"
-  >
-    <slot />
-  </button>
+  <button type="button" class="search-pill"><slot /></button>
 </template>
 
 <style scoped>
 .search-pill {
-  background: var(--md-sys-color-surface-container-high, rgb(var(--color-slate-100)));
-  color: var(--md-sys-color-on-surface, rgb(var(--color-slate-700)));
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
-  transition: transform 300ms ease-out, box-shadow 300ms ease-out, background-color 200ms;
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--glass-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 140ms cubic-bezier(.2, 0, 0, 1);
 }
-.dark .search-pill {
-  background: var(--md-sys-color-surface-container-high, rgb(var(--color-slate-800)));
-  color: var(--md-sys-color-on-surface, rgb(var(--color-slate-300)));
+/* 视觉胶囊内缩，完整点击区域保留；滤镜只采样背景，文字与图标保持锐利。 */
+.search-pill::before {
+  position: absolute;
+  z-index: -1;
+  inset: 4px 0;
+  border: 1px solid var(--glass-edge);
+  border-radius: inherit;
+  background: var(--glass-pill-background);
+  box-shadow: var(--glass-card-shadow);
+  -webkit-backdrop-filter: var(--glass-pill-filter);
+  backdrop-filter: var(--glass-pill-filter);
+  pointer-events: none;
+  content: '';
+  transition: background-color 150ms ease, border-color 150ms ease;
 }
-.search-pill:hover, .search-pill:active {
-  background: var(--md-sys-color-surface-container-highest, rgb(var(--color-slate-200)));
-}
-.dark .search-pill:hover, .dark .search-pill:active {
-  background: var(--md-sys-color-surface-container-highest, rgb(var(--color-slate-700)));
-}
+.search-pill:disabled { cursor: default; opacity: .5; }
+.search-pill:focus-visible { outline: 2px solid rgb(var(--focus, 37 99 235)); outline-offset: 2px; }
+.search-pill:active:not(:disabled) { transform: scale(.97); }
 @media (hover: hover) {
-  .search-pill:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -2px rgb(0 0 0 / 10%);
-  }
-  .dark .search-pill:hover {
-    box-shadow: 0 8px 15px -3px rgb(0 0 0 / 40%);
-  }
-}
-.search-pill:active {
-  transform: translateY(0) scale(0.95);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
-}
-.dark .search-pill:active { box-shadow: 0 1px 2px rgb(0 0 0 / 20%); }
-.search-pill:focus-visible {
-  outline: 2px solid var(--md-sys-color-primary, rgb(var(--color-accent-text)));
-  outline-offset: 3px;
+  .search-pill:hover:not(:disabled) { transform: translateY(-1px); }
+  .search-pill:hover:not(:disabled)::before { background: var(--glass-pill-hover); border-color: rgb(59 130 246 / 40%); }
+  .dark .search-pill:hover:not(:disabled)::before { border-color: rgb(147 197 253 / 38%); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .search-pill { transition: none; }
+  .search-pill, .search-pill::before { transition: none; }
   .search-pill:hover, .search-pill:active { transform: none; }
 }
 </style>
