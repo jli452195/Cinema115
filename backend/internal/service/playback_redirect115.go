@@ -16,7 +16,7 @@ import (
 func (s *PlaybackCache) lookupRedirect115Target(ctx context.Context, fast fastPlaybackClient, selected *PlaybackCacheSelection, scope, sourceKey, ua string, report *PlaybackResolution, recovery *playbackRecovery) (string, bool, *playbackSearchPrefetch, error) {
 	// Complete play115 declarations use the normal target lookup with the
 	// declared size, including when an older origin mapping disagrees.
-	if _, ok := ctx.Value(play115SourceKey{}).(Play115Source); ok {
+	if _, ok := playbackDeclaredSource(ctx); ok {
 		return "", false, nil, nil
 	}
 	enabled, _ := ctx.Value(playbackTargetSHA1Lookup{}).(bool)

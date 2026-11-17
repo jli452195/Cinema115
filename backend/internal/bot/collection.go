@@ -36,6 +36,10 @@ func (b *Telegram) enqueueUpdates(state *telegramState, updates []telegramUpdate
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
 		}
+		if isED2KSTRMCommand(telegramMessageText(m)) {
+			b.enqueueED2KSTRMMessage(state, update, m, now)
+			continue
+		}
 		var items []messageShare
 		if b.ShareEnabled || len(b.ShareTransferTargets) > 0 {
 			items = parseTelegramMessage(m)
@@ -112,7 +116,7 @@ func telegramShareMode(settings service.AutomationSettings, _ messageShare) stri
 // 普通分享可越过尚未到期的转存批次，执行中的云端操作仍保持串行。
 func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 	// 普通分享与云下载不等待合并窗口；同一 Bot 仍串行执行云端操作。
-	for _, selectedMode := range []string{"direct", "cloud", "share_transfer", "reshare"} {
+	for _, selectedMode := range []string{"direct", "ed2k_strm", "cloud", "share_transfer", "reshare"} {
 		for i, batch := range state.Queue {
 			if batch.Mode != selectedMode {
 				continue
@@ -125,11 +129,10 @@ func (b *Telegram) startReadyBatch(state *telegramState, now time.Time) bool {
 				return true
 			}
 			state.Batch = batch
-			mode := map[string]string{"direct": "普通分享", "cloud": "115 云下载", "share_transfer": "115 分享转存", "reshare": "合并转存再分享"}[batch.Mode]
+			mode := map[string]string{"direct": "普通分享", "ed2k_strm": "ED2K STRM 导入", "cloud": "115 云下载", "share_transfer": "115 分享转存", "reshare": "合并转存再分享"}[batch.Mode]
 			b.Logs.Append("Telegram", fmt.Sprintf("批次-%d", batch.UpdateID), "Bot", "INFO", fmt.Sprintf("开始处理批次：%d 个链接，%s", len(batch.Items), mode))
-			if batch.Mode == "cloud" {
-				// Cloud submissions produce one final summary only. The batch itself
-				// remains persisted before any 115 request is made.
+			if batch.Mode == "cloud" || batch.Mode == "ed2k_strm" {
+				// 入队操作只发送最终汇总；执行前先持久保存整个批次。
 				state.Pending = nil
 				return true
 			}

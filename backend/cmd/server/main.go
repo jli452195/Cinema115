@@ -462,6 +462,14 @@ func main() {
 		log.Fatal(err)
 	}
 	playbackCache.Members = memberPlayback
+	ed2kSTRM, err := service.NewED2KSTRMService(ctx, database, accounts, shareAPI.Client, cloudClient, cloudDownloads, shareAPI.OutputRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ed2kSTRM.Playback, ed2kSTRM.Logs = playbackCache, generationLogs
+	shareAPI.ED2K = ed2kSTRM
+	httpapi.RegisterED2KSTRM(admin, ed2kSTRM, shareAPI.BaseURL)
+	httpapi.RegisterED2KPlayback(r, ed2kSTRM, shareAPI.MediaHTTP, generationLogs)
 	memberPlayback.Cache = playbackCache
 	auth.Members = memberPlayback
 	identityStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-playback-identities.enc"), secret)
@@ -509,6 +517,7 @@ func main() {
 		log.Fatal(err)
 	}
 	telegram.CloudDownloads = cloudDownloads
+	telegram.ED2KSTRM = ed2kSTRM
 	telegram.ShareTransfers = shareTransfers
 	telegram.CloudDownloadSettings = cloudDownloadSettings
 	telegram.ShareTransferSettings = shareTransferSettings
@@ -648,6 +657,16 @@ func main() {
 	go func() {
 		defer workers.Done()
 		if err := driveSTRM.Run(ctx); err != nil {
+			select {
+			case workerErrors <- err:
+			case <-ctx.Done():
+			}
+		}
+	}()
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		if err := ed2kSTRM.Run(ctx); err != nil {
 			select {
 			case workerErrors <- err:
 			case <-ctx.Done():

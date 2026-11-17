@@ -63,6 +63,21 @@ func (c *ShareClient) PickCodeInstantInfo(ctx context.Context, pickCode, cookie 
 	return c.completePickCodeInstantInfo(ctx, info, id, pickCode, cookie)
 }
 
+// PickCodeInstantInfoForFile 使用已保存身份读取来源；仅精确核验确认删除后允许恢复流程查找替代副本。
+func (c *ShareClient) PickCodeInstantInfoForFile(ctx context.Context, expected DrivePlaybackFile, cookie string) (*DownloadInfo, error) {
+	if !validDriveID(expected.ID, false) || !instantHash.MatchString(expected.SHA1) || expected.Size <= 0 || CookieUserID(cookie) == "" {
+		return nil, ErrDriveInvalidResponse
+	}
+	info, err := c.PickCodeInstantInfo(ctx, expected.PickCode, cookie)
+	if err != nil {
+		return nil, c.confirmRejectedPlaybackFile(ctx, expected, cookie, err)
+	}
+	if info.FileID != expected.ID || info.Size != expected.Size || !strings.EqualFold(info.SHA1, expected.SHA1) {
+		return nil, ErrDriveInvalidResponse
+	}
+	return info, nil
+}
+
 func (c *ShareClient) completePickCodeInstantInfo(ctx context.Context, info *DownloadInfo, id, pickCode, cookie string) (*DownloadInfo, error) {
 	if info == nil || !validDriveID(id, false) {
 		return nil, ErrDriveInvalidResponse

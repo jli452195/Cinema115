@@ -32,6 +32,7 @@ type Telegram struct {
 	ShareEnabled               bool
 	CloudDownloads             CloudDownloadSubmitter
 	ShareTransfers             ShareLinkTransferer
+	ED2KSTRM                   ED2KSTRMImporter
 	CloudDownloadTargets       []TelegramTransferTarget
 	CurrentCloudTarget         func(string) (TelegramTransferTarget, bool)
 	ShareTransferTargets       []TelegramTransferTarget

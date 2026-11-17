@@ -31,6 +31,9 @@ type messageBatch struct {
 // 每个链接分别保存开始与结束状态；需要凭据快照的转存批次在重启后停止剩余链接。
 func (b *Telegram) processBatchLink(ctx context.Context, state *telegramState) error {
 	batch := state.Batch
+	if batch.Mode == "ed2k_strm" {
+		return b.processED2KSTRM(ctx, state)
+	}
 	if batch.Mode == "cloud" {
 		return b.processCloudDownload(ctx, state)
 	}

@@ -24,6 +24,7 @@ import (
 	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
+	"strm115/backend/internal/strm"
 )
 
 var errNotShareSTRM = errors.New("不是支持的分享 STRM")
@@ -743,16 +744,18 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		session := service.DirectLinkKey(token, proxyQuery(r.URL.Query(), "PlaySessionId"))
 		ctx = service.WithPoolRequest(ctx, service.PoolRequest{Device: h.identities.Device(h.config.URL, token), Client: service.DirectLinkKey("playback-client", token), Session: session, PlaySession: proxyQuery(r.URL.Query(), "PlaySessionId"), Item: item, Source: jsonString(source["Id"]), Download: isDownload})
 		origin := service.DirectLinkKey("share-material", claim.Code, claim.Password, claim.FileID)
-		if claim.PickCode != "" {
+		if claim.ED2KHash != "" {
+			origin = service.DirectLinkKey("ed2k-material", claim.SHA1, strconv.FormatInt(claim.Size, 10))
+		} else if claim.PickCode != "" {
 			origin = service.DirectLinkKey("pickcode-material", sourceAccount.ID, claim.PickCode)
 		}
 		if members.IsPoolUser(h.config.URL, userID) {
 			ctx = h.cache.WithPoolCopyPreference(ctx, origin, claim.SHA1)
 		}
-		if claim.PickCode == "" && !isDownload {
+		if claim.PickCode == "" && claim.ED2KHash == "" && !isDownload {
 			ctx = service.WithPlaybackDirectShare(ctx, true)
 		}
-		if claim.PickCode != "" && !isDownload {
+		if (claim.PickCode != "" || claim.ED2KHash != "") && !isDownload {
 			ctx = service.WithPlaybackFileReuse(ctx)
 		}
 		authorization, err = members.BeginMediaAuthorization(ctx, h.config.URL, userID, isDownload, &user)
@@ -798,7 +801,9 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		fail("302 使用的 115 账号未选择、已删除或未登录，请管理员重新配置", 503)
 		return false
 	}
-	if claim.PickCode != "" {
+	if claim.ED2KHash != "" {
+		h.logs.Add(ctx, "INFO", "ED2K STRM 内容声明解析成功，优先复用目标账号同 SHA1 文件，未触发离线")
+	} else if claim.PickCode != "" {
 		h.logs.Add(ctx, "INFO", "网盘 PickCode STRM 解析成功，优先匹配已有文件资料；pickcode="+proxyLogID(claim.PickCode))
 	} else {
 		h.logs.Add(ctx, "INFO", "STRM 解析成功，文件编号="+proxyLogID(claim.FileID))
@@ -808,18 +813,41 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 	// Share identity is the share code, password and file ID. An external SHA1
 	// hint must not split its cache from the equivalent /s/ representation.
 	keySHA1 := claim.SHA1
-	if claim.PickCode == "" {
+	if claim.PickCode == "" && claim.ED2KHash == "" {
 		keySHA1 = ""
 	}
 	key := service.DirectLinkKey(h.config.URL, user.ID, item, jsonString(source["Id"]), claim.Code, claim.Password, claim.FileID, claim.PickCode, keySHA1, sourceAccount.ID, strconv.FormatUint(sourceAccount.Revision, 10), cookie, cacheSelection.DirectLinkScope(), r.UserAgent())
 	if claim.PickCode != "" && claim.FileID != "" {
 		key = service.DirectLinkKey(key, strconv.FormatInt(claim.Size, 10), claim.Name)
 	}
+	if claim.ED2KHash != "" {
+		key = service.DirectLinkKey(key, "ed2k", claim.SHA1, strconv.FormatInt(claim.Size, 10))
+	}
 	fetch := func(fetchCtx context.Context) (service.DirectLinkValue, error) {
 		h.logs.Add(fetchCtx, "INFO", fmt.Sprintf("直链缓存未命中，开始向 115 获取直链；缓存时间=%d 分钟（0 为关闭）", h.config.DirectLinkCacheMinutes))
 		value := service.DirectLinkValue{Report: service.PlaybackResolution{Mode: "源账号分享直取", AccountLabel: sourceAccountLabel}}
 		var fetchErr error
-		if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
+		if claim.ED2KHash != "" {
+			loadSource := func(sourceCtx context.Context) (*p115.DownloadInfo, error) {
+				if h.share.ED2K == nil {
+					return nil, fmt.Errorf("ED2K STRM 缓存服务尚未初始化")
+				}
+				// 此处已通过 Emby 用户、条目和来源授权；服务仍须核对资源有合法导入记录。
+				return h.share.ED2K.ResolveSource(service.WithED2KSourceAccount(sourceCtx, sourceAccount), ed2kClaim(claim), r.Method == http.MethodGet && !isDownload)
+			}
+			if cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
+				value.URL, value.Report, fetchErr = h.cache.ResolveED2KWithReport(authorization.ResolutionContext(fetchCtx), cacheSelection, ed2kClaim(claim), r.UserAgent(), loadSource)
+			} else {
+				if direct, ok := h.share.ED2K.(interface {
+					ResolveURL(context.Context, strm.ED2K, string, bool) (string, error)
+				}); ok {
+					value.URL, fetchErr = direct.ResolveURL(service.WithED2KSourceAccount(fetchCtx, sourceAccount), ed2kClaim(claim), r.UserAgent(), r.Method == http.MethodGet && !isDownload)
+					value.Report.Mode = "ED2K 主缓存直取"
+				} else {
+					fetchErr = fmt.Errorf("ED2K STRM 缓存服务尚未提供播放器取链")
+				}
+			}
+		} else if claim.PickCode != "" && cacheSelection != nil && !cacheSelection.UsesSourceAccount(sourceAccount.ID) {
 			value.URL, value.Report, fetchErr = h.cache.ResolvePickCodeWithReport(pickCodeSHA1Context(authorization.ResolutionContext(fetchCtx), claim), cacheSelection, claim.PickCode, cookie, r.UserAgent(), sourceAccount.ID)
 		} else if claim.PickCode != "" {
 			value.URL, fetchErr = h.pickDownload(fetchCtx, claim.PickCode, cookie, r.UserAgent())
@@ -1073,7 +1101,9 @@ func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {
 		source["SupportsDirectPlay"] = json.RawMessage("false")
 		source["SupportsDirectStream"] = json.RawMessage("true")
 		rewritten++
-		if claim.PickCode != "" {
+		if claim.ED2KHash != "" {
+			h.logs.Add(ctx, "INFO", sourceLabel+"：ED2K STRM 识别成功，播放入口已改写为授权取链入口")
+		} else if claim.PickCode != "" {
 			h.logs.Add(ctx, "INFO", sourceLabel+"：网盘 pickcode STRM 识别成功，播放入口已改写为 302 解析入口；来源为配置的源账号")
 		} else {
 			h.logs.Add(ctx, "INFO", sourceLabel+"：分享 STRM 识别成功，播放入口已改写为 302 解析入口")

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/url"
 	"strings"
+
+	"strm115/backend/internal/strm"
 )
 
 // Only recognized share URL formats with a definite syntax error fail early.
@@ -19,7 +21,7 @@ func isMalformedShareURL(raw string) bool {
 		_, password := q["receive_code"]
 		return code || password
 	}
-	return strings.HasPrefix(u.Path, "/api/share115/") || strings.HasPrefix(u.Path, "/s/")
+	return strings.HasPrefix(u.Path, "/api/share115/") || strings.HasPrefix(u.Path, "/s/") || strings.HasPrefix(u.Path, strm.ED2KPrefix)
 }
 
 // Only use an unambiguous static STRM returned by the current user's item

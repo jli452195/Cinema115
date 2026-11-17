@@ -29,6 +29,7 @@ type Hub struct {
 	Notifications         NotificationStore
 	CloudDownloads        *service.CloudDownloadService
 	ShareTransfers        *service.ShareLinkTransferService
+	ED2KSTRM              *service.ED2KSTRMService
 	Follows               *service.FollowService
 	Playback              *service.MemberPlaybackService
 	Anime                 *service.AnimeAdminService
@@ -62,6 +63,9 @@ func (h *Hub) newManager(profile BotProfile, receiveShare bool) *Manager {
 			worker.ShareEnabled = receiveShare
 			worker.CloudDownloads = h.CloudDownloads
 			worker.ShareTransfers = h.ShareTransfers
+			if h.ED2KSTRM != nil {
+				worker.ED2KSTRM = h.ED2KSTRM
+			}
 			worker.CloudDownloadTargets = append([]TelegramTransferTarget{}, cloudTargets...)
 			worker.CurrentCloudTarget = func(id string) (TelegramTransferTarget, bool) { return h.cloudTarget(profile.ID, id) }
 			worker.ShareTransferTargets = append([]TelegramTransferTarget{}, shareTargets...)

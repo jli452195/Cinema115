@@ -2,6 +2,7 @@ package p115
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
 
@@ -15,9 +16,20 @@ func (c *ShareClient) VerifiedPlaybackURL(ctx context.Context, expected DrivePla
 	info, id, err := c.pickCodeInfo(readCtx, expected.PickCode, cookie, ua)
 	finish()
 	if err != nil {
-		return "", err
+		return "", c.confirmRejectedPlaybackFile(ctx, expected, cookie, err)
 	}
 	return verifiedPlaybackDownload(expected, info, id, func() error { return c.VerifyPlaybackFile(ctx, expected, cookie) })
+}
+
+// confirmRejectedPlaybackFile 只在取链被泛拒绝后精确核对固定文件，不把拒绝直接当作删除。
+func (c *ShareClient) confirmRejectedPlaybackFile(ctx context.Context, expected DrivePlaybackFile, cookie string, rejected error) error {
+	if !errors.Is(rejected, ErrDriveRejected) {
+		return rejected
+	}
+	if err := c.VerifyPlaybackFile(ctx, expected, cookie); err != nil {
+		return err
+	}
+	return rejected
 }
 
 func verifiedPlaybackDownload(expected DrivePlaybackFile, info *DownloadInfo, id string, verifyMissingSHA func() error) (string, error) {

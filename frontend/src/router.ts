@@ -92,6 +92,7 @@ export const router = createRouter({
     { path: '/115/cloud-download', name: 'cloud-download', component: CloudDownloadView, meta: { defaultSidebarCollapsed: false } },
     { path: '/115/folder-monitor', name: 'folder-monitor', component: FolderMonitorView, meta: { defaultSidebarCollapsed: false } },
     { path: '/115/drive-strm', name: 'drive-strm', component: () => import('./views/DriveSTRMView.vue'), meta: { defaultSidebarCollapsed: false } },
+    { path: '/115/ed2k-strm', name: 'ed2k-strm', component: () => import('./views/ED2KSTRMView.vue'), meta: { defaultSidebarCollapsed: false } },
     { path: '/115/download-organize', name: 'download-organize', component: DownloadOrganizeView, meta: { defaultSidebarCollapsed: false } },
     { path: '/telegram', name: 'telegram-category', component: HomeView, props: { category: 'telegram' }, meta: { categoryPage: true, defaultSidebarCollapsed: false } },
     { path: '/telegram/bot', name: 'telegram', component: TelegramView, meta: { defaultSidebarCollapsed: false } },

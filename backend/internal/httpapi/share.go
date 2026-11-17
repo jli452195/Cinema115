@@ -23,6 +23,7 @@ type ShareAPI struct {
 	BaseURL    func() string
 	MediaHTTP  *http.Client
 	Logs       *service.GenerationLogs
+	ED2K       ED2KSourceResolver
 }
 
 func NewShareAPI(cookie func() string) *ShareAPI {
@@ -100,6 +101,7 @@ type sharePlaybackParams struct {
 	PickCode string `json:"pickCode,omitempty"`
 	SHA1     string `json:"sha1,omitempty"`
 	Size     int64  `json:"size,omitempty"`
+	ED2KHash string `json:"ed2kHash,omitempty"`
 }
 
 func (a *ShareAPI) strm(c *gin.Context) {

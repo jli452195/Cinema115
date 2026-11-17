@@ -9,6 +9,7 @@ import { telegramUserRequest, TelegramSearchError, type TelegramChannelConfig, t
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
+import { createED2KSTRMAPI } from '../lib/ed2k-strm-api'
 import { copyText } from '../utils/clipboard'
 import telegramIcon from '../assets/telegram/telegram.svg'
 
@@ -20,6 +21,8 @@ const lifecycle = new AbortController()
 const transfers = useShareTransfer(props.token, lifecycle.signal)
 const shares = useShareSTRMRun(props.token, lifecycle.signal, { scope: `tg-channel/${props.kind}/${props.tmdbId}` })
 const cloudPending = ref<Record<string, boolean>>({}), cloudStatus = ref<Record<string, { message: string; blocked: boolean; success: boolean; needsConfig?: boolean }>>({})
+const ed2kSTRM = createED2KSTRMAPI(() => props.token, lifecycle.signal)
+const ed2kPending = ref<Record<string, boolean>>({}), ed2kStatus = ref<Record<string, { message: string; success: boolean }>>({})
 const retryAt = ref(0), clock = ref(Date.now())
 let retryTimer: ReturnType<typeof setInterval> | undefined
 const retrySeconds = computed(() => Math.max(0, Math.ceil((retryAt.value - clock.value) / 1000)))
@@ -84,6 +87,17 @@ async function download(item: TelegramChannelResource, link: TelegramChannelLink
     }
   } finally { delete cloudPending.value[id] }
 }
+async function generateED2K(item: TelegramChannelResource, link: TelegramChannelLink) {
+  const id = linkID(item, link)
+  if (link.type !== 'ed2k' || ed2kPending.value[id] || ed2kStatus.value[id]?.success) return
+  ed2kPending.value[id] = true; delete ed2kStatus.value[id]
+  try {
+    const value = await ed2kSTRM.imports([link.url])
+    if (!lifecycle.signal.aborted) ed2kStatus.value[id] = { message: value.resources.every(resource => !!resource.strmPath) ? '已复用资源的 STRM，可在 ED2K STRM 查看。' : '已接收 ED2K，后台核验文件后生成 STRM。', success: true }
+  } catch (reason) {
+    if (!lifecycle.signal.aborted) ed2kStatus.value[id] = { message: reason instanceof Error ? reason.message : '提交 ED2K STRM 失败', success: false }
+  } finally { delete ed2kPending.value[id] }
+}
 async function copy(link: TelegramChannelLink) {
   try { await copyText(link.url); copied.value = link.url }
   catch { copied.value = ''; error.value = '复制失败，请再次尝试' }
@@ -117,15 +131,16 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
           <div v-for="(link, index) in item.links" :key="link.url" class="tg-link-row">
             <div v-if="link.metadata" class="tg-link-specs"><span v-if="link.metadata.episode" class="tg-episode" aria-label="发布季集">{{ link.metadata.episode }}</span><p v-if="link.metadata.specs?.length || link.metadata.size" class="tg-specs" aria-label="资源规格"><span v-for="spec in link.metadata.specs" :key="spec">{{ spec }}</span><span v-if="link.metadata.size" class="tg-size">{{ link.metadata.size }}</span></p></div>
             <div class="tg-link-heading"><span>{{ link.type === '115' ? '115 分享' : 'ED2K' }}{{ item.links.length > 1 ? ` ${index + 1}` : '' }}</span><button class="tg-copy" :aria-label="`复制${link.type === '115' ? '分享' : 'ED2K'}链接`" @click="copy(link)"><IconCopy :size="15" aria-hidden="true"/>{{ copied === link.url ? '已复制' : '复制' }}</button><a v-if="link.type === '115'" :href="link.url" target="_blank" rel="noopener noreferrer" class="tg-copy">打开分享<IconExternalLink :size="13" aria-hidden="true" /></a></div>
-            <div class="tg-actions"><template v-if="link.type === '115'"><ShareTransferButton :transfer="transfers" :resource="{ load: async () => [{ url: link.url }] }" /><button class="resource-action-button resource-primary-button" :disabled="shares.pending.value[linkID(item, link)] || shares.statuses.value[linkID(item, link)]?.success" :aria-busy="!!shares.pending.value[linkID(item, link)]" :title="shares.statuses.value[linkID(item, link)]?.message" @click="shares.submit(shareResource(item, link))"><IconFile :size="16" aria-hidden="true"/><span class="resource-strm-label">{{ shares.pending.value[linkID(item, link)] ? '处理中…' : shares.statuses.value[linkID(item, link)]?.success ? '已生成' : '分享 STRM' }}</span></button></template><button v-else class="tg-button tg-primary" :disabled="cloudPending[linkID(item, link)] || cloudStatus[linkID(item, link)]?.blocked" @click="download(item, link)"><IconDownload :size="16" aria-hidden="true"/>{{ cloudPending[linkID(item, link)] ? '提交中…' : cloudStatus[linkID(item, link)]?.success ? '已提交' : cloudStatus[linkID(item, link)]?.blocked ? '待核对' : '115 云下载' }}</button></div>
+            <div class="tg-actions"><template v-if="link.type === '115'"><ShareTransferButton :transfer="transfers" :resource="{ load: async () => [{ url: link.url }] }" /><button class="resource-action-button resource-primary-button" :disabled="shares.pending.value[linkID(item, link)] || shares.statuses.value[linkID(item, link)]?.success" :aria-busy="!!shares.pending.value[linkID(item, link)]" :title="shares.statuses.value[linkID(item, link)]?.message" @click="shares.submit(shareResource(item, link))"><IconFile :size="16" aria-hidden="true"/><span class="resource-strm-label">{{ shares.pending.value[linkID(item, link)] ? '处理中…' : shares.statuses.value[linkID(item, link)]?.success ? '已生成' : '分享 STRM' }}</span></button></template><template v-else><button class="tg-button" :disabled="cloudPending[linkID(item, link)] || cloudStatus[linkID(item, link)]?.blocked" @click="download(item, link)"><IconDownload :size="16" aria-hidden="true"/>{{ cloudPending[linkID(item, link)] ? '提交中…' : cloudStatus[linkID(item, link)]?.success ? '已提交' : cloudStatus[linkID(item, link)]?.blocked ? '待核对' : '115 云下载' }}</button><button class="tg-button tg-primary" :disabled="ed2kPending[linkID(item, link)] || ed2kStatus[linkID(item, link)]?.success" :aria-busy="!!ed2kPending[linkID(item, link)]" @click="generateED2K(item, link)"><IconFile :size="16" aria-hidden="true"/>{{ ed2kPending[linkID(item, link)] ? '提交中…' : ed2kStatus[linkID(item, link)]?.success ? '已接收' : 'ED2K STRM' }}</button></template></div>
             <p v-if="cloudStatus[linkID(item, link)]" role="status" class="tg-task-status">{{ cloudStatus[linkID(item, link)]?.message }} <RouterLink v-if="cloudStatus[linkID(item, link)]?.needsConfig" to="/115/cloud-download" @click="emit('close')">前往配置</RouterLink></p>
+            <p v-if="ed2kStatus[linkID(item, link)]" role="status" class="tg-task-status">{{ ed2kStatus[linkID(item, link)]?.message }} <RouterLink to="/115/ed2k-strm" @click="emit('close')">{{ ed2kStatus[linkID(item, link)]?.success ? '查看 ED2K STRM' : '前往 ED2K STRM 配置' }}</RouterLink></p>
           </div>
           <details class="tg-message"><summary>消息内容</summary><p>{{ item.text }}</p></details>
         </li>
       </ul>
       <div class="tg-list-end"><button v-if="canContinue" class="tg-button" :disabled="!!phase || retrySeconds > 0" @click="search(true)">{{ phase === 'more' ? '正在加载…' : '加载更多资源' }}</button><span v-else-if="!phase && !error && !result.partial && !result.truncated">已加载全部资源</span></div>
     </template>
-    <template #footer><div class="search-log-footer"><span>115 分享生成 STRM，ED2K 使用已保存的云下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></div></template>
+    <template #footer><div class="search-log-footer"><span>115 分享与 ED2K 分别生成 STRM；云下载仍使用原接收目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></div></template>
   </FloatingDialog>
 </template>
 

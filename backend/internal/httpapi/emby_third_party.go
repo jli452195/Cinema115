@@ -9,9 +9,19 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 	"strm115/backend/internal/strm"
 )
+
+// ED2KSourceResolver 只在确需源文件时恢复已登记的主缓存，URL 本身不授予离线权限。
+type ED2KSourceResolver interface {
+	ResolveSource(context.Context, strm.ED2K, bool) (*p115.DownloadInfo, error)
+}
+
+func ed2kClaim(claim *sharePlaybackParams) strm.ED2K {
+	return strm.ED2K{Hash: claim.ED2KHash, SHA1: claim.SHA1, Size: claim.Size, Name: claim.Name}
+}
 
 func pickCodeSHA1Context(ctx context.Context, claim *sharePlaybackParams) context.Context {
 	if claim.PickCode != "" && claim.FileID != "" {
@@ -56,6 +66,16 @@ func parsePickCodeSTRMClaim(raw string) (*sharePlaybackParams, bool) {
 		return nil, false
 	}
 	path := u.EscapedPath()
+	if strings.HasPrefix(path, strm.ED2KPrefix) {
+		if strings.Contains(raw, "#") {
+			return nil, false
+		}
+		value, err := strm.ParseED2KPath(path)
+		if err != nil {
+			return nil, false
+		}
+		return &sharePlaybackParams{ED2KHash: value.Hash, SHA1: value.SHA1, Size: value.Size, Name: value.Name}, true
+	}
 	if strings.HasPrefix(path, strm.DrivePrefix) {
 		// Our generator always escapes filenames. Unlike legacy generators,
 		// native declarations never recover unescaped URL fragments.

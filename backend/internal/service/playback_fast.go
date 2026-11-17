@@ -185,7 +185,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	defer prefetch.stop()
 	next("文件秒传资料")
 	info, materialID, commitRanges, err := s.preparePlaybackMaterial(ctx, selected, report, func() (*p115.DownloadInfo, error) {
-		if sourceCookie == "" {
+		if _, ed2k := ctx.Value(ed2kPlaybackSourceKey{}).(ed2kPlaybackSource); sourceCookie == "" && !ed2k {
 			return nil, fmt.Errorf("请配置主账号凭据")
 		}
 		return loadSource()
@@ -193,7 +193,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 	if err != nil {
 		return "", err
 	}
-	_, fromPlay115 := ctx.Value(play115SourceKey{}).(Play115Source)
+	_, fromDeclaration := playbackDeclaredSource(ctx)
 	if err := p115.ValidateInstantSource(info); err != nil {
 		return "", err
 	}
@@ -213,7 +213,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			entry.MaterialID = materialID
 			link, err := recovery.reuse(ctx, s, entry, selected, ua, report)
 			if err == nil {
-				if fromPlay115 {
+				if fromDeclaration {
 					if err := commitRanges(); err != nil {
 						return "", err
 					}
@@ -286,7 +286,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			continue
 		}
 		report.Mode = "复用同 SHA1 文件"
-		if fromPlay115 {
+		if fromDeclaration {
 			if err := commitRanges(); err != nil {
 				return "", err
 			}
@@ -380,6 +380,14 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		}
 	})
 	if err != nil || result == nil {
+		var sourcePending *PlaybackPendingError
+		if errors.As(err, &sourcePending) {
+			// 校验来源正在后台恢复，当前挑战尚未接受，不把它标成未知写入。
+			if saveErr := s.ForgetLocked(key); saveErr != nil {
+				return "", saveErr
+			}
+			return "", sourcePending
+		}
 		var preflight *p115.PlaybackPreflightError
 		if errors.As(err, &preflight) {
 			if saveErr := s.ForgetLocked(key); saveErr != nil {
@@ -398,7 +406,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 			next("异常响应 SHA1 确认")
 			link, found, confirmErr := s.confirmUncertainUpload(ctx, fast, e, info, selected, ua, report)
 			if found {
-				if fromPlay115 {
+				if fromDeclaration {
 					// A verified target proves file data, but an uncertain upload
 					// response does not prove acceptance of this request's ranges.
 					m := PlaybackMaterial{ID: materialID, Name: info.Name, Size: info.Size, SHA1: info.SHA1, CreatedAt: time.Now().UTC(), VerifiedAt: time.Now().UTC()}
@@ -416,7 +424,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		return "", fmt.Errorf("朋友账号秒传未完成：%s", reason)
 	}
 	// Only an explicit successful upload response proves the challenge accepted.
-	if !fromPlay115 {
+	if !fromDeclaration {
 		if err := commitRanges(); err != nil {
 			return "", fmt.Errorf("秒传已成功，但校验资料保存失败: %w", err)
 		}
@@ -439,7 +447,7 @@ func (s *PlaybackCache) resolveFastInstant(ctx context.Context, fast fastPlaybac
 		}
 		return "", fmt.Errorf("秒传已成功，%s（fileID=%s，pickcode=%s）", reason, result.FileID, result.PickCode)
 	}
-	if fromPlay115 {
+	if fromDeclaration {
 		if err := commitRanges(); err != nil {
 			return "", fmt.Errorf("秒传已成功，但资料保存失败: %w", err)
 		}

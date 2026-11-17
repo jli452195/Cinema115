@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 71
+const schemaVersion = 72
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -586,6 +586,9 @@ PRAGMA user_version=30;`); err != nil {
 				}
 			}
 		}
+	}
+	if _, err := tx.ExecContext(ctx, ed2kSTRMSchema); err != nil {
+		return fmt.Errorf("创建 ED2K STRM 存储: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {
 		return fmt.Errorf("保存数据库结构版本: %w", err)

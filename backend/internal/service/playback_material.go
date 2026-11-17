@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -193,8 +194,8 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 	origin, _ := ctx.Value(playbackMaterialOrigin{}).(string)
 	hint, _ := ctx.Value(playbackSHA1Hint{}).(string)
 	material, byHash := s.lookupMaterial(origin, hint)
-	declared, fromPlay115 := ctx.Value(play115SourceKey{}).(Play115Source)
-	if fromPlay115 {
+	declared, fromDeclaration := playbackDeclaredSource(ctx)
+	if fromDeclaration {
 		material = PlaybackMaterial{ID: playbackMaterialID(declared.SHA1, declared.Size), Name: declared.Name, Size: declared.Size, SHA1: declared.SHA1, CreatedAt: time.Now().UTC()}
 		if err := validatePlaybackMaterials([]PlaybackMaterial{material}); err != nil {
 			return nil, "", nil, err
@@ -202,7 +203,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if old, ok := s.materialByID(material.ID); ok {
 			material.Ranges = old.Ranges
 		}
-		s.logs.Add(ctx, "INFO", "采用 play115 声明的 SHA1、大小和文件名，跳过主账号元数据查询；仅二次校验缺片段时读取来源")
+		s.logs.Add(ctx, "INFO", "采用完整内容声明的 SHA1、大小和文件名，跳过主账号元数据查询；仅二次校验缺片段时读取来源")
 	}
 	var original *p115.DownloadInfo
 	if material.ID == "" {
@@ -242,7 +243,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if err := s.putMaterial(material); err != nil {
 			return nil, "", nil, err
 		}
-	} else if !fromPlay115 {
+	} else if !fromDeclaration {
 		s.stats.materialHits.Add(1)
 		if byHash {
 			s.logs.Add(ctx, "INFO", "外部链接 SHA1 命中已验证资料，跳过主账号元数据查询")
@@ -290,7 +291,11 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		if err != nil && readCtx.Err() == nil {
 			if original == nil {
 				s.stats.primaryReads.Add(1)
-				original, err = loadSource()
+				if source, ok := ctx.Value(ed2kPlaybackSourceKey{}).(ed2kPlaybackSource); ok && source.load != nil {
+					original, err = source.load(readCtx)
+				} else {
+					original, err = loadSource()
+				}
 			}
 			if original != nil {
 				s.logs.Add(readCtx, "INFO", "二次校验来源：本次请求固定的源文件")
@@ -298,7 +303,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 				if original.Size != material.Size || !strings.EqualFold(original.SHA1, material.SHA1) {
 					return "", fmt.Errorf("源文件身份与秒传资料不一致，请核查资料")
 				}
-				if fromPlay115 && original.FileID != declared.FileID {
+				if fromDeclaration && declared.FileID != "" && original.FileID != declared.FileID {
 					return "", fmt.Errorf("play115 校验来源文件 ID 不一致")
 				}
 				s.stats.primaryReads.Add(1)
@@ -309,6 +314,10 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 			if readCtx.Err() != nil {
 				return "", readCtx.Err()
 			}
+			var pending *PlaybackPendingError
+			if errors.As(err, &pending) {
+				return "", err
+			}
 			return "", p115.ErrPlaybackRangeUnavailable
 		}
 		if !validMaterialHash(hash) {
@@ -318,7 +327,7 @@ func (s *PlaybackCache) preparePlaybackMaterial(ctx context.Context, selected *P
 		return strings.ToUpper(hash), nil
 	}
 	commit := func() error {
-		if len(pending) == 0 && !fromPlay115 {
+		if len(pending) == 0 && !fromDeclaration {
 			return nil
 		}
 		material.VerifiedAt = time.Now().UTC()

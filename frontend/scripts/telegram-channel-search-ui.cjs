@@ -14,7 +14,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const ed2k = 'ed2k://|file|Movie.mkv|123|0123456789abcdef0123456789abcdef|/'
   const first = { id: '11:10', title: '测试电影', metadata: { episode: 'S01E13', specs: ['2160p', 'HDR', 'HEVC'], size: '18.1 GB' }, text: '测试电影 2160p\n4K HDR\nhttps://115.com/s/example?password=abcd', channel: channels[0], sourceUrl: 'https://t.me/c/11/10', postedAt: '2026-10-27T01:00:00Z', links: [{ type: '115', url: 'https://115.com/s/example?password=abcd' }] }
   const second = { id: '12:20', title: '测试电影', text: '测试电影 1080p\n' + ed2k, channel: channels[1], sourceUrl: 'https://t.me/c/12/20', postedAt: '2026-10-26T01:00:00Z', links: [{ type: 'ed2k', url: ed2k, metadata: { specs: ['1080p', 'HEVC'], size: '1.2 GiB' } }] }
-  let failMore = false, expired = false, holdSearch = false, releaseSearch, uncertainDownload = true, configReady = true
+  let failMore = false, expired = false, holdSearch = false, releaseSearch, uncertainDownload = true, configReady = true, rejectED2K = true
   let run
   const baseResult = () => ({ items: [first], warnings: [{ channel: channels[1], error: '频道读取超时，可加载更多重试' }], hasMore: true, cursor: 'page2', partial: true, cached: false, expiresAt: '2026-10-27T02:00:00Z' })
   await page.route('**/api/**', async route => {
@@ -35,6 +35,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     writes.push({ path: p, body: req.postDataJSON() })
     if (uncertainDownload) return route.fulfill({ status: 504, body: '', contentType: 'text/plain' })
     return route.fulfill({ json: { accepted: true } })
+   }
+   if (p === '/api/admin/p115/ed2k-strm/imports') {
+    assert.deepEqual(req.postDataJSON(), { links: [ed2k] })
+    if (rejectED2K) return route.fulfill({ status: 409, json: { error: '请先保存 ED2K STRM 基础设置' } })
+    writes.push({ path: p, body: req.postDataJSON() })
+    return route.fulfill({ status: 202, json: { resources: [{ hash: '0123456789abcdef0123456789abcdef', size: 123, name: 'Movie.mkv', status: 'queued' }] } })
    }
    if (p === '/api/admin/p115/share/automation-config') return route.fulfill({ json: { settings: { accountId: 'main', generation: { baseUrl: 'http://nas', outputDir: '/strm', videoExtensions: '.mkv', recursive: true } } } })
    if (p === '/api/admin/p115/share/generation-runs' && req.method() === 'POST') {
@@ -83,6 +89,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await dialog.getByRole('button', { name: '分享 STRM', exact: true }).click()
   await dialog.getByRole('button', { name: '已生成', exact: true }).waitFor()
   assert.equal(writes[1].body.inputs[0].url, first.links[0].url.replace('115.com', '115cdn.com'))
+  await ed.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
+  await ed.getByText('请先保存 ED2K STRM 基础设置', { exact: false }).waitFor()
+  assert.equal(await ed.getByRole('link', { name: '前往 ED2K STRM 配置', exact: true }).getAttribute('href'), '/115/ed2k-strm')
+  rejectED2K = false
+  await ed.getByRole('button', { name: 'ED2K STRM', exact: true }).click()
+  await ed.getByRole('button', { name: '已接收', exact: true }).waitFor()
+  assert.equal(await ed.getByRole('button', { name: '已接收', exact: true }).isDisabled(), true)
+  assert.deepEqual(writes[2], { path: '/api/admin/p115/ed2k-strm/imports', body: { links: [ed2k] } })
   await dialog.getByRole('searchbox', { name: '筛选频道资源' }).fill('1080p')
   assert.equal(await dialog.locator('.tg-resource').count(), 1)
   await dialog.getByRole('searchbox').fill('')
@@ -109,6 +123,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   releaseSearch(); holdSearch = false
   assert.deepEqual(errors, [])
   assert.ok(searches.every(s => s.tmdbId === '42' && s.kind === 'movie'))
-  console.log('TG channel search UI passed: detail entry, partial results, pagination retry/expiry, share STRM, uncertain ED2K, mobile/dark and close cancellation.')
+  console.log('TG channel search UI passed: detail entry, partial results, pagination retry/expiry, share STRM, uncertain ED2K, independent ED2K STRM, mobile/dark and close cancellation.')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

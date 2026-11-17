@@ -155,6 +155,36 @@ func (s *DriveSTRMService) SaveWithSchedule(ctx context.Context, value model.Dri
 	if err != nil {
 		return value, err
 	}
+	if reader, ok := s.Store.(interface {
+		GetED2KSTRMSettings(context.Context) (model.ED2KSTRMSettings, error)
+		ListED2KSTRMResources(context.Context) ([]model.ED2KSTRMResource, error)
+	}); ok {
+		settings, err := reader.GetED2KSTRMSettings(ctx)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return value, err
+		}
+		resources, err := reader.ListED2KSTRMResources(ctx)
+		if err != nil {
+			return value, err
+		}
+		protected := make(map[string]bool, len(resources)+1)
+		protected[settings.OutputDir] = true
+		for _, resource := range resources {
+			protected[resource.Settings.OutputDir] = true
+		}
+		for directory := range protected {
+			if directory == "" {
+				continue
+			}
+			ed2kOutput, err := ResolveOutputDirectory(s.Root, directory)
+			if err != nil {
+				return value, err
+			}
+			if mediaWithin(ed2kOutput, output) || mediaWithin(output, ed2kOutput) {
+				return value, generationInputError("输出目录不能与 ED2K STRM 输出目录重叠")
+			}
+		}
+	}
 	if _, err := s.Settings(ctx); err != nil {
 		return value, err
 	}

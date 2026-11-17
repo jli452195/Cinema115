@@ -10,6 +10,7 @@
     "test:dashboard-navigation-ui": "node scripts/dashboard-navigation-ui.cjs",
     "test:folder-monitor-ui": "node scripts/folder-monitor-ui.cjs",
     "test:drive-strm-ui": "node scripts/drive-strm-ui.cjs",
+    "test:ed2k-strm-ui": "node scripts/ed2k-strm-ui.cjs",
     "test:classification": "node --test tests/classification-document.test.mjs",
     "test:classification-ui": "node scripts/classification-settings-ui.cjs",
     "test:recognition-ui": "node scripts/recognition-settings-ui.cjs",
