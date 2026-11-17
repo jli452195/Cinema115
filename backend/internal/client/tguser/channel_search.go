@@ -17,7 +17,6 @@ import (
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 	"golang.org/x/sync/errgroup"
-	"strm115/backend/internal/client/p115"
 )
 
 const channelSearchTTL = 10 * time.Minute
@@ -29,6 +28,18 @@ type ChannelLink struct {
 	Type     string           `json:"type"`
 	URL      string           `json:"url"`
 	Metadata *ChannelMetadata `json:"metadata,omitempty"`
+	File     *ChannelFile     `json:"file,omitempty"`
+}
+type ChannelFile struct {
+	Name      string `json:"name"`
+	Hash      string `json:"hash"`
+	SizeBytes string `json:"sizeBytes"`
+}
+type ChannelSource struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	URL   string `json:"url"`
+	Label string `json:"label"`
 }
 type ChannelResource struct {
 	ID        string           `json:"id"`
@@ -39,6 +50,8 @@ type ChannelResource struct {
 	PostedAt  time.Time        `json:"postedAt"`
 	Links     []ChannelLink    `json:"links"`
 	Metadata  *ChannelMetadata `json:"metadata,omitempty"`
+	Sources   []ChannelSource  `json:"sources,omitempty"`
+	Version   string           `json:"version,omitempty"`
 }
 type ChannelSearchWarning struct {
 	Channel Channel `json:"channel"`
@@ -69,6 +82,14 @@ type channelSearch struct {
 	next                   int
 	cursor, previousCursor string
 	result                 ChannelSearchResult
+	target                 ChannelSearchTarget
+}
+
+// ChannelSearchTarget 保留作品身份，外链详情解析不能丢失电影与剧集的区别。
+type ChannelSearchTarget struct {
+	Title  string
+	Kind   string
+	TMDBID string
 }
 
 func channelFingerprint(settings channelSettings) string {
@@ -116,7 +137,27 @@ func (c *Client) channelSearchStateLocked(title, cursor string, refresh bool) (*
 // SearchChannels never sends messages or invokes callbacks. Each request reads
 // a bounded batch; pagination and failed channels retain their own offsets.
 func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refresh bool) (ChannelSearchResult, error) {
+	return c.SearchChannelsForMedia(ctx, ChannelSearchTarget{Title: title}, cursor, refresh)
+}
+
+func (c *Client) SearchChannelsForMedia(ctx context.Context, target ChannelSearchTarget, cursor string, refresh bool) (ChannelSearchResult, error) {
+	title := target.Title
 	title = strings.TrimSpace(title)
+	target.Title = title
+	if target.Kind != "" && target.Kind != "movie" && target.Kind != "tv" {
+		return ChannelSearchResult{}, ErrInput
+	}
+	if target.TMDBID != "" {
+		id, err := strconv.ParseUint(target.TMDBID, 10, 63)
+		if err != nil || id == 0 || target.Kind == "" {
+			return ChannelSearchResult{}, ErrInput
+		}
+		target.TMDBID = strconv.FormatUint(id, 10)
+	}
+	key := title
+	if target.Kind != "" {
+		key = target.Kind + "/" + target.TMDBID + "/" + title
+	}
 	if title == "" || len([]rune(title)) > 256 || len(cursor) > 64 || (refresh && cursor != "") {
 		return ChannelSearchResult{}, ErrInput
 	}
@@ -124,7 +165,7 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 		return ChannelSearchResult{}, err
 	}
 	c.mu.Lock()
-	search, cached, err := c.channelSearchStateLocked(title, cursor, refresh)
+	search, cached, err := c.channelSearchStateLocked(key, cursor, refresh)
 	if err != nil || cached {
 		c.mu.Unlock()
 		if cached {
@@ -146,7 +187,7 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 	}
 	defer unlock()
 	c.mu.Lock()
-	search, cached, err = c.channelSearchStateLocked(title, cursor, refresh)
+	search, cached, err = c.channelSearchStateLocked(key, cursor, refresh)
 	c.mu.Unlock()
 	if err != nil {
 		return ChannelSearchResult{}, err
@@ -176,7 +217,7 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 			return &OperationError{Code: "channel_search_expired", Message: "频道账号或配置已改变，请重新搜索"}
 		}
 		if search == nil {
-			search = &channelSearch{key: title, fingerprint: channelFingerprint(c.channels), ownerID: c.userID, expires: time.Now().Add(channelSearchTTL), positions: make([]channelPosition, len(c.channels.Peers))}
+			search = &channelSearch{key: key, target: target, fingerprint: channelFingerprint(c.channels), ownerID: c.userID, expires: time.Now().Add(channelSearchTTL), positions: make([]channelPosition, len(c.channels.Peers))}
 			for i, p := range c.channels.Peers {
 				search.positions[i].peer = p
 			}
@@ -315,7 +356,7 @@ func (c *Client) SearchChannels(ctx context.Context, title, cursor string, refre
 			delete(c.channelSearches, oldest)
 		}
 		for id, cached := range c.channelSearches {
-			if cached == search || (refresh && cached.key == title) {
+			if cached == search || (refresh && cached.key == key) {
 				delete(c.channelSearches, id)
 			}
 		}
@@ -377,11 +418,16 @@ var channelUsernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{3,31}$`)
 
 func channelMessage(message *tg.Message, channel Channel, query string) (ChannelResource, bool) {
 	links := make([]ChannelLink, 0)
+	sources := make([]ChannelSource, 0, 1)
 	seen := make(map[string]bool)
 	add := func(raw string) {
+		if source, ok := channelTelegraphSource(raw); ok && !seen[source.URL] && len(sources) < 4 {
+			seen[source.URL] = true
+			sources = append(sources, source)
+		}
 		value, kind := shareLink(raw), "115"
 		if value == "" && strings.HasPrefix(strings.ToLower(raw), "ed2k://") {
-			if resource, err := p115.ParseCloudResource(raw); err == nil && resource.Protocol == "ed2k" {
+			if _, err := channelED2KIdentity(raw); err == nil {
 				value, kind = raw, "ed2k"
 			}
 		}
@@ -407,7 +453,7 @@ func channelMessage(message *tg.Message, channel Channel, query string) (Channel
 			}
 		}
 	}
-	if len(links) == 0 {
+	if len(links) == 0 && len(sources) == 0 {
 		return ChannelResource{}, false
 	}
 	if query != "" && !channelRelevant(message.Message, links, query) {
@@ -447,5 +493,5 @@ func channelMessage(message *tg.Message, channel Channel, query string) (Channel
 	if channelUsernamePattern.MatchString(channel.Username) {
 		path = channel.Username
 	}
-	return ChannelResource{ID: channel.ID + ":" + strconv.Itoa(message.ID), Title: title, Text: message.Message, Channel: channel, SourceURL: "https://t.me/" + path + "/" + strconv.Itoa(message.ID), PostedAt: time.Unix(int64(message.Date), 0).UTC(), Links: links, Metadata: metadata}, true
+	return ChannelResource{ID: channel.ID + ":" + strconv.Itoa(message.ID), Title: title, Text: message.Message, Channel: channel, SourceURL: "https://t.me/" + path + "/" + strconv.Itoa(message.ID), PostedAt: time.Unix(int64(message.Date), 0).UTC(), Links: links, Metadata: metadata, Sources: sources}, true
 }

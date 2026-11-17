@@ -16,6 +16,32 @@ import (
 	"strm115/backend/internal/storage"
 )
 
+func TestED2KSTRMImportRejectsOversizedBodyBeforeRegistering(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "ed2k.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	accounts, _ := proxyTestAccounts(t)
+	s, err := service.NewED2KSTRMService(ctx, db, accounts, nil, nil, nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := gin.New()
+	RegisterED2KSTRM(r.Group("/api/admin"), s, func() string { return "https://cinema.example" }, nil)
+	body := `{"links":["ed2k://|file|` + strings.Repeat("x", 512<<10) + `.mkv|123|0123456789abcdef0123456789abcdef|/"],"targetId":"tv","requestId":"oversized"}`
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/ed2k-strm/imports", strings.NewReader(body)))
+	if w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), "本次未接收") {
+		t.Fatalf("请求体过大没有明确接收前拒绝：status=%d body=%s", w.Code, w.Body.String())
+	}
+	stored, err := db.ListED2KSTRMTasks(ctx)
+	if err != nil || len(stored) != 0 || len(s.List()) != 0 {
+		t.Fatalf("请求体过大仍产生了登记：tasks=%d resources=%d err=%v", len(stored), len(s.List()), err)
+	}
+}
+
 func TestED2KSTRMManagementSeparatesTargetsTasksAndResources(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "ed2k.db"))

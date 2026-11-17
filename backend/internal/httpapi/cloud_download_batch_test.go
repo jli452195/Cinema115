@@ -25,6 +25,7 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 		{"invalid-second", `{"urls":["` + link + `","invalid"],"targetCID":"99"}`, 400, 0},
 		{"empty", `{"urls":[],"targetCID":"99"}`, 400, 0},
 		{"missing-directory", `{"urls":["` + link + `"]}`, 400, 0},
+		{"body-too-large", `{"urls":["` + link + `&dn=` + strings.Repeat("x", 256<<10) + `"],"targetCID":"99"}`, http.StatusRequestEntityTooLarge, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client.steps = nil
@@ -37,6 +38,9 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 				t.Fatal("credentials exposed")
 			}
 			if tc.status != 200 {
+				if tc.status == http.StatusRequestEntityTooLarge && (!strings.Contains(w.Body.String(), "本次未提交") || strings.HasPrefix(w.Header().Get("Content-Type"), "application/x-ndjson")) {
+					t.Fatal("请求体过大必须明确拒绝且不能开启提交流", w.Body.String())
+				}
 				return
 			}
 			if !w.Flushed || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/x-ndjson") || w.Header().Get("X-Accel-Buffering") != "no" {

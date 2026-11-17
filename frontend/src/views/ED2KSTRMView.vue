@@ -34,7 +34,6 @@ import {
   ed2kResourceKey,
   ed2kResourceStatus,
   ed2kSize,
-  ED2K_IMPORT_LIMIT,
 } from '../utils/ed2kSTRM'
 import { strmDirectoryPath } from '../utils/strmDirectory'
 
@@ -325,7 +324,6 @@ onMounted(() => {
             <h2>
               <IconLink :size="18" aria-hidden="true" />导入 ED2K
             </h2>
-            <span class="es-counter">每次最多 {{ ED2K_IMPORT_LIMIT }} 条</span>
           </header>
 
           <div class="es-import-grid">
@@ -361,8 +359,8 @@ onMounted(() => {
             <label class="es-field">
               <div class="es-field-header">
                 <span>ED2K 链接</span>
-                <span v-if="links.length" class="es-link-count" :class="{ 'es-error-text': links.length > ED2K_IMPORT_LIMIT }">
-                  已识别 {{ links.length }} / {{ ED2K_IMPORT_LIMIT }} 条
+                <span v-if="links.length" class="es-link-count">
+                  已识别 {{ links.length }} 条
                 </span>
               </div>
               <textarea
@@ -387,9 +385,7 @@ onMounted(() => {
                       ? '请先保存或还原播放地址。'
                       : !state.targets.length
                         ? '请先添加本地输出目录。'
-                        : links.length > ED2K_IMPORT_LIMIT
-                          ? `单次最多导入 ${ED2K_IMPORT_LIMIT} 条链接。`
-                          : `已识别 ${links.length} 条链接`
+                        : `已识别 ${links.length} 条链接`
               }}
             </span>
             <div class="es-actions">

@@ -1,7 +1,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { createED2KSTRMAPI } from '../lib/ed2k-strm-api'
 import type { ED2KSTRMResource, ED2KSTRMSettings, ED2KSTRMState, ED2KSTRMTarget, ED2KSTRMTask } from '../types/ed2kSTRM'
-import { ed2kLinks, ed2kRequestID, ed2kResourceActive, ed2kResourceKey, ed2kResourceLink, ED2K_IMPORT_LIMIT } from '../utils/ed2kSTRM'
+import { ed2kLinks, ed2kRequestID, ed2kResourceActive, ed2kResourceKey, ed2kResourceLink } from '../utils/ed2kSTRM'
 import { validSTRMDirectory } from '../utils/strmDirectory'
 
 export function useED2KSTRM(token: () => string) {
@@ -21,7 +21,7 @@ export function useED2KSTRM(token: () => string) {
   const links = computed(() => ed2kLinks(input.value))
   const selectedTarget = computed(() => state.value?.targets.find(target => target.id === targetId.value))
   const targetOptions = computed(() => state.value?.targets.map(target => ({ value: target.id, label: target.name })) || [])
-  const canImport = computed(() => canRestore.value && !!selectedTarget.value && !settingsDirty.value && !busy.value && links.value.length > 0 && links.value.length <= ED2K_IMPORT_LIMIT)
+  const canImport = computed(() => canRestore.value && !!selectedTarget.value && !settingsDirty.value && !busy.value && links.value.length > 0)
   const canSaveTarget = computed(() => !!editor.value?.name.trim() && validSTRMDirectory(editor.value.outputDir.trim()))
   const resources = computed(() => {
     const needle = query.value.trim().toLocaleLowerCase()

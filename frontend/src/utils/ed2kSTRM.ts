@@ -1,7 +1,5 @@
 import type { ED2KSTRMResource } from '../types/ed2kSTRM'
 
-export const ED2K_IMPORT_LIMIT = 50
-
 // 局域网 HTTP 页面也可使用，UUID 中不包含资源或账号信息。
 export function ed2kRequestID(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16))

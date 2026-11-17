@@ -29,8 +29,7 @@ export function magnetKey(raw: string): string {
   } catch { return '' }
 }
 
-// Parse chunk boundaries and require the final receipt. A dropped stream must
-// not turn submitted-but-unacknowledged rows into safe retry candidates.
+// 处理数据块边界并要求最终回执，断流后未确认的资源不能直接作为安全重试候选。
 export async function readCloudBatch(response: Response, onEvent: (event: CloudBatchEvent) => void): Promise<void> {
   if (!response.ok) {
     const data = await response.json().catch(() => null)
@@ -43,7 +42,7 @@ export async function readCloudBatch(response: Response, onEvent: (event: CloudB
   const consume = (line: string) => {
     if (!line.trim()) return
     const event = JSON.parse(line) as CloudBatchEvent
-    if (!['ready', 'start', 'result', 'done'].includes(event.type) || !Number.isInteger(event.total) || (['start', 'result'].includes(event.type) && !Number.isInteger(event.index)) || event.total < 1 || event.total > CLOUD_BATCH_LIMIT) throw new Error('批量提交回执格式异常，请核对 115 云下载')
+    if (!['ready', 'start', 'result', 'done'].includes(event.type) || !Number.isSafeInteger(event.total) || (['start', 'result'].includes(event.type) && !Number.isInteger(event.index)) || event.total < 1) throw new Error('批量提交回执格式异常，请核对 115 云下载')
     if (event.type === 'done') done = true
     onEvent(event)
   }

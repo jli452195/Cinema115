@@ -70,7 +70,12 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 			TargetID  string   `json:"targetId"`
 			RequestID string   `json:"requestId"`
 		}
-		if c.ShouldBindJSON(&in) != nil {
+		if err := c.ShouldBindJSON(&in); err != nil {
+			var oversized *http.MaxBytesError
+			if errors.As(err, &oversized) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "ED2K 链接内容超过 512 KiB，本次未接收，请减少链接后重试"})
+				return
+			}
 			c.JSON(400, gin.H{"error": "请提供 ED2K 链接列表"})
 			return
 		}

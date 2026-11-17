@@ -24,8 +24,8 @@ func (s *ED2KSTRMService) ImportToTarget(ctx context.Context, target model.ED2KS
 
 func (s *ED2KSTRMService) importTo(ctx context.Context, targetID string, expected *model.ED2KSTRMTarget, links []string, requestID string) (model.ED2KSTRMImportResult, error) {
 	out := model.ED2KSTRMImportResult{Resources: make([]model.ED2KSTRMResource, 0), Tasks: make([]model.ED2KSTRMTask, 0)}
-	if len(links) < 1 || len(links) > 50 {
-		return out, generationInputError("一次可导入 1 至 50 条 ED2K 链接")
+	if len(links) == 0 {
+		return out, generationInputError("请提供至少一条 ED2K 链接")
 	}
 	if requestID == "" || len(requestID) > 128 || strings.IndexFunc(requestID, func(r rune) bool { return r < 33 || r > 126 }) >= 0 {
 		return out, generationInputError("请提供有效的输出请求编号")

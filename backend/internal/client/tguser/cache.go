@@ -14,6 +14,7 @@ type cachedSearch struct {
 func (c *Client) clearSearchLocked() {
 	c.searchCache = make(map[string]cachedSearch)
 	c.results = make(map[string]storedAction)
+	c.telegraphCache = nil
 }
 
 // 缓存独立副本，避免调用方修改链接或配额指针后污染下次响应。

@@ -234,6 +234,11 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			TargetCID string   `json:"targetCID"`
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
+			var oversized *http.MaxBytesError
+			if errors.As(err, &oversized) {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "云下载链接内容超过 256 KiB，本次未提交，请减少链接后重试"})
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": "批量云下载参数无效"})
 			return
 		}

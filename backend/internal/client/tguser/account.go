@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"regexp"
 	"strings"
 	"sync"
@@ -53,6 +54,7 @@ type Client struct {
 	lifecycle                       *semaphore.Weighted
 	channelPicker, relayPicker      *semaphore.Weighted
 	channelSearchGate               *semaphore.Weighted
+	telegraphGate                   *semaphore.Weighted
 	mu                              sync.Mutex
 	config                          Config
 	channels                        channelSettings
@@ -63,6 +65,9 @@ type Client struct {
 	temporaryConnection             *relayConnection
 	channelSearches                 map[string]*channelSearch
 	channelRetryAt                  time.Time
+	telegraphHTTP                   *http.Client
+	telegraphCache                  map[string]telegraphCacheEntry
+	telegraphFlights                map[string]*telegraphFlight
 	userID                          int64 // Last verified identity; authorized gates online operations.
 	authorized                      bool
 	name, username, phone, codeHash string
@@ -107,7 +112,7 @@ func (s encryptedSession) StoreSession(ctx context.Context, data []byte) error {
 	return s.Save(base64.StdEncoding.EncodeToString(data))
 }
 func New(configStore, sessionStore Store) (*Client, error) {
-	c := &Client{configStore: configStore, sessionStore: sessionStore, lifecycle: semaphore.NewWeighted(lifecycleCapacity), channelPicker: semaphore.NewWeighted(1), relayPicker: semaphore.NewWeighted(1), channelSearchGate: semaphore.NewWeighted(1), results: make(map[string]storedAction)}
+	c := &Client{configStore: configStore, sessionStore: sessionStore, lifecycle: semaphore.NewWeighted(lifecycleCapacity), channelPicker: semaphore.NewWeighted(1), relayPicker: semaphore.NewWeighted(1), channelSearchGate: semaphore.NewWeighted(1), telegraphGate: semaphore.NewWeighted(2), results: make(map[string]storedAction)}
 	c.workerContext, c.stopWorker = context.WithCancel(context.Background())
 	c.searches = make(map[string]*searchJob)
 	c.searchTiming = defaultSearchTiming

@@ -9,17 +9,31 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 	"strm115/backend/internal/releaseparse"
 )
 
 // ChannelMetadata is an unverified description from a post or ED2K filename.
 // It is only for display, never episode mapping or download authorization.
 type ChannelMetadata struct {
-	Episode string   `json:"episode,omitempty"`
-	Specs   []string `json:"specs,omitempty"`
-	Size    string   `json:"size,omitempty"`
+	Episode       string   `json:"episode,omitempty"`
+	Specs         []string `json:"specs,omitempty"`
+	Size          string   `json:"size,omitempty"`
+	Season        *int     `json:"season,omitempty"`
+	EpisodeNumber *int     `json:"episodeNumber,omitempty"`
+	Resolution    string   `json:"resolution,omitempty"`
+	DynamicRange  string   `json:"dynamicRange,omitempty"`
+	Source        string   `json:"source,omitempty"`
+	Platform      string   `json:"platform,omitempty"`
+	VideoCodec    string   `json:"videoCodec,omitempty"`
+	BitDepth      string   `json:"bitDepth,omitempty"`
+	FrameRate     string   `json:"frameRate,omitempty"`
+	Audio         string   `json:"audio,omitempty"`
+	Subtitles     string   `json:"subtitles,omitempty"`
+	ReleaseGroup  string   `json:"releaseGroup,omitempty"`
 }
 
 var (
@@ -31,6 +45,9 @@ var (
 	channelDolbyVision   = regexp.MustCompile(`(?i)\bDolby\s*Vision\b`)
 	channelSpecLine      = regexp.MustCompile(`(?i)^(?:热更\s+)?(?:[0-9]{3,4}[pi]|[48]k)\b`)
 	channelLabelLine     = regexp.MustCompile(`^(季\s*集|集\s*数|集\s*數|质量|質量|画质|畫質|版本|规格|規格|字幕|音\s*轨|音\s*軌|大小|体\s*积|體\s*積|文件\s*大小)\s+(.+)$`)
+	channelSingleEpisode = regexp.MustCompile(`^S([0-9]{1,2})E([0-9]{1,5})$`)
+	channelNumberEpisode = regexp.MustCompile(`^第([0-9]{1,5})集$`)
+	channelEpisodeYear   = regexp.MustCompile(`(?i)(S[0-9]{1,2}\s*E[0-9]{1,5})\.((?:19|20)[0-9]{2})([._ -]|$)`)
 )
 
 func channelTextKey(value string) string {
@@ -63,17 +80,13 @@ func channelED2KFile(link ChannelLink) (string, string) {
 	if link.Type != "ed2k" {
 		return "", ""
 	}
-	parts := strings.Split(link.URL, "|") // Already validated by ParseCloudResource.
-	if len(parts) < 6 {
+	file, err := channelED2KIdentity(link.URL)
+	if err != nil {
 		return "", ""
 	}
-	name, err := url.PathUnescape(parts[2]) // Unlike QueryUnescape, keeps literal '+'.
+	bytes, err := strconv.ParseUint(file.SizeBytes, 10, 63)
 	if err != nil {
-		name = parts[2]
-	}
-	bytes, err := strconv.ParseUint(parts[3], 10, 63)
-	if err != nil {
-		return name, ""
+		return file.Name, ""
 	}
 	value, unit := float64(bytes), 0
 	units := [...]string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
@@ -81,11 +94,36 @@ func channelED2KFile(link ChannelLink) (string, string) {
 		value /= 1024
 		unit++
 	}
-	return name, strings.TrimRight(strings.TrimRight(strconv.FormatFloat(value, 'f', 2, 64), "0"), ".") + " " + units[unit]
+	return file.Name, strings.TrimRight(strings.TrimRight(strconv.FormatFloat(value, 'f', 2, 64), "0"), ".") + " " + units[unit]
+}
+
+// 云下载标识解析只校验协议与哈希；展示前还须拒绝损坏转义、控制字符和路径式文件名。
+func channelED2KIdentity(raw string) (*ChannelFile, error) {
+	resource, err := p115.ParseCloudResource(raw)
+	if err != nil || resource.Protocol != "ed2k" {
+		return nil, ErrInput
+	}
+	parts := strings.Split(raw, "|")
+	name, err := url.PathUnescape(parts[2])
+	if err != nil || !utf8.ValidString(name) || strings.TrimSpace(name) == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+		return nil, ErrInput
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return nil, ErrInput
+		}
+	}
+	bytes, err := strconv.ParseUint(parts[3], 10, 63)
+	if err != nil {
+		return nil, ErrInput
+	}
+	return &ChannelFile{Name: name, Hash: resource.Hash, SizeBytes: strconv.FormatUint(bytes, 10)}, nil
 }
 
 func channelEpisode(text string) string {
 	text = channelQualityDot.ReplaceAllString(text, " $1")
+	// 集号后紧跟的四位年份是文件名字段，不能截成小数集号。
+	text = channelEpisodeYear.ReplaceAllString(text, "$1 $2$3")
 	values := make([]string, 0, 2)
 	for _, span := range channelSeasonEpisode.FindAllStringIndex(text, -1) {
 		ascii := func(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' }
@@ -111,6 +149,29 @@ func channelEpisode(text string) string {
 		return parsed.RawEpisode
 	}
 	return ""
+}
+
+// 外链版本只补充本组明确字段；真实文件的规格、季集和大小始终优先。
+func channelGroupMetadata(link *ChannelLink, version, fields, subtitles string) {
+	if link.File == nil {
+		return
+	}
+	fileFacts := channelFacts(link.File.Name)
+	groupFacts := channelFacts(version + "\n" + fields)
+	combined := channelFacts(link.File.Name + "\n[" + version + "]\n" + fields)
+	for field, value := range groupFacts {
+		if value != "" && fileFacts[field] == "" && combined[field] == value {
+			fileFacts[field] = value
+		}
+	}
+	if subtitles != "" && (link.Metadata == nil || link.Metadata.Subtitles == "") {
+		fileFacts[naming.Languages] = subtitles
+	}
+	episode, size := "", ""
+	if link.Metadata != nil {
+		episode, size = link.Metadata.Episode, link.Metadata.Size
+	}
+	link.Metadata = channelFactsLabel(fileFacts, episode, size)
 }
 
 func channelMetadata(title, text string, links []ChannelLink) *ChannelMetadata {
@@ -150,6 +211,9 @@ func channelMetadata(title, text string, links []ChannelLink) *ChannelMetadata {
 	}
 	for i := range links {
 		name, fileSize := channelED2KFile(links[i])
+		if links[i].Type == "ed2k" {
+			links[i].File, _ = channelED2KIdentity(links[i].URL)
+		}
 		facts := make(map[naming.Field]string)
 		episode := ""
 		if len(links) == 1 {
@@ -195,6 +259,22 @@ func channelFacts(text string) map[naming.Field]string {
 	// Values performs the shared title/spec scan once and also extracts the
 	// filename quality tokens; avoid a second independent parse here.
 	values := mediafacts.Values(text, releaseparse.Spec{}, "")
+	// 发布组和自定义平台复用当前词表；冲突只留空，不根据文件后缀猜发布组。
+	if recognized, err := recognition.Current().Recognize(text); err == nil {
+		groupsConflict, platformsConflict := false, false
+		for _, conflict := range recognized.Conflicts {
+			groupsConflict = groupsConflict || conflict.Kind == "groups"
+			platformsConflict = platformsConflict || conflict.Kind == "platforms"
+		}
+		if !groupsConflict {
+			values[naming.ReleaseGroup] = strings.Join(recognized.ReleaseGroups, "&")
+		}
+		if platformsConflict || len(recognized.Platforms) > 1 {
+			values[naming.Platform] = ""
+		} else if len(recognized.Platforms) == 1 {
+			values[naming.Platform] = recognized.Platforms[0]
+		}
+	}
 	// Retain explicit channel terms that the shared filename parser does not know.
 	for _, span := range channelExtraSpec.FindAllStringIndex(text, -1) {
 		before, _ := utf8.DecodeLastRuneInString(text[:span[0]])
@@ -216,7 +296,7 @@ func channelFacts(text string) map[naming.Field]string {
 
 func channelFactsLabel(values map[naming.Field]string, episode, size string) *ChannelMetadata {
 	specs := make([]string, 0, 8)
-	for _, field := range []naming.Field{naming.Resolution, naming.DynamicRange, naming.Source, naming.VideoCodec, naming.BitDepth, naming.AudioCodec, naming.Languages, naming.SubtitleMode} {
+	for _, field := range []naming.Field{naming.Resolution, naming.DynamicRange, naming.Source, naming.Platform, naming.VideoCodec, naming.BitDepth, naming.FrameRate, naming.AudioCodec, naming.Languages, naming.SubtitleMode, naming.ReleaseGroup} {
 		value := values[field]
 		if field == naming.AudioCodec {
 			value = strings.TrimSpace(value + " " + values[naming.Channels] + " " + values[naming.AudioEffect])
@@ -228,7 +308,23 @@ func channelFactsLabel(values map[naming.Field]string, episode, size string) *Ch
 	if episode == "" && len(specs) == 0 && size == "" {
 		return nil
 	}
-	return &ChannelMetadata{Episode: episode, Specs: specs, Size: size}
+	metadata := &ChannelMetadata{Episode: episode, Specs: specs, Size: size,
+		Resolution: values[naming.Resolution], DynamicRange: values[naming.DynamicRange], Source: values[naming.Source],
+		Platform: values[naming.Platform], VideoCodec: values[naming.VideoCodec], BitDepth: values[naming.BitDepth], FrameRate: values[naming.FrameRate],
+		Audio:     strings.TrimSpace(values[naming.AudioCodec] + " " + values[naming.Channels] + " " + values[naming.AudioEffect]),
+		Subtitles: strings.TrimSpace(values[naming.Languages] + " " + values[naming.SubtitleMode]), ReleaseGroup: values[naming.ReleaseGroup]}
+	if match := channelSingleEpisode.FindStringSubmatch(episode); match != nil {
+		season, seasonErr := strconv.Atoi(match[1])
+		number, numberErr := strconv.Atoi(match[2])
+		if seasonErr == nil && numberErr == nil {
+			metadata.Season, metadata.EpisodeNumber = &season, &number
+		}
+	} else if match := channelNumberEpisode.FindStringSubmatch(episode); match != nil {
+		if number, err := strconv.Atoi(match[1]); err == nil {
+			metadata.EpisodeNumber = &number
+		}
+	}
+	return metadata
 }
 
 func channelDisplayTitle(title string, metadata *ChannelMetadata) string {

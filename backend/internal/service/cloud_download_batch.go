@@ -9,8 +9,6 @@ import (
 	"strm115/backend/internal/client/p115"
 )
 
-const CloudDownloadBatchLimit = 100
-
 type CloudDownloadBatchEvent struct {
 	Type             string `json:"type"`
 	Index            int    `json:"index"`
@@ -32,8 +30,8 @@ type CloudDownloadBatch struct {
 }
 
 func (s *CloudDownloadService) PrepareBatch(config CloudDownloadConfig, urls []string) (*CloudDownloadBatch, error) {
-	if len(urls) == 0 || len(urls) > CloudDownloadBatchLimit {
-		return nil, generationInputError("每批请选择 1 至 100 条云下载链接")
+	if len(urls) == 0 {
+		return nil, generationInputError("请至少选择一条云下载链接")
 	}
 	account, err := s.snapshot(config)
 	if err != nil {

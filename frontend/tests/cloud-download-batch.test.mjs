@@ -99,6 +99,48 @@ test('handles split UTF-8 chunks and rejects a stream without the final receipt'
   await assert.rejects(readCloudBatch(response([event('ready')]), () => {}), /连接中断/)
 })
 
+test('545 条逐个回执跨数据块完整读取，不受其他页面的选择条数策略限制', async () => {
+  const total = 545, events = [event('ready', 0, {}, total)]
+  for (let index = 0; index < total; index++) events.push(event('start', index, {}, total), event('result', index, { accepted: true }, total))
+  events.push(event('done', 0, {}, total))
+  const bytes = new TextEncoder().encode(events.map(value => JSON.stringify(value)).join('\n') + '\n')
+  const stream = new ReadableStream({ start(controller) {
+    for (let offset = 0; offset < bytes.length; offset += 137) controller.enqueue(bytes.slice(offset, offset + 137))
+    controller.close()
+  } })
+  const received = []
+  await readCloudBatch(new Response(stream, { headers: { 'Content-Type': 'application/x-ndjson' } }), value => received.push(value))
+  assert.equal(received.length, 1092)
+  assert.equal(received.every(value => value.total === 545), true)
+  assert.deepEqual(received.filter(value => value.type === 'start').map(value => value.index), Array.from({ length: total }, (_, index) => index))
+  assert.equal(received.filter(value => value.type === 'result' && value.accepted).length, total)
+  assert.equal(received.at(-1).type, 'done')
+})
+
+test('总数仍须为正安全整数，非法事件类型及非整数文件编号继续拒绝', async () => {
+  for (const total of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '545', null]) {
+    let received = 0
+    await assert.rejects(readCloudBatch(response([event('ready', 0, {}, total)]), () => received++), /回执格式异常/)
+    assert.equal(received, 0)
+  }
+  for (const value of [event('other', 0, {}, 545), event('start', 1.5, {}, 545), event('result', '1', {}, 545)]) {
+    await assert.rejects(readCloudBatch(response([value]), () => {}), /回执格式异常/)
+  }
+  await readCloudBatch(response([event('done', 0, {}, Number.MAX_SAFE_INTEGER)]), () => {})
+})
+
+test('413 结构化错误明确标记接收前拒绝，网关超时保持接收不确定', async () => {
+  await assert.rejects(readCloudBatch(Response.json({ error: '请求体过大' }, { status: 413 }), () => assert.fail('拒绝时不得分发文件回执')), error => {
+    assert.equal(error.beforeStart, true)
+    assert.match(error.message, /请求体过大/)
+    return true
+  })
+  await assert.rejects(readCloudBatch(new Response('gateway timeout', { status: 504 }), () => {}), error => {
+    assert.equal(error.beforeStart, false)
+    return true
+  })
+})
+
 test('stop aborts network work and marks unknown receipts for review', async t => {
   let entered
   const started = new Promise(resolve => { entered = resolve })

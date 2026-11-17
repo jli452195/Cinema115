@@ -75,6 +75,7 @@ func (c *Client) saveSettingsLocked(cfg Config, channels channelSettings) error 
 	}
 	if channelFingerprint(c.channels) != channelFingerprint(channels) {
 		c.channelSearches = nil
+		c.telegraphCache = nil
 	}
 	c.config, c.channels = cfg, channels
 	return nil

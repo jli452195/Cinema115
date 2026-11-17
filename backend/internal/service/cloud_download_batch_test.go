@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,7 +80,7 @@ func TestCloudBatchValidationDeduplicationAndStop(t *testing.T) {
 	decoded, _ := hex.DecodeString(hash)
 	b32 := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(decoded)
 	link := "magnet:?xt=urn:btih:" + hash
-	for _, rows := range [][]string{nil, {link, "invalid"}, make([]string, 101)} {
+	for _, rows := range [][]string{nil, {link, "invalid"}, {link, ""}} {
 		if _, err := s.PrepareBatch(config, rows); err == nil {
 			t.Fatal("invalid batch accepted")
 		}
@@ -116,5 +117,70 @@ func TestCloudBatchValidationDeduplicationAndStop(t *testing.T) {
 	cancel()
 	if err := batch.Run(ctx, func(CloudDownloadBatchEvent) error { return nil }); !errors.Is(err, context.Canceled) || adds != 0 {
 		t.Fatal("canceled batch still submitted")
+	}
+}
+
+func TestCloudBatchSubmitsEntireLargeSelectionSequentiallyWithOneSnapshot(t *testing.T) {
+	const count = 545
+	accounts, config := cloudWorkflowAccounts(t)
+	links := make([]string, count)
+	for i := range links {
+		hash := strconv.FormatInt(int64(i+1), 16)
+		hash = strings.Repeat("0", 32-len(hash)) + hash
+		links[i] = ed2kSTRMTestLink("Series.S01E"+strconv.Itoa(i+1)+".mkv", hash, ed2kSTRMTestSize)
+	}
+	lookups, adds := 0, 0
+	client := &cloudWorkflowStub{
+		lookup: func(_ context.Context, cookie string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+			lookups++
+			if cookie != "UID=123_A; CID=original" || lookups != adds+1 {
+				t.Fatalf("查找未保持固定凭据或顺序：lookups=%d adds=%d", lookups, adds)
+			}
+			return p115.CloudTask{}, false, nil
+		},
+		add: func(_ context.Context, cookie, raw, cid string) (json.RawMessage, error) {
+			if cookie != "UID=123_A; CID=original" || cid != "9" || adds >= len(links) || raw != links[adds] {
+				t.Fatalf("提交未保持原凭据、目录或文件顺序：index=%d cid=%s", adds, cid)
+			}
+			adds++
+			if adds == 1 {
+				account, err := accounts.Get(config.AccountID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				replacement := "UID=123_B; CID=changed"
+				if err := accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
+					t.Fatal(err)
+				}
+			}
+			return json.RawMessage(`{}`), nil
+		},
+	}
+	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
+	invalid := append([]string(nil), links...)
+	invalid[len(invalid)-1] = "invalid"
+	if _, err := s.PrepareBatch(config, invalid); err == nil || lookups != 0 || adds != 0 {
+		t.Fatalf("尾部无效链接未在写入前整批拒绝：lookups=%d adds=%d err=%v", lookups, adds, err)
+	}
+	batch, err := s.PrepareBatch(config, links)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.TargetCID = "changed"
+	events := make([]CloudDownloadBatchEvent, 0, 2*count+2)
+	if err := batch.Run(context.Background(), func(event CloudDownloadBatchEvent) error {
+		events = append(events, event)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if lookups != count || adds != count || len(events) != 2*count+2 || events[0].Type != "ready" || events[len(events)-1].Type != "done" || events[len(events)-1].Stopped {
+		t.Fatalf("完整选择未按序完成：lookups=%d adds=%d events=%d", lookups, adds, len(events))
+	}
+	for i := range count {
+		start, result := events[2*i+1], events[2*i+2]
+		if start.Type != "start" || result.Type != "result" || start.Index != i || result.Index != i || start.Total != count || result.Total != count || !result.Accepted {
+			t.Fatalf("文件回执顺序或总数错误：start=%+v result=%+v", start, result)
+		}
 	}
 }

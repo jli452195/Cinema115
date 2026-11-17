@@ -30,7 +30,8 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			group.BasePath() + "/channels": "保存搜索频道",
 		}))
 		group.Use(operationLogs(sinks[0], "搜索", "TG 频道", map[string]string{
-			group.BasePath() + "/channels/search": "频道资源搜索",
+			group.BasePath() + "/channels/search":  "频道资源搜索",
+			group.BasePath() + "/channels/resolve": "解析频道文件列表",
 		}))
 	}
 	group.Use(func(c *gin.Context) {
@@ -202,13 +203,44 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 35*time.Second)
 		defer cancel()
-		result, err := account.SearchChannels(ctx, title, input.Cursor, input.Refresh)
+		result, err := account.SearchChannelsForMedia(ctx, tguser.ChannelSearchTarget{Title: title, Kind: input.Kind, TMDBID: input.TMDBID}, input.Cursor, input.Refresh)
 		if err != nil {
 			fail(c, err)
 			return
 		}
 		c.Set("operationLogCached", result.Cached)
 		c.Set("operationLogSummary", fmt.Sprintf("%s/%s，已加载资源 %d 项，频道异常 %d 项", input.Kind, input.TMDBID, len(result.Items), len(result.Warnings)))
+		c.JSON(200, result)
+	})
+	group.POST("/channels/resolve", func(c *gin.Context) {
+		var input struct {
+			ResourceID string `json:"resourceId" binding:"required"`
+			SourceID   string `json:"sourceId" binding:"required"`
+			Kind       string `json:"kind" binding:"required"`
+			TMDBID     string `json:"tmdbId" binding:"required"`
+		}
+		if c.ShouldBindJSON(&input) != nil || (input.Kind != "movie" && input.Kind != "tv") {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		id, err := strconv.ParseUint(input.TMDBID, 10, 63)
+		if err != nil || id == 0 {
+			fail(c, tguser.ErrInput)
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 18*time.Second)
+		defer cancel()
+		result, err := account.ResolveChannelSource(ctx, input.ResourceID, input.SourceID, tguser.ChannelSearchTarget{Kind: input.Kind, TMDBID: strconv.FormatUint(id, 10)})
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.Set("operationLogCached", result.Cached)
+		files := 0
+		for _, group := range result.Groups {
+			files += len(group.Links)
+		}
+		c.Set("operationLogSummary", fmt.Sprintf("已解析版本 %d 组、文件 %d 项", len(result.Groups), files))
 		c.JSON(200, result)
 	})
 	group.POST("/search", func(c *gin.Context) {
