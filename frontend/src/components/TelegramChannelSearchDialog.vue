@@ -98,7 +98,7 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
     <template #header>
       <div class="tg-heading"><img :src="telegramIcon" width="28" height="28" alt="" /><h3>{{ title }}</h3><span>频道资源</span></div>
       <div class="tg-toolbar"><label class="tg-filter"><IconSearch :size="17" aria-hidden="true" /><input v-model="query" type="search" aria-label="筛选频道资源" :placeholder="tab === 'ed2k' ? '筛选文件名、季集或规格' : '筛选分享资源'" /></label><button class="tg-button tg-refresh" aria-label="刷新搜索" :disabled="!!phase || !enabled || retrySeconds > 0" @click="search(false, true)"><IconRefresh :size="16" aria-hidden="true" /><span>刷新搜索</span></button><RouterLink to="/resources/telegram" class="tg-button" aria-label="Telegram 搜索配置" @click="emit('close')"><IconSettings :size="17" aria-hidden="true" /></RouterLink></div>
-      <div v-if="result" class="tg-tabs"><SegmentedControl :model-value="tab" :options="tabs" label="资源类型" density="compact" appearance="neutral" @update:model-value="tab = $event; tabChosen = true" /><span v-if="result.cached">频道搜索缓存</span></div>
+      <div v-if="result" class="tg-tabs"><SegmentedControl :model-value="tab" :options="tabs" label="资源类型" density="compact" appearance="underline" @update:model-value="tab = $event; tabChosen = true" /><span v-if="result.cached">频道搜索缓存</span></div>
     </template>
     <p v-if="phase === 'config'" role="status" class="tg-notice">正在读取频道配置…</p>
     <div v-else-if="config && !enabled" class="tg-empty"><h3>先选择资源频道</h3><p>使用已登录的 Telegram 账号，选择需要聚合搜索的频道。</p><RouterLink to="/resources/telegram" class="tg-button tg-primary" @click="emit('close')">配置搜索频道</RouterLink></div>
@@ -157,6 +157,10 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 </template>
 
 <style scoped>
+:global(dialog.anime-floating.tg-channel-search .anime-floating-header) { padding-bottom: 0; }
+.tg-tabs { border-bottom: 1px solid var(--search-dialog-card-border); }
+.tg-tabs > :deep(.segmented-control) { margin-bottom: -1px; }
+.tg-tabs > span { align-self: center; white-space: nowrap; }
 :global(dialog.anime-floating.tg-channel-search) { width: min(1100px, calc(100vw - 32px)); max-width: calc(100vw - 32px); height: min(860px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); color: var(--search-dialog-text); }
 .tg-heading { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }.tg-heading h3 { min-width: 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; }.tg-heading > span { margin-left: auto; font-size: 11px; color: var(--search-dialog-muted); }
 .tg-toolbar { display: flex; align-items: center; gap: 8px; }.tg-filter { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; border-radius: 9px; padding: 0 10px; background: var(--search-dialog-card); color: var(--search-dialog-muted); }.tg-filter input { min-width: 0; width: 100%; padding: 9px 0; background: transparent; outline: none; font-size: 13px; color: var(--search-dialog-text); }

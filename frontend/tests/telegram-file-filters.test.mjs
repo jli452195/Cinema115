@@ -99,6 +99,20 @@ test('自动追加只补充选项和数量，保留有效条件，移除的冲�
   assert.deepEqual(repeated, previous)
 })
 
+test('联动筛选保留来稿顺序，供显示层选择季集或大小排序', () => {
+  const incoming = [
+    { ...file('episode-10', 1, '2160p', 'HDR', 'NF', 'HHWEB'), episodeNumber: 10, sizeBytes: '3000' },
+    { ...file('episode-2', 1, '2160p', 'HDR', 'NF', 'HHWEB'), episodeNumber: 2, sizeBytes: '2000' },
+    { ...file('episode-1', 1, '1080p', 'SDR', 'AMZN', 'ADWeb'), episodeNumber: 1 },
+  ]
+  const result = resolveTelegramFileFilters(incoming, values({ resolution: '2160p' }), 'SHOW')
+  assert.deepEqual(result.files.map(file => file.id), ['episode-10', 'episode-2'])
+  assert.deepEqual(options(result, 'resolution'), [['all', 3], ['1080p', 1], ['2160p', 2]])
+  assert.deepEqual(filesModule.filterTelegramFiles(result.files).map(file => file.id), ['episode-2', 'episode-10'])
+  assert.deepEqual(filesModule.filterTelegramFiles(result.files, { sort: 'size' }).map(file => file.id), ['episode-10', 'episode-2'])
+  assert.deepEqual(result.files.map(file => file.id), ['episode-10', 'episode-2'])
+})
+
 test('每一级呈现的选项均有匹配文件，逐级选到底不会产生空组合', () => {
   function visit(current, depth = 0) {
     const result = resolveTelegramFileFilters(files, current)

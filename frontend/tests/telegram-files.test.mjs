@@ -6,7 +6,7 @@ import ts from 'typescript'
 const module = { exports: {} }
 const code = ts.transpileModule(readFileSync(new URL('../src/utils/telegramFiles.ts', import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 new Function('module', 'exports', code)(module, module.exports)
-const { telegramFiles, filterTelegramFiles, groupTelegramFiles } = module.exports
+const { telegramFiles, matchTelegramFiles, filterTelegramFiles, groupTelegramFiles } = module.exports
 const hashA = '0123456789abcdef0123456789abcdef'
 const hashB = 'fedcba9876543210fedcba9876543210'
 const link = (name, hash = hashA, size = '1000', metadata) => ({ type: 'ed2k', url: `ed2k://|file|${encodeURIComponent(name)}|${size}|${hash}|/`, metadata })
@@ -90,6 +90,22 @@ test('自然季集排序、精确大小排序、来源最新时间排序均保�
   assert.equal(files[0].episodeNumber, 10)
   assert.equal(filterTelegramFiles(files, { season: 0 }).length, 1)
   assert.equal(filterTelegramFiles(files, { season: 'unknown' })[0].name, 'Movie.mkv')
+})
+
+test('条件匹配保留原始顺序，关键词和规格取交集，显示阶段仍按指定方式排序', () => {
+  const files = telegramFiles([resource('a', [
+    link('Show.S01E10.NF.mkv', hashA, '3000', { resolution: '2160p', platform: 'NF' }),
+    link('Show.S01E02.NF.mkv', hashB, '1000', { resolution: '2160p', platform: 'NF' }),
+    link('Show.S01E01.NF.mkv', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '2000', { resolution: '1080p', platform: 'NF' }),
+  ])])
+  const filter = { query: 'show NF', season: 1, resolution: '2160p' }
+  assert.deepEqual(matchTelegramFiles(files, filter).map(file => file.episodeNumber), [10, 2])
+  assert.deepEqual(filterTelegramFiles(files, filter).map(file => file.episodeNumber), [2, 10])
+  assert.deepEqual(filterTelegramFiles(files, { ...filter, sort: 'size' }).map(file => file.episodeNumber), [10, 2])
+  const all = matchTelegramFiles(files, { query: '  ' })
+  assert.notEqual(all, files)
+  assert.deepEqual(all, files)
+  assert.deepEqual(files.map(file => file.episodeNumber), [10, 2, 1])
 })
 
 test('相同版本跨集归组，平台、发布组、动态范围差异不合并', () => {

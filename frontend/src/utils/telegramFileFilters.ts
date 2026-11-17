@@ -1,4 +1,4 @@
-import { filterTelegramFiles, type TelegramFile } from './telegramFiles'
+import { matchTelegramFiles, type TelegramFile } from './telegramFiles'
 
 const definitions = [
   { key: 'season', label: '筛选季', allLabel: '全部季' },
@@ -37,7 +37,7 @@ function valueLabel(field: TelegramFileFilterField, value: string): string {
 // 按关键词和上游条件依次计算选项，保留兼容选择，冲突的下游条件恢复为全部。
 export function resolveTelegramFileFilters(files: readonly TelegramFile[], filters: TelegramFileFilterValues, query = '') {
   const values = { ...filters }, facets: TelegramFileFacet[] = []
-  let remaining = filterTelegramFiles(files, { query })
+  let remaining = matchTelegramFiles(files, { query })
   for (const { key, label, allLabel } of definitions) {
     const counts = new Map<string, number>()
     for (const file of remaining) {

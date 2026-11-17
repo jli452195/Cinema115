@@ -165,18 +165,23 @@ function compareEpisode(a: TelegramFile, b: TelegramFile): number {
   return compareOptional(a.season, b.season) || compareOptional(a.episodeNumber, b.episodeNumber) || naturalCompare(a.version, b.version) || naturalCompare(a.name, b.name) || a.id.localeCompare(b.id)
 }
 
-/** 筛选后的数组独立排序，不修改缓存中的文件或来源。 */
-export function filterTelegramFiles(files: readonly TelegramFile[], filter: TelegramFileFilter = {}): TelegramFile[] {
+/** 只匹配条件并保留输入顺序，供联动筛选计算选项后统一排序。 */
+export function matchTelegramFiles(files: readonly TelegramFile[], filter: Omit<TelegramFileFilter, 'sort'> = {}): TelegramFile[] {
   const words = (filter.query || '').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
   const season = filter.season === undefined || filter.season === '' || filter.season === 'all' ? undefined : filter.season
-  const filtered = files.filter(file => {
+  return files.filter(file => {
     if (season === 'unknown' ? file.season !== undefined : season !== undefined && file.season !== Number(season)) return false
     if (filter.resolution && filter.resolution !== 'all' && file.metadata.resolution?.toLocaleLowerCase() !== filter.resolution.toLocaleLowerCase()) return false
     if (filter.dynamicRange && filter.dynamicRange !== 'all' && file.metadata.dynamicRange?.toLocaleLowerCase() !== filter.dynamicRange.toLocaleLowerCase()) return false
+    if (!words.length) return true
     const searchable = [file.name, file.version, ...Object.values(file.metadata).flatMap(value => Array.isArray(value) ? value : [value])].join(' ').toLocaleLowerCase()
     return words.every(word => searchable.includes(word))
   })
-  return filtered.sort((a, b) => {
+}
+
+/** 筛选后的数组独立排序，不修改缓存中的文件或来源。 */
+export function filterTelegramFiles(files: readonly TelegramFile[], filter: TelegramFileFilter = {}): TelegramFile[] {
+  return matchTelegramFiles(files, filter).sort((a, b) => {
     if (filter.sort === 'latest') return fileTime(b) - fileTime(a) || compareEpisode(a, b)
     if (filter.sort === 'size') {
       const left = BigInt(a.sizeBytes), right = BigInt(b.sizeBytes)

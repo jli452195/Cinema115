@@ -156,6 +156,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const row = (episode, resolution = '2160p') => dialog.locator('.ed-file').filter({ has: page.locator('.ed-episode', { hasText: new RegExp(`^S01E${episode}$`) }) }).filter({ has: page.locator('.ed-specs', { hasText: resolution }) })
   const query = dialog.getByRole('searchbox', { name: '筛选频道资源' })
   const sourceProgress = dialog.locator('.tg-load-status').getByRole('status')
+  const resourceControl = dialog.getByRole('navigation', { name: '资源类型', exact: true })
+  const viewControl = dialog.getByRole('navigation', { name: 'ED2K 展示方式', exact: true })
+  const assertMobileToolbar = async reason => {
+   const layout = await dialog.evaluate(element => {
+    const toolbar = element.querySelector('.ed-toolbar'), parts = [toolbar.querySelector('.ed-filter-toggle'), toolbar.querySelector('[role="combobox"]'), toolbar.querySelector('.segmented-control')]
+    const rectangles = parts.map(part => part.getBoundingClientRect()), buttons = [...toolbar.querySelectorAll('.ed-filter-toggle, [role="combobox"], .segmented-control button'), ...element.querySelectorAll('.tg-tabs .segmented-control button')]
+    return { sameRow: Math.max(...rectangles.map(rect => rect.bottom)) - Math.min(...rectangles.map(rect => rect.top)) <= Math.max(...rectangles.map(rect => rect.height)) + 1, fits: toolbar.scrollWidth <= toolbar.clientWidth + 1, controls: rectangles.map(rect => ({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })), touchTargets: buttons.map(button => { const rect = button.getBoundingClientRect(); return { label: button.getAttribute('aria-label'), width: rect.width, height: rect.height } }) }
+   })
+   assert.equal(layout.sameRow, true, `${reason}：筛选、排序和展示方式保持同排，${JSON.stringify(layout)}`)
+   assert.equal(layout.fits, true, `${reason}：工具栏无横向溢出`)
+   assert.ok(layout.touchTargets.every(target => target.height >= 44 && target.width >= 44), `${reason}：所有切换和工具按钮至少44px点击区，${JSON.stringify(layout.touchTargets)}`)
+  }
   await open()
   await sourceProgress.filter({ hasText: /^清单已载入 0 \/ 1 页，失败 1 页$/ }).waitFor()
   assert.equal(await dialog.getByRole('button', { name: '重试失败清单', exact: true }).isEnabled(), true, '失败清单在列表上方提供明确重试入口')
@@ -179,13 +191,25 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await row('13').locator('.ed-information').click()
   assert.ok((await row('13').boundingBox()).height <= 72, '桌面文件行保持紧凑')
 
-  await dialog.getByRole('button', { name: '115 分享', exact: true }).click()
+  assert.equal(await resourceControl.evaluate(element => element.classList.contains('segmented-control-underline')), true, '资源分类采用一级下划线外观')
+  const beforeResourceKeys = apiRequests.length
+  await resourceControl.getByRole('button', { name: 'ED2K 文件', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  assert.equal(await resourceControl.getByRole('button', { name: '115 分享', exact: true }).evaluate(element => document.activeElement === element), true)
+  assert.equal(await resourceControl.getByRole('button', { name: 'ED2K 文件', exact: true }).getAttribute('aria-pressed'), 'true', '方向键只移动资源分类焦点，不立即切换')
+  await page.keyboard.press('Home'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
   const shareLink = dialog.getByRole('link', { name: '打开分享', exact: true })
+  await shareLink.waitFor()
+  assert.equal(apiRequests.length, beforeResourceKeys, '资源分类方向键、Home/End和Enter切换不发起API请求')
   assert.equal(await shareLink.getAttribute('href'), share.links[0].url)
   await dialog.getByRole('button', { name: '分享 STRM', exact: true }).click()
   await dialog.getByRole('button', { name: '已生成', exact: true }).waitFor()
   assert.equal(writes.at(-1).body.inputs[0].url, share.links[0].url.replace('115.com', '115cdn.com'))
-  await dialog.getByRole('button', { name: 'ED2K 文件', exact: true }).click()
+  const beforeReturnKeys = apiRequests.length
+  await resourceControl.getByRole('button', { name: '115 分享', exact: true }).focus()
+  await page.keyboard.press('Home'); await page.keyboard.press('Enter')
+  await row('13').waitFor()
+  assert.equal(apiRequests.length, beforeReturnKeys, '键盘返回ED2K资源不重建文件状态或重新请求')
 
   failMore = true
   await dialog.getByRole('button', { name: '加载更多资源' }).click()
@@ -209,9 +233,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.locator('.ed-file').count(), 1)
   await selectOption(dialog.getByRole('combobox', { name: '筛选发布组', exact: true }), 'all')
   await dialog.getByRole('button', { name: '规格筛选', exact: true }).click()
-  await dialog.getByRole('button', { name: '按版本', exact: true }).click()
+  assert.equal(await viewControl.evaluate(element => element.classList.contains('segmented-control-subtle')), true, '文件/版本采用二级轻量外观')
+  const beforeViewKeys = apiRequests.length
+  await viewControl.getByRole('button', { name: '文件列表', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  assert.equal(await viewControl.getByRole('button', { name: '按版本', exact: true }).evaluate(element => document.activeElement === element), true)
+  assert.equal(await viewControl.getByRole('button', { name: '文件列表', exact: true }).getAttribute('aria-pressed'), 'true', '展示方式方向键只移动焦点')
+  await page.keyboard.press('Home'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
   assert.equal(await dialog.locator('.ed-group-title').count(), 2)
-  await dialog.getByRole('button', { name: '文件列表', exact: true }).click()
+  await page.keyboard.press('Home'); await page.keyboard.press('Enter')
+  assert.equal(await dialog.locator('.ed-group-title').count(), 0)
+  assert.equal(apiRequests.length, beforeViewKeys, '文件/版本键盘切换只调整本地展示，不发起API请求')
 
   await row('13').getByRole('button', { name: 'ED2K STRM', exact: true }).click()
   await dialog.getByText('请选择上方的 STRM 输出目录，然后提交。', { exact: false }).waitFor()
@@ -292,6 +324,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    // 等待主题颜色和滑块过渡稳定，避免把切换过程误当成最终配色。
    await page.waitForTimeout(350)
    await page.evaluate(async () => { const { useToast } = await import('/src/composables/useToast.ts'); useToast().clear() })
+   if (width !== 1440) await assertMobileToolbar(`${width}px ${dark ? '深色' : '浅色'}无筛选计数`)
    const layout = await dialog.evaluate(element => {
     const box = element.getBoundingClientRect()
     const children = [...element.querySelectorAll('.anime-floating-body, .ed-file, .ed-workspace, .ed-filterbar, .ed-output, .ed-selection')]
@@ -508,6 +541,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await assertFilterOptions('releaseGroup', [['ALPHA', 2]], '发布组根据全部上游条件排除零文件组合')
   await selectOption(filterControl('releaseGroup'), 'ALPHA')
   await assertVisibleFiles(2)
+  for (const width of [390, 320]) for (const dark of [false, true]) {
+   await page.setViewportSize({ width, height: 860 })
+   await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+   await assertMobileToolbar(`${width}px ${dark ? '深色' : '浅色'}存在5个已选规格计数`)
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), filterScreenshotDark)
   await assertFilterOptions('resolution', [['1080p', 2], ['2160p', 3]], '下游HDR、平台和发布组不能反向缩小上游清晰度选项')
   await assertFilterOptions('platform', [['NF', 2]], '唯一有效且已选的平台仍保留全部平台取消入口')
   await assertFilterOptions('releaseGroup', [['ALPHA', 2]], '唯一有效且已选的发布组仍保留全部发布组取消入口')

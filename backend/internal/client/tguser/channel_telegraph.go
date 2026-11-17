@@ -61,6 +61,7 @@ var telegraphTMDBID = regexp.MustCompile(`(?i)\{?tmdb(?:id)?\s*[-=:：]\s*([0-9]
 var telegraphTMDBURL = regexp.MustCompile(`(?i)^https?://(?:www\.)?themoviedb\.org/(movie|tv)/([0-9]+)(?:[/?#-]|$)`)
 var telegraphED2K = regexp.MustCompile(`(?i)ed2k://\|file\|[^\r\n<>]+?\|/`)
 var telegraphTitleYear = regexp.MustCompile(`\s*[(（]\s*(?:19|20)[0-9]{2}\s*[)）]\s*$`)
+var telegraphTitleProgress = regexp.MustCompile(`\s+(?:全\s*[0-9]{1,5}\s*集(?:\s+·\s+S[0-9]{1,2}E[0-9]{1,5}-E[0-9]{1,5})?|更新至\s*(?:第\s*)?[0-9]{1,5}\s*集)\s*$`)
 
 func channelTelegraphSource(raw string) (ChannelSource, bool) {
 	u, err := url.Parse(strings.TrimSpace(raw))
@@ -501,7 +502,22 @@ func telegraphTitleMatches(title string, target ChannelSearchTarget) bool {
 	name := strings.TrimSpace(telegraphTMDBID.ReplaceAllString(title, ""))
 	name = telegraphTitleYear.ReplaceAllString(name, "")
 	key := mediafacts.NameKey(target.Title)
-	return key != "" && mediafacts.NameKey(name) == key
+	if key == "" {
+		return false
+	}
+	if mediafacts.NameKey(name) == key {
+		return true
+	}
+	if target.Kind != "tv" {
+		return false
+	}
+	// 仅剥离有空白边界的尾部集数说明，片名仍须精确一致，不能按包含关系归入续作。
+	trimmed := telegraphTitleProgress.ReplaceAllString(name, "")
+	if trimmed == name {
+		return false
+	}
+	trimmed = telegraphTitleYear.ReplaceAllString(trimmed, "")
+	return mediafacts.NameKey(trimmed) == key
 }
 
 func telegraphTMDBLinkConflicts(href string, target ChannelSearchTarget) bool {

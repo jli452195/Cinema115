@@ -154,6 +154,86 @@ func TestTelegraphTitleMatchingKeepsRealPageFormatAndNormalizedNames(t *testing.
 	}
 }
 
+func TestTelegraphProgressSuffixKeepsExactWorkIdentity(t *testing.T) {
+	target := ChannelSearchTarget{Title: "嫁金钗", Kind: "tv", TMDBID: "300146"}
+	for _, title := range []string{
+		"嫁金钗 全30集",
+		"嫁金钗 (2026) 全30集 {tmdbid-300146}",
+		"嫁金钗 全30集 (2026) {tmdbid-300146}",
+		"嫁金钗 全 7 集 · S01E02-E08",
+		"嫁金钗 (2026) 全 7 集 · S01E02-E08 {tmdbid=300146}",
+		"嫁金钗 更新至第18集",
+		"嫁金钗 更新至18集 {tmdbid-300146}",
+	} {
+		if !telegraphTitleMatches(title, target) {
+			t.Fatalf("明确尾部集数说明不应改变作品身份: %q", title)
+		}
+	}
+	for _, title := range []string{
+		"嫁金钗续集 全30集",
+		"嫁金钗 全30集续篇",
+		"嫁金钗全30集",
+		"嫁金钗 全30集 花絮",
+		"全30集 嫁金钗",
+		"嫁金钗 第30集",
+		"嫁金钗 全30集 {tmdbid-42}",
+		"嫁金钗 全30集 {tmdbid-300146} {tmdbid-42}",
+		"嫁金钗续集 全 7 集 · S01E02-E08",
+		"嫁金钗 全 7 集 · S01E02-E08 花絮",
+		"嫁金钗 全 7 集 · S01E02-E08 {tmdbid-42}",
+		"嫁金钗 全 7 集 · E02-E08",
+		"嫁金钗 全 7 集 · S01E02-08",
+		"嫁金钗 全 7 集 · S01E02-E",
+		"嫁金钗 全 7 集 · S01E02-E08x",
+		"嫁金钗 全 7 集 / S01E02-E08",
+	} {
+		if telegraphTitleMatches(title, target) {
+			t.Fatalf("尾部说明适配放宽了片名或 TMDB 校验: %q", title)
+		}
+	}
+	// 真实片名本身可能带集数文字，优先保留原有的精确名称匹配。
+	for _, kind := range []string{"tv", "movie"} {
+		if !telegraphTitleMatches("作品 全30集", ChannelSearchTarget{Title: "作品 全30集", Kind: kind}) {
+			t.Fatalf("尾部适配破坏了原本精确一致的作品名: %s", kind)
+		}
+	}
+}
+
+func TestTelegraphProgressSuffixDoesNotInferTVForMovieTarget(t *testing.T) {
+	target := ChannelSearchTarget{Title: "嫁金钗", Kind: "movie", TMDBID: "300146"}
+	for _, title := range []string{"嫁金钗 全30集", "嫁金钗 全 7 集 · S01E02-E08", "嫁金钗 更新至第18集"} {
+		// 页面没有 TMDB 外链时，也不能把剧集进度后缀用于同名电影。
+		if _, err := parseTelegraph(telegraphFixture(title, []any{telegraphTestNode("p", channelED2K)}), target); err == nil {
+			t.Fatalf("剧集进度后缀被用于电影条目: %s", title)
+		}
+	}
+}
+
+func TestTelegraphRealCompleteSeriesTitleStillChecksTMDBLinks(t *testing.T) {
+	target := ChannelSearchTarget{Title: "嫁金钗", Kind: "tv", TMDBID: "300146"}
+	file := "ed2k://|file|嫁金钗(2026)(tmdbid=300146).S01E06.1080p.mkv|12345|0123456789abcdef0123456789abcdef|/"
+	for _, title := range []string{"嫁金钗 全30集", "嫁金钗 全 7 集 · S01E02-E08"} {
+		for _, value := range []struct {
+			href  string
+			valid bool
+		}{
+			{"https://www.themoviedb.org/tv/300146", true},
+			{"https://www.themoviedb.org/movie/300146", false},
+			{"https://www.themoviedb.org/tv/42", false},
+		} {
+			anchor := telegraphTestNode("a", "TMDB")
+			anchor["attrs"] = map[string]string{"href": value.href}
+			result, err := parseTelegraph(telegraphFixture(title, []any{anchor, telegraphTestNode("p", file)}), target)
+			if (err == nil) != value.valid {
+				t.Fatalf("全集标题导致 TMDB 类型或 ID 校验变化: %s, %s, %v", title, value.href, err)
+			}
+			if value.valid && (len(result.Groups) != 1 || len(result.Groups[0].Links) != 1 || result.Groups[0].Links[0].Metadata.Episode != "S01E06") {
+				t.Fatalf("真实全集标题未提取到第六集: %s, %+v", title, result)
+			}
+		}
+	}
+}
+
 func TestTelegraphHeadingLinksStillValidateMediaKindAndID(t *testing.T) {
 	target := ChannelSearchTarget{Title: "朝鲜律师", Kind: "tv", TMDBID: "206715"}
 	for _, value := range []struct {

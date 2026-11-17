@@ -28,13 +28,17 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       const vueURL = source.match(/from ["']([^"']*\/vue\.js[^"']*)["']/)[1]
       const { createApp, h, reactive, nextTick } = await import(vueURL)
       const Component = (await import('/src/components/SegmentedControl.vue')).default
-      const state = reactive({ value: 0, disabled: false, fieldsetDisabled: false, shown: true, density: 'default', options: [{ value: 0, label: '全部', count: 6148 }, { value: 1, label: '整理中', disabled: true }, { value: 2, label: '成功', count: 6136 }, { value: 3, label: '失败', count: 12 }] })
+      const state = reactive({ value: 0, disabled: false, fieldsetDisabled: false, shown: true, density: 'default', appearance: undefined, references: false, options: [{ value: 0, label: '全部', count: 6148 }, { value: 1, label: '整理中', disabled: true }, { value: 2, label: '成功', count: 6136 }, { value: 3, label: '失败', count: 12 }] })
       const events = []
       const mount = document.createElement('div')
       mount.id = 'segmented-fixture'; mount.style.cssText = 'max-width:720px;padding:16px'
       document.querySelector('#app').style.display = 'none'
       document.body.append(mount)
-      const app = createApp({ render: () => h('fieldset', { disabled: state.fieldsetDisabled, style: 'min-width:0' }, [state.shown && h(Component, { label: '分段控件测试', modelValue: state.value, options: state.options, disabled: state.disabled, density: state.density, 'onUpdate:modelValue': value => { state.value = value; events.push(value) } })]) })
+      const referenceOptions = [{ value: 0, label: '文件', count: 7 }, { value: 2, label: '版本', count: 2 }]
+      const app = createApp({ render: () => h('fieldset', { disabled: state.fieldsetDisabled, style: 'min-width:0' }, [
+        state.shown && h(Component, { label: '分段控件测试', modelValue: state.value, options: state.options, disabled: state.disabled, density: state.density, appearance: state.appearance, 'onUpdate:modelValue': value => { state.value = value; events.push(value) } }),
+        state.references && h('div', { style: 'display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;min-width:0' }, [h(Component, { label: '默认外观对照', modelValue: 0, options: referenceOptions }), h(Component, { label: '中性外观对照', modelValue: 0, options: referenceOptions, appearance: 'neutral' })]),
+      ]) })
       app.mount(mount)
       window.segmentedFixture = { state, events, nextTick, dispose: () => { app.unmount(); mount.remove(); document.querySelector('#app').style.display = '' } }
     })
@@ -103,6 +107,85 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.evaluate(() => { window.segmentedFixture.state.value = 1 })
     await aligned()
     passed.push('计数与选项变化、手机横滚和布局、条件重挂载、无匹配值及减少动态效果')
+
+    // 新外观与默认、中性对照同时挂载，验证样式作用域及两种层级的交互。
+    await page.setViewportSize({ width: 1100, height: 800 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.evaluate(() => {
+      const { state, events } = window.segmentedFixture
+      state.references = true; state.density = 'compact'; state.value = 0; events.length = 0
+      state.options = [{ value: 0, label: '文件', count: 6148 }, { value: 1, label: '不可用', disabled: true }, { value: 2, label: '版本', count: 2 }]
+    })
+    const defaultReference = page.getByRole('navigation', { name: '默认外观对照', exact: true })
+    const neutralReference = page.getByRole('navigation', { name: '中性外观对照', exact: true })
+    const skin = locator => locator.evaluate(element => {
+      const root = getComputedStyle(element), indicator = getComputedStyle(element.querySelector('.segmented-control-indicator')), option = getComputedStyle(element.querySelector('button'))
+      return { background: root.backgroundColor, radius: root.borderRadius, padding: root.padding, border: root.borderWidth, indicatorBackground: indicator.backgroundColor, indicatorRadius: indicator.borderRadius, indicatorShadow: indicator.boxShadow, optionHeight: option.minHeight, optionPadding: option.padding, optionColor: option.color }
+    })
+    const settledSkin = async locator => {
+      let previous, stable = 0
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const current = await skin(locator)
+        stable = JSON.stringify(current) === JSON.stringify(previous) ? stable + 1 : 0
+        if (stable >= 2) return current
+        previous = current
+        await page.waitForTimeout(100)
+      }
+      assert.fail('主题过渡后公共控件样式未稳定')
+    }
+    const appearanceRequests = requests.length
+    for (const dark of [false, true]) {
+      await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
+      await page.waitForTimeout(350)
+      const defaultSkin = await settledSkin(defaultReference), neutralSkin = await settledSkin(neutralReference)
+      assert.equal(defaultSkin.radius, '12px'); assert.equal(defaultSkin.padding, '4px'); assert.equal(defaultSkin.border, '0px')
+      assert.equal(neutralSkin.radius, '12px'); assert.equal(neutralSkin.padding, '4px'); assert.equal(neutralSkin.border, '1px')
+      for (const appearance of ['underline', 'subtle']) {
+        await page.evaluate(appearance => { const { state, events } = window.segmentedFixture; state.appearance = appearance; state.value = 0; events.length = 0 }, appearance)
+        await aligned()
+        await page.waitForTimeout(350)
+        const visual = await control.evaluate(element => {
+          const root = getComputedStyle(element), indicatorElement = element.querySelector('.segmented-control-indicator'), indicator = getComputedStyle(indicatorElement), line = getComputedStyle(indicatorElement, '::after'), count = getComputedStyle(element.querySelector('.segmented-control-count')), active = getComputedStyle(element.querySelector('[aria-pressed=true]'))
+          return { background: root.backgroundColor, padding: root.padding, radius: root.borderRadius, height: element.getBoundingClientRect().height, optionHeight: element.querySelector('button').getBoundingClientRect().height, indicatorBackground: indicator.backgroundColor, indicatorShadow: indicator.boxShadow, lineHeight: line.height, lineBackground: line.backgroundColor, activeColor: active.color, countBackground: count.backgroundColor, countRadius: count.borderRadius }
+        })
+        if (appearance === 'underline') {
+          assert.equal(visual.background, 'rgba(0, 0, 0, 0)'); assert.equal(visual.padding, '0px'); assert.equal(visual.radius, '0px')
+          assert.equal(visual.indicatorBackground, 'rgba(0, 0, 0, 0)'); assert.equal(visual.indicatorShadow, 'none'); assert.equal(visual.lineHeight, '2px')
+          assert.equal(visual.lineBackground, visual.activeColor, '底线与当前资源文字使用同一主题色')
+          assert.notEqual(visual.countBackground, 'rgba(0, 0, 0, 0)'); assert.equal(visual.countRadius, '999px', '一级数量采用独立徽标')
+        } else {
+          assert.equal(visual.padding, '2px'); assert.equal(visual.radius, '8px'); assert.equal(visual.height, 36); assert.equal(visual.optionHeight, 32)
+          assert.notEqual(visual.background, 'rgba(0, 0, 0, 0)', '二级展示方式保留低对比底槽')
+        }
+        assert.deepEqual(await skin(defaultReference), defaultSkin, `${appearance}不改变同时挂载的默认控件`)
+        assert.deepEqual(await skin(neutralReference), neutralSkin, `${appearance}不改变同时挂载的中性控件`)
+        await control.getByRole('button', { name: '文件', exact: true }).focus()
+        await page.keyboard.press('ArrowRight')
+        assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), '版本', '新外观仍跳过禁用项')
+        assert.deepEqual(await page.evaluate(() => window.segmentedFixture.events), [], '方向键不自动确认')
+        await page.keyboard.press('Enter'); await aligned()
+        await page.keyboard.press('Home')
+        assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), '文件')
+        await page.keyboard.press('End')
+        assert.equal(await page.evaluate(() => document.activeElement.getAttribute('aria-label')), '版本')
+        await page.keyboard.press('ArrowRight'); await page.keyboard.press('Enter'); await aligned()
+        assert.deepEqual(await page.evaluate(() => window.segmentedFixture.events), [2, 0])
+        await page.emulateMedia({ reducedMotion: 'reduce' })
+        await control.getByRole('button', { name: '版本', exact: true }).click(); await aligned()
+        assert.equal(await control.locator('.segmented-control-indicator').evaluate(element => element.style.transition), 'none', `${appearance}尊重减少动态效果`)
+        await page.setViewportSize({ width: 320, height: 800 }); await aligned()
+        const mobile = await control.evaluate(element => ({ padding: getComputedStyle(element).padding, height: element.getBoundingClientRect().height, options: [...element.querySelectorAll('button')].map(button => { const rect = button.getBoundingClientRect(); return { width: rect.width, height: rect.height } }) }))
+        assert.equal(mobile.padding, '0px'); assert.equal(mobile.height, 44, `${appearance}手机整体高度保持44px`)
+        assert.ok(mobile.options.every(option => option.width >= 44 && option.height >= 44), `${appearance}手机点击区至少44px`)
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+        await page.setViewportSize({ width: 1100, height: 800 }); await page.emulateMedia({ reducedMotion: 'no-preference' }); await aligned()
+      }
+    }
+    assert.equal(requests.length, appearanceRequests, '新外观、键盘和主题切换不触发网络请求')
+    await page.evaluate(() => { window.segmentedFixture.state.appearance = 'default' })
+    assert.equal(await control.evaluate(element => element.classList.contains('segmented-control-underline') || element.classList.contains('segmented-control-subtle')), false)
+    assert.equal((await skin(control)).padding, '4px', '恢复default后不残留新外观样式')
+    passed.push('underline底线与计数徽标、subtle桌面36/手机44px、默认/neutral样式隔离、深浅主题/键盘/减少动态效果')
     await page.evaluate(() => { window.segmentedFixture.dispose(); localStorage.setItem('admin_token', 'mock-segmented') })
 
     await page.setViewportSize({ width: 1100, height: 800 })

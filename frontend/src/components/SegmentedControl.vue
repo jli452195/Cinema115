@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 interface Option { value: T; label: string; count?: number | string; disabled?: boolean; title?: string }
-const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' }>()
+const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T]; change: [value: T] }>()
 const strip = ref<HTMLElement>(), countID = useId()
 const { indicatorStyle } = useSlidingIndicator(strip, '[aria-pressed="true"]', [() => props.modelValue, () => props.options])
@@ -40,7 +40,7 @@ function moveFocus(event: KeyboardEvent) {
 </script>
 
 <template>
-  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="{ 'segmented-control-compact': density === 'compact', 'segmented-control-neutral': appearance === 'neutral' }" @keydown="moveFocus">
+  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="{ 'segmented-control-compact': density === 'compact', 'segmented-control-neutral': appearance === 'neutral', 'segmented-control-underline': appearance === 'underline', 'segmented-control-subtle': appearance === 'subtle' }" @keydown="moveFocus">
     <span class="segmented-control-indicator" :style="indicatorStyle" aria-hidden="true"></span>
     <button v-for="(option, index) in options" :key="option.value" type="button" class="segmented-control-option" :aria-label="option.label" :aria-describedby="option.count !== undefined ? `${countID}-${index}` : undefined" :aria-pressed="modelValue === option.value" :disabled="disabled || option.disabled" :title="option.title" @click="choose(option)">
       <slot name="option" :option="option" :selected="modelValue === option.value">{{ option.label }}</slot>
@@ -69,7 +69,30 @@ function moveFocus(event: KeyboardEvent) {
 .dark .segmented-control-neutral .segmented-control-option { color: #94a3b8; }
 .dark .segmented-control-neutral .segmented-control-option[aria-pressed=true] { color: #f8fafc; }
 .dark .segmented-control-neutral .segmented-control-indicator { background: #1e293b; box-shadow: 0 1px 3px rgb(0 0 0 / .35); }
+
+/* 一级导航使用底线，沿用完整滑块定位以保留原有动画与尺寸变化处理。 */
+.segmented-control-underline, .dark .segmented-control-underline { gap: 8px; padding: 0; border-radius: 0; background: transparent; }
+.segmented-control-underline .segmented-control-indicator, .dark .segmented-control-underline .segmented-control-indicator { border-radius: 0; background: transparent; box-shadow: none; }
+.segmented-control-underline .segmented-control-indicator::after { content: ''; position: absolute; right: 0; bottom: 0; left: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--search-dialog-primary, rgb(var(--selection-content))); }
+.segmented-control-underline .segmented-control-option { min-width: 0; padding-inline: 10px; border-radius: 6px 6px 0 0; color: var(--search-dialog-muted, rgb(var(--content-secondary))); }
+.segmented-control-underline .segmented-control-option[aria-pressed=true] { color: var(--search-dialog-primary, rgb(var(--selection-content))); font-weight: 600; }
+.segmented-control-underline .segmented-control-count { min-width: 24px; padding: 1px 6px; border-radius: 999px; background: var(--search-dialog-secondary-background, rgb(148 163 184 / .14)); font-weight: 600; line-height: 16px; opacity: 1; }
+.segmented-control-underline .segmented-control-option[aria-pressed=true] .segmented-control-count { background: var(--search-dialog-action-background, rgb(59 91 135 / .12)); }
+
+/* 二级展示工具使用浅底槽，显式选择该外观时才影响控件样式。 */
+.segmented-control-subtle { gap: 2px; padding: 2px; border-radius: 8px; background: var(--search-dialog-secondary-background, rgb(148 163 184 / .1)); box-shadow: inset 0 0 0 1px var(--search-dialog-card-border, rgb(148 163 184 / .2)); }
+.dark .segmented-control-subtle { background: var(--search-dialog-secondary-background, rgb(148 163 184 / .1)); }
+.segmented-control-subtle .segmented-control-indicator { border-radius: 6px; background: rgb(var(--surface-card)); box-shadow: 0 1px 2px rgb(15 23 42 / .06); }
+.dark .segmented-control-subtle .segmented-control-indicator { background: var(--search-dialog-action-background, rgb(148 163 184 / .16)); box-shadow: inset 0 0 0 1px var(--search-dialog-card-border, rgb(148 163 184 / .2)); }
+.segmented-control-subtle .segmented-control-option { min-width: 52px; border-radius: 6px; color: var(--search-dialog-muted, rgb(var(--content-secondary))); }
+.segmented-control-subtle.segmented-control-compact .segmented-control-option { min-width: 48px; min-height: 32px; padding: 4px 10px; font-size: 12px; line-height: 18px; }
+.segmented-control-subtle .segmented-control-option[aria-pressed=true] { color: var(--search-dialog-primary, rgb(var(--selection-content))); font-weight: 600; }
 @media (hover: hover) { .segmented-control-option:not(:disabled):not([aria-pressed=true]):hover { color: rgb(var(--content-primary)); } }
 @media (max-width: 639px) { .segmented-control-compact .segmented-control-option { min-height: 44px; } }
+@media (max-width: 639px), (pointer: coarse) {
+  .segmented-control-underline.segmented-control-compact .segmented-control-option { min-height: 44px; }
+  .segmented-control-subtle { padding: 0; }
+  .segmented-control-subtle.segmented-control-compact .segmented-control-option { min-width: 44px; min-height: 44px; padding-inline: 8px; font-size: 13px; }
+}
 @media (prefers-reduced-motion: reduce) { .segmented-control-option { transition: none; } }
 </style>
