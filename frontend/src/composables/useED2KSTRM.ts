@@ -15,6 +15,7 @@ export function useED2KSTRM(token: () => string) {
   const needsSettingsSave = computed(() => !!draft.value && (!state.value?.settingsSaved || settingsDirty.value))
   const cacheDirectoryInvalid = computed(() => !!draft.value?.cacheCID && (!state.value?.accountReady || !state.value.primaryAccountId || draft.value.cacheAccountId !== state.value.primaryAccountId))
   const settingsValid = computed(() => !!draft.value?.baseUrl.trim() && !cacheDirectoryInvalid.value)
+  const strmPreview = computed(() => (draft.value?.baseUrl.trim().replace(/\/+$/, '') || 'http://NAS_IP:8080') + '/api/ed2k-strm/0123456789abcdef0123456789abcdef/0123456789ABCDEF0123456789ABCDEF01234567/1073741824/Example.S01E01.mkv')
   const canStart = computed(() => !!state.value?.accountReady && state.value.settingsSaved)
   const canRestore = computed(() => canStart.value && state.value?.cacheReady !== false)
   const links = computed(() => ed2kLinks(input.value))
@@ -161,5 +162,5 @@ export function useED2KSTRM(token: () => string) {
   async function visible() { window.clearTimeout(timer); if (!document.hidden) await refresh(); poll() }
   onMounted(async () => { document.addEventListener('visibilitychange', visible); await refresh(); poll() })
   onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
-  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, clearCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, taskAction }
+  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, strmPreview, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, clearCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, taskAction }
 }

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { IconPlus, IconCloud, IconFolder, IconFolderCheck, IconEdit, IconTrash, IconRefresh, IconSearch, IconLoader2, IconSettings, IconCode, IconChevronRight, IconClock } from '@tabler/icons-vue'
+import { IconPlus, IconCloud, IconFolder, IconFolderCheck, IconEdit, IconTrash, IconRefresh, IconSearch, IconLoader2, IconSettings, IconClock } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
+import STRMContentPreview from '../components/STRMContentPreview.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import { useDriveSTRMState } from '../composables/useDriveSTRMState'
@@ -92,7 +93,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
           <div><span class="ds-event-title">生活事件</span><p id="ds-event-help" class="ds-help">所有监控目录共享一次读取，按变更更新。</p></div>
           <div class="ds-select-field"><span class="ds-field-label">事件检查间隔</span><SelectMenu v-model="settingsDraft.eventIntervalSeconds" label="事件检查间隔" :options="[{ value: 0, label: '关闭' }, { value: 20, label: '每 20 秒' }, { value: 60, label: '每 1 分钟' }, { value: 300, label: '每 5 分钟' }, { value: 900, label: '每 15 分钟' }, { value: 1800, label: '每 30 分钟' }]" :disabled="!!busy" aria-describedby="ds-event-help" class="w-full" /></div>
         </fieldset>
-        <details class="ds-preview"><summary><IconChevronRight class="ds-chevron" :size="14" aria-hidden="true" /><IconCode :size="16" aria-hidden="true" />STRM 内容预览</summary><code>{{ strmPreview }}</code><p class="ds-help">示例字段，生成时替换为实际文件信息；支持播放器直接播放，也支持通过 Cinema115 的 Emby 反代播放。</p></details>
+        <STRMContentPreview :content="strmPreview" />
       </form>
       <section class="ds-directories" aria-label="监控目录">
         <div class="ds-section-heading">
@@ -279,7 +280,6 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
 .ds-outlined>input { @apply text-slate-800 dark:text-slate-100; display:block; width:100%; min-width:0; height:40px; padding:0 13px; border:0; border-radius:inherit; background:transparent; font-size:13px; outline:none; }
 .ds-outlined>input:focus-visible { outline:none; }
 .ds-outlined:has(>input:disabled) { @apply border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/50; }.ds-outlined>input:disabled { @apply text-slate-400 dark:text-slate-500; cursor:not-allowed; }
-.ds-preview { margin-top:14px; }.ds-preview summary { @apply text-slate-600 dark:text-slate-300; display:flex; align-items:center; gap:6px; width:fit-content; min-height:32px; cursor:pointer; list-style:none; font-size:12px; }.ds-preview summary::-webkit-details-marker { display:none; }.ds-chevron { transition:transform .15s; }.ds-preview[open] .ds-chevron { transform:rotate(90deg); }.ds-preview code { @apply rounded-lg bg-slate-50 text-slate-700 dark:bg-slate-950 dark:text-slate-300; display:block; padding:10px 12px; font-size:12px; line-height:1.8; overflow-wrap:anywhere; }
 .ds-directories { margin-top:24px; }.ds-directories>.ds-section-heading { margin-bottom:14px; }.ds-start-hint { margin:-4px 0 12px; }
 .ds-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); align-items:start; gap:14px; }
 .ds-card { @apply rounded-2xl bg-white p-4 text-slate-700 dark:bg-slate-900 dark:text-slate-200; min-width:0; box-shadow:0 4px 16px -10px rgb(0 0 0 / .15),0 1px 3px rgb(0 0 0 / .035); transition:box-shadow .2s; }.ds-card:hover { box-shadow:0 9px 26px -14px rgb(0 0 0 / .2),0 2px 6px rgb(0 0 0 / .04); }
@@ -358,7 +358,7 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
 .ds-alert { @apply rounded-xl bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300; padding:12px; margin-bottom:12px; font-size:13px; overflow-wrap:anywhere; }.ds-notice { @apply text-blue-700 dark:text-blue-300; margin-bottom:12px; font-size:13px; }.ds-empty { @apply rounded-xl bg-white text-slate-500 dark:bg-slate-900 dark:text-slate-400; display:flex; align-items:center; gap:10px; padding:18px; font-size:13px; line-height:1.7; }.ds-empty>svg { flex-shrink:0; }
 .ds-notes { @apply text-slate-500 dark:text-slate-400; font-size:12px; line-height:1.8; margin-top:12px; }.ds-notes summary { width:fit-content; min-height:32px; cursor:pointer; }.ds-notes p { margin-top:4px; max-width:900px; }
 .ds-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }.ds-spin { animation:ds-spin 1s linear infinite; }@keyframes ds-spin { to { transform:rotate(360deg) } }
-@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-preview summary,.ds-notes summary { min-height:44px; }.ds-outlined>input { height:44px; font-size:16px; } }
+@media(max-width:639px) { .ds-settings { padding:16px; }.ds-settings-grid { grid-template-columns:minmax(0,1fr); gap:20px; }.ds-download-controls { justify-content:space-between; gap:14px 10px; padding:14px 12px; }.ds-download-controls .ds-help { flex-basis:100%; }.ds-rate-input { width:118px; }.ds-button { min-height:44px; padding-inline:8px; white-space:nowrap; }.ds-save-actions { gap:10px; }.ds-icon { width:40px; height:40px; }.ds-meta button { min-height:40px; padding-inline:8px; }.ds-text-button,.ds-notes summary { min-height:44px; }.ds-outlined>input { height:44px; font-size:16px; } }
 @media(max-width:639px) {
   .ds-rate-input,.ds-image-mode { width:100%; }.ds-event-setting { align-items:flex-start; gap:16px; flex-direction:column; }.ds-event-setting>.ds-select-field { width:100%; flex:none; }
   .ds-editor-row.ds-name-monitor-row { flex-direction:column; align-items:stretch; gap:8px; }
@@ -379,5 +379,5 @@ onBeforeUnmount(() => { window.removeEventListener('beforeunload', beforeUnload)
   .ds-schedule-card-header { flex-direction:column; align-items:stretch; gap:6px; }
   .ds-schedule-interval { width:100%; }
 }
-@media(prefers-reduced-motion:reduce) { .ds-spin { animation:none; }.ds-chevron,.ds-outlined,.ds-card { transition:none; } }
+@media(prefers-reduced-motion:reduce) { .ds-spin { animation:none; }.ds-outlined,.ds-card { transition:none; } }
 </style>

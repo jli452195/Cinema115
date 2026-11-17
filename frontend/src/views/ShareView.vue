@@ -11,6 +11,7 @@ import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
 import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
+import STRMContentPreview from '../components/STRMContentPreview.vue'
 import { validSTRMDirectory as validDirectory, strmDirectoryPath as resolvedDirectory, strmDirectoryName as directoryName } from '../utils/strmDirectory'
 
 const props = withDefaults(defineProps<{ token: string; tab?: 'basic' | 'generate' | 'logs' }>(), { tab: 'basic' })
@@ -402,11 +403,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                   <label class="outlined-field w-44"><span>最小文件大小（MB）</span><input v-model.number="minSizeMB" type="number" required min="0" max="1073741824" step="1" /></label>
                   <p class="settings-help">0 表示不限制，小于此大小的视频会跳过。</p>
                 </div>
-                <div class="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20" aria-labelledby="strm-preview-title">
-                  <div id="strm-preview-title" class="mb-3 flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"><svg class="h-4 w-4 shrink-0 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6" /></svg>STRM 内容实时预览</div>
-                  <code class="block break-all text-xs leading-6 text-slate-800 dark:text-slate-200">{{ strmPreview }}</code>
-                  <p class="settings-help mt-2">示例字段，实际生成时替换为文件信息，提取码不能为空。兼容已有旧格式 STRM。</p>
-                </div>
+                <STRMContentPreview :content="strmPreview" description="示例字段，实际生成时替换为文件信息，提取码不能为空。" />
               </section>
 
               <section class="settings-section">
@@ -416,17 +413,21 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
                 </div>
                 <div class="directory-grid">
                   <div v-for="directory in outputDirectories" :key="directory" class="directory-card" :class="{ 'directory-selected': outputDir === directory }">
-                    <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
-                      <input v-model="outputDir" type="radio" name="output-directory" :value="directory" :aria-label="'生成到 ' + resolvedDirectory(directory)" class="peer sr-only" />
-                      <span class="directory-icon peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7V5h6l2 2h10v13H3z" /></svg></span>
-                      <span class="min-w-0"><span class="block break-all text-sm font-semibold text-slate-800 dark:text-slate-200">{{ directoryName(directory) }}</span><span class="mt-1 block break-all text-xs text-slate-500 dark:text-slate-400">{{ resolvedDirectory(directory) }}</span></span>
+                    <label class="directory-label">
+                      <input v-model="outputDir" type="radio" name="output-directory" :value="directory" :aria-label="'生成到 ' + resolvedDirectory(directory)" class="sr-only" />
+                      <span class="block min-w-0">
+                        <span class="directory-title"><svg class="directory-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" /></svg><span class="min-w-0 truncate" :title="directoryName(directory)">{{ directoryName(directory) }}</span><span v-if="outputDir === directory" class="directory-default-dot" title="默认输出目录" aria-hidden="true"></span></span>
+                        <code class="directory-path" :title="resolvedDirectory(directory)">{{ resolvedDirectory(directory) }}</code>
+                      </span>
                     </label>
-                    <button type="button" :aria-label="'修改目录 ' + resolvedDirectory(directory)" title="修改目录" class="directory-edit" @click="openDirectoryDialog(directory)"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15l-1 5Z" /></svg></button>
-                    <button type="button" :aria-label="'移除目录 ' + resolvedDirectory(directory)" class="directory-remove" @click="removeDirectory(directory)"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button>
+                    <div class="directory-actions">
+                      <button type="button" :aria-label="'修改目录 ' + resolvedDirectory(directory)" title="修改目录" class="directory-edit" @click="openDirectoryDialog(directory)"><svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg></button>
+                      <button type="button" :aria-label="'移除目录 ' + resolvedDirectory(directory)" title="移除目录" class="directory-remove" @click="removeDirectory(directory)"><svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg></button>
+                    </div>
                   </div>
                 </div>
                 <p v-if="outputDirectories.length === 0" class="settings-empty">尚未选择 STRM 生成目录，请添加目录。</p>
-                <details class="settings-details"><summary>目录说明</summary><p>从媒体库挂载范围内的真实文件夹中选择，移除选项不会删除文件夹。页面统一显示为 /strm，Docker 中对应 NAS 挂载路径，Windows 中对应 STRM_ROOT。保留分享文件夹结构；相同内容直接复用，同名但内容不同会保留旧文件并另存。</p></details>
+                <details class="settings-details directory-details"><summary>目录说明</summary><p>蓝色指示条标记默认输出目录。从媒体库挂载范围内的真实文件夹中选择，移除选项不会删除文件夹。页面统一显示为 /strm，Docker 中对应 NAS 挂载路径，Windows 中对应 STRM_ROOT。保留分享文件夹结构；相同内容直接复用，同名但内容不同会保留旧文件并另存。</p></details>
               </section>
             </div>
             <template v-else>
@@ -521,25 +522,94 @@ onBeforeUnmount(() => { mounted = false; controller?.abort() })
   @apply shrink-0 sm:w-52;
 }
 .directory-grid {
-  @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-3;
+  @apply grid max-w-5xl grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-3;
 }
 .directory-card {
-  @apply flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 transition-colors dark:border-slate-700 dark:bg-slate-950;
+  @apply relative flex min-w-0 items-center justify-between rounded-xl border border-line-default bg-surface-elevated py-3 pl-4 pr-2.5;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 80%), 0 2px 10px -2px rgb(2 6 23 / 8%);
+  transition: background-color 200ms, border-color 200ms, box-shadow 200ms;
 }
-.directory-selected {
-  @apply border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30;
+.directory-card:hover {
+  @apply border-action-link/30 bg-surface-hover;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 90%), 0 6px 20px -4px rgb(2 6 23 / 12%);
+}
+.directory-card::before {
+  @apply absolute inset-y-2.5 left-0 w-[3px] rounded-r-full bg-content-secondary/50 transition-colors;
+  content: '';
+}
+.directory-card:hover::before {
+  @apply bg-action-link/75;
+}
+.directory-selected::before {
+  @apply bg-action-link;
+  box-shadow: 0 0 10px rgb(var(--action-link) / 55%);
+}
+.directory-card:has(input:focus-visible) {
+  @apply outline outline-2 outline-offset-2 outline-focus;
+}
+.directory-label {
+  @apply min-w-0 flex-1 cursor-pointer;
+}
+.directory-title {
+  @apply flex items-center gap-1.5 text-[13.5px] font-medium text-content-primary;
 }
 .directory-icon {
-  @apply flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-100 bg-blue-50 text-blue-600 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-400;
+  @apply h-3.5 w-3.5 shrink-0 text-content-secondary transition-colors;
+}
+.directory-selected .directory-icon,
+.directory-card:hover .directory-icon {
+  @apply text-action-link;
+}
+.directory-default-dot {
+  @apply ml-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-action-link;
+}
+.directory-path {
+  @apply mt-1.5 inline-block max-w-full truncate rounded-md border border-line-default/60 bg-surface-page px-2 py-0.5 align-top font-mono text-[11.5px] leading-[1.5] text-action-link transition-colors;
+}
+.directory-card:hover .directory-path {
+  @apply border-action-link/25;
+}
+.directory-actions {
+  @apply ml-2.5 flex shrink-0 items-center gap-0.5 border-l border-line-default pl-2;
+}
+.directory-edit,
+.directory-remove {
+  @apply flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-content-secondary transition-colors focus-visible:outline-focus;
 }
 .directory-edit {
-  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-blue-600 hover:bg-blue-100 focus-visible:outline-blue-500 dark:text-blue-400 dark:hover:bg-blue-900/40;
+  @apply hover:bg-surface-hover hover:text-content-primary;
 }
 .directory-remove {
-  @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 focus-visible:outline-blue-500 dark:hover:bg-red-950/30 dark:hover:text-red-400;
+  @apply hover:bg-status-danger-surface hover:text-status-danger;
 }
 .settings-add {
-  @apply inline-flex items-center gap-1 rounded-md bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-400 dark:hover:bg-blue-900/40;
+  @apply inline-flex items-center gap-1 rounded-md bg-selection-surface px-3 py-1.5 text-xs font-medium text-action-link hover:bg-action-link/15 focus-visible:outline-focus;
+}
+.directory-details {
+  @apply pt-1;
+}
+.directory-details p {
+  @apply mt-2 rounded-xl border border-line-default/60 bg-surface-page px-3.5 py-2.5;
+}
+.dark .directory-card {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%), 0 2px 10px -2px rgb(2 6 23 / 50%);
+}
+.dark .directory-card:hover {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 9%), 0 6px 20px -4px rgb(2 6 23 / 65%);
+}
+.dark .directory-edit:hover {
+  background: rgb(255 255 255 / 7%);
+}
+@media (pointer: coarse) {
+  .directory-edit,
+  .directory-remove {
+    @apply h-8 w-8;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .directory-card {
+    transition: none;
+  }
 }
 .settings-empty {
   @apply rounded-lg border border-dashed border-slate-200 p-3 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400;

@@ -21,6 +21,7 @@ import ED2KSTRMTargetCards from '../components/ED2KSTRMTargetCards.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import STRMDirectoryDialog from '../components/STRMDirectoryDialog.vue'
+import STRMContentPreview from '../components/STRMContentPreview.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import { useED2KSTRM } from '../composables/useED2KSTRM'
@@ -68,6 +69,7 @@ const {
   settingsDirty,
   needsSettingsSave,
   settingsValid,
+  strmPreview,
   cacheDirectoryInvalid,
   canStart,
   canRestore,
@@ -668,6 +670,8 @@ onMounted(() => {
             <small>未选择时使用 /Cinema115-ED2K缓存目录，按需创建。修改保存后生效，已有文件不移动。</small>
             <p v-if="cacheDirectoryHint" role="status" class="es-cache-hint">{{ cacheDirectoryHint }}</p>
           </div>
+
+          <STRMContentPreview :content="strmPreview" description="示例字段，生成时替换为实际文件信息；播放地址不依赖本地 STRM 所在目录。" />
 
           <footer class="es-settings-actions">
             <button
