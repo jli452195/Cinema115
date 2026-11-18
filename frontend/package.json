@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test:glass-settings": "node --test tests/glass-settings.test.mjs",
-    "test:glass-settings-ui": "node scripts/glass-settings-ui.cjs",
+    "test:detail-navigation-ui": "node scripts/detail-navigation-ui.cjs",
+    "test:glass-surfaces-ui": "node scripts/glass-surfaces-ui.cjs",
     "test:segmented-control-ui": "node scripts/segmented-control-ui.cjs",
     "test:dialog-lifecycle-ui": "node scripts/dialog-lifecycle-ui.cjs",
     "test:mobile-sheet-ui": "node scripts/mobile-sheet-ui.cjs",

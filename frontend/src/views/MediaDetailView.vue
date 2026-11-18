@@ -82,6 +82,8 @@ interface Detail extends CacheInfo {
   seasons: SeasonSummary[]; collection: { id: number; name: string } | null; imdbId: string; imdbUrl: string; tmdbUrl: string
 }
 const detail = ref<Detail | null>(null)
+const detailTitleElement = ref<HTMLElement | null>(null)
+const detailNavigation = computed(() => ({ title: detail.value?.title || '', year: detail.value?.date.slice(0, 4) || '', fallback: `/${props.kind}`, titleElement: detailTitleElement.value }))
 const { mediaColorStyle, readPosterColors } = useMediaColors(() => tmdbImageURL(detail.value?.posterUrl || ''))
 // 动画类型包含日漫、国漫及动画电影，不按国家限制入口。
 const isAnimation = computed(() => !!detail.value?.genres?.some(genre => genre.id === 16))
@@ -96,6 +98,14 @@ watch(canSearchAnimeResources, allowed => { if (!allowed) { mikanSearchOpen.valu
 const loading = ref(true)
 const error = ref('')
 const failedImages = ref(new Set<string>())
+// 横版图失效时复用已加载的海报，无图时直接使用页面底色。
+const heroImage = computed(() => {
+  const backdrop = detail.value?.backdropUrl || ''
+  if (hasImage(backdrop)) return backdrop
+  const poster = detail.value?.posterUrl || ''
+  return hasImage(poster) ? poster : ''
+})
+const posterBackdrop = computed(() => !!heroImage.value && heroImage.value !== detail.value?.backdropUrl)
 const openSeasons = ref(new Set<number>())
 const visitedSeasons = ref(new Set<number>())
 const { seasons, schedules, reset: resetSeasons, prime: primeSchedules, loadSeason, loadSchedule } = useTMDBSeasons(() => props.token, () => props.tmdbId, () => detail.value?.numbering?.revision || 0)
@@ -242,6 +252,10 @@ async function closeSeason(number: number) {
   window.scrollBy({ top: button.getBoundingClientRect().top - targetTop, behavior: 'instant' })
 }
 function hasImage(url: string) { return !!url && !failedImages.value.has(url) }
+function onHeroImageError(event: Event) {
+  const url = (event.currentTarget as HTMLImageElement).dataset.sourceUrl
+  if (url) failedImages.value.add(url)
+}
 function seasonName(season: SeasonSummary) { return detail.value?.numbering?.groupId && season.name ? season.name : season.number === 0 ? '特别篇' : `第 ${season.number} 季` }
 // 同一个组件会复用于不同影视，路由变化时取消旧请求并清空季缓存。
 watch(() => [props.kind, props.tmdbId, props.token], () => { namingCopied.value = false; namingCopyError.value = false; void loadDetail() }, { immediate: true })
@@ -269,10 +283,10 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     <GyingSearchDialog :animation-library="isAnimation" v-if="isPortalAdmin && searchConfigured.gying && gyingSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :imdb-id="detail.imdbId" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="gyingSearchOpen = false" />
     <WoniuSearchDialog :animation-library="isAnimation" v-if="isPortalAdmin && searchConfigured.woniu && woniuSearchOpen && detail" :token="token" :kind="kind" :tmdb-id="tmdbId" :title="detail.title" :original-title="detail.originalTitle" :theme-colors="mediaColorStyle" @close="woniuSearchOpen = false" />
     <AnimeResourceSearchDialog :animation-library="isAnimation" v-if="detail && (isPortalAdmin && dmhySearchOpen || canSearchAnimeResources && (mikanSearchOpen || gardenSearchOpen))" :key="dmhySearchOpen ? 'dmhy' : gardenSearchOpen ? 'garden' : 'mikan'" :provider="dmhySearchOpen ? 'dmhy' : gardenSearchOpen ? 'garden' : 'mikan'" :token="token" :title="detail.title" :original-title="detail.originalTitle" :tmdb-id="detail.id" :kind="detail.kind" :date="detail.date" :seasons="detail.seasons" :theme-colors="mediaColorStyle" @close="mikanSearchOpen = false; gardenSearchOpen = false; dmhySearchOpen = false" />
-    <WorkbenchHeader tonal-surface :over-backdrop="!!detail?.backdropUrl && hasImage(detail.backdropUrl)" @logout="emit('logout')" />
+    <WorkbenchHeader tonal-surface :over-backdrop="!!heroImage" :detail-navigation="detailNavigation" @logout="emit('logout')" />
     <main class="detail-page relative min-w-0 flex-1">
-      <div v-if="detail?.backdropUrl && hasImage(detail.backdropUrl)" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" aria-hidden="true">
-        <img :src="tmdbImageURL(detail.backdropUrl)" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="failedImages.add(detail.backdropUrl)" />
+      <div v-if="heroImage" class="detail-backdrop pointer-events-none absolute inset-x-0 top-0" :class="{ 'is-poster-backdrop': posterBackdrop }" aria-hidden="true">
+        <img :key="heroImage" :src="tmdbImageURL(heroImage)" :data-source-url="heroImage" alt="" class="h-full w-full object-cover object-top" referrerpolicy="no-referrer" @error="onHeroImageError" />
       </div>
       <div class="detail-content workbench-content relative mx-auto max-w-[1440px] px-5 pb-8 md:px-8 lg:px-10">
         <div v-if="loading" aria-label="正在加载影视详情" aria-busy="true" class="animate-pulse">
@@ -280,7 +294,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
           <div class="mt-12 h-24 rounded-xl bg-slate-200 dark:bg-slate-700/60"></div>
         </div>
         <section v-else-if="error" role="alert" class="rounded-2xl border border-red-100 bg-white dark:bg-slate-900 dark:bg-slate-900/90 px-6 py-12 text-center">
-          <HistoryBackButton :fallback="`/${kind}`" class="mb-4" />
+          <HistoryBackButton :fallback="`/${kind}`" class="mb-4 hidden sm:inline-flex" />
           <h1 class="text-xl font-semibold detail-on-surface">暂时无法加载详情</h1><p class="mt-3 text-sm text-red-600">{{ error }}</p>
           <button class="mt-6 rounded-lg bg-slate-900 px-5 py-2.5 text-sm text-white" @click="loadDetail">重新加载</button>
         </section>
@@ -293,12 +307,12 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
             <div class="min-w-0 py-1">
               <div class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs detail-muted"><span class="rounded-full detail-kind px-3 py-1 text-[11px] font-bold">{{ mediaLabel }}</span><span>{{ detail.date || '日期待定' }}</span><span v-if="detail.genres.length" class="detail-divider border-l pl-3 font-semibold detail-muted">{{ detail.genres.map(item => item.name).join(' / ') }}</span></div>
               <div class="mt-4 flex items-start gap-3">
-                <HistoryBackButton :fallback="`/${kind}`" icon-only class="detail-back-button lg:mt-2" />
-                <h1 class="min-w-0 break-words text-3xl font-bold leading-tight tracking-tight detail-on-surface lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
+                <HistoryBackButton :fallback="`/${kind}`" icon-only class="detail-back-button hidden sm:inline-flex lg:mt-2" />
+                <h1 ref="detailTitleElement" class="min-w-0 break-words text-3xl font-bold leading-tight tracking-tight detail-on-surface lg:text-5xl"><button type="button" class="cursor-copy text-left decoration-slate-300 underline-offset-4 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" :title="`点击复制：${scrapeName}`" :aria-label="`复制刮削命名：${scrapeName}`" @click="copyScrapeName">{{ detail.title }}</button></h1>
               </div>
               <p v-if="namingCopied || namingCopyError" class="mt-2 text-xs" :class="namingCopied ? 'text-emerald-600' : 'text-amber-600'" role="status">{{ namingCopied ? `已复制：${scrapeName}` : '复制失败，请再次点击标题重试' }}</p>
               <p v-if="detail.originalTitle && detail.originalTitle !== detail.title" class="mt-2 text-sm detail-muted">{{ detail.originalTitle }}</p>
-              <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="detail-collection mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-xl px-3 py-2 text-xs"><span aria-hidden="true" class="detail-primary"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M7 3h10" /></svg></span><span>{{ detail.collection.name }}</span><span class="detail-primary">查看系列 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span></RouterLink>
+              <RouterLink v-if="kind === 'movie' && detail.collection" :to="`/collection/${detail.collection.id}`" class="detail-collection mt-4 inline-flex max-w-full flex-wrap items-center gap-2 rounded-full px-3.5 py-2.5 text-xs"><span aria-hidden="true" class="detail-collection-accent"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="7" width="18" height="14" rx="2" /><path d="M7 3h10" /></svg></span><span>{{ detail.collection.name }}</span><span class="detail-collection-accent">查看系列 <svg class="inline h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6" /></svg></span></RouterLink>
               <div class="mt-4 flex flex-wrap items-center gap-4 text-xs">
                 <a :href="detail.tmdbUrl" target="_blank" rel="noopener noreferrer" class="detail-rating flex items-baseline gap-2"><img :src="tmdbLogo" alt="TMDB" width="161" height="35.52" class="h-auto w-11 shrink-0" /><span class="text-base font-bold">{{ detail.votes > 0 ? detail.rating.toFixed(1) : '暂无评分' }}<span v-if="detail.votes > 0" class="ml-0.5 text-xs detail-muted">/10</span></span></a>
                 <span v-if="detail.votes > 0" class="detail-muted">{{ detail.votes.toLocaleString() }} 人评价</span>
@@ -370,7 +384,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 
 <style scoped>
 .media-detail {
-  /* MCU surfaces already have restrained chroma; retain the artwork hue. */
+  /* 页面底色保留少量海报色彩，阅读区域维持中性色。 */
   --md-sys-color-surface: color-mix(in srgb, rgb(248 250 252) 90%, var(--detail-light-surface) 10%);
   --md-sys-color-on-surface: rgb(15 23 42);
   --md-sys-color-on-surface-variant: rgb(71 85 105);
@@ -431,14 +445,20 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   isolation: isolate;
 }
 .detail-backdrop img {
-  /* Overscan keeps the blurred image edges outside the visible background. */
+  /* 图片向外扩展，避免静态模糊后出现浅色边缘。 */
   position: absolute;
   inset: -12px;
   width: calc(100% + 24px);
-  /* Override Preflight's max-width: 100% so overscan covers both edges. */
+  /* 覆盖预设最大宽度，让扩展区域同时覆盖左右两侧。 */
   max-width: none;
   height: calc(100% + 24px);
   filter: blur(5px);
+}
+.detail-backdrop.is-poster-backdrop img {
+  inset: -32px;
+  width: calc(100% + 64px);
+  height: calc(100% + 64px);
+  filter: blur(22px) saturate(1.15);
 }
 .detail-backdrop::before,
 .detail-backdrop::after {
@@ -448,7 +468,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
 }
 .detail-backdrop::before {
   z-index: 1;
-  /* The reading column extends across the image, including the right synopsis. */
+  /* 渐变覆盖整个阅读区域，保证右侧简介同样清晰。 */
   background: linear-gradient(90deg,
     color-mix(in srgb, var(--md-sys-color-surface) 64%, transparent) 0%,
     color-mix(in srgb, var(--md-sys-color-surface) 80%, transparent) 18%,
@@ -467,7 +487,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
     var(--md-sys-color-surface) 96%);
 }
 @media (min-width: 1024px) {
-  /* Paint beneath the transparent rail while keeping the reading column inset. */
+  /* 背景延伸至透明侧栏下方，正文仍保留原有缩进。 */
   .detail-page::before {
     content: '';
     position: absolute;
@@ -480,12 +500,15 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   }
 }
 @media (max-width: 639px) {
+  .detail-content { padding-top: calc(var(--workbench-header-height) + 12px); }
+  .detail-poster { width: clamp(180px, 52vw, 208px); box-shadow: 0 18px 40px -14px rgb(15 23 42 / 32%); }
   .detail-backdrop {
-    height: calc(var(--workbench-header-height) + 350px);
+    height: calc(var(--workbench-header-height) + 380px);
   }
-  .detail-backdrop img { filter: blur(4px); }
+  .detail-backdrop img { filter: blur(12px) saturate(1.1); }
+  .detail-backdrop.is-poster-backdrop img { filter: blur(24px) saturate(1.15); }
   .detail-backdrop::before {
-    background: color-mix(in srgb, var(--md-sys-color-surface) 30%, transparent);
+    background: color-mix(in srgb, var(--md-sys-color-surface) 38%, transparent);
   }
 }
 .detail-poster {
@@ -600,12 +623,16 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   color: var(--md-sys-color-on-tertiary-container);
 }
 .detail-collection {
-  background: var(--md-sys-color-surface-container-high);
+  min-height: 44px;
+  border: 1px solid var(--glass-edge);
+  background: var(--glass-pill-background);
+  box-shadow: var(--glass-rim-shadow);
   color: var(--md-sys-color-on-surface);
   transition: background-color 200ms;
 }
+.detail-collection-accent { color: rgb(var(--action-link)); }
 .detail-collection:hover {
-  background: var(--md-sys-color-surface-container-highest);
+  background: var(--glass-pill-hover);
 }
 .detail-collection:focus-visible {
   outline: 2px solid var(--md-sys-color-primary);

@@ -1,45 +1,38 @@
-/* 用户参数、主题底色、场景约束和降级集中维护，组件只选用合适的材质。 */
+/* 固定 TG 风格：胶囊弱模糊、面板磨砂、细描边和轻阴影，不在运行时全局调参。 */
+/* Android 使用降采样 RenderEffect；网页面板将模糊控制在 24px，避免直接放大原生半径。 */
 :root {
-  --user-glass-blur: 22px;
-  --user-glass-saturate: 1.75;
-  --user-glass-opacity: .42;
-  --user-glass-rim: .8;
   --glass-tint-rgb: 248 250 252;
   --glass-solid: rgb(var(--glass-tint-rgb));
   --glass-text: #1e293b;
   --glass-muted: #475569;
-  --glass-panel-alpha: clamp(.74, calc(var(--user-glass-opacity) + .32), 1);
-  --glass-header-alpha: clamp(.72, calc(var(--user-glass-opacity) + .28), 1);
-  --glass-pill-background: rgb(var(--glass-tint-rgb) / var(--user-glass-opacity));
-  --glass-pill-hover: rgb(var(--glass-tint-rgb) / min(1, calc(var(--user-glass-opacity) + .14)));
-  --glass-panel-background: rgb(var(--glass-tint-rgb) / var(--glass-panel-alpha));
+  --glass-header-alpha: .85;
+  --glass-pill-background: rgb(var(--glass-tint-rgb) / .85);
+  --glass-pill-hover: rgb(var(--glass-tint-rgb) / .9);
+  --glass-panel-background: rgb(var(--glass-tint-rgb) / .85);
   --glass-header-background: rgb(var(--glass-tint-rgb) / var(--glass-header-alpha));
-  --glass-edge: rgb(148 163 184 / calc(.2 + var(--user-glass-rim) * .24));
-  --glass-rim-shadow: inset 0 1px 0 rgb(255 255 255 / calc(var(--user-glass-rim) * .85)), inset 0 -1px 0 rgb(255 255 255 / calc(var(--user-glass-rim) * .16));
-  --glass-card-shadow: 0 3px 14px rgb(15 23 42 / 5%), var(--glass-rim-shadow);
-  --glass-dialog-shadow: 0 24px 64px -16px rgb(15 23 42 / 22%), 0 0 0 1px rgb(15 23 42 / 4%), var(--glass-rim-shadow);
-  --glass-pill-filter: blur(min(var(--user-glass-blur), 24px)) saturate(var(--user-glass-saturate));
-  --glass-panel-filter: blur(min(var(--user-glass-blur), 24px)) saturate(var(--user-glass-saturate));
-  --glass-header-filter: blur(min(var(--user-glass-blur), 20px)) saturate(var(--user-glass-saturate));
-  --glass-refraction: url(#cinema-glass-refraction);
-  --glass-inset-surface: rgb(241 245 249 / max(.76, var(--user-glass-opacity)));
-  --glass-inset-border: rgb(148 163 184 / calc(.2 + var(--user-glass-rim) * .12));
-  --glass-badge-background: rgb(15 23 42 / max(.72, var(--user-glass-opacity)));
-  --glass-badge-edge: rgb(255 255 255 / calc(.08 + var(--user-glass-rim) * .12));
-  --glass-scrim: rgb(10 12 16 / 22%);
+  --glass-edge: rgb(148 163 184 / .24);
+  --glass-rim-shadow: inset 0 .55px 0 rgb(255 255 255 / .85), inset 0 -.55px 0 rgb(255 255 255 / .6);
+  --glass-card-shadow: 0 1px 2.25px rgb(0 0 0 / .078), var(--glass-rim-shadow);
+  --glass-dialog-shadow: 0 1px 2.25px rgb(0 0 0 / .078), var(--glass-rim-shadow);
+  --glass-pill-filter: blur(6px) saturate(3);
+  --glass-panel-filter: blur(24px) saturate(3);
+  --glass-header-filter: blur(6px) saturate(3);
+  --glass-inset-surface: rgb(241 245 249 / .85);
+  --glass-inset-border: rgb(148 163 184 / .3);
+  --glass-badge-background: rgb(15 23 42 / .76);
+  --glass-badge-edge: rgb(255 255 255 / .16);
+  --glass-scrim: rgb(10 12 16 / .102);
 }
 
 .dark {
   --glass-tint-rgb: 18 22 30;
   --glass-text: #e2e8f0;
   --glass-muted: #b8c4d4;
-  --glass-panel-alpha: clamp(.76, calc(var(--user-glass-opacity) + .34), 1);
-  --glass-edge: rgb(255 255 255 / calc(.08 + var(--user-glass-rim) * .14));
-  --glass-rim-shadow: inset 0 1px 0 rgb(255 255 255 / calc(var(--user-glass-rim) * .24)), inset 0 -1px 0 rgb(255 255 255 / calc(var(--user-glass-rim) * .06));
-  --glass-card-shadow: 0 4px 14px rgb(0 0 0 / 22%), var(--glass-rim-shadow);
-  --glass-dialog-shadow: 0 24px 64px -16px rgb(0 0 0 / 55%), var(--glass-rim-shadow);
-  --glass-inset-surface: rgb(30 37 49 / max(.68, var(--user-glass-opacity)));
-  --glass-scrim: rgb(10 12 16 / 42%);
+  --glass-edge: rgb(255 255 255 / .08);
+  --glass-rim-shadow: inset 0 .55px 0 rgb(255 255 255 / .125), inset 0 -.55px 0 rgb(255 255 255 / .078);
+  --glass-card-shadow: var(--glass-rim-shadow);
+  --glass-dialog-shadow: var(--glass-rim-shadow);
+  --glass-inset-surface: rgb(30 37 49 / .85);
 }
 
 /* 无透明能力时统一换成实色，所有迁入的独立表面也遵守同一降级。 */
@@ -55,7 +48,6 @@
     --glass-pill-filter: none;
     --glass-panel-filter: none;
     --glass-header-filter: none;
-    --glass-refraction: blur(0px);
   }
 }
 
@@ -71,7 +63,6 @@
     --glass-pill-filter: none;
     --glass-panel-filter: none;
     --glass-header-filter: none;
-    --glass-refraction: blur(0px);
   }
 }
 
@@ -110,10 +101,23 @@ dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog) { visibi
 dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdrop { background: transparent; }
 .floating-surface[popover]::backdrop { background: transparent; pointer-events: none; }
 
-/* 仅少量独立搜索按钮使用实验性折射，弹窗与长列表始终走原生模糊。 */
-:root[data-glass-refraction='on'] .detail-search-buttons .search-pill::before {
-  -webkit-backdrop-filter: var(--glass-pill-filter) var(--glass-refraction);
-  backdrop-filter: var(--glass-pill-filter) var(--glass-refraction);
+/* 小型独立胶囊共用材质，滤镜与文字分层。 */
+.glass-pill-surface { position: relative; isolation: isolate; border-radius: 999px; color: var(--glass-text); }
+.glass-pill-surface::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid var(--glass-edge);
+  border-radius: inherit;
+  background: var(--glass-pill-background);
+  box-shadow: var(--glass-card-shadow);
+  -webkit-backdrop-filter: var(--glass-pill-filter);
+  backdrop-filter: var(--glass-pill-filter);
+  pointer-events: none;
+}
+@media (hover: hover) {
+  :is(a, button).glass-pill-surface:hover::before { background: var(--glass-pill-hover); }
 }
 
 @media (prefers-contrast: more) {
