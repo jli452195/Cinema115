@@ -97,8 +97,63 @@ func TestLongSeasonResponseLimitAndRawCache(t *testing.T) {
 	if len(c.cache) != 0 {
 		t.Fatal("大型原始季响应不应留在内存缓存")
 	}
-	if _, err := c.Details(context.Background(), "tv", 91759); err == nil || err.Error() != "TMDB 响应超过大小限制" {
-		t.Fatal("普通详情上限不应随季接口放宽", err)
+}
+
+func TestLongTVDetailResponseLimitAndRawCache(t *testing.T) {
+	// 用与长剧相当的全剧演员数量和响应体积重现 2734 的详情请求。
+	cast := make([]map[string]any, 7671)
+	for i := range cast {
+		cast[i] = map[string]any{
+			"id": i + 1, "name": "演员", "roles": []map[string]string{{"character": "角色"}},
+			"original_name": strings.Repeat("x", 275),
+		}
+	}
+	data, err := json.Marshal(map[string]any{
+		"id": 2734, "name": "法律与秩序：特殊受害者",
+		"aggregate_credits": map[string]any{"cast": cast},
+		"external_ids":      map[string]string{"imdb_id": "tt0203259"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) <= defaultResponseLimit || len(data) > tvDetailResponseLimit {
+		t.Fatalf("测试数据大小不符合长剧场景: %d", len(data))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/tv/2734" && r.URL.Query().Get("append_to_response") != "aggregate_credits,external_ids" {
+			t.Error("未附加全剧演员和外部标识")
+		}
+		_, _ = w.Write(data)
+	}))
+	defer server.Close()
+	c := New("test-key")
+	c.base = server.URL
+	detail, err := c.Details(context.Background(), "tv", 2734)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.ID != 2734 || detail.IMDBID != "tt0203259" || len(detail.Cast) != 20 || detail.Cast[0].Character != "角色" {
+		t.Fatal("长剧详情或演员信息归一化错误")
+	}
+	if _, err := c.Details(context.Background(), "movie", 2734); !errors.Is(err, errResponseTooLarge) {
+		t.Fatal("电影详情应保持普通接口的响应上限", err)
+	}
+	if len(c.cache) != 0 {
+		t.Fatal("大型详情响应不应留在原始缓存")
+	}
+}
+
+func TestTVDetailStillRejectsOversizedResponse(t *testing.T) {
+	data := []byte(`{"id":2734,"unused":"` + strings.Repeat("x", tvDetailResponseLimit) + `"}`)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(data) }))
+	defer server.Close()
+	c := New("test-key")
+	c.base = server.URL
+	if _, err := c.Details(context.Background(), "tv", 2734); !errors.Is(err, errResponseTooLarge) {
+		t.Fatal("剧集详情超限未拦截", err)
+	}
+	if len(c.cache) != 0 {
+		t.Fatal("失败响应不应缓存")
 	}
 }
 
@@ -108,7 +163,7 @@ func TestSeasonStillRejectsOversizedResponse(t *testing.T) {
 	defer server.Close()
 	c := New("test-key")
 	c.base = server.URL
-	if _, err := c.Season(context.Background(), 91759, 1); err == nil || err.Error() != "TMDB 响应超过大小限制" {
+	if _, err := c.Season(context.Background(), 91759, 1); !errors.Is(err, errResponseTooLarge) {
 		t.Fatal("季响应超限未拦截", err)
 	}
 	if len(c.cache) != 0 {

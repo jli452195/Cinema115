@@ -25,7 +25,7 @@ const props = defineProps<{
   overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string
   mobileSectionHeading?: boolean
   mobileSectionTitle?: string
-  mobilePage?: { title: string; fallback: string; target?: string }
+  mobilePage?: { title: string; fallback: string; target?: string; titleElement?: HTMLElement | null }
   detailNavigation?: { title: string; year: string; fallback: string; titleElement: HTMLElement | null }
   mobileBack?: MobileToolBackTarget
 }>()
@@ -177,7 +177,10 @@ onBeforeUnmount(() => {
   stopHeaderUnread()
 })
 const header = ref<HTMLElement>()
-const detailTitleVisible = useScrollBoundary(() => props.detailNavigation?.titleElement, header, mobileDetail)
+// 未传正文标题时保持常显；传入 null 表示正文尚未渲染，继续隐藏。
+const mobileTitleElement = computed(() => mobilePageNavigation.value?.titleElement)
+const mobileTitlePassedBoundary = useScrollBoundary(mobileTitleElement, header, mobileDetail)
+const mobileTitleVisible = computed(() => mobileTitleElement.value === undefined || mobileTitlePassedBoundary.value)
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const closingForTheme = ref(false)
@@ -389,7 +392,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
       <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back mobile-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation }" />
       <div v-if="mobileDetail && mobilePageNavigation" class="detail-nav-title-slot" aria-hidden="true">
-        <div class="detail-nav-title glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation, 'is-visible': !detailNavigation || detailTitleVisible }">
+        <div class="detail-nav-title glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation, 'is-visible': mobileTitleVisible }">
           <span class="detail-nav-name">{{ mobilePageNavigation.title }}</span><span v-if="detailNavigation?.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
         </div>
       </div>

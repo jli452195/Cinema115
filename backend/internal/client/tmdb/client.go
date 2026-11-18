@@ -21,7 +21,10 @@ var ErrInput = errors.New("看板查询参数无效")
 var ErrNotConfigured = errors.New("请先在根目录 .env 中填写 TMDB_API_KEY 并重启后端")
 var ErrNotFound = errors.New("未找到对应的影视或季信息")
 
+var errResponseTooLarge = errors.New("TMDB 响应超过大小限制")
+
 const defaultResponseLimit = 2 << 20
+const tvDetailResponseLimit = 8 << 20
 const seasonResponseLimit = 8 << 20
 
 type cachedResponse struct {
@@ -122,12 +125,12 @@ func (c *Client) getLimited(ctx context.Context, endpoint string, query url.Valu
 		return requestError(ctx, err, "读取 TMDB 响应失败")
 	}
 	if int64(len(data)) > limit {
-		return fmt.Errorf("TMDB 响应超过大小限制")
+		return errResponseTooLarge
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		return fmt.Errorf("TMDB 返回的数据格式不正确")
 	}
-	// 长季包含大量前端不用的演职员字段，归一化后由服务层压缩入库，不保留大型原始响应。
+	// 长剧详情和长季由服务层缓存归一化后的数据，这里不保留大型原始响应。
 	if len(data) > defaultResponseLimit {
 		return nil
 	}

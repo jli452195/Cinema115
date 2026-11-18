@@ -179,11 +179,14 @@ func (c *Client) Details(ctx context.Context, kind string, id int) (*Detail, err
 		} `json:"seasons"`
 	}
 	appendices := "credits,external_ids"
+	limit := int64(defaultResponseLimit)
 	if kind == "tv" {
 		appendices = "aggregate_credits,external_ids"
+		// 长剧的全剧演职员可能超过普通接口上限，仍保留独立的读取上限。
+		limit = tvDetailResponseLimit
 	}
 	endpoint := "/" + kind + "/" + strconv.Itoa(id)
-	if err := c.get(ctx, endpoint, url.Values{"language": {"zh-CN"}, "append_to_response": {appendices}}, &raw); err != nil {
+	if err := c.getLimited(ctx, endpoint, url.Values{"language": {"zh-CN"}, "append_to_response": {appendices}}, &raw, limit); err != nil {
 		return nil, err
 	}
 	if raw.ID != id {

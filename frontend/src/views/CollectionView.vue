@@ -12,6 +12,7 @@ const props = defineProps<{ token: string; tmdbId: string }>()
 defineEmits<{ logout: [] }>()
 interface Collection { id: number; name: string; overview: string; posterUrl: string; backdropUrl: string; items: MediaCardItem[] }
 const collection = ref<Collection>()
+const collectionTitleElement = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const error = ref('')
 const failedImages = ref(new Set<string>())
@@ -44,7 +45,7 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader :over-backdrop="!!collection?.backdropUrl && hasImage(collection.backdropUrl)" :mobile-page="{ title: collection?.name || '电影系列', fallback: '/movie' }" @logout="$emit('logout')" />
+    <WorkbenchHeader :over-backdrop="!!collection?.backdropUrl && hasImage(collection.backdropUrl)" :mobile-page="{ title: collection?.name || '未命名系列', fallback: '/movie', titleElement: collectionTitleElement }" @logout="$emit('logout')" />
     <main class="relative min-w-0 flex-1 overflow-hidden">
       <div v-if="collection && hasImage(collection.backdropUrl)" class="pointer-events-none absolute inset-x-0 top-0 h-[560px]" aria-hidden="true"><img :src="tmdbImageURL(collection.backdropUrl)" alt="" referrerpolicy="no-referrer" class="h-full w-full object-cover opacity-[0.15]" @error="failedImages.add(collection.backdropUrl)"/><div class="absolute inset-0 bg-gradient-to-b from-slate-50/20 to-slate-50 dark:from-slate-950/20 dark:to-slate-950"></div></div>
       <div class="workbench-content relative mx-auto max-w-[1440px] px-4 pb-6 sm:px-8 lg:px-10">
@@ -54,7 +55,7 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
         <template v-else-if="collection">
           <section aria-label="系列信息" class="grid items-start gap-7 sm:grid-cols-[200px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10">
             <div class="mx-auto aspect-[2/3] w-44 overflow-hidden rounded-2xl bg-slate-200 dark:bg-slate-700 shadow-xl shadow-slate-900/10 sm:w-full"><img v-if="hasImage(collection.posterUrl)" :src="tmdbImageURL(collection.posterUrl)" :alt="collection.name" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImages.add(collection.posterUrl)"/><div v-else class="flex h-full items-center justify-center text-sm text-slate-400 dark:text-slate-500">暂无系列海报</div></div>
-            <div class="min-w-0 py-2"><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-400/10 dark:text-amber-300">电影系列</span><h1 class="mt-5 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 dark:text-slate-100 lg:text-4xl">{{ collection.name || '未命名系列' }}</h1><p class="mt-4 text-sm text-slate-500 dark:text-slate-400">共 {{ collection.items.length }} 部电影 · 按上映时间排列</p><h2 class="mt-7 text-sm font-semibold text-slate-700 dark:text-slate-200">系列简介</h2><p class="mt-3 max-w-4xl whitespace-pre-line text-sm leading-7 text-slate-600 dark:text-slate-300">{{ collection.overview || 'TMDB 暂未提供该系列的中文简介。' }}</p></div>
+            <div class="min-w-0 py-2"><span class="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-400/10 dark:text-amber-300">电影系列</span><h1 ref="collectionTitleElement" class="mt-5 break-words text-3xl font-bold leading-tight tracking-tight text-slate-950 dark:text-slate-100 lg:text-4xl">{{ collection.name || '未命名系列' }}</h1><p class="mt-4 text-sm text-slate-500 dark:text-slate-400">共 {{ collection.items.length }} 部电影 · 按上映时间排列</p><h2 class="mt-7 text-sm font-semibold text-slate-700 dark:text-slate-200">系列简介</h2><p class="mt-3 max-w-4xl whitespace-pre-line text-sm leading-7 text-slate-600 dark:text-slate-300">{{ collection.overview || 'TMDB 暂未提供该系列的中文简介。' }}</p></div>
           </section>
           <section aria-label="系列电影" class="mt-12"><h2 class="mb-6 text-xl font-semibold text-slate-900 dark:text-slate-100">系列电影 <span class="ml-2 text-sm font-normal text-slate-400 dark:text-slate-500">{{ collection.items.length }}</span></h2>
             <p v-if="!collection.items.length" class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-10 text-center text-sm text-slate-400 dark:text-slate-500">该系列暂无电影条目。</p>
