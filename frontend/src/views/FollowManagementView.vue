@@ -107,12 +107,14 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
 </script>
 
 <template>
-  <SubscriptionListLayout title="订阅管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
-    <template #mobile-actions>
-      <button type="button" class="subscription-toolbar-action" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" aria-label="追更通知与自动搜资源设置" @click="settingsOpen = !settingsOpen"><IconSettings :size="20" aria-hidden="true" /></button>
-      <button type="button" class="subscription-toolbar-action" :disabled="loading || busy" aria-label="刷新订阅申请" @click="refresh"><IconRefresh :size="20" aria-hidden="true" /></button>
+  <SubscriptionListLayout title="订阅管理" mobile-title="追更管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
+    <template #actions>
+      <button type="button" class="subscription-toolbar-action text-sm text-blue-600" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" @click="settingsOpen = !settingsOpen">
+        <IconSettings :size="20" class="sm:hidden" aria-hidden="true" />
+        <span class="sr-only sm:not-sr-only"><span class="sm:hidden">追更通知与自动搜资源设置</span><span class="hidden sm:inline">通知设置</span></span>
+      </button>
+      <button type="button" class="subscription-toolbar-action sm:hidden" :disabled="loading || busy" aria-label="刷新订阅申请" @click="refresh"><IconRefresh :size="20" aria-hidden="true" /></button>
     </template>
-    <template #actions><button class="text-sm text-blue-600" @click="settingsOpen = !settingsOpen">通知设置</button></template>
     <FollowDialog v-if="editing" title="处理追更申请" :busy="busy" @close="editing = undefined">
       <form class="space-y-4" @submit.prevent="save">
         <p class="break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{{ editing.title }}</p>

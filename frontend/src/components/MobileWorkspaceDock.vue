@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { IconCalendar, IconHome, IconPlus, IconRss } from '@tabler/icons-vue'
+import { IconCalendar, IconHeart, IconHome, IconPlus } from '@tabler/icons-vue'
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import NavigationIcon from './NavigationIcon.vue'
@@ -8,20 +8,29 @@ import { animateFloatingPanel, readFloatingPanelMotion } from '../lib/floatingPa
 import { isPortalAdmin } from '../composables/usePortalAuth'
 import { followPendingCount } from '../composables/useFollowPendingCount'
 import { rememberedDashboardHome } from '../utils/dashboardPreferences'
-import { mobileWorkspaceLabels, mobileWorkspaceToolGroups, type MobileWorkspaceSection } from '../utils/mobileWorkspace'
+import { mobileFollowTabs, mobileWorkspaceLabels, mobileWorkspaceToolGroups, type MobileWorkspaceSection } from '../utils/mobileWorkspace'
 
-const props = defineProps<{ section?: MobileWorkspaceSection; activeTool?: string; dialogId: string }>()
+const props = defineProps<{ section?: MobileWorkspaceSection; activeTool?: string }>()
 const route = useRoute()
 const tabs = computed(() => [
   { key: 'home', label: mobileWorkspaceLabels.home, icon: IconHome, to: rememberedDashboardHome.value },
-  { key: 'subscriptions', label: mobileWorkspaceLabels.subscriptions, icon: IconRss, to: '/follows' },
+  { key: 'follows', label: mobileWorkspaceLabels.follows, icon: IconHeart, to: props.section === 'follows' ? route.fullPath : mobileFollowTabs[0].to },
   { key: 'updates', label: mobileWorkspaceLabels.updates, icon: IconCalendar, to: '/updates' },
 ])
 const selectedIndex = computed(() => tabs.value.findIndex(tab => tab.key === props.section))
+function selectTab(event: MouseEvent, key: string, navigate: (event: MouseEvent) => unknown) {
+  // 再点当前追更区时保留页面和滚动位置，同时保留链接的修饰键操作。
+  if (key === 'follows' && props.section === key && event.button === 0 &&
+      !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+    event.preventDefault()
+    return
+  }
+  void navigate(event)
+}
 const pending = computed(() => isPortalAdmin.value ? followPendingCount.value || 0 : 0)
 const currentToolPath = computed(() => route.path.toLowerCase().replace(/\/$/, ''))
 const dialog = ref<HTMLDialogElement>(), panel = ref<HTMLElement>(), closeButton = ref<HTMLButtonElement>()
-const opened = ref(false), titleId = useId()
+const opened = ref(false), dialogId = useId(), titleId = useId()
 const lifecycle = createDialogLifecycle()
 const mobile = window.matchMedia('(max-width: 639px)'), reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let animation: Animation | undefined
@@ -94,7 +103,6 @@ watch(() => route.fullPath, () => dismissTools(false))
 watch(isPortalAdmin, admin => { if (!admin) dismissTools(false) })
 onMounted(() => mobile.addEventListener('change', onViewportChange))
 onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); dismissTools(false) })
-defineExpose({ openTools, opened })
 </script>
 
 <template>
@@ -102,9 +110,9 @@ defineExpose({ openTools, opened })
     <nav class="dock-tabs glass-pill-surface" aria-label="手机主导航" :style="{ '--dock-selection': String(selectedIndex) }">
       <span v-if="selectedIndex >= 0" class="dock-selection" aria-hidden="true"></span>
       <RouterLink v-for="tab in tabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
-        <a :href="href" class="dock-tab" :aria-current="section === tab.key ? 'page' : undefined" @click="navigate">
+        <a :href="href" class="dock-tab" :aria-current="section === tab.key ? 'page' : undefined" @click="selectTab($event, tab.key, navigate)">
           <span class="dock-icon"><component :is="tab.icon" :size="22" :stroke="section === tab.key ? '2.1' : '1.75'" aria-hidden="true" />
-            <span v-if="tab.key === 'subscriptions' && pending" class="dock-badge" :aria-label="`${pending} 项待处理`">{{ pending > 99 ? '99+' : pending }}</span>
+            <span v-if="tab.key === 'follows' && pending" class="dock-badge" :aria-label="`${pending} 项待处理`">{{ pending > 99 ? '99+' : pending }}</span>
           </span>
           <span>{{ tab.label }}</span>
         </a>

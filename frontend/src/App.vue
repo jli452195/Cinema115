@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, useId, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
@@ -23,27 +23,20 @@ const router = useRouter()
 const phoneViewport = window.matchMedia('(max-width: 639px)')
 const phone = ref(phoneViewport.matches)
 function updatePhone() { phone.value = phoneViewport.matches }
-const activeTool = computed(() => portalUser.value?.role === 'admin' ? mobileWorkspaceTool(route)?.to : undefined)
-const mobileToolEnabled = computed(() => phone.value && !!activeTool.value)
+const activeTool = computed(() => portalUser.value?.role === 'admin' ? mobileWorkspaceTool(route) : undefined)
 const hasMobileDock = computed(() => phone.value && (!!mobileSection.value || !!activeTool.value))
-const mobileDock = ref<InstanceType<typeof MobileWorkspaceDock>>()
-const toolsDialogId = useId()
 const toolOrigin = ref<MobileToolBackTarget>()
-const toolBack = computed(() => toolOrigin.value || { label: mobileWorkspaceLabels.home, to: rememberedDashboardHome.value })
 const stopToolOrigin = router.afterEach((to, from, failure) => {
   if (failure || to.path === from.path) return
+  // 工具区内部互切（含同分类子页）不覆盖进入前的主页面及筛选。
   if (!mobileWorkspaceTool(to)) { toolOrigin.value = undefined; return }
   if (mobileWorkspaceTool(from)) return
-  // 同一工具区内互切时，保留进入工具前的主页面及筛选条件。
   const section = mobileWorkspaceSection(from.name)
   toolOrigin.value = section ? { label: mobileWorkspaceLabels[section], to: from.fullPath } : undefined
 })
 provide(mobileToolNavigationKey, {
-  enabled: mobileToolEnabled,
-  opened: computed(() => mobileDock.value?.opened ?? false),
-  back: toolBack,
-  controls: toolsDialogId,
-  openTools: event => mobileDock.value?.openTools(event),
+  tool: computed(() => phone.value ? activeTool.value : undefined),
+  toolBack: computed(() => toolOrigin.value ?? { label: mobileWorkspaceLabels.home, to: rememberedDashboardHome.value }),
 })
 const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
 watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
@@ -127,7 +120,7 @@ onBeforeUnmount(() => {
     <RouterView v-slot="{ Component }">
       <component :is="Component" v-bind="viewProps" @logout="logout" />
     </RouterView>
-    <MobileWorkspaceDock v-if="hasMobileDock" ref="mobileDock" :dialog-id="toolsDialogId" :section="mobileSection" :active-tool="activeTool" />
+    <MobileWorkspaceDock v-if="hasMobileDock" :section="mobileSection" :active-tool="activeTool?.to" />
     <NetworkConnectionTestDialog v-if="networkConnectionTest && portalUser.role === 'admin'" :request="networkConnectionTest" @close="closeNetworkConnectionTest" />
   </div>
   <ReloadPrompt />
@@ -136,11 +129,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .portal-workspace { --management-sidebar-motion: 300ms cubic-bezier(0.2, 0, 0, 1); min-width: 0; }
-/* 搜索背景覆盖侧栏下方，透明侧栏与内容区共用同一层底色。 */
-.is-search-workspace { background-color: #f8fafc; background-image: radial-gradient(circle at 50% 0%, rgb(148 163 184 / .14), transparent 55%); }
-.dark .is-search-workspace { background-color: #090d16; background-image: radial-gradient(circle at 50% 0%, rgb(51 65 85 / .25), transparent 60%); }
+@media (min-width: 640px) {
+  /* 搜索背景覆盖侧栏下方，透明侧栏与内容区共用同一层底色。 */
+  .is-search-workspace { background-color: #f8fafc; background-image: radial-gradient(circle at 50% 0%, rgb(148 163 184 / .14), transparent 55%); }
+  .dark .is-search-workspace { background-color: #090d16; background-image: radial-gradient(circle at 50% 0%, rgb(51 65 85 / .25), transparent 60%); }
+}
 .has-navigation-sidebar { padding-left: var(--management-sidebar-width); }
 @media (max-width: 639px) {
+  .is-search-workspace { background: rgb(var(--surface-page)); }
   .has-mobile-dock { padding-bottom: var(--mobile-dock-clearance); overflow-x: clip; }
 }
 @media (prefers-reduced-motion: reduce) { .portal-workspace { --management-sidebar-motion: 0s linear; } }

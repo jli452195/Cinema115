@@ -7,12 +7,7 @@ export function mobileWorkspaceSection(name: RouteLocationNormalizedLoaded['name
     case 'movie':
     case 'tv': return 'home'
     case 'my-follows':
-    case 'follow-management':
-    case 'anime-discovery':
-    case 'anime-settings':
-    case 'anime-subscriptions':
-    case 'anime-subscription-new':
-    case 'anime-subscription-edit': return 'subscriptions'
+    case 'follow-management': return 'follows'
     case 'updates': return 'updates'
     default: return undefined
   }
@@ -20,12 +15,15 @@ export function mobileWorkspaceSection(name: RouteLocationNormalizedLoaded['name
 
 export type MobileWorkspaceSection = NonNullable<ReturnType<typeof mobileWorkspaceSection>>
 
-export const mobileWorkspaceLabels: Record<MobileWorkspaceSection, string> = { home: '首页', subscriptions: '订阅', updates: '更新' }
+export const mobileWorkspaceLabels: Record<MobileWorkspaceSection, string> = { home: '首页', follows: '追更', updates: '更新' }
 
-const subscriptionLinks = new Set(['/follows/manage', '/anime'])
+export const mobileFollowTabs = [
+  { name: 'my-follows', label: '我的追更', to: '/follows' },
+  { name: 'follow-management', label: '追更管理', to: '/follows/manage' },
+] as const
 
 export const mobileWorkspaceToolGroups = adminAccountGroups
-  .map(({ label, links }) => ({ label, items: links.filter(link => !subscriptionLinks.has(link.to)) }))
+  .map(({ label, links }) => ({ label, items: links.filter(link => link.to !== '/follows/manage') }))
   .filter(group => group.items.length > 0)
 
 const mobileWorkspaceTools = mobileWorkspaceToolGroups.flatMap(group => group.items)

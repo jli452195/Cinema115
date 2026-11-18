@@ -68,10 +68,12 @@ onBeforeUnmount(() => { controller?.abort(); lifecycle.abort() })
 
 <template>
   <SubscriptionListLayout title="我的追更" description="查看你申请的电影和剧集。剧集默认追更所有正片季，不含特别篇。" @logout="emit('logout')">
-    <template #mobile-actions>
-      <button type="button" class="subscription-toolbar-action" :disabled="loading || !!busy" aria-label="刷新我的追更" @click="load"><IconRefresh :size="20" aria-hidden="true" /></button>
+    <template #actions>
+      <button type="button" class="subscription-toolbar-action text-sm text-blue-600 disabled:opacity-50" :disabled="loading || !!busy" @click="load">
+        <IconRefresh :size="20" class="sm:hidden" aria-hidden="true" />
+        <span class="sr-only sm:not-sr-only">刷新<span class="sm:hidden">我的追更</span></span>
+      </button>
     </template>
-    <template #actions><button :disabled="loading || !!busy" class="text-sm text-blue-600 disabled:opacity-50" @click="load">刷新</button></template>
     <div class="subscription-list space-y-6">
       <div class="subscription-filters subscription-filters-personal flex flex-wrap gap-4 sm:gap-6">
         <SegmentedControl :model-value="status" :options="statusOptions" label="追更状态" appearance="mobile-line" :disabled="!!busy" @update:model-value="value => navigate(kind, 0, value)" />

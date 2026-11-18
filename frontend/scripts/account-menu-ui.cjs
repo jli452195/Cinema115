@@ -2,6 +2,256 @@
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 
+const mobileNav = page => page.getByRole('navigation', { name: '手机主导航', exact: true })
+// 待处理徽章的可访问名称可能出现在「追更」之前。
+const followEntry = page => mobileNav(page).getByRole('link', { name: /追更$/ })
+const followTabs = page => page.getByRole('navigation', { name: '追更导航', exact: true })
+
+async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
+  await page.setViewportSize({ width: 320, height: 844 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  if (standalone) {
+    // 独立模式覆盖深色样式；只模拟显示模式，不安装 PWA。
+    await page.addInitScript(() => {
+      localStorage.setItem('cinema115-theme', 'dark')
+      const matchMedia = window.matchMedia.bind(window)
+      window.matchMedia = query => {
+        const result = matchMedia(query)
+        if (query === '(display-mode: standalone)') Object.defineProperty(result, 'matches', { value: true })
+        return result
+      }
+    })
+  }
+  const go = to => page.goto(origin + to)
+  const clickTo = async (link, to) => {
+    await link.click()
+    await page.waitForURL(url => url.pathname === to)
+  }
+  const header = page.getByRole('banner')
+  const titleRow = page.getByRole('main').locator('.management-heading')
+  const launcher = page.getByRole('button', { name: '打开功能导航', exact: true })
+  const toolDialog = page.getByRole('dialog', { name: '功能导航', exact: true })
+  const tools = toolDialog.getByRole('navigation', { name: '管理工具', exact: true })
+  const assertNoOldToolControls = async () => {
+    assert.equal(await header.locator('.tool-nav-back, .tool-nav-switcher').count(), 0, '顶栏没有旧工具胶囊')
+    assert.equal(await header.getByRole('button', { name: /^(打开功能导航$|切换工具)/ }).count(), 0)
+  }
+  const openTools = async () => {
+    await launcher.first().waitFor()
+    assert.equal(await launcher.count(), 1, '右下角 + 是唯一工具面板入口')
+    const dialogId = await launcher.getAttribute('aria-controls')
+    assert(dialogId, '工具面板入口应通过 aria-controls 指向面板')
+    assert.equal(await page.locator(`[aria-controls="${dialogId}"]:visible`).count(), 1)
+    const box = await launcher.boundingBox(), viewport = page.viewportSize()
+    assert(box && box.x > viewport.width / 2 && box.y > viewport.height / 2, '工具面板入口应位于右下角')
+    assert.equal(await launcher.locator('svg').count(), 1)
+    assert.equal((await launcher.textContent()).trim(), '')
+    assert.equal(await toolDialog.isVisible(), false)
+    await launcher.click()
+    await toolDialog.waitFor()
+    assert.equal(await toolDialog.getAttribute('id'), dialogId)
+  }
+  const closeTools = async () => {
+    await toolDialog.getByRole('button', { name: '关闭功能导航', exact: true }).click()
+    await toolDialog.waitFor({ state: 'hidden' })
+    assert(await launcher.evaluate(el => el === document.activeElement), '关闭工具面板后焦点回到 +')
+  }
+  const assertRoundBack = async (name, destination) => {
+    const back = header.getByRole('link', { name, exact: true }).and(header.locator('.mobile-nav-back'))
+    await back.waitFor()
+    assert.equal(await header.locator('.mobile-nav-back').count(), 1, '顶栏只有一个独立返回控件')
+    assert.equal(await back.getAttribute('aria-label'), name)
+    assert.equal(await back.getAttribute('href'), destination)
+    assert.equal(await back.locator('svg').count(), 1)
+    assert.equal((await back.textContent()).trim(), '', '圆形返回仅显示图标')
+    const round = await back.evaluate(el => {
+      const { width, height } = el.getBoundingClientRect(), style = getComputedStyle(el)
+      return width >= 40 && Math.abs(width - height) <= 1 && [style.borderTopLeftRadius, style.borderTopRightRadius,
+        style.borderBottomLeftRadius, style.borderBottomRightRadius].every(radius =>
+        radius.endsWith('%') ? parseFloat(radius) >= 50 : parseFloat(radius) >= width / 2 - 1)
+    })
+    assert(round, `${name}应为圆形点击区域`)
+    const surface = await back.evaluate(el => {
+      const style = getComputedStyle(el, '::before')
+      return { border: style.borderTopWidth, shadow: style.boxShadow }
+    })
+    assert.equal(surface.border, '0px')
+    assert.notEqual(surface.shadow, 'none', '返回按钮用柔和外阴影和页面区分')
+    return back
+  }
+  const assertBodyTitle = async (title, noTopBar = false) => {
+    const heading = titleRow.getByRole('heading', { name: title, level: 1, exact: true })
+    await heading.waitFor()
+    const titleBox = await heading.boundingBox()
+    assert(titleBox && titleBox.width > 1 && titleBox.height > 1, `${title}应在正文中显示`)
+    const headerBox = await header.isVisible() ? await header.boundingBox() : null
+    if (noTopBar) {
+      assert(!headerBox || headerBox.height <= 1, '普通用户追更页不应显示空顶栏')
+      // 允许常规正文留白，但不能保留一整行顶栏的高度。
+      assert(titleBox.y >= 0 && titleBox.y <= 32, '普通用户追更页不应为顶栏保留空白')
+    } else {
+      assert(headerBox && titleBox.y >= headerBox.y + headerBox.height - 1, `${title}应在顶栏下方显示`)
+    }
+    return titleBox
+  }
+  const tab = name => followTabs(page).getByRole('link', { name, exact: true })
+  const home = mobileNav(page).getByRole('link', { name: '首页', exact: true })
+  const updates = mobileNav(page).getByRole('link', { name: '更新', exact: true })
+  const follow = followEntry(page)
+  const enterFollows = async () => {
+    assert.equal(await follow.getAttribute('href'), '/follows', '离开追更区后，底栏入口固定为 /follows')
+    await clickTo(follow, '/follows')
+    assert.equal(new URL(page.url()).search, '')
+    assert.equal(await follow.getAttribute('aria-current'), 'page')
+  }
+  const assertSelectedTab = async name => {
+    assert.equal(await tab(name).getAttribute('aria-current'), 'page')
+    assert.equal(await followTabs(page).locator('a[aria-current="page"]').count(), 1)
+  }
+
+  const assertFollowLayout = async (title, admin = true) => {
+    const titleBox = await assertBodyTitle(title, !admin)
+    await assertNoOldToolControls()
+    assert.equal(await page.locator('.mobile-nav-back:visible').count(), 0, `${title}不应显示返回按钮`)
+    assert.equal(await header.getByRole('link', { name: /^返回/ }).count(), 0)
+    assert.equal(await header.getByRole('button', { name: /^返回/ }).count(), 0)
+    const actions = [/说明/, /刷新/, ...(title === '追更管理' ? [/设置/] : [])]
+    for (const name of actions) {
+      assert.equal(await header.getByRole('button', { name }).count(), 0, `${title}的${name}不应出现在顶栏`)
+      const action = titleRow.getByRole('button', { name })
+      await action.waitFor()
+      const box = await action.boundingBox()
+      assert(box && box.y < titleBox.y + titleBox.height && box.y + box.height > titleBox.y,
+        `${title}的${name}应与正文标题同一行`)
+    }
+    if (admin) {
+      await header.getByRole('navigation', { name: '追更导航', exact: true }).waitFor()
+      const mine = await tab('我的追更').boundingBox(), manage = await tab('追更管理').boundingBox()
+      assert(mine && manage && manage.x >= mine.x + mine.width - 1 &&
+        Math.abs(mine.y + mine.height / 2 - manage.y - manage.height / 2) <= 6,
+        '管理员两个追更标签应并排显示在同一行')
+    }
+  }
+
+  setRole('admin')
+  await go('/movie')
+  await page.waitForFunction(dark => document.documentElement.classList.contains('dark') === dark, standalone)
+  const homeURL = page.url(), homePath = new URL(homeURL).pathname
+
+  await openTools()
+  await clickTo(tools.getByRole('link', { name: '资源配置', exact: true }), '/resources')
+  await assertRoundBack('返回首页', homePath)
+  await assertNoOldToolControls()
+  await assertBodyTitle('资源配置')
+  await openTools()
+  await closeTools()
+  await clickTo(page.getByRole('main').getByRole('link', { name: '字幕', exact: true }), '/resources/subtitles')
+  const parentBack = await assertRoundBack('返回资源配置', '/resources')
+  await assertNoOldToolControls()
+  await assertBodyTitle('字幕')
+  await openTools()
+  await closeTools()
+  await clickTo(parentBack, '/resources')
+  await clickTo(await assertRoundBack('返回首页', homePath), homePath)
+
+  await go('/resources/subtitles')
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.getByRole('navigation', { name: '上级导航' }).getByRole('link', { name: '返回 资源配置', exact: true }).waitFor()
+  assert.equal(await page.locator('.mobile-nav-back:visible, .dock-launcher:visible').count(), 0, '桌面保留面包屑而非手机返回和工具入口')
+  await page.setViewportSize({ width: 320, height: 844 })
+  await clickTo(await assertRoundBack('返回资源配置', '/resources'), '/resources')
+  await clickTo(await assertRoundBack('返回首页', homePath), homePath)
+
+  await enterFollows()
+  await assertSelectedTab('我的追更')
+  await assertFollowLayout('我的追更')
+  assert.deepEqual(await followTabs(page).getByRole('link').evaluateAll(links => links.map(link => [link.textContent.trim(), new URL(link.href).pathname])), [
+    ['我的追更', '/follows'], ['追更管理', '/follows/manage'],
+  ])
+  await clickTo(tab('追更管理'), '/follows/manage')
+  await assertSelectedTab('追更管理')
+  await assertFollowLayout('追更管理')
+  assert.equal(await follow.getAttribute('aria-current'), 'page')
+  const manageURL = page.url()
+  await follow.click()
+  // 等待可能的异步路由切换；立即读 URL 会漏掉错误跳转。
+  await assert.rejects(page.waitForURL(url => url.href !== manageURL, { timeout: 500 }), { name: 'TimeoutError' })
+  await assertSelectedTab('追更管理')
+  // 追更本身不显示返回，但从追更打开工具后，应能回到原标签。
+  await openTools()
+  await clickTo(tools.getByRole('link', { name: '资源配置', exact: true }), '/resources')
+  const manageLocation = new URL(manageURL)
+  const toolBack = await assertRoundBack('返回追更', manageLocation.pathname + manageLocation.search)
+  await toolBack.click()
+  await page.waitForURL(manageURL)
+  await assertSelectedTab('追更管理')
+  await assertFollowLayout('追更管理')
+
+  await clickTo(updates, '/updates')
+  await enterFollows()
+  await assertSelectedTab('我的追更')
+  await assertFollowLayout('我的追更')
+
+  await clickTo(home, homePath)
+  const openAnime = async () => {
+    await openTools()
+    const anime = tools.getByRole('link', { name: '动漫订阅', exact: true })
+    assert.equal((await tools.getByRole('link').first().textContent()).trim(), '动漫订阅')
+    assert.equal(await anime.getAttribute('href'), '/anime')
+    assert.equal(await tools.getByRole('link', { name: '追更管理', exact: true }).count(), 0)
+    await clickTo(anime, '/anime')
+  }
+  await openAnime()
+  assert.equal(await follow.getAttribute('aria-current'), null)
+  assert.equal(await follow.getAttribute('href'), '/follows')
+  assert.equal(await followTabs(page).count(), 0)
+  await header.getByRole('link', { name: '返回首页', exact: true }).click()
+  await page.waitForURL(homeURL)
+
+  // 用固定季度避免依赖当前日期，切换星期后验证 URL 和可见筛选状态均被恢复。
+  await go('/anime?source=mikan&view=calendar&season=2026-07&day=all')
+  const provider = page.getByRole('group', { name: '选择订阅站点', exact: true }).getByRole('button', { name: '蜜柑', exact: true })
+  const weekday = page.getByRole('navigation', { name: '蜜柑日历分类', exact: true }).getByRole('button', { name: /^周三/ })
+  await weekday.click()
+  await page.waitForURL(url => url.searchParams.get('day') === '3')
+  const catalogURL = page.url()
+  const catalogLocation = new URL(catalogURL)
+  const assertCatalogFilters = async () => {
+    assert.equal(await weekday.getAttribute('aria-pressed'), 'true')
+    assert.equal(await provider.getAttribute('aria-pressed'), 'true')
+    assert.equal(await follow.getAttribute('aria-current'), null)
+  }
+  for (const [link, to] of [
+    [header.getByRole('link', { name: '订阅计划', exact: true }), '/anime/subscriptions'],
+    [header.getByRole('link', { name: '动漫订阅设置', exact: true }).filter({ hasText: '设置' }), '/anime/settings'],
+  ]) {
+    await clickTo(link, to)
+    assert.equal(new URL(page.url()).searchParams.get('returnTo'), catalogLocation.pathname + catalogLocation.search)
+    await header.getByRole('button', { name: '返回上一页', exact: true }).click()
+    await page.waitForURL(catalogURL)
+    await assertCatalogFilters()
+  }
+
+  // 恢复上次筛选不能覆盖打开 RSS 前的首页历史记录。
+  await home.click()
+  await page.waitForURL(homeURL)
+  await openAnime()
+  await page.waitForURL(catalogURL)
+  await assertCatalogFilters()
+  await page.goBack()
+  await page.waitForURL(homeURL)
+
+  setRole('user')
+  await go('/movie')
+  await home.waitFor()
+  assert.equal(await launcher.count(), 0)
+  await enterFollows()
+  await assertFollowLayout('我的追更', false)
+  assert.equal(await followTabs(page).count(), 0)
+  assert.equal(await page.getByRole('link', { name: '追更管理', exact: true }).count(), 0)
+  assert.equal(await launcher.count(), 0)
+}
+
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
@@ -14,11 +264,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       localStorage.setItem('cinema115-theme', 'light')
     })
     await context.route('**/api/**', async route => {
-      const endpoint = new URL(route.request().url()).pathname
+      const url = new URL(route.request().url()), endpoint = url.pathname
       requests.push(endpoint)
       let data = { configured: false, accounts: [], items: [], hasMore: false, total: 0, totalPages: 1, genres: [] }
       if (endpoint === '/api/auth/me') data = { user: { id: 'mock', username: 'account-menu-test', role, disabled: false } }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 3 }
+      else if (endpoint === '/api/admin/follows' && url.searchParams.get('countsOnly') === '1') data = { counts: { pending: 2 } }
+      else if (/^\/api\/admin\/anime\/catalog\/[^/]+\/seasons$/.test(endpoint)) data = { provider: endpoint.split('/').at(-2), seasons: ['2026-07'], fetchedAt: Date.now(), expiresAt: Date.now() + 60000 }
+      else if (/^\/api\/admin\/anime\/catalog\/[^/]+$/.test(endpoint)) data = { provider: endpoint.split('/').at(-1), season: route.request().postDataJSON()?.season || '', days: [], items: [], fetchedAt: Date.now(), expiresAt: Date.now() + 60000 }
+      else if (endpoint === '/api/admin/subtitles/config') data = { assrt: { configured: false } }
+      else if (endpoint === '/api/admin/anime/rss-settings') data = { revision: 1, pollMinutes: 15, autoArchive: true, inactiveArchiveDays: 60 }
       else if (endpoint === '/api/admin/member-playback/users') data = { members: [], settings: { enabled: true, libraryIds: ['movies'], allowDownload: false } }
       else if (endpoint === '/api/admin/member-playback/settings') data = { settings: { enabled: true, libraryIds: ['movies'], allowDownload: false }, proxy: { listening: true } }
       else if (endpoint === '/api/admin/member-playback/libraries') data = { libraries: [{ ItemId: 'movies', Name: '电影', CollectionType: 'movies' }] }
@@ -37,6 +292,21 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else if (endpoint.includes('/follows/')) data = { subscribed: false, request: null, libraryState: 'absent', items: [], hasMore: false }
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) })
     })
+    for (const standalone of [false, true]) {
+      const mobilePage = await context.newPage()
+      mobilePage.setDefaultTimeout(8000)
+      mobilePage.on('pageerror', error => errors.push(error.message))
+      try {
+        await checkMobileFollowNavigation(mobilePage, origin, standalone, value => { role = value })
+        passed.push(`${standalone ? 'PWA 模拟独立模式' : '手机浏览器'}：工具页圆形返回与唯一 + 入口、追更标签与无返回布局、工具返回追更来源、动漫订阅筛选恢复`)
+      } finally { await mobilePage.close() }
+    }
+    role = 'admin'
+    if (process.argv.includes('--mobile-follow-navigation')) {
+      assert.deepEqual(errors, [])
+      console.log(JSON.stringify({ passed, pageErrors: errors }, null, 2))
+      return
+    }
     const page = await context.newPage()
     page.setDefaultTimeout(8000)
     page.on('pageerror', error => errors.push(error.message))
@@ -396,14 +666,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await menu().getByText('普通用户', { exact: true }).count(), 1)
     assert.equal(await menu().locator('.account-row:visible').count(), 4)
     await close()
-    // 手机详情回到首页后，订阅由底栏进入，账户菜单继续提供个人播放。
+    // 手机首页的账户菜单只提供个人播放，追更由底栏进入。
     await page.locator('.detail-nav-back').click(); await page.waitForURL('**/movie')
-    const mobileNav = page.getByRole('navigation', { name: '手机主导航', exact: true })
-    await mobileNav.getByRole('link', { name: '订阅', exact: true }).click(); await page.waitForURL('**/follows')
-    assert.equal(await mobileNav.getByRole('link', { name: '订阅', exact: true }).getAttribute('aria-current'), 'page')
     await open()
     assert.deepEqual(await personalLinks().evaluateAll(links => links.map(link => link.getAttribute('href'))), ['/account/playback'])
     await close()
+    await followEntry(page).click(); await page.waitForURL('**/follows')
+    assert.equal(await followEntry(page).getAttribute('aria-current'), 'page')
     await go('/tv')
     const ordinaryStart = requests.length
     for (const destination of ['/users', '/users/list', '/users/invites', '/emby/users']) {

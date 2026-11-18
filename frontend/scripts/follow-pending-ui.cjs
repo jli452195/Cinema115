@@ -79,13 +79,18 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(await badge.count(), 0)
     pending = 12; await refresh()
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.getByRole('button', { name: '打开侧栏', exact: true }).click()
-    const drawer = page.getByRole('dialog', { name: '功能导航', exact: true })
-    await drawer.locator('[data-follow-pending-badge]').getByText('12', { exact: true }).waitFor()
+    const mobileBadge = page.getByRole('navigation', { name: '手机主导航' }).getByLabel('12 项待处理', { exact: true })
+    await mobileBadge.getByText('12', { exact: true }).waitFor()
     const before = countRequests
-    await page.getByRole('button', { name: '关闭功能导航', exact: true }).click()
-    await page.getByRole('button', { name: '打开侧栏', exact: true }).click()
-    assert.equal(countRequests, before, '打开抽屉不新增轮询')
+    const launcher = page.getByRole('button', { name: '打开功能导航', exact: true })
+    await launcher.click()
+    const drawer = page.getByRole('dialog', { name: '功能导航', exact: true })
+    assert.equal(await drawer.getByRole('link', { name: '追更管理', exact: true }).count(), 0)
+    await drawer.getByRole('button', { name: '关闭功能导航', exact: true }).click()
+    await drawer.waitFor({ state: 'hidden' })
+    await mobileBadge.getByText('12', { exact: true }).waitFor()
+    assert.equal(await launcher.evaluate(el => el === document.activeElement), true)
+    assert.equal(countRequests, before, '打开工具面板不新增轮询')
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
 
     role = 'user'
@@ -96,6 +101,6 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(await page.locator('[data-follow-pending-badge]').count(), 0)
     assert.deepEqual(errors, [])
     assert.deepEqual(writes, [])
-    console.log(JSON.stringify({ passed: ['全局数量独立于筛选，查看不清零，失败保留', '99+完整数字辅助说明，深浅主题Dock放大不裁切', '零值隐藏，手机抽屉复用状态与轮询，普通用户无数量请求'], countRequests, errors }, null, 2))
+    console.log(JSON.stringify({ passed: ['全局数量独立于筛选，查看不清零，失败保留', '99+完整数字辅助说明，深浅主题Dock放大不裁切', '零值隐藏，手机底栏复用待处理数量，工具面板不重复展示，普通用户无数量请求'], countRequests, errors }, null, 2))
   } finally { await browser.close() }
 })().catch(e => { console.error(e); process.exitCode = 1 })

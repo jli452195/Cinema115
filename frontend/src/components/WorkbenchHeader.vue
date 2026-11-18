@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { IconArrowLeft } from '@tabler/icons-vue'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import { vTooltip } from '../directives/tooltip'
@@ -9,6 +10,7 @@ import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTe
 import HeaderAccountMenu from './HeaderAccountMenu.vue'
 import HistoryBackButton from './HistoryBackButton.vue'
 import ManagementSidebar from './ManagementSidebar.vue'
+import NavigationIcon from './NavigationIcon.vue'
 import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
@@ -16,16 +18,18 @@ import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useManagementSidebar } from '../composables/useManagementSidebar'
 import { useScrollBoundary } from '../composables/useScrollBoundary'
 import { useAnchoredMenuMotion } from '../composables/useAnchoredMenuMotion'
-import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
+import { mobileFollowTabs, mobileWorkspaceSection } from '../utils/mobileWorkspace'
+import type { MobileToolBackTarget } from '../composables/useMobileToolNavigation'
 
 const props = defineProps<{
   overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string
   mobileSectionHeading?: boolean
+  mobileSectionTitle?: string
   mobilePage?: { title: string; fallback: string; target?: string }
   detailNavigation?: { title: string; year: string; fallback: string; titleElement: HTMLElement | null }
-  toolNavigation?: { title: string; back: { label: string; to: string }; controls: string; opened: boolean }
+  mobileBack?: MobileToolBackTarget
 }>()
-const emit = defineEmits<{ logout: []; toggleSidebar: [event: MouseEvent]; openTools: [event: MouseEvent] }>()
+const emit = defineEmits<{ logout: []; toggleSidebar: [event: MouseEvent] }>()
 const { desktop } = useManagementSidebar()
 const desktopSidebar = computed(() => props.sidebarLayout || !props.managedSidebar && desktop.value)
 const navigationSidebar = ref<InstanceType<typeof ManagementSidebar>>()
@@ -49,12 +53,11 @@ const mobilePageNavigation = computed(() => props.detailNavigation ?? props.mobi
 const mobileBackTarget = computed(() => !props.detailNavigation ? props.mobilePage?.target : undefined)
 const mobileDetail = computed(() => compact.value && !!mobilePageNavigation.value)
 const mobileSection = computed(() => compact.value && !mobilePageNavigation.value ? mobileWorkspaceSection(route.name) : undefined)
-const mobileTool = computed(() => compact.value && !mobileDetail.value && !mobileSection.value ? props.toolNavigation : undefined)
-const mobileWorkspace = computed(() => !!mobileSection.value || !!mobileTool.value)
+const mobileBack = computed(() => compact.value && !mobileDetail.value ? props.mobileBack : undefined)
+const mobileWorkspace = computed(() => !!mobileSection.value || !!mobileBack.value)
 const mobileHome = computed(() => mobileSection.value === 'home')
-const mobileSectionHeading = computed(() => props.mobileSectionHeading && mobileSection.value === 'subscriptions')
-const flatMobileHeader = computed(() => mobileHome.value || mobileSectionHeading.value)
-// 手机顶栏按页面职责提供入口；工具页与订阅的局部搜索各自维护。
+const mobileSectionHeading = computed(() => props.mobileSectionHeading && !!mobileBack.value)
+// 手机顶栏按页面职责提供入口；工具页与追更的局部搜索各自维护。
 const showAccount = computed(() => !compact.value || mobileHome.value)
 const showMediaSearch = computed(() => !compact.value || mobileHome.value ||
   route.name === 'movie-detail' || route.name === 'tv-detail' || route.name === 'collection' || route.name === 'person')
@@ -87,11 +90,9 @@ const mobileTabs = computed(() => {
     { key: 'movie', label: '电影', to: rememberedDashboardPaths.movie, selected: route.name === 'movie' },
     { key: 'tv', label: '剧集', to: rememberedDashboardPaths.tv, selected: route.name === 'tv' || route.name === 'home' },
   ]
-  if (mobileSection.value === 'subscriptions' && isPortalAdmin.value) return [
-    { key: 'follows', label: '我的追更', to: '/follows', selected: route.name === 'my-follows' },
-    { key: 'manage', label: '订阅管理', to: '/follows/manage', selected: route.name === 'follow-management' },
-    { key: 'rss', label: 'RSS 追番', to: '/anime', selected: route.path === '/anime' || route.path.startsWith('/anime/') },
-  ]
+  if (mobileSection.value === 'follows' && isPortalAdmin.value) return mobileFollowTabs.map(tab => ({
+    ...tab, key: tab.name, selected: route.name === tab.name,
+  }))
   return []
 })
 const mobileTabsRef = ref<HTMLElement>()
@@ -208,21 +209,18 @@ const headerStyle = computed(() => {
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const updatesActive = computed(() => route.path === '/updates')
-const animeActive = computed(() => route.path === '/anime' || route.path.startsWith('/anime/'))
-const showAnimeShortcut = computed(() => compact.value && isPortalAdmin.value &&
-  (route.name === 'home' || route.name === 'movie' || route.name === 'tv' || updatesActive.value || animeActive.value))
 
 const navContainerRef = ref<HTMLElement>()
 const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
   navContainerRef, 
   '.top-link.selected', 
-  [movieActive, tvActive, updatesActive, animeActive, showAnimeShortcut],
+  [movieActive, tvActive, updatesActive],
   { persistKey: '__nav_indicator_pos' }
 )
 
 function closePanels() { accountOpen.value = false }
-function onToolBack(event: MouseEvent) {
-  const target = mobileTool.value?.back.to
+function onWorkspaceBack(event: MouseEvent) {
+  const target = mobileBack.value?.to
   if (!target || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   closePanels()
   // 上一个历史记录就是返回目标时直接回退，避免反复把工具页推入历史。
@@ -231,11 +229,6 @@ function onToolBack(event: MouseEvent) {
     router.back()
   }
 }
-function openToolNavigation(event: MouseEvent) {
-  closePanels()
-  emit('openTools', event)
-}
-watch(() => mobileTool.value?.opened, open => { if (open) closePanels() })
 
 async function prepareThemeChange() {
   const restoreFocus = !!header.value?.querySelector('#header-management')?.contains(document.activeElement)
@@ -390,33 +383,27 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-home-scrolled': mobileHome && mobileHomeScrolled, 'mobile-section-heading': mobileSectionHeading, 'mobile-subscriptions': mobileSection === 'subscriptions' }" :style="tonalSurface || mobileSectionHeading || mobileHome ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header v-if="mobileSection !== 'follows' || isPortalAdmin" ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-follow-tabs': mobileSection === 'follows' && mobileTabs.length > 0, 'mobile-home-scrolled': mobileHome && mobileHomeScrolled, 'mobile-section-heading': mobileSectionHeading }" :style="tonalSurface || mobileSectionHeading || mobileHome ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
-      <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation }" />
+      <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back mobile-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation }" />
       <div v-if="mobileDetail && mobilePageNavigation" class="detail-nav-title-slot" aria-hidden="true">
         <div class="detail-nav-title glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation, 'is-visible': !detailNavigation || detailTitleVisible }">
           <span class="detail-nav-name">{{ mobilePageNavigation.title }}</span><span v-if="detailNavigation?.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
         </div>
       </div>
-      <template v-if="mobileTool">
-        <RouterLink :to="mobileTool.back.to" class="tool-nav-back glass-pill-surface" :aria-label="`返回${mobileTool.back.label}`" :title="`返回${mobileTool.back.label}`" @click.capture="onToolBack">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 19-7-7 7-7" /></svg>
-          <span class="tool-nav-label">{{ mobileTool.back.label }}</span>
+      <RouterLink v-if="mobileBack && !mobileSectionHeading" :to="mobileBack.to" class="mobile-nav-back glass-pill-surface glass-pill-surface-soft" :aria-label="`返回${mobileBack.label}`" :title="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
+        <IconArrowLeft :size="20" stroke="1.8" aria-hidden="true" />
+      </RouterLink>
+      <div v-if="mobileHome || mobileSection === 'updates' || mobileSectionHeading" class="workspace-brand" :class="{ 'glass-pill-surface': mobileSection === 'updates' }">
+        <RouterLink v-if="mobileSectionHeading && mobileBack" :to="mobileBack.to" class="section-nav-back" :aria-label="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
+          <NavigationIcon name="back" :size="22" />
         </RouterLink>
-        <button type="button" class="tool-nav-switcher glass-pill-surface" :aria-label="`切换工具，当前：${mobileTool.title}`" :title="mobileTool.title" aria-haspopup="dialog" :aria-controls="mobileTool.controls" :aria-expanded="mobileTool.opened" @click="openToolNavigation">
-          <span class="tool-nav-dot" aria-hidden="true"></span>
-          <span class="tool-nav-label">{{ mobileTool.title }}</span>
-          <svg class="tool-nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-        </button>
-      </template>
-      <div v-if="mobileSection" class="workspace-brand" :class="{ 'glass-pill-surface': !flatMobileHeader }">
-        <CinemaLogo v-if="mobileSection === 'home'" mobile-wordmark />
-        <span v-else>{{ mobileSection === 'subscriptions' ? '订阅' : '更新日历' }}</span>
-        <slot v-if="mobileSectionHeading" name="mobile-title-tools" />
+        <CinemaLogo v-if="mobileHome" mobile-wordmark />
+        <span v-else class="workspace-brand-label">{{ mobileSectionHeading ? mobileSectionTitle : '更新日历' }}</span>
       </div>
-      <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileHome ? '电影与剧集' : '订阅导航'" class="workspace-tabs" :class="{ 'glass-pill-surface': !flatMobileHeader }">
+      <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileHome ? '电影与剧集' : '追更导航'" class="workspace-tabs">
         <span class="workspace-tab-indicator" :style="mobileIndicatorStyle" aria-hidden="true"></span>
         <RouterLink v-for="tab in mobileTabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
           <a :href="href" :aria-current="tab.selected ? 'page' : undefined" @click="navigate">{{ tab.label }}</a>
@@ -425,12 +412,11 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
       <button v-if="!desktopSidebar && !mobileDetail && !mobileWorkspace" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" v-tooltip="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
       </button>
-      <nav v-if="!mobileDetail && !mobileWorkspace" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2" :class="{ 'has-anime-shortcut': showAnimeShortcut }">
+      <nav v-if="!mobileDetail && !mobileWorkspace" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2">
         <div class="nav-indicator absolute inset-y-0 z-0 rounded-[0.6rem] bg-[#f1f5f9] dark:bg-slate-800" :style="navIndicatorStyle"></div>
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: movieActive }">电影</RouterLink>
         <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: tvActive }">剧集</RouterLink>
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
-        <RouterLink v-if="showAnimeShortcut" to="/anime" aria-label="动漫订阅" :aria-current="animeActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: animeActive }">订阅</RouterLink>
       </nav>
       <div v-if="showHeaderActions" class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail, 'glass-pill-surface-soft': mobileDetail && detailNavigation }">
         <slot v-if="showMobileActions" name="mobile-actions" />
@@ -591,7 +577,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .connection-test-action { display: none; }
 }
 @media (max-width: 639px) {
-  .has-anime-shortcut .top-link { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; padding: 0 7px; }
   .account-trigger { transition: color 200ms, background-color 200ms; }
   .account-trigger > svg, .account-trigger > span { transition: transform 140ms ease; }
   .account-trigger:active > svg { transform: scale(.85); }
@@ -599,14 +584,16 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 @media (max-width: 420px) {
   .header-inner { gap: 0.25rem; padding-left: max(12px, var(--app-safe-left)); padding-right: max(12px, var(--app-safe-right)); }
   .top-link { padding-inline: 0.5rem; }
-  .has-anime-shortcut { gap: 0; }
   .icon-button { width: 2rem; height: 2rem; }
 }
 /* 详情页手机导航只在小胶囊采样，空白区域允许操作下方正文。 */
 .workbench-header.mobile-detail { pointer-events: none; border-color: transparent; }
 .mobile-detail::after, .mobile-detail .header-surface, .mobile-detail .header-background { display: none; }
 .mobile-detail .header-inner { gap: 8px; padding-inline: max(14px, var(--app-safe-left)) max(14px, var(--app-safe-right)); }
-.mobile-detail .detail-nav-back { width: 44px; height: 44px; border-radius: 50%; color: var(--glass-text); pointer-events: auto; }
+.workbench-header .mobile-nav-back { display: grid; flex: none; width: 46px; height: 46px; place-items: center; border-radius: 50%; color: var(--glass-text); pointer-events: auto; }
+.workbench-header.mobile-detail:not(.mobile-media-detail) .mobile-nav-back { width: 44px; height: 44px; }
+.workbench-header .mobile-nav-back:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+.workbench-header .mobile-nav-back:active { color: rgb(var(--selection-content)); }
 .detail-nav-title-slot { display: flex; flex: 1; min-width: 0; justify-content: center; }
 /* 片名区域随剩余空间伸缩，三个胶囊保持同高，文字和年份整体居中。 */
 .detail-nav-title {
@@ -623,13 +610,13 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .workbench-header.mobile-detail :is(a, button):focus-visible { outline-color: rgb(var(--focus)); }
 /* 参考 Telegram 的 ActionBar：返回和操作各自绘制玻璃，避免全宽遮住海报。 */
 .mobile-media-detail .header-inner { padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
-.workbench-header.mobile-media-detail :is(.detail-nav-back, .detail-nav-title, .header-actions, .icon-button) { height: 46px; }
-.workbench-header.mobile-media-detail :is(.detail-nav-back, .icon-button) { width: 46px; }
-.mobile-media-detail :is(.detail-nav-back, .icon-button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+.workbench-header.mobile-media-detail :is(.detail-nav-title, .header-actions, .icon-button) { height: 46px; }
+.workbench-header.mobile-media-detail .icon-button { width: 46px; }
+.mobile-media-detail .icon-button:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
 @media (hover: hover) {
   .mobile-media-detail .detail-nav-back:hover { background: rgb(var(--surface-hover) / .6); }
 }
-.mobile-media-detail :is(.detail-nav-back, .icon-button):active { color: rgb(var(--selection-content)); }
+.mobile-media-detail .icon-button:active { color: rgb(var(--selection-content)); }
 @media (prefers-reduced-motion: reduce) { .mobile-media-detail :is(.detail-nav-back, .icon-button) { transition: none; } }
 @media (display-mode: standalone) {
   /* 系统栏安全区保持实色，下面的操作胶囊仍沿用用户选择的玻璃材质。 */
@@ -647,12 +634,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 }
 .workspace-brand :deep(.cinema-logo) { --cinema-logo-mark-width: 23px; }
 .workspace-brand :deep(.cinema-logo-wordmark) { font-size: 13px; }
-.workspace-tabs { display: flex; flex: 1; min-width: 0; max-width: 280px; gap: 1px; padding: 0 3px; pointer-events: auto; }
+.workspace-tabs { position: relative; display: flex; min-width: 0; gap: 4px; pointer-events: auto; }
 .workspace-tabs > a {
-  position: relative; display: grid; flex: 1; min-width: 0; min-height: 44px; place-items: center;
+  position: relative; display: grid; flex: none; min-height: 44px; place-items: center; padding-inline: clamp(10px, 3.6vw, 16px);
   border-radius: 999px; color: rgb(var(--content-secondary)); font-size: 13px; font-weight: 600; white-space: nowrap;
 }
-.mobile-subscriptions .workspace-tabs > a { font-size: 12px; }
 .workspace-tabs > a[aria-current] { color: rgb(var(--selection-content)); }
 .workspace-tab-indicator { position: absolute; border-radius: 999px; background: rgb(var(--selection-surface)); pointer-events: none; }
 .mobile-workspace .header-actions { margin-left: auto; flex: none; height: 44px; gap: 0; padding: 0; border: 0; pointer-events: auto; }
@@ -660,30 +646,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .mobile-workspace .icon-button:hover, .mobile-workspace .icon-button.selected { background: rgb(var(--surface-hover) / .56); color: var(--glass-text); }
 .mobile-workspace :is(a, button):focus-visible { outline-color: rgb(var(--focus)); outline-offset: -2px; }
 .mobile-workspace :deep(#header-management) { right: max(12px, var(--app-safe-right)); }
-/* 长标题和返回标签在各自的胶囊内截断。 */
-.tool-nav-back, .tool-nav-switcher {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 44px; min-width: 44px; padding-inline: 11px; pointer-events: auto;
-  color: var(--glass-text); font-size: 13px; font-weight: 650;
-}
-.tool-nav-back { flex: 0 1 auto; max-width: 30%; }
-.tool-nav-switcher { flex: 1 1 0; min-width: max(44px, 7ch); }
-.tool-nav-switcher::before { border-color: color-mix(in srgb, rgb(var(--selection-content)) 35%, var(--glass-edge)); }
-.tool-nav-switcher[aria-expanded='true']::before { border-color: rgb(var(--selection-content)); }
-.tool-nav-label { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
-.tool-nav-back svg { flex: none; width: 16px; height: 16px; }
-.tool-nav-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--selection-content)); }
-.tool-nav-chevron { flex: none; width: 14px; height: 14px; color: var(--glass-muted); }
-.tool-nav-switcher[aria-expanded='true'] .tool-nav-chevron { transform: rotate(180deg); }
-@media (prefers-reduced-motion: no-preference) {
-  .tool-nav-chevron { transition: transform 140ms cubic-bezier(.32,.72,0,1); }
-}
 @media (max-width: 359px) {
   .mobile-workspace .header-inner { gap: 5px; padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
   .workspace-brand { padding-inline: 8px; }
-  .mobile-workspace:not(.mobile-home) .workspace-brand :deep(.cinema-logo-wordmark) { display: none; }
-  .mobile-subscriptions .workspace-brand { display: none; }
-  .tool-nav-back, .tool-nav-switcher { gap: 4px; padding-inline: 8px; }
 }
 @media (display-mode: standalone) {
   .mobile-workspace .header-surface, .mobile-workspace .header-background {
@@ -707,8 +672,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .mobile-home .workspace-brand { padding-inline: 0; }
 .mobile-home .workspace-brand :deep(.cinema-logo-mark) { display: none; }
 .mobile-home .workspace-brand :deep(.cinema-logo-wordmark) { display: inline; font-size: clamp(18px, 5.4vw, 22px); font-weight: 700; }
-.mobile-home .workspace-tabs { position: relative; flex: 0 0 auto; padding: 0; gap: 0; }
-.mobile-home .workspace-tabs > a { flex: 0 0 auto; min-width: 48px; padding: 0 8px; border-radius: 8px; font-size: 15px; }
+.mobile-home .workspace-tabs { gap: 0; }
+.mobile-home .workspace-tabs > a { min-width: 48px; padding: 0 8px; border-radius: 8px; font-size: 15px; }
 .mobile-home .workspace-tabs > a[aria-current] { color: rgb(var(--content-primary)); font-weight: 700; }
 .mobile-home .workspace-tab-indicator { border-radius: 0; background: transparent; }
 .mobile-home .workspace-tab-indicator::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 20px; height: 3px; border-radius: 999px; background: rgb(var(--selection-content)); transform: translateX(-50%); }
@@ -722,19 +687,25 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .mobile-home .header-inner { gap: 4px; padding-inline-start: max(12px, var(--app-safe-left)); }
   .mobile-home .workspace-tabs > a { min-width: 44px; padding-inline: 5px; font-size: 14px; }
 }
-/* 订阅列表共用两行顶栏，只有当前入口带背景。 */
+/* 正文滑过固定的追更标签时，不与标签文字叠在一起。 */
+.workbench-header.mobile-follow-tabs { background: rgb(var(--app-chrome-color)); }
+/* 有页面级入口时保留原来的扁平标题栏。 */
 .workbench-header.mobile-section-heading { pointer-events: auto; border-color: var(--glass-edge); background: rgb(var(--app-chrome-color)); }
 .mobile-section-heading .header-inner {
-  display: grid; grid-template: var(--workbench-toolbar-height) var(--workbench-section-tabs-height) / minmax(0, 1fr) auto;
-  height: calc(var(--workbench-toolbar-height) + var(--workbench-section-tabs-height));
-  gap: 0; padding-inline: max(16px, var(--app-safe-left)) max(12px, var(--app-safe-right));
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 6px; padding-inline: max(16px, var(--app-safe-left)) max(12px, var(--app-safe-right));
 }
-.mobile-section-heading .workspace-brand { display: inline-flex; grid-area: 1 / 1; justify-self: start; padding: 0; color: rgb(var(--content-primary)); font-size: 21px; }
-.mobile-section-heading .workspace-tabs { position: relative; grid-area: 2 / 1 / 3 / 3; align-self: start; justify-self: start; gap: 4px; max-width: 100%; padding: 0; }
-.mobile-section-heading .workspace-tabs > a { flex: 0 0 auto; padding-inline: clamp(10px, 3.6vw, 16px); font-size: 13px; font-weight: 500; }
-.mobile-section-heading .workspace-tabs > a[aria-current] { font-weight: 650; }
-.mobile-section-heading .workspace-tab-indicator { border-block: 3px solid transparent; background: rgb(var(--content-primary) / .085); background-clip: padding-box; }
-.mobile-section-heading .header-actions { grid-area: 1 / 2; }
+.mobile-section-heading .workspace-brand { grid-area: 1 / 1; min-width: 0; padding: 0; color: rgb(var(--content-primary)); font-size: 21px; }
+.mobile-section-heading .workspace-brand-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.section-nav-back { display: grid; flex: none; width: 44px; height: 44px; margin-inline-start: -8px; place-items: center; border-radius: 50%; }
+.section-nav-back:is(:hover, :active) { background: rgb(var(--surface-hover)); }
+.section-nav-back:focus-visible { outline: 2px solid rgb(var(--focus)); }
+@media (max-width: 359px) {
+  .mobile-section-heading .header-inner { padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
+  .mobile-section-heading .workspace-brand { font-size: 19px; }
+  .section-nav-back { margin-inline-start: 0; }
+}
+.mobile-section-heading .header-actions { grid-area: 1 / 2; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .detail-nav-title { transition: none; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .account-trigger, .account-trigger > svg, .account-trigger > span { transition: none; }

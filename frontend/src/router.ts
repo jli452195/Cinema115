@@ -55,7 +55,8 @@ export const router = createRouter({
     { path: '/follows/manage', name: 'follow-management', component: FollowManagementView, meta: { defaultSidebarCollapsed: false } },
     { path: '/anime', name: 'anime-discovery', component: AnimeWorkspaceView, meta: { defaultSidebarCollapsed: false }, beforeEnter: to => {
       const query = animeRememberedQuery()
-      if (!Object.keys(to.query).length && query) return { path: '/anime', query, replace: true }
+      // 恢复选番条件，但不覆盖打开工具前的页面。
+      if (!Object.keys(to.query).length && query) return { path: '/anime', query }
     } },
     { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
     { path: '/anime/settings', name: 'anime-settings', component: AnimeSettingsView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },

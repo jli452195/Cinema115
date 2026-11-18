@@ -20,7 +20,7 @@ defineEmits<{ select: [] }>()
 .provider-brand { transition: transform 180ms ease; }
 .provider-anibt .provider-brand { transition: transform 400ms cubic-bezier(.34, 1.56, .64, 1); }
 .provider-status { display: block; min-height: 12px; margin-top: 2px; font-size: 10px; font-weight: 500; line-height: 12px; }
-.anime-provider-button[aria-pressed="true"] { background: rgb(var(--provider-accent) / .105); box-shadow: 0 3px 12px -7px rgb(var(--provider-accent) / .55); }
+.anime-provider-button[aria-pressed="true"] { background: rgb(var(--provider-accent) / .105); box-shadow: 0 0 14px rgb(var(--provider-accent) / .40), 0 4px 10px -4px rgb(var(--provider-accent) / .38); }
 .anime-provider-button[aria-pressed="true"]::after { content: ''; position: absolute; bottom: 6px; left: calc(50% - 12px); width: 24px; height: 3px; border-radius: 3px; background: rgb(var(--provider-accent) / .8); }
 .anime-provider-button:disabled { cursor: default; }
 .anime-provider-button:disabled .provider-brand { opacity: .65; filter: saturate(.65); }
@@ -43,7 +43,6 @@ defineEmits<{ select: [] }>()
 @media (max-width: 639px) {
   .anime-provider-button.provider-compact { width: 100%; padding-inline: 5px; }
   .anime-provider-button.provider-pill { border-radius: 999px; }
-  .anime-provider-button.provider-pill[aria-pressed="true"] { background: rgb(var(--selection-surface)); box-shadow: inset 0 0 0 1px rgb(var(--focus) / .36); }
   .anime-provider-button.provider-pill[aria-pressed="true"]::after { content: none; }
 }
 </style>
