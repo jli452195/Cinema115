@@ -7,24 +7,21 @@ import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import { animateFloatingPanel, readFloatingPanelMotion } from '../lib/floatingPanelMotion'
 import { isPortalAdmin } from '../composables/usePortalAuth'
 import { followPendingCount } from '../composables/useFollowPendingCount'
-import { adminAccountGroups } from '../utils/accountNavigation'
 import { rememberedDashboardHome } from '../utils/dashboardPreferences'
-import type { MobileWorkspaceSection } from '../utils/mobileWorkspace'
+import { mobileWorkspaceLabels, mobileWorkspaceToolGroups, type MobileWorkspaceSection } from '../utils/mobileWorkspace'
 
-const props = defineProps<{ section: MobileWorkspaceSection }>()
+const props = defineProps<{ section?: MobileWorkspaceSection; activeTool?: string; dialogId: string }>()
 const route = useRoute()
 const tabs = computed(() => [
-  { key: 'home', label: '首页', icon: IconHome, to: rememberedDashboardHome.value },
-  { key: 'subscriptions', label: '订阅', icon: IconRss, to: '/follows' },
-  { key: 'updates', label: '更新', icon: IconCalendar, to: '/updates' },
+  { key: 'home', label: mobileWorkspaceLabels.home, icon: IconHome, to: rememberedDashboardHome.value },
+  { key: 'subscriptions', label: mobileWorkspaceLabels.subscriptions, icon: IconRss, to: '/follows' },
+  { key: 'updates', label: mobileWorkspaceLabels.updates, icon: IconCalendar, to: '/updates' },
 ])
 const selectedIndex = computed(() => tabs.value.findIndex(tab => tab.key === props.section))
 const pending = computed(() => isPortalAdmin.value ? followPendingCount.value || 0 : 0)
-const toolGroups = adminAccountGroups.map(group => ({
-  ...group, links: group.links.filter(link => link.to !== '/follows/manage' && link.to !== '/anime'),
-}))
+const currentToolPath = computed(() => route.path.toLowerCase().replace(/\/$/, ''))
 const dialog = ref<HTMLDialogElement>(), panel = ref<HTMLElement>(), closeButton = ref<HTMLButtonElement>()
-const opened = ref(false), dialogId = useId(), titleId = useId()
+const opened = ref(false), titleId = useId()
 const lifecycle = createDialogLifecycle()
 const mobile = window.matchMedia('(max-width: 639px)'), reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let animation: Animation | undefined
@@ -35,9 +32,10 @@ function openTools(event: MouseEvent) {
   lifecycle.acquire(event.currentTarget as HTMLElement)
   opened.value = true
   backdropStarted = false
+  if (panel.value) panel.value.inert = false
   dialog.value.showModal()
   closeButton.value?.focus({ preventScroll: true })
-  if (!panel.value || reducedMotion.matches) return
+  if (!panel.value || reducedMotion.matches || typeof panel.value.animate !== 'function') return
   const opening = animateFloatingPanel(panel.value, true, 'bottom')
   animation = opening
   opening.onfinish = () => { if (animation === opening) { animation = undefined; opening.cancel() } }
@@ -54,8 +52,11 @@ function dismissTools(returnFocus = true) {
 }
 
 async function closeTools() {
-  if (!opened.value || !panel.value || reducedMotion.matches) { dismissTools(); return }
+  if (!opened.value || !panel.value || reducedMotion.matches || typeof panel.value.animate !== 'function') { dismissTools(); return }
   if (animation?.id === 'closing-tools') return
+  // 退场时禁用卡片，保留模态遮罩，直到动画结束。
+  panel.value.inert = true
+  closeButton.value?.focus({ preventScroll: true })
   const from = animation ? readFloatingPanelMotion(panel.value) : undefined
   animation?.cancel()
   const closing = animateFloatingPanel(panel.value, false, 'bottom', from)
@@ -63,6 +64,19 @@ async function closeTools() {
   animation = closing
   try { await closing.finished } catch { return }
   if (animation === closing) dismissTools()
+}
+
+function pickTool(event: MouseEvent, to: string, navigate: (event: MouseEvent) => unknown) {
+  if (!opened.value || animation?.id === 'closing-tools') { event.preventDefault(); return }
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.button !== 0) return
+  if (currentToolPath.value === to) {
+    event.preventDefault()
+    void closeTools()
+    return
+  }
+  // 先释放原生模态，再让路由守卫决定是否离开，未保存确认可以直接接管焦点。
+  dismissTools()
+  void navigate(event)
 }
 
 function outside(event: MouseEvent | PointerEvent) {
@@ -80,12 +94,13 @@ watch(() => route.fullPath, () => dismissTools(false))
 watch(isPortalAdmin, admin => { if (!admin) dismissTools(false) })
 onMounted(() => mobile.addEventListener('change', onViewportChange))
 onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); dismissTools(false) })
+defineExpose({ openTools, opened })
 </script>
 
 <template>
   <div class="mobile-dock">
     <nav class="dock-tabs glass-pill-surface" aria-label="手机主导航" :style="{ '--dock-selection': String(selectedIndex) }">
-      <span class="dock-selection" aria-hidden="true"></span>
+      <span v-if="selectedIndex >= 0" class="dock-selection" aria-hidden="true"></span>
       <RouterLink v-for="tab in tabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
         <a :href="href" class="dock-tab" :aria-current="section === tab.key ? 'page' : undefined" @click="navigate">
           <span class="dock-icon"><component :is="tab.icon" :size="22" :stroke="section === tab.key ? '2.1' : '1.75'" aria-hidden="true" />
@@ -95,7 +110,7 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
         </a>
       </RouterLink>
     </nav>
-    <button v-if="isPortalAdmin" type="button" class="dock-launcher glass-pill-surface" aria-label="打开功能导航" aria-haspopup="dialog" :aria-controls="dialogId" :aria-expanded="opened" @click="openTools">
+    <button v-if="isPortalAdmin" type="button" class="dock-launcher glass-pill-surface" :class="{ 'is-tool-context': activeTool }" aria-label="打开功能导航" aria-haspopup="dialog" :aria-controls="dialogId" :aria-expanded="opened" @click="openTools">
       <IconPlus :size="26" stroke="1.9" aria-hidden="true" />
     </button>
   </div>
@@ -104,13 +119,15 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
       <section ref="panel" class="dock-tools-panel floating-surface">
         <h2 :id="titleId">功能导航</h2>
         <nav aria-label="管理工具">
-          <section v-for="group in toolGroups" :key="group.label" class="dock-tool-group" :aria-label="group.label">
+          <section v-for="group in mobileWorkspaceToolGroups" :key="group.label" class="dock-tool-group" :aria-label="group.label">
             <h3>{{ group.label }}</h3>
             <div class="dock-tool-grid">
-              <RouterLink v-for="link in group.links" :key="link.to" :to="link.to" class="dock-tool">
-                <span class="dock-tool-icon"><NavigationIcon :name="link.icon" :size="20" /></span>
-                <span>{{ link.label }}</span>
-                <NavigationIcon name="chevron" class="dock-tool-chevron" :size="15" />
+              <RouterLink v-for="tool in group.items" :key="tool.to" :to="tool.to" custom v-slot="{ href, navigate }">
+                <a :href="href" class="dock-tool" :aria-current="tool.to === activeTool ? (tool.to === currentToolPath ? 'page' : 'location') : undefined" @click="pickTool($event, tool.to, navigate)">
+                  <span class="dock-tool-icon"><NavigationIcon :name="tool.icon" :size="20" /></span>
+                  <span class="dock-tool-label">{{ tool.label }}</span>
+                  <NavigationIcon name="chevron" class="dock-tool-chevron" :size="15" />
+                </a>
               </RouterLink>
             </div>
           </section>
@@ -124,7 +141,11 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
 </template>
 
 <style>
-:root { --mobile-dock-height: 54px; --mobile-dock-bottom: max(12px, var(--app-safe-bottom)); }
+:root {
+  --mobile-dock-height: 54px;
+  --mobile-dock-bottom: max(12px, var(--app-safe-bottom));
+  --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom));
+}
 </style>
 
 <style scoped>
@@ -166,6 +187,7 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
   display: grid; flex: none; place-items: center; width: var(--mobile-dock-height); height: var(--mobile-dock-height);
   padding: 0; color: rgb(var(--selection-content)); cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
+.dock-launcher.is-tool-context::before { border-color: color-mix(in srgb, rgb(var(--selection-content)) 35%, var(--glass-edge)); }
 .dock-launcher > svg { transition: transform 200ms cubic-bezier(.22, 1, .36, 1); }
 .dock-launcher:active > svg { transform: scale(.86); }
 .dock-tools {
@@ -175,7 +197,7 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
 }
 .dock-tools::backdrop { background: var(--glass-scrim); }
 .dock-tools-panel {
-  max-height: calc(100dvh - var(--app-safe-top) - var(--mobile-dock-bottom) - var(--mobile-dock-height) - 28px);
+  max-height: calc(100dvh - var(--app-safe-top) - var(--mobile-dock-clearance) - 28px);
   overflow: auto; overscroll-behavior: contain; padding: 15px; border-radius: 25px; transform-origin: calc(100% - 28px) 100%;
   box-shadow: 0 12px 40px rgb(15 23 42 / .19), var(--glass-dialog-shadow);
 }
@@ -189,6 +211,8 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
   color: var(--glass-text); font-size: 12px; font-weight: 600;
 }
 .dock-tool-icon { display: grid; flex: none; width: 30px; height: 30px; place-items: center; border-radius: 10px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+.dock-tool[aria-current] { border-color: rgb(var(--selection-content) / .48); background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+.dock-tool-label { min-width: 0; overflow-wrap: anywhere; }
 .dock-tool-chevron { flex: none; margin-left: auto; color: var(--glass-muted); }
 .dock-close { margin: 9px 0 0 auto; }
 .dock-close > svg { transform: rotate(45deg); }

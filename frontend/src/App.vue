@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, provide, ref, useId, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { loginReturnPath } from './router'
 import ReloadPrompt from './components/ReloadPrompt.vue'
@@ -7,7 +7,10 @@ import GlobalToast from './components/GlobalToast.vue'
 import { useFollowPendingCountSync } from './composables/useFollowPendingCount'
 import ManagementSidebar from './components/ManagementSidebar.vue'
 import MobileWorkspaceDock from './components/MobileWorkspaceDock.vue'
-import { mobileWorkspaceSection } from './utils/mobileWorkspace'
+import { mobileWorkspaceLabels, mobileWorkspaceSection, mobileWorkspaceTool } from './utils/mobileWorkspace'
+import { rememberedDashboardHome } from './utils/dashboardPreferences'
+import { mobileToolNavigationKey, type MobileToolBackTarget } from './composables/useMobileToolNavigation'
+import { useMobileRouteMotion } from './composables/useMobileRouteMotion'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
 import { networkConnectionTest, closeNetworkConnectionTest } from './composables/useNetworkConnectionTest'
@@ -17,6 +20,31 @@ const route = useRoute()
 const mobileSection = computed(() => mobileWorkspaceSection(route.name))
 useFollowPendingCountSync()
 const router = useRouter()
+const phoneViewport = window.matchMedia('(max-width: 639px)')
+const phone = ref(phoneViewport.matches)
+function updatePhone() { phone.value = phoneViewport.matches }
+const activeTool = computed(() => portalUser.value?.role === 'admin' ? mobileWorkspaceTool(route)?.to : undefined)
+const mobileToolEnabled = computed(() => phone.value && !!activeTool.value)
+const hasMobileDock = computed(() => phone.value && (!!mobileSection.value || !!activeTool.value))
+const mobileDock = ref<InstanceType<typeof MobileWorkspaceDock>>()
+const toolsDialogId = useId()
+const toolOrigin = ref<MobileToolBackTarget>()
+const toolBack = computed(() => toolOrigin.value || { label: mobileWorkspaceLabels.home, to: rememberedDashboardHome.value })
+const stopToolOrigin = router.afterEach((to, from, failure) => {
+  if (failure || to.path === from.path) return
+  if (!mobileWorkspaceTool(to)) { toolOrigin.value = undefined; return }
+  if (mobileWorkspaceTool(from)) return
+  // 同一工具区内互切时，保留进入工具前的主页面及筛选条件。
+  const section = mobileWorkspaceSection(from.name)
+  toolOrigin.value = section ? { label: mobileWorkspaceLabels[section], to: from.fullPath } : undefined
+})
+provide(mobileToolNavigationKey, {
+  enabled: mobileToolEnabled,
+  opened: computed(() => mobileDock.value?.opened ?? false),
+  back: toolBack,
+  controls: toolsDialogId,
+  openTools: event => mobileDock.value?.openTools(event),
+})
 const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
 watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
   const request = networkConnectionTest.value
@@ -28,6 +56,7 @@ watch(() => route.path, () => {
   collapsed.value = route.meta.defaultSidebarCollapsed ?? true
 }, { immediate: true })
 const workspace = ref<HTMLElement>()
+useMobileRouteMotion(router, workspace, route => mobileWorkspaceTool(route)?.to)
 const sidebarWidth = useSidebarWidthMotion(collapsed, desktop, workspace)
 const registeredUsername = ref('')
 function handleRegistered(name: string) {
@@ -70,11 +99,13 @@ function syncLogin(event: StorageEvent) {
   if (event.storageArea === localStorage && (event.key === 'admin_token' || event.key === null)) void ensurePortalSession(true, { background: true })
 }
 function resumeLogin() { if (!document.hidden) void ensurePortalSession(false, { background: true }) }
-onMounted(() => { void ensurePortalSession() })
+onMounted(() => { phoneViewport.addEventListener('change', updatePhone); void ensurePortalSession() })
 window.addEventListener('storage', syncLogin)
 document.addEventListener('visibilitychange', resumeLogin)
 const authTimer = window.setInterval(() => { if (!document.hidden) void ensurePortalSession(true, { background: true }) }, 60000)
 onBeforeUnmount(() => {
+  stopToolOrigin()
+  phoneViewport.removeEventListener('change', updatePhone)
   closeNetworkConnectionTest()
   window.clearInterval(authTimer)
   window.removeEventListener('storage', syncLogin)
@@ -91,12 +122,12 @@ onBeforeUnmount(() => {
     <button v-if="portalAuthError" class="text-blue-600" @click="ensurePortalSession(true)">重新验证</button>
     <button v-if="portalAuthError" class="text-slate-500" @click="logout">返回登录</button>
   </main>
-  <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop, 'has-mobile-dock': mobileSection, 'is-search-workspace': route.name === 'search' }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
+  <div v-else ref="workspace" class="portal-workspace" :class="{ 'has-navigation-sidebar': desktop, 'has-mobile-dock': hasMobileDock, 'is-search-workspace': route.name === 'search' }" :style="{ '--management-sidebar-width': `${sidebarWidth}px`, '--management-sidebar-progress': (sidebarWidth - 64) / 176 }">
     <ManagementSidebar v-if="desktop" :desktop="true" :collapsed="collapsed" />
     <RouterView v-slot="{ Component }">
       <component :is="Component" v-bind="viewProps" @logout="logout" />
     </RouterView>
-    <MobileWorkspaceDock v-if="mobileSection" :section="mobileSection" />
+    <MobileWorkspaceDock v-if="hasMobileDock" ref="mobileDock" :dialog-id="toolsDialogId" :section="mobileSection" :active-tool="activeTool" />
     <NetworkConnectionTestDialog v-if="networkConnectionTest && portalUser.role === 'admin'" :request="networkConnectionTest" @close="closeNetworkConnectionTest" />
   </div>
   <ReloadPrompt />
@@ -110,7 +141,7 @@ onBeforeUnmount(() => {
 .dark .is-search-workspace { background-color: #090d16; background-image: radial-gradient(circle at 50% 0%, rgb(51 65 85 / .25), transparent 60%); }
 .has-navigation-sidebar { padding-left: var(--management-sidebar-width); }
 @media (max-width: 639px) {
-  .has-mobile-dock { padding-bottom: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom)); }
+  .has-mobile-dock { padding-bottom: var(--mobile-dock-clearance); overflow-x: clip; }
 }
 @media (prefers-reduced-motion: reduce) { .portal-workspace { --management-sidebar-motion: 0s linear; } }
 </style>

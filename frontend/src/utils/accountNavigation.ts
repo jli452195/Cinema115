@@ -70,13 +70,15 @@ export const adminAccountGroups: { label: string; links: AccountLink[] }[] = [
   ] },
 ]
 
-export function isManagementLinkActive(route: RouteLocationNormalizedLoaded, to: string) {
+type NavigationRoute = Pick<RouteLocationNormalizedLoaded, 'path' | 'meta'>
+
+export function isManagementLinkActive(route: NavigationRoute, to: string) {
   return route.meta.managementSection
     ? route.meta.managementSection === to
     : route.path === to || route.path.startsWith(`${to}/`)
 }
 
-export function isAccountLinkActive(route: RouteLocationNormalizedLoaded, link: AccountLink) {
+export function isAccountLinkActive(route: NavigationRoute, link: AccountLink) {
   return isManagementLinkActive(route, link.to)
     || !!link.children?.some(child => isManagementLinkActive(route, child.to))
 }

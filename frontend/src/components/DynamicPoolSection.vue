@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <section id="pool" aria-label="共享小号池" class="scroll-mt-6">
+  <section id="pool" aria-label="共享小号池" class="scroll-mt-[calc(var(--workbench-header-height)_+_12px)]">
     <div class="pool-dashboard">
       <header class="dashboard-heading">
         <div class="dashboard-heading-copy">
