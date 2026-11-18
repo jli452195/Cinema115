@@ -72,7 +72,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   await page.route('**/api/**', async route => {
    const req = route.request(), url = new URL(req.url()), endpoint = url.pathname
-   apiRequests.push({ endpoint, method: req.method() })
+   // 全局未读轮询与搜索弹窗无关，不能计作外壳和本地筛选的请求。
+   if (endpoint !== '/api/me/notifications/unread' || req.method() !== 'GET') apiRequests.push({ endpoint, method: req.method() })
    if (endpoint === '/api/auth/me') return route.fulfill({ json: { user: { id: 'admin', role: 'admin', username: 'admin' } } })
    if (endpoint.endsWith('/telegram-user/channels')) return route.fulfill({ json: { account: { configured: true, hasSession: true, botConfigured: false }, channels } })
    if (endpoint.endsWith('/telegram-user/config')) return route.fulfill({ json: { configured: true, hasSession: true, botConfigured: false, bot: '' } })

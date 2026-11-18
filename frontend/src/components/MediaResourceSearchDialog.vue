@@ -7,14 +7,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRouter } from 'vue-router'
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
-import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import BottomSheetDialog from './BottomSheetDialog.vue'
+import BottomSheetExpandButton from './BottomSheetExpandButton.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
 import type { ResourceLink as GyingResourceLink, ResourceSearchAttempt as GyingSearchAttempt, ResourceSearchItem as GyingSearchItem } from '../types/resourceSearch'
 import { useMediaResourceSearch } from '../composables/useMediaResourceSearch'
 import { useMediaResourceActions } from '../composables/useMediaResourceActions'
 import { useToast } from '../composables/useToast'
-import { requestErrorMessage } from '../utils/requestErrorMessage'
 import gyingLogo from '../assets/gying/logo-gying.png'
 import woniuLogo from '../assets/woniu.svg'
 
@@ -24,11 +24,9 @@ const sourceLogo = props.source === 'woniu' ? woniuLogo : gyingLogo
 const settingsPath = '/' + props.source
 function methodLabel(method?: string) { return method === 'imdb' ? 'IMDb' : props.source === 'woniu' && method === 'title' ? '名称' : '原名' }
 const emit = defineEmits<{ close: [] }>()
-const dialog = ref<HTMLDialogElement>()
+const sheetDialog = ref<InstanceType<typeof BottomSheetDialog>>()
+const dialog = computed(() => sheetDialog.value?.dialog)
 const organizeDialog = ref<InstanceType<typeof DownloadOrganizeDialog>>()
-const viewportStyle = ref<Record<string, string>>({})
-const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
-const mobileViewport = ref(window.matchMedia('(max-width: 639px)').matches)
 const shortViewport = ref(false)
 const scrollBody = ref<HTMLElement>()
 const filterAnchor = ref<HTMLElement>()
@@ -59,7 +57,6 @@ function coverSource(item: GyingSearchItem) {
   if (props.source === 'woniu') return /^\/api\/woniu\/image\/(?:vod|[0-9]{8}(?:-[1-9][0-9]{0,3})?)\/[a-fA-F0-9]{32}\.(jpg|jpeg|png|webp)$/.test(source) ? source : ''
   return /^\/api\/gying\/image\/(mv|tv|ac|zy)\/[A-Za-z0-9]{1,64}\.webp$/.test(source) ? source : ''
 }
-const dialogLifecycle = createDialogLifecycle()
 const mediaLabels: Record<string, string> = { movie: '电影', tv: '剧集', anime: '动漫', other: '其他' }
 const defaultResourceOrder = ['magnet', 'aliyun', 'quark', 'baidu', 'xunlei', 'mobile', '115', '123', 'guangya', 'uc', 'tianyi', 'other']
 const magnetSubTypeOrder = ['720P', '中字720P', '1080P', '中字1080P', '4K', '中字4K', '原盘', '未知']
@@ -71,7 +68,6 @@ function resourceRank(type: string) {
 function sortResourceLinks(links: GyingResourceLink[]) {
   return links.map((link, index) => ({ link, index })).sort((a, b) => resourceRank(a.link.type) - resourceRank(b.link.type) || a.index - b.index).map(item => item.link)
 }
-function closeDialog() { if (!organizeEntries.value.length && !cloudBusy.value) emit('close') }
 function canLeave() { return !cloudBusy.value && !organizeDialog.value?.busy }
 onBeforeRouteLeave(canLeave)
 onBeforeRouteUpdate(canLeave)
@@ -258,47 +254,27 @@ async function copyLink(link: GyingResourceLink) {
   catch { if (!lifecycle.signal.aborted) { copied.value = ''; copyError.value = link.url } }
 }
 
-function syncVisualViewport() {
-  mobileViewport.value = window.matchMedia('(max-width: 639px)').matches
-  const viewport = window.visualViewport
-  shortViewport.value = (viewport?.height ?? window.innerHeight) < 520
-  viewportStyle.value = {
-    '--gy-visible-height': `${viewport?.height ?? window.innerHeight}px`,
-    '--gy-visible-top': `${viewport?.offsetTop ?? 0}px`,
-    '--gy-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
-  }
-}
-
-onMounted(async () => {
-  syncVisualViewport()
-  window.visualViewport?.addEventListener('resize', syncVisualViewport)
-  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
-  window.addEventListener('resize', syncVisualViewport)
-  try {
-    dialogLifecycle.acquire()
-    if (!dialog.value) throw new Error(sourceLabel + '搜索弹窗初始化失败')
-    if (!dialog.value.open) dialog.value.showModal()
-  } catch (e) {
-    error.value = requestErrorMessage(e, '打开' + sourceLabel + '搜索弹窗')
-    return
-  }
-  await initialize()
-})
-onBeforeUnmount(() => {
-  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
-  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  window.removeEventListener('resize', syncVisualViewport)
-  lifecycle.abort()
-  if (dialog.value?.open) dialog.value.close()
-  dialogLifecycle.release()
-})
+onMounted(() => { void initialize() })
+onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
   <Teleport to="body">
-    <dialog :data-search-source="source" ref="dialog" :style="dialogStyle" aria-labelledby="gying-search-title" aria-describedby="gying-work-title" class="gy-dialog media-search-dialog" :class="{ 'gy-short-viewport': shortViewport }" @cancel.prevent="closeDialog">
+    <BottomSheetDialog
+      ref="sheetDialog"
+      :data-search-source="source"
+      :style="themeColors"
+      aria-labelledby="gying-search-title"
+      aria-describedby="gying-work-title"
+      class="gy-dialog media-search-dialog"
+      :class="{ 'gy-short-viewport': shortViewport }"
+      :close-disabled="organizeEntries.length > 0 || cloudBusy"
+      @close="emit('close')"
+      @viewport-change="shortViewport = $event"
+      v-slot="{ close, expanded, toggleExpanded }"
+    >
       <div class="gy-layout">
-        <header class="gy-header">
+        <header class="gy-header" data-sheet-drag>
           <div class="gy-brand" :class="{ 'gy-woniu-brand': source === 'woniu' }"><img :src="sourceLogo" alt="" width="34" height="34" /></div>
           <div class="gy-heading">
             <h2 id="gying-search-title">{{ sourceLabel }}搜索</h2>
@@ -307,7 +283,8 @@ onBeforeUnmount(() => {
               <span v-if="result" class="gy-search-caption" :class="{ 'gy-cached-caption': result.cached && phase !== 'search' && !error }">{{ phase === 'search' ? '搜索中' : error ? '上次结果' : result.cached ? '已复用缓存' : methodLabel(result.matchedBy) + '搜索' }}</span>
             </div>
           </div>
-          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" :disabled="cloudBusy" :title="cloudBusy ? '正在等待云下载回执，请稍候' : undefined" class="gy-icon-button" @click="closeDialog">
+          <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
+          <button autofocus type="button" :aria-label="'关闭' + sourceLabel + '搜索'" :disabled="cloudBusy" :title="cloudBusy ? '正在等待云下载回执，请稍候' : undefined" class="gy-icon-button" @click="close()">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
           </button>
         </header>
@@ -324,7 +301,7 @@ onBeforeUnmount(() => {
               {{ phase === 'search' ? '搜索中 ' + elapsedSeconds + ' 秒' : '重搜' }}
             </button>
             <button v-else-if="!config && error" type="button" :disabled="busy" class="gy-tool-button" @click="initialize">重试</button>
-            <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'" @click="closeDialog">
+            <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'" @click="close()">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--gy-container)" /><circle cx="15" cy="17" r="3" fill="var(--gy-container)" /></svg>
               配置
             </RouterLink>
@@ -333,7 +310,7 @@ onBeforeUnmount(() => {
         <div ref="scrollBody" class="gy-body" data-auto-scrollbar>
           <div v-if="config && !searchEnabled" class="gy-setup">
             <h3>登录{{ sourceLabel }}后搜索资源</h3><p>请先在资源配置中保存{{ sourceLabel }}账号并登录。</p>
-            <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="closeDialog">配置{{ sourceLabel }}搜索</RouterLink>
+            <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="close()">配置{{ sourceLabel }}搜索</RouterLink>
           </div>
           <p v-if="phase === 'config'" role="status" class="gy-notice gy-info">正在读取{{ sourceLabel }}搜索配置…<span v-if="elapsedSeconds >= 10">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
           <p v-else-if="phase === 'search'" role="status" class="gy-notice gy-info">{{ source === 'woniu' ? '正在搜索影片名称并读取网盘资源…' : '正在搜索影视原名并读取资源详情…' }}
@@ -341,7 +318,7 @@ onBeforeUnmount(() => {
             <span v-else>已等待 {{ elapsedSeconds }} 秒，最多等待约 2 分钟。</span>
             <span v-if="result">下方保留上次搜索结果，搜索完成后更新。</span>
           </p>
-          <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="closeDialog">前往配置</RouterLink></p>
+          <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="close()">前往配置</RouterLink></p>
           <template v-if="result">
             <section v-if="!resultItems.length" class="gy-search-process" aria-label="搜索过程">
               <div class="gy-process-heading"><span>搜索过程</span><span v-if="result.cached && phase !== 'search' && !error" class="gy-cache">已复用缓存</span></div>
@@ -375,7 +352,7 @@ onBeforeUnmount(() => {
                 <div class="gy-filter-context">
                   <h3 class="gy-filter-title">资源筛选</h3>
                   <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
-                  <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="closeDialog" />
+                  <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="close()" />
                 </div>
                 <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll" data-auto-scrollbar>
                   <div class="gy-selection-indicator gy-chip-indicator" :style="sourceIndicatorStyle" aria-hidden="true"></div>
@@ -437,7 +414,7 @@ onBeforeUnmount(() => {
                           <component :is="preparingOrganize === cloudResourceID(item, link) ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'gy-spinning': preparingOrganize === cloudResourceID(item, link) }" />
                           {{ preparingOrganize === cloudResourceID(item, link) ? '解析中…' : '115 整理' }}
                         </button>
-                        <RouterLink v-if="canCloudDownload(link) && cloudStatuses[cloudResourceID(item, link)]?.success" :to="cloudTask(item, link).path" data-gy-action="cloud-task" class="gy-button gy-primary-button" :aria-label="'已提交，' + cloudTask(item, link).label" @click="closeDialog">
+                        <RouterLink v-if="canCloudDownload(link) && cloudStatuses[cloudResourceID(item, link)]?.success" :to="cloudTask(item, link).path" data-gy-action="cloud-task" class="gy-button gy-primary-button" :aria-label="'已提交，' + cloudTask(item, link).label" @click="close()">
                           <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg>
                           已提交
                         </RouterLink>
@@ -457,7 +434,7 @@ onBeforeUnmount(() => {
                     </div>
                     <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
                     <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-warning">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
-                    <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
+                    <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
                   </li>
                 </ul>
               </article>
@@ -471,12 +448,12 @@ onBeforeUnmount(() => {
               <button type="button" class="gy-button gy-outlined-button" :disabled="busy" @click="loadNextPage">{{ phase === 'more' ? '读取下一页…' : moreError ? '重试加载更多' : '加载更多条目' }}</button>
               <span role="status">已加载 {{ result.page || 1 }} 页，{{ resultItems.length }} 个条目</span>
             </div>
-            <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="closeDialog">前往配置</RouterLink></p>
+            <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="close()">前往配置</RouterLink></p>
           </template>
         </div>
-        <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
+        <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
       </div>
-    </dialog>
+    </BottomSheetDialog>
   </Teleport>
   <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => recordOrganized(keys, true)" />
 </template>
@@ -643,7 +620,7 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-actions { grid-column: 1; }
 }
 @media (max-width: 639px) {
-  .gy-dialog { --gy-max-height: calc(min(100dvh, var(--gy-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--gy-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--gy-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .gy-layout { flex: 1; min-height: 0; max-height: none; }
   .gy-header { gap: 10px; padding: 16px 16px 8px; }
   .gy-heading h2 { font-size: 18px; line-height: 26px; }
   .gy-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 18px; }

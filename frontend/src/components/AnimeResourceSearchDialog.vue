@@ -14,7 +14,8 @@ import mikanWordmark from '../assets/mikan/mikan-text.svg?no-inline'
 import AnimeProviderBrand from './AnimeProviderBrand.vue'
 import SegmentedControl from './SegmentedControl.vue'
 import dmhyLogo from '../assets/dmhy.svg'
-import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import BottomSheetDialog from './BottomSheetDialog.vue'
+import BottomSheetExpandButton from './BottomSheetExpandButton.vue'
 
 import { useAnimeResourceSearch } from '../composables/useAnimeResourceSearch'
 import { useAnimeResourceActions } from '../composables/useAnimeResourceActions'
@@ -22,9 +23,8 @@ import type { AnimeResourceItem as Item, AnimeResourceBangumi as Bangumi, AnimeR
 
 const props = withDefaults(defineProps<{ token: string; title: string; originalTitle: string; provider?: AnimeResourceProvider; animationLibrary?: boolean; themeColors?: Record<string, string>; tmdbId?: number; kind?: 'movie' | 'tv'; date?: string; seasons?: { number: number; name: string; episodeCount: number }[] }>(), { provider: 'mikan' })
 const emit = defineEmits<{ close: [] }>()
-const dialog = ref<HTMLDialogElement>()
-const viewportStyle = ref<Record<string, string>>({})
-const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
+const sheetDialog = ref<InstanceType<typeof BottomSheetDialog>>()
+const dialog = computed(() => sheetDialog.value?.dialog)
 const shortViewport = ref(false)
 const scrollBody = ref<HTMLElement>()
 const filterAnchor = ref<HTMLElement>()
@@ -50,7 +50,6 @@ const itemStrip = ref<HTMLElement>()
 const activeBangumiId = computed(() => selectedBangumi.value?.id || 'all')
 const { indicatorStyle: itemIndicatorStyle } = useSlidingIndicator(itemStrip, '[aria-pressed="true"]', [activeBangumiId, bangumis])
 const hasBrokenCovers = computed(() => bangumis.value.some(card => brokenCovers.value[card.id]))
-const dialogLifecycle = createDialogLifecycle()
 function selectCard(item: Item, event: MouseEvent) {
   if (!batchMode.value || (event.target as HTMLElement).closest('button, a, input, textarea, label, summary')) return
   toggleResource(item)
@@ -65,7 +64,6 @@ async function startBatch() {
   // 队列结束会移除停止按钮；将焦点留在稳定的摘要上，避免回落到页面。
   if (document.activeElement === document.body) dialog.value?.querySelector<HTMLElement>('.mikan-batch-count')?.focus({ preventScroll: true })
 }
-function closeDialog() { if (organizeEntries.value.length) return; batch.stop(); emit('close') }
 function refreshCurrent() { retryCovers(); searchState.refreshCurrent() }
 async function focusAppendedResults(previousVisible: number) {
   await nextTick()
@@ -108,48 +106,34 @@ async function copy(item: Item) {
   try { await copyText(item.magnet, dialog.value); copied.value = item.id }
   catch { copied.value = ''; copyError.value = item.id }
 }
-function syncVisualViewport() {
-  const viewport = window.visualViewport
-  shortViewport.value = (viewport?.height ?? window.innerHeight) < 520
-  viewportStyle.value = {
-    '--mikan-visible-height': `${viewport?.height ?? window.innerHeight}px`,
-    '--mikan-visible-top': `${viewport?.offsetTop ?? 0}px`,
-    '--mikan-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
-  }
-  if (shortViewport.value && dialog.value?.contains(document.activeElement) && document.activeElement instanceof HTMLInputElement) {
-    void nextTick(() => (document.activeElement as HTMLInputElement)?.scrollIntoView({ block: 'nearest' }))
-  }
-}
-onMounted(() => {
-  syncVisualViewport()
-  window.visualViewport?.addEventListener('resize', syncVisualViewport)
-  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
-  window.addEventListener('resize', syncVisualViewport)
-  dialogLifecycle.acquire()
-  dialog.value?.showModal()
-  void search()
-})
-onBeforeUnmount(() => {
-  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
-  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  window.removeEventListener('resize', syncVisualViewport)
-  lifecycle.abort()
-  dialog.value?.close()
-  dialogLifecycle.release()
-})
+onMounted(() => { void search() })
+onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="mikan-search-title" aria-describedby="mikan-work-title" class="mikan-dialog media-search-dialog" :class="{ 'mikan-short-viewport': shortViewport }" @cancel.prevent="closeDialog">
+    <BottomSheetDialog
+      ref="sheetDialog"
+      :style="themeColors"
+      aria-labelledby="mikan-search-title"
+      aria-describedby="mikan-work-title"
+      class="mikan-dialog media-search-dialog"
+      :class="{ 'mikan-short-viewport': shortViewport }"
+      :close-disabled="organizeEntries.length > 0"
+      @closing="batch.stop"
+      @close="emit('close')"
+      @viewport-change="shortViewport = $event"
+      v-slot="{ close, expanded, toggleExpanded }"
+    >
       <div class="mikan-layout">
-        <header class="mikan-header" data-mikan-brand>
+        <header class="mikan-header" data-mikan-brand data-sheet-drag>
           <div v-if="!pagedSearch" class="mikan-brand" aria-hidden="true"><img :src="mikanMascot" alt="" width="400" height="400" draggable="false" /></div>
           <div class="mikan-heading">
             <h2 id="mikan-search-title"><span class="sr-only">{{ providerName }}搜索</span><span v-if="isDmhy" class="dmhy-brand" aria-hidden="true"><img :src="dmhyLogo" alt="" width="30" height="30" />动漫花园</span><AnimeProviderBrand v-else-if="isGarden" provider="garden" /><img v-else :src="mikanWordmark" alt="" width="117" height="29" draggable="false" /></h2>
             <p id="mikan-work-title" :title="title" data-mikan-brand-title>{{ title }}</p>
           </div>
-          <button autofocus type="button" :aria-label="batchRunning ? `停止提交并关闭${providerName}搜索` : `关闭${providerName}搜索`" class="mikan-icon-button" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+          <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
+          <button autofocus type="button" :aria-label="batchRunning ? `停止提交并关闭${providerName}搜索` : `关闭${providerName}搜索`" class="mikan-icon-button" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </header>
         <div ref="scrollBody" class="mikan-body" data-auto-scrollbar>
           <form class="mikan-search-form" @submit.prevent="search()">
@@ -238,7 +222,7 @@ onBeforeUnmount(() => {
                     <button v-if="canReadMagnet(item)" type="button" class="mikan-button mikan-outlined-button dmhy-read-magnet" aria-label="读取磁力" :aria-busy="readingMagnet === item.id" :disabled="interactionBusy || singleSubmitting" @click="readMagnet(item, $event)"><component :is="readingMagnet === item.id ? IconLoader2 : IconMagnet" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': readingMagnet === item.id }" /><span>{{ readingMagnet === item.id ? '读取中…' : '读取磁力' }}</span></button>
                     <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : `查看${providerName}原帖`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
                     <button v-if="tmdbId && !batchMode && (pagedSearch || item.torrentUrl)" type="button" class="mikan-button mikan-outlined-button" aria-label="115 整理" :aria-busy="preparingItem === item.id" :disabled="!magnetKey(item.magnet) || interactionBusy || singleSubmitting || submission(item)?.success || submission(item)?.uncertain" @click="openOrganize(item, $event)"><component :is="preparingItem === item.id ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': preparingItem === item.id }" /><span class="mikan-action-label-desktop">{{ preparingItem === item.id ? '解析中…' : '115 整理' }}</span><span class="mikan-action-label-mobile">{{ preparingItem === item.id ? '解析…' : '整理' }}</span></button>
-                    <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务" @click="closeDialog"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
+                    <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
                     <button v-else type="button" :disabled="!magnetKey(item.magnet) || interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
                   </div>
                 </div>
@@ -246,7 +230,7 @@ onBeforeUnmount(() => {
                 <p v-if="preparingItem === item.id || readingMagnet === item.id" role="status" class="mikan-notice garden-prepare-notice">{{ readingMagnet === item.id ? '正在读取原帖磁力…' : isGarden ? '读取 Garden 文件清单…' : `正在解析${providerName}种子清单…` }}</p>
                 <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button v-if="magnetKey(item.magnet)" type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
                 <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
-                <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="closeDialog">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
+                <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
               </li>
             </ul>
             <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>
@@ -263,12 +247,12 @@ onBeforeUnmount(() => {
           <div class="mikan-batch-count" tabindex="-1" aria-live="polite" aria-atomic="true"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
           <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="openBatchOrganize"><IconFolder :size="16" aria-hidden="true" />批量整理（{{ batchCount }}）</button><button type="button" class="mikan-button mikan-primary-button" :aria-label="`提交到 115（${batchCount}）`" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><span class="mikan-action-label-desktop">提交到 115（{{ batchCount }}）</span><span class="mikan-action-label-mobile">云下载（{{ batchCount }}）</span></button></template></div>
           <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
-          <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="closeDialog">前往配置</RouterLink></p>
+          <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="close()">前往配置</RouterLink></p>
           <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
         </footer>
-        <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="closeDialog">查看日志</RouterLink></footer>
+        <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
       </div>
-    </dialog>
+    </BottomSheetDialog>
   </Teleport>
   <DownloadOrganizeDialog :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeEntries = []" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
@@ -437,7 +421,7 @@ onBeforeUnmount(() => {
   .mikan-action-label-mobile { display: inline; }
 }
 @media (max-width: 639px) {
-  .mikan-dialog { --mikan-max-height: calc(min(100dvh, var(--mikan-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--mikan-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--mikan-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 16px); border-radius: 20px; }
+  .mikan-layout { flex: 1; min-height: 0; max-height: none; }
   .mikan-header { gap: 10px; padding: 16px 16px 8px; }
   .mikan-heading h2 { height: 26px; }
   .mikan-heading h2 img { height: 20px; }

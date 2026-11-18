@@ -28,7 +28,7 @@ const item = (id, links, status = 'ready') => ({ id, title: id === '35487' ? '�
       }
       if (request.method() !== 'GET') writes.push(url.pathname)
       if (url.pathname === '/api/auth/me') data = { user: { id: 'mock', role, username: 'mock', disabled: false } }
-      else if (url.pathname.includes('/tmdb/detail/')) data = { id: 65942, kind: 'tv', title: '测试影片', originalTitle: 'Original', imdbId: '', genres: [], countries: [], cast: [], seasons: [], overview: '', posterUrl: '', backdropUrl: '' }
+      else if (url.pathname.includes('/tmdb/detail/')) data = { id: 65942, kind: 'tv', title: '测试影片', date: '2026-01-01', originalTitle: 'Original', imdbId: '', genres: [], countries: [], cast: [], seasons: [], overview: '', posterUrl: '', backdropUrl: '' }
       else if (url.pathname.endsWith('/share/automation-config')) data = { settings: { accountId: 'mock-main', generation: { outputDir: 'mock-output', baseUrl: 'http://mock.invalid', videoExtensions: 'mkv', metadataExtensions: 'srt', minSizeMB: 0, recursive: true } } }
       else if (url.pathname.endsWith('/share/generation-runs') && request.method() === 'POST') {
         const input = request.postDataJSON(); submissions.push(input)
@@ -118,7 +118,7 @@ const item = (id, links, status = 'ready') => ({ id, title: id === '35487' ? '�
     await page.getByRole('heading', { name: '观影搜索', exact: true }).waitFor()
     await page.locator('[data-film-id="gying"]').waitFor()
     await page.keyboard.press('Escape')
-    assert.equal(await page.locator('dialog[open]').count(), 0)
+    await page.locator('dialog[open]').waitFor({ state: 'detached' })
     mode = 'delay'; await page.getByRole('button', { name: /蜗牛\s*搜索/ }).click(); await page.getByRole('button', { name: '关闭蜗牛搜索', exact: true }).click()
     await page.waitForTimeout(900)
     assert.equal(await page.locator('dialog[open]').count(), 0)

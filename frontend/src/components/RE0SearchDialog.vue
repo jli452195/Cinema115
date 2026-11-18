@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import BottomSheetDialog from './BottomSheetDialog.vue'
+import BottomSheetExpandButton from './BottomSheetExpandButton.vue'
 import SelectMenu from './SelectMenu.vue'
 import { useToast } from '../composables/useToast'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -9,11 +10,9 @@ import re0Logo from '../assets/re0/logo-re0-square.webp'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; themeColors?: Record<string, string> }>()
 const emit = defineEmits<{ close: [] }>()
-const dialog = ref<HTMLDialogElement>()
-const viewportStyle = ref<Record<string, string>>({})
-const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
+const sheetDialog = ref<InstanceType<typeof BottomSheetDialog>>()
+const dialog = computed(() => sheetDialog.value?.dialog)
 const lifecycle = new AbortController()
-const dialogLifecycle = createDialogLifecycle()
 const toast = useToast()
 const result = ref<RE0SearchResult>()
 const error = ref('')
@@ -197,39 +196,26 @@ async function sendTransfer(input: TransferInput) {
     }
   } finally { phase.value = ''; transferSelected.value = undefined; void focusResourceAction(input.slug, 'transfer') }
 }
-function close() { if (!writing.value) emit('close') }
-function syncVisualViewport() {
-  const viewport = window.visualViewport
-  viewportStyle.value = {
-    '--re0-visible-height': `${viewport?.height ?? window.innerHeight}px`,
-    '--re0-visible-top': `${viewport?.offsetTop ?? 0}px`,
-    '--re0-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
-  }
-}
 onMounted(() => {
-  syncVisualViewport()
-  window.visualViewport?.addEventListener('resize', syncVisualViewport)
-  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
-  dialogLifecycle.acquire(); dialog.value?.showModal(); void search()
+  void search()
 })
 onBeforeUnmount(() => {
-  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
-  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  lifecycle.abort(); dialog.value?.close(); dialogLifecycle.release()
+  lifecycle.abort()
 })
 </script>
 
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="re0-title" aria-describedby="re0-work-title" class="re0-dialog media-search-dialog" @cancel.prevent="close">
+    <BottomSheetDialog ref="sheetDialog" :style="themeColors" aria-labelledby="re0-title" aria-describedby="re0-work-title" class="re0-dialog media-search-dialog" :close-disabled="writing" @close="emit('close')" v-slot="{ close, expanded, toggleExpanded }">
       <div class="re0-layout">
-        <header class="re0-header">
+        <header class="re0-header" data-sheet-drag>
           <div class="re0-brand"><img :src="re0Logo" alt="" width="40" height="40" /></div>
           <div class="re0-heading">
             <h2 id="re0-title">RE0 资源搜索</h2>
             <p id="re0-work-title" :title="title">{{ title }}</p>
           </div>
-          <button autofocus type="button" aria-label="关闭 RE0 搜索" :disabled="writing" class="re0-icon-button" @click="close">
+          <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
+          <button autofocus type="button" aria-label="关闭 RE0 搜索" :disabled="writing" class="re0-icon-button" @click="close()">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
           </button>
         </header>
@@ -245,7 +231,7 @@ onBeforeUnmount(() => {
               <svg aria-hidden="true" :class="{ 're0-spinning': phase === 'search' }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               刷新搜索
             </button>
-            <RouterLink v-if="!writing" to="/nanshare" class="re0-tool-button" @click="emit('close')">
+            <RouterLink v-if="!writing" to="/nanshare" class="re0-tool-button" @click="close()">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--re0-container)" /><circle cx="15" cy="17" r="3" fill="var(--re0-container)" /></svg>
               登录配置
             </RouterLink>
@@ -351,9 +337,9 @@ onBeforeUnmount(() => {
             </li>
           </ul>
         </div>
-        <footer class="search-log-footer"><RouterLink v-if="!writing" :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click.capture="writing && $event.preventDefault()" @click="close">查看日志</RouterLink><span v-else>正在提交任务，请等待结果。</span></footer>
+        <footer class="search-log-footer"><RouterLink v-if="!writing" :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click.capture="writing && $event.preventDefault()" @click="close()">查看日志</RouterLink><span v-else>正在提交任务，请等待结果。</span></footer>
       </div>
-    </dialog>
+    </BottomSheetDialog>
   </Teleport>
 </template>
 
@@ -480,7 +466,7 @@ onBeforeUnmount(() => {
   .re0-resource-main { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 @media (max-width: 639px) {
-  .re0-dialog { --re0-max-height: calc(min(100dvh, var(--re0-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--re0-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--re0-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .re0-layout { flex: 1; min-height: 0; max-height: none; }
   .re0-header { gap: 10px; padding: 16px 16px 12px; }
   .re0-heading h2 { font-size: 18px; line-height: 26px; }
   .re0-toolbar { flex-wrap: wrap; gap: 4px; padding: 0 16px 12px; }

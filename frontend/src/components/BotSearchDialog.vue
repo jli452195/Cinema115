@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { createDialogLifecycle } from '../lib/dialog-lifecycle'
+import BottomSheetDialog from './BottomSheetDialog.vue'
+import BottomSheetExpandButton from './BottomSheetExpandButton.vue'
 import ShareTransferDirectory from './ShareTransferDirectory.vue'
 import ShareTransferButton from './ShareTransferButton.vue'
 import { useShareTransfer } from '../composables/useShareTransfer'
@@ -11,9 +12,8 @@ import { telegramUserRequest, telegramUserSearchStream, TelegramSearchError, typ
 import telegramLogo from '../assets/telegram/telegram.svg'
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; tmdbId: string; title: string; themeColors?: Record<string, string> }>()
 const emit = defineEmits<{ close: [] }>()
-const dialog = ref<HTMLDialogElement>()
-const viewportStyle = ref<Record<string, string>>({})
-const dialogStyle = computed(() => ({ ...props.themeColors, ...viewportStyle.value }))
+const sheetDialog = ref<InstanceType<typeof BottomSheetDialog>>()
+const dialog = computed(() => sheetDialog.value?.dialog)
 const query = ref('')
 const lockedResourceOrder = ref<string[]>([])
 const state = ref<TelegramUserStatus>()
@@ -48,7 +48,6 @@ const linkErrors = ref<Record<string, string>>({})
 const linkRequests = new Map<string, Promise<string[]>>()
 let linkQueue: Promise<unknown> = Promise.resolve()
 const busy = computed(() => searchBusy.value || shareRuns.preparing.value > 0 || Object.values(linkPending.value).some(Boolean))
-const dialogLifecycle = createDialogLifecycle()
 const resources = computed(() => {
   const items = result.value?.items.filter(item => item.kind === 'resource') || []
   if (items.length) return items.map(item => ({ ...item, direct: '' }))
@@ -174,42 +173,29 @@ async function request(id?: string, refresh = false) {
 }
 function stopRun() { void shareRuns.stop() }
 function shareSTRM(item: (typeof resources.value)[number]) { void shareRuns.submit(shareResource(item)) }
-function syncVisualViewport() {
-  const viewport = window.visualViewport
-  viewportStyle.value = {
-    '--bot-visible-height': `${viewport?.height ?? window.innerHeight}px`,
-    '--bot-visible-top': `${viewport?.offsetTop ?? 0}px`,
-    '--bot-visible-bottom': `${viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0}px`,
-  }
-}
 onMounted(async () => {
-  syncVisualViewport()
-  window.visualViewport?.addEventListener('resize', syncVisualViewport)
-  window.visualViewport?.addEventListener('scroll', syncVisualViewport)
   countdown = setInterval(() => { clockNow.value = Date.now() }, 1000)
-  dialogLifecycle.acquire(); dialog.value?.showModal()
   try { state.value = await telegramUserRequest<TelegramUserStatus>(props.token, 'config', lifecycle.signal) }
   catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '配置读取失败' }
   finally { checking.value = false }
   if (!lifecycle.signal.aborted && state.value?.botConfigured && state.value.hasSession) await request()
 })
 onBeforeUnmount(() => {
-  window.visualViewport?.removeEventListener('resize', syncVisualViewport)
-  window.visualViewport?.removeEventListener('scroll', syncVisualViewport)
-  clearInterval(countdown); lifecycle.abort(); dialog.value?.close(); dialogLifecycle.release()
+  clearInterval(countdown); lifecycle.abort()
 })
 </script>
 <template>
   <Teleport to="body">
-    <dialog ref="dialog" :style="dialogStyle" aria-labelledby="bot-search-title" aria-describedby="bot-work-title" class="bot-dialog media-search-dialog" @cancel.prevent="emit('close')">
+    <BottomSheetDialog ref="sheetDialog" :style="themeColors" aria-labelledby="bot-search-title" aria-describedby="bot-work-title" class="bot-dialog media-search-dialog" @close="emit('close')" v-slot="{ close, expanded, toggleExpanded }">
       <div class="bot-layout">
-        <header class="bot-header">
+        <header class="bot-header" data-sheet-drag>
           <div class="bot-brand"><img :src="telegramLogo" alt="" width="36" height="36" /></div>
           <div class="bot-heading">
             <h2 id="bot-search-title">Telegram 资源搜索</h2>
             <p id="bot-work-title" :title="title">{{ title }}<span v-if="state?.bot" class="bot-identity">@{{ state.bot }}</span></p>
           </div>
-          <button autofocus type="button" aria-label="关闭资源搜索" class="bot-icon-button" @click="emit('close')">
+          <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
+          <button autofocus type="button" aria-label="关闭资源搜索" class="bot-icon-button" @click="close()">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg>
           </button>
         </header>
@@ -226,7 +212,7 @@ onBeforeUnmount(() => {
               <svg aria-hidden="true" :class="{ 'bot-spinning': searchBusy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg>
               刷新搜索
             </button>
-            <RouterLink to="/resources/telegram" class="bot-tool-button" @click="emit('close')">
+            <RouterLink to="/resources/telegram" class="bot-tool-button" @click="close()">
               <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--bot-container)" /><circle cx="15" cy="17" r="3" fill="var(--bot-container)" /></svg>
               搜索配置
             </RouterLink>
@@ -238,7 +224,7 @@ onBeforeUnmount(() => {
           <div v-else-if="!state?.botConfigured || !state.hasSession" class="bot-setup">
             <h3>{{ state?.hasSession ? '先配置资源 Bot' : '登录 Telegram 后搜索资源' }}</h3>
             <p>{{ state?.hasSession ? '选择已获得使用权限的资源 Bot。' : '请使用已获资源 Bot 认证的 Telegram 用户账号。' }}</p>
-            <RouterLink :to="state?.hasSession ? '/resources/telegram' : '/telegram/user'" class="bot-button bot-primary-button" @click="emit('close')">{{ state?.hasSession ? '配置资源 Bot' : '配置并登录 Telegram' }}</RouterLink>
+            <RouterLink :to="state?.hasSession ? '/resources/telegram' : '/telegram/user'" class="bot-button bot-primary-button" @click="close()">{{ state?.hasSession ? '配置资源 Bot' : '配置并登录 Telegram' }}</RouterLink>
           </div>
 
           <div v-if="searchBusy" role="status" class="bot-notice bot-info">
@@ -254,7 +240,7 @@ onBeforeUnmount(() => {
             <p v-if="result.partial" role="status" class="bot-notice bot-warning">{{ result.warning || '当前为部分结果，稍后可刷新补充。' }}</p>
             <div class="bot-results-heading">
               <h3>115 资源</h3>
-              <ShareTransferDirectory v-if="resources.length" :transfer="transfers" @settings="emit('close')" />
+              <ShareTransferDirectory v-if="resources.length" :transfer="transfers" @settings="close()" />
               <span role="status">{{ query.trim() ? '显示 ' + filteredResources.length + ' / ' + resources.length + ' 个资源' : resources.length + ' 个资源' }}</span>
             </div>
             <div v-if="result.remaining !== undefined || (result.cached && !searchBusy)" class="bot-search-meta">
@@ -323,9 +309,9 @@ onBeforeUnmount(() => {
             </details>
           </template>
         </div>
-        <footer class="search-log-footer"><span v-if="state?.botConfigured && state.hasSession">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="emit('close')">查看日志</RouterLink></footer>
+        <footer class="search-log-footer"><span v-if="state?.botConfigured && state.hasSession">结果缓存 24 小时；刷新会重新查询 Bot 并追加结果。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
       </div>
-    </dialog>
+    </BottomSheetDialog>
   </Teleport>
 </template>
 
@@ -445,7 +431,7 @@ onBeforeUnmount(() => {
   .bot-resource-main { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 }
 @media (max-width: 639px) {
-  .bot-dialog { --bot-max-height: calc(min(100dvh, var(--bot-visible-height, 100dvh)) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); inset-block: calc(var(--bot-visible-top, 0px) + env(safe-area-inset-top)) calc(var(--bot-visible-bottom, 0px) + env(safe-area-inset-bottom)); width: calc(100% - 24px); border-radius: 24px; }
+  .bot-layout { flex: 1; min-height: 0; max-height: none; }
   .bot-header { gap: 10px; padding: 16px 16px 12px; }
   .bot-heading h2 { font-size: 18px; line-height: 26px; }
   .bot-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }

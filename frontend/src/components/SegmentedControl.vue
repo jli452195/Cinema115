@@ -122,7 +122,7 @@ function moveFocus(event: KeyboardEvent) {
   .dark .segmented-control-pwa-pill { box-shadow: 0 1px 3px rgb(0 0 0 / .25), 0 3px 9px -2px rgb(0 0 0 / .34); }
   .segmented-control-pwa-pill .segmented-control-option {
     flex: 1 0 auto; min-width: 44px; min-height: 44px; padding: 0 6px;
-    border-radius: 999px; font-size: 14px; font-weight: 600;
+    border-radius: 999px; font-size: 13px; font-weight: 600; line-height: 18px;
   }
   .segmented-control-pwa-pill .segmented-control-option:not(:disabled):active { color: rgb(var(--selection-content)); }
   .segmented-control-pwa-pill .segmented-control-indicator,

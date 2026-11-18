@@ -9,6 +9,7 @@
     "test:segmented-control-ui": "node scripts/segmented-control-ui.cjs",
     "test:dialog-lifecycle-ui": "node scripts/dialog-lifecycle-ui.cjs",
     "test:mobile-sheet-ui": "node scripts/mobile-sheet-ui.cjs",
+    "test:detail-search-sheet-ui": "node scripts/detail-search-sheet-ui.cjs",
     "test:select-menu-ui": "node scripts/select-menu-ui.cjs",
     "test:dashboard-navigation-ui": "node scripts/dashboard-navigation-ui.cjs",
     "test:folder-monitor-ui": "node scripts/folder-monitor-ui.cjs",

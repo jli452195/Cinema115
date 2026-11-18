@@ -3,7 +3,9 @@ import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 interface MobileSheetOptions {
   enabled: () => boolean
   closeDisabled: () => boolean
+  onClosing?: () => void
   onClose: () => void
+  onViewportChange?: (height: number) => void
 }
 
 interface DragSample { y: number; time: number }
@@ -33,6 +35,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
 
   const active = () => opened && !!element?.open && options.enabled() && !!mobile?.matches
   const reducedMotion = () => !!reduced?.matches
+  const closeBlocked = () => options.closeDisabled() || !!element?.hasAttribute('data-dialog-covered')
 
   function cancelAnimation() {
     const current = animation
@@ -96,16 +99,17 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     options.onClose()
   }
   function close() {
-    if (disposed || notified || closing || options.closeDisabled()) return
+    if (disposed || notified || closing || closeBlocked()) return
     releaseDrag()
     closing = true
+    options.onClosing?.()
     if (!active() || reducedMotion()) {
       cancelAnimation(); clearTransform(); notifyClose(); return
     }
     const from = visualOffset(), destination = element!.getBoundingClientRect().height + 32
     void move(from, destination, 180).then(finished => {
       if (!finished || !closing) return
-      if (options.closeDisabled()) { closing = false; snap(expanded.value); return }
+      if (closeBlocked()) { closing = false; snap(expanded.value); return }
       notifyClose()
     })
   }
@@ -117,13 +121,17 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
 
   function updateViewport() {
     if (!element) return
+    const height = viewport?.height ?? window.innerHeight
+    if (options.enabled()) options.onViewportChange?.(height)
     if (!active()) {
       element.style.removeProperty('--sheet-viewport-height')
+      element.style.removeProperty('--sheet-viewport-top')
       element.style.removeProperty('--sheet-viewport-bottom')
       return
     }
-    const height = viewport?.height ?? window.innerHeight
-    const bottom = Math.max(0, window.innerHeight - height - (viewport?.offsetTop ?? 0))
+    const top = viewport?.offsetTop ?? 0
+    const bottom = Math.max(0, window.innerHeight - height - top)
+    element.style.setProperty('--sheet-viewport-top', `${top}px`)
     element.style.setProperty('--sheet-viewport-height', `${Math.max(1, height)}px`)
     element.style.setProperty('--sheet-viewport-bottom', `${bottom}px`)
   }
@@ -142,7 +150,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
       setExpanded(false)
       if (closing) {
         closing = false
-        if (!options.closeDisabled()) notifyClose()
+        if (!closeBlocked()) notifyClose()
       }
     }
     updateViewport()
@@ -153,7 +161,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     releaseDrag(); cancelAnimation(); clearTransform()
     if (closing) {
       closing = false
-      if (!options.closeDisabled()) notifyClose()
+      if (!closeBlocked()) notifyClose()
     }
   }
   function captureClick(event: MouseEvent) {
@@ -245,7 +253,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     const delta = event.clientY - current.y, first = current.samples[0]!, last = current.samples.at(-1)!
     const speed = last.time > first.time ? (last.y - first.y) / (last.time - first.time) : 0
     const shouldClose = delta >= 110 || delta > 64 && speed > .65
-    if (shouldClose && !options.closeDisabled()) { close(); return }
+    if (shouldClose && !closeBlocked()) { close(); return }
     if (shouldClose || element?.hasAttribute('data-dialog-covered')) { snap(current.expanded); return }
     snap(delta <= -18 ? true : current.expanded && delta >= 18 ? false : current.expanded)
   }
@@ -266,6 +274,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     releaseDrag(); cancelAnimation(); removeListeners(); clearTransform()
     element?.style.removeProperty('--sheet-viewport-height')
     element?.style.removeProperty('--sheet-viewport-bottom')
+    element?.style.removeProperty('--sheet-viewport-top')
     if (element) delete element.dataset.sheetExpanded
   })
 

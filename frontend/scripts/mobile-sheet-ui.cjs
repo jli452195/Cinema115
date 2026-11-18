@@ -44,7 +44,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       window.mobileSheetFixture = { state, nextTick, dispose: () => { app.unmount(); mount.remove(); document.removeEventListener('pointerdown', pointer); document.body.style.overflow = previousOverflow; document.querySelector('#app').style.display = '' } }
     })
     const parent = page.locator('dialog.sheet-fixture-parent[open]'), child = page.locator('dialog.sheet-fixture-child[open]')
-    const body = parent.locator('.anime-floating-body'), handle = parent.locator('.anime-floating-grabber-zone')
+    const body = parent.locator('.anime-floating-body'), handle = parent.locator('.bottom-sheet-grabber-zone')
     const open = async (plain = false) => {
       await page.locator(plain ? '#open-plain-dialog' : '#open-mobile-sheet').click(); await parent.waitFor()
       const animations = await parent.evaluate(element => element.getAnimations().map(animation => ({ duration: Number(animation.effect.getTiming().duration), frames: animation.effect.getKeyframes().map(frame => Object.keys(frame).filter(key => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))) })))
@@ -171,13 +171,13 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const plain = await geometry(parent)
     assert.ok(plain.left > 0 && plain.right < plain.viewportWidth && plain.top > 0, '未opt-in手机弹窗保留原居中边距')
     assert.equal(await parent.getByRole('button', { name: '展开弹窗', exact: true }).count(), 0)
-    assert.equal(await parent.locator('.anime-floating-grabber-zone').isVisible().catch(() => false), false)
+    assert.equal(await parent.locator('.bottom-sheet-grabber-zone').isVisible().catch(() => false), false)
     await parent.getByRole('button', { name: '关闭测试弹窗', exact: true }).click(); await closed('#open-plain-dialog')
     await page.setViewportSize({ width: 1100, height: 900 }); await open()
     const desktop = await geometry(parent)
     assert.ok(desktop.left > 0 && desktop.right < desktop.viewportWidth && desktop.top > 0, '桌面opt-in弹窗保留原居中布局')
     assert.equal(await parent.getByRole('button', { name: '展开弹窗', exact: true }).count(), 0)
-    assert.equal(await parent.locator('.anime-floating-grabber-zone').isVisible().catch(() => false), false)
+    assert.equal(await parent.locator('.bottom-sheet-grabber-zone').isVisible().catch(() => false), false)
     await parent.getByRole('button', { name: '关闭测试弹窗', exact: true }).click(); await closed()
     passed.push('reduced-motion即时状态、非opt-in手机与桌面布局隔离')
 
