@@ -23,6 +23,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       else if (endpoint === '/api/admin/member-playback/settings') data = { settings: { enabled: true, libraryIds: ['movies'], allowDownload: false }, proxy: { listening: true } }
       else if (endpoint === '/api/admin/member-playback/libraries') data = { libraries: [{ ItemId: 'movies', Name: '电影', CollectionType: 'movies' }] }
       else if (endpoint === '/api/admin/invites') data = { invites: [], hasMore: false }
+      else if (endpoint.endsWith('/tmdb/browse')) data = {
+        items: Array.from({ length: 16 }, (_, index) => ({ id: index + 123, kind: 'movie', title: '测试海报 ' + (index + 1), overview: '', posterUrl: '', date: '2026-01-01', rating: 8.5, votes: 100 })),
+        total: 16, totalPages: 1,
+      }
       else if (endpoint.includes('/tmdb/detail/')) data = {
         id: 123, kind: 'movie', title: '示例电影', originalTitle: 'Example Film', overview: '账户菜单交互检查。', posterUrl: '', backdropUrl: '',
         date: '2016-07-01', rating: 8.5, votes: 100, tagline: '', status: 'Released', runtime: 106, episodeCount: 0,
@@ -142,56 +146,39 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           const inner = await page.locator('.header-inner').boundingBox()
           assert(Math.abs(bounds.y - Math.max(inner.y + 12, button.y - 8)) <= 1 && Math.abs(bounds.x + bounds.width - button.x - button.width) <= 1, '手机菜单保留安全区内 12px 顶距并对齐胶囊右边')
           assert.equal(await trigger().evaluate(el => document.querySelector('#header-management').contains(document.elementFromPoint(el.getBoundingClientRect().x + el.offsetWidth / 2, el.getBoundingClientRect().y + el.offsetHeight / 2))), true)
-          assert.match(await menu().locator('.account-glass').evaluate(el => getComputedStyle(el).backdropFilter), /blur\(/, '菜单复用玻璃材质')
-          assert.equal(await menu().locator('.account-surface').evaluate(el => getComputedStyle(el).backdropFilter), 'none', '父层不重复采样玻璃')
+          assert.match(await menu().locator('.account-surface').evaluate(el => getComputedStyle(el).backdropFilter), /blur\(/, '菜单复用玻璃材质')
+          assert.equal(await menu().locator('.account-content').evaluate(el => getComputedStyle(el).backdropFilter), 'none', '菜单内容不重复采样玻璃')
         }
         if (width === 1440 || width === 390) await screenshot(`account-personal-${width}-${dark ? 'dark' : 'light'}`)
         await close()
       }
     }
-    // 按 TG 13.2.2 源码采样：整块胶囊起点、宽高分离弹簧、内容等比缩放与过冲。
+    // 确认手机面板按右上角展开，动画只写入透明度和变换属性。
     const expansion = await page.evaluate(async () => {
-      const trigger = document.querySelector('button[aria-controls="header-management"]'), button = trigger.closest('.header-actions').getBoundingClientRect()
-      trigger.click(); await Promise.resolve()
-      await new Promise(resolve => requestAnimationFrame(resolve))
-      const menu = document.querySelector('#header-management')
+      document.querySelector('[aria-controls="header-management"]').click()
+      await new Promise(requestAnimationFrame)
+      const menu = document.querySelector('#header-management'), panel = menu.querySelector('[data-menu-panel]')
       window.accountMotionSamples = menu.getAnimations({ subtree: true })
-      for (const animation of accountMotionSamples) { animation.pause(); animation.currentTime = 0 }
-      const read = () => {
-        const box = menu.querySelector('[data-menu-surface]').getBoundingClientRect()
-        const filterBox = menu.querySelector('.account-glass').getBoundingClientRect()
-        const icon = menu.querySelector('.account-icon').getBoundingClientRect()
-        return { x: box.x, y: box.y, width: box.width, height: box.height, material: { x: filterBox.x, y: filterBox.y, width: filterBox.width, height: filterBox.height }, iconWidth: icon.width, iconHeight: icon.height, contentOpacity: Number(getComputedStyle(menu.querySelector('.account-content')).opacity), glassOpacity: Number(getComputedStyle(menu.querySelector('[data-menu-surface]')).opacity), originOpacity: Number(getComputedStyle(menu.querySelector('.account-origin')).opacity), scrimOpacity: Number(getComputedStyle(menu.querySelector('.account-scrim')).opacity), clip: getComputedStyle(menu.querySelector('.account-clip')).clipPath }
+      const [animation] = accountMotionSamples
+      animation.pause()
+      const duration = animation.effect.getTiming().duration
+      const read = time => {
+        animation.currentTime = time
+        const { x, y, width, height } = panel.getBoundingClientRect()
+        return { x, y, width, height, layoutWidth: panel.offsetWidth, layoutHeight: panel.offsetHeight, opacity: Number(getComputedStyle(panel).opacity) }
       }
-      const start = read()
-      for (const animation of accountMotionSamples) animation.currentTime = 80
-      const middle = read()
-      for (const animation of accountMotionSamples) animation.currentTime = 250
-      const overshoot = read()
-      for (const animation of accountMotionSamples) animation.currentTime = 700
-      return { button: { x: button.x, y: button.y, width: button.width, height: button.height }, start, middle, overshoot, end: read(), animations: accountMotionSamples.length }
+      const frames = animation.effect.getKeyframes()
+      return { duration, count: accountMotionSamples.length, properties: Object.keys(frames[0]), start: read(0), middle: read(80), end: read(duration) }
     })
-    assert(expansion.animations > 0)
-    for (const key of ['x', 'y', 'width', 'height']) assert(Math.abs(expansion.button[key] - expansion.start[key]) <= 1, JSON.stringify(expansion))
-    assert.equal(expansion.start.contentOpacity, 0)
-    assert.equal(expansion.start.glassOpacity, 1, '起点由原胶囊玻璃连续交接')
-    assert.equal(expansion.start.originOpacity, 1, '起点保留原胶囊图标')
-    assert(expansion.middle.width > expansion.start.width && expansion.middle.width < expansion.end.width)
-    assert(expansion.middle.height > expansion.start.height && expansion.middle.height < expansion.end.height)
-    for (const state of [expansion.middle, expansion.overshoot, expansion.end]) {
-      assert.deepEqual(state.material, expansion.start.material, '0/80/250/700ms 的滤镜采样边界保持固定，仅外框改变几何')
-    }
-    assert(expansion.middle.contentOpacity > 0 && expansion.middle.contentOpacity < 1, '文字透明度由弹簧几何进度驱动')
-    const widthProgress = (expansion.middle.width - expansion.start.width) / (expansion.end.width - expansion.start.width)
-    const heightProgress = (expansion.middle.height - expansion.start.height) / (expansion.end.height - expansion.start.height)
-    assert(widthProgress > heightProgress, '宽度先行，高度滞后')
-    assert(expansion.middle.iconWidth < expansion.end.iconWidth)
-    assert(Math.abs(expansion.middle.iconWidth - expansion.middle.iconHeight) < .01, '文字图标统一等比缩放')
-    assert(Math.abs(expansion.middle.iconWidth / expansion.end.iconWidth - expansion.middle.width / expansion.end.width) < .005, '内容比例跟随当前窗口宽度')
-    assert(expansion.overshoot.width > expansion.end.width && expansion.overshoot.height > expansion.end.height, '双弹簧保留小幅过冲')
-    assert.equal(expansion.end.scrimOpacity, 1)
-    assert.equal(expansion.end.originOpacity, 0)
-    assert.notEqual(expansion.middle.clip, expansion.end.clip, '下方内容由边界逐步露出')
+    assert.equal(expansion.count, 1)
+    assert(expansion.duration <= 310)
+    assert.deepEqual(expansion.properties.filter(key => !['offset', 'computedOffset', 'easing', 'composite'].includes(key)).sort(), ['opacity', 'transform'])
+    assert.equal(expansion.start.opacity, 0)
+    assert(expansion.middle.opacity > .75 && expansion.end.opacity === 1, '文字在动画前段就已可读')
+    assert(expansion.start.width < expansion.end.width && expansion.start.y < expansion.end.y, '从右上角平移并放大')
+    assert(Math.abs(expansion.start.width / expansion.end.width - expansion.start.height / expansion.end.height) < .005, '面板等比缩放')
+    assert.equal(expansion.start.layoutWidth, expansion.end.layoutWidth)
+    assert.equal(expansion.start.layoutHeight, expansion.end.layoutHeight)
     await page.evaluate(() => { for (const animation of accountMotionSamples) { try { animation.finish() } catch {} } })
     await open(); await close()
     // 退场中重新打开，旧节点的完成事件不能使新菜单变为 inert 或遗留旧 Promise。
@@ -208,13 +195,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const trigger = document.querySelector('button[aria-controls="header-management"]')
       const frame = () => new Promise(resolve => requestAnimationFrame(resolve))
       const read = menu => {
-        const box = menu.querySelector('[data-menu-surface]').getBoundingClientRect()
-        return { x: box.x, y: box.y, width: box.width, height: box.height }
+        const box = menu.querySelector('[data-menu-panel]').getBoundingClientRect()
+        return { x: box.x, y: box.y, width: box.width, height: box.height, opacity: Number(getComputedStyle(menu.querySelector('[data-menu-panel]')).opacity) }
       }
       trigger.click(); await frame()
       const leaving = document.querySelector('#header-management')
       const oldAnimations = leaving.getAnimations({ subtree: true })
-      for (const animation of oldAnimations) { animation.pause(); animation.currentTime = 85 }
+      for (const animation of oldAnimations) { animation.pause(); animation.currentTime = 100 }
       const before = read(leaving)
       trigger.click(); await frame()
       const entering = document.querySelector('#header-management')
@@ -224,8 +211,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       for (const animation of entering.getAnimations({ subtree: true })) animation.finish()
       return { before, after, oldStopped }
     })
-    assert(Math.abs(reversal.before.y - reversal.after.y) < 1 && Math.abs(reversal.before.height - reversal.after.height) < 1, '反向时按原生较大的宽高进度重新启动双弹簧')
-    assert(reversal.after.width >= reversal.before.width && reversal.after.width < expansion.end.width, '重开承接当前进度，不回到起点')
+    for (const key of ['x', 'y', 'width', 'height', 'opacity']) assert(Math.abs(reversal.before[key] - reversal.after[key]) < .5, '反向打开承接之前的视觉状态')
     assert(reversal.oldStopped, '旧节点的动画应立即释放')
     await open(); await close()
     await trigger().focus(); await page.keyboard.press('Enter'); await open()
@@ -233,25 +219,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await close()
     await open()
     const contraction = await page.evaluate(async () => {
-      const trigger = document.querySelector('button[aria-controls="header-management"]')
-      const source = trigger.closest('.header-actions').getBoundingClientRect()
-      trigger.click(); await new Promise(resolve => requestAnimationFrame(resolve))
-      const menu = document.querySelector('#header-management'), animations = menu.getAnimations({ subtree: true })
-      const read = time => {
-        for (const animation of animations) { animation.pause(); animation.currentTime = time }
-        const box = menu.querySelector('[data-menu-surface]').getBoundingClientRect()
-        return { x: box.x, y: box.y, width: box.width, height: box.height, contentOpacity: Number(getComputedStyle(menu.querySelector('.account-content')).opacity), originOpacity: Number(getComputedStyle(menu.querySelector('.account-origin')).opacity) }
-      }
-      const pouring = read(150), pill = read(200), settling = read(240)
-      for (const animation of animations) animation.finish()
-      return { source: { x: source.x, y: source.y, width: source.width, height: source.height }, pouring, pill, settling }
+      document.querySelector('[aria-controls="header-management"]').click()
+      await new Promise(requestAnimationFrame)
+      const menu = document.querySelector('#header-management')
+      const [animation] = menu.getAnimations({ subtree: true })
+      const duration = animation.effect.getTiming().duration
+      animation.pause(); animation.currentTime = duration
+      const opacity = getComputedStyle(menu.querySelector('[data-menu-panel]')).opacity
+      animation.finish()
+      return { duration, opacity }
     })
-    assert.equal(contraction.pouring.contentOpacity, 0, '回灌前段菜单文字先消失')
-    for (const key of ['x', 'y', 'width', 'height']) assert(Math.abs(contraction.pill[key] - contraction.source[key]) < 1, '200ms 时回到原胶囊')
-    assert.equal(contraction.pill.originOpacity, 1)
-    assert(contraction.settling.width > contraction.pill.width && contraction.settling.height < contraction.pill.height, '回灌后胶囊轻微横向回弹')
+    assert(contraction.duration <= 170 && contraction.opacity === '0', '收起快速淡出')
     await page.locator('#header-management').waitFor({ state: 'detached' })
-    assert.equal(await page.locator('[data-menu-origin-owned]').count(), 0, '收尾后把来源胶囊交还原组件')
     await open()
     const currentURL = page.url(), back = await page.locator('.detail-nav-back').boundingBox()
     await page.mouse.click(back.x + back.width / 2, back.y + back.height / 2)
@@ -262,18 +241,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const source = await trigger().boundingBox()
     await page.mouse.click(source.x + source.width / 2, source.y + source.height / 2)
     await page.locator('#header-management').waitFor({ state: 'detached' })
-    assert.equal(await trigger().getAttribute('aria-expanded'), 'false', '300ms 内再次点击来源位置关闭菜单')
+    assert.equal(await trigger().getAttribute('aria-expanded'), 'false', '展开时再次点击来源位置关闭菜单')
     await open()
     await page.evaluate(async () => { document.querySelector('button[aria-controls="header-management"]').click(); await new Promise(resolve => requestAnimationFrame(resolve)); for (const animation of document.querySelector('#header-management').getAnimations({ subtree: true })) animation.pause() })
     await page.setViewportSize({ width: 390, height: 800 })
     await page.locator('#header-management').waitFor({ state: 'detached' })
-    assert.equal(await page.locator('[data-menu-origin-owned]').count(), 0, '退场中改变窗口大小立即清理旧几何和来源占用')
     await open(); await page.setViewportSize({ width: 844, height: 390 })
     await page.locator('#header-management').waitFor({ state: 'detached' })
     await page.setViewportSize({ width: 390, height: 844 })
-    assert.equal(await page.locator('[data-menu-origin-owned]').count(), 0, '跨断点往返不残留来源占用')
-    passed.push('TG 13.2.2 整块胶囊交接、双弹簧过冲、等比内容、几何渐显与快速开关')
-    passed.push('200ms 回灌、胶囊回弹、外部点击不穿透、二次点击关闭及退场 resize 清理')
+    passed.push('手机面板只动画透明度和变换，保留快速反向交接')
+    passed.push('快速淡出、外部点击不穿透、二次点击关闭及退场 resize 清理')
 
     await page.setViewportSize({ width: 390, height: 320 })
     await page.evaluate(() => { document.documentElement.style.setProperty('--app-safe-top', '28px'); document.documentElement.style.setProperty('--app-safe-left', '28px'); document.documentElement.style.setProperty('--app-safe-right', '22px'); document.documentElement.style.setProperty('--app-safe-bottom', '24px') })
@@ -286,7 +263,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await close()
     await page.setViewportSize({ width: 390, height: 844 })
     await page.evaluate(() => { for (const side of ['top', 'left', 'right', 'bottom']) document.documentElement.style.removeProperty(`--app-safe-${side}`) })
-    await go('/tv')
+    await go('/notifications')
     const ordinaryTrigger = await trigger().boundingBox()
     assert.equal(ordinaryTrigger.width, 32, '普通手机页保留原按钮尺寸')
     await open()
@@ -345,16 +322,88 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await close()
     passed.push('desktop-mobile-themes-short-screen-notifications-and-reduced-motion')
 
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await go('/movie')
+    const posters = page.locator('.media-poster-card')
+    await posters.first().waitFor()
+    const touch = await context.newCDPSession(page)
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    const tap = async ({ x, y }) => {
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+      await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    }
+    const center = ({ x, y, width, height }) => ({ x: x + width / 2, y: y + height / 2 })
+    const logo = center(await page.locator('.workspace-brand').boundingBox())
+    await posters.first().evaluate((poster, y) => window.scrollBy({ top: poster.getBoundingClientRect().top - y + 12, behavior: 'instant' }), logo.y)
+    const hasPosterBehind = point => page.evaluate(({ x, y }) => document.elementsFromPoint(x, y).some(el => el.closest('.media-poster-card')), point)
+    const movieURL = page.url()
+    assert(await hasPosterBehind(logo), '徽标下方应有一张可点击的海报')
+    await tap(logo)
+    assert.equal(page.url(), movieURL, '点击徽标不会打开下层海报')
+    await open()
+    const themePoint = center(await menu().locator('.theme-toggle').boundingBox())
+    const logoutPoint = center(await menu().getByRole('button', { name: '退出登录', exact: true }).boundingBox())
+    assert(await hasPosterBehind(themePoint), '主题按钮下方应有一张可点击的海报')
+    await close()
+
+    const pauseMotion = (phase, time) => page.evaluate(async ({ phase, time }) => {
+      await new Promise(requestAnimationFrame)
+      const menu = document.querySelector('#header-management')
+      if (menu?.dataset.menuMotion !== phase) throw Error('账户菜单动画阶段不符：' + phase)
+      window.accountMotionSamples = menu.getAnimations({ subtree: true })
+      for (const animation of accountMotionSamples) { animation.pause(); animation.currentTime = time }
+    }, { phase, time })
+    const finishMotion = () => page.evaluate(() => { for (const animation of accountMotionSamples) animation.finish() })
+    await trigger().evaluate(el => el.click())
+    await pauseMotion('entering', 0)
+    await tap(logoutPoint)
+    await page.waitForFunction(() => !document.querySelector('#header-management')?.dataset.menuMotion)
+    assert.equal(await trigger().getAttribute('aria-expanded'), 'true', '提前点到尚未显示的退出登录，只展开菜单')
+    assert.equal(await page.evaluate(() => localStorage.getItem('admin_token')), 'mock-account-menu-token')
+    await open()
+    await page.keyboard.press('Escape')
+    await pauseMotion('leaving', 75)
+    assert(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.hasAttribute('data-menu-scrim'), themePoint), '退场中由遮罩接住原主题按钮位置的点击')
+    await tap(themePoint)
+    assert.equal(page.url(), movieURL, '收起动画时点按不会打开海报')
+    await finishMotion()
+    await page.locator('#header-management').waitFor({ state: 'detached' })
+
+    await trigger().evaluate(el => el.click())
+    await pauseMotion('entering', 0)
+    assert.equal(await menu().locator('[data-menu-panel]').evaluate(el => getComputedStyle(el).opacity), '0', '验证主题按钮在尚未露出时的点按')
+    await tap(themePoint)
+    await page.waitForFunction(() => document.documentElement.classList.contains('theme-reveal'))
+    await page.waitForFunction(() => localStorage.getItem('cinema115-theme') === 'dark', null, { timeout: 2000 })
+    assert.equal(await trigger().getAttribute('aria-expanded'), 'false')
+    const [themeX, themeY] = (await page.evaluate(() => document.documentElement.style.getPropertyValue('--theme-reveal-origin'))).split(' ').map(parseFloat)
+    assert(Math.abs(themeX - themePoint.x) < 1 && Math.abs(themeY - themePoint.y) < 1, '提前点按仍用真实触点播放主题动效')
+    await tap(themePoint)
+    await page.waitForFunction(() => !document.documentElement.classList.contains('theme-reveal'))
+    assert.equal(page.url(), movieURL, '主题转场中再次点按不会打开海报')
+    assert.equal(await page.locator('#header-management').count(), 0)
+    const posterHref = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('.media-poster-card')?.href, themePoint)
+    assert(posterHref, '转场结束后应恢复下层海报的点击')
+    await tap(themePoint)
+    await page.waitForURL(posterHref)
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+    await touch.detach()
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    passed.push('手机首页徽标和菜单退场不穿透，展开早期一次点按即切换主题，转场结束后恢复海报点击')
+
     role = 'user'
     await go('/movie/123'); await open(); await personalMenu(true)
     assert.equal(await menu().getByText('普通用户', { exact: true }).count(), 1)
     assert.equal(await menu().locator('.account-row:visible').count(), 4)
     await close()
-    // 手机详情使用返回入口，回到列表后仍可通过原 Logo 打开功能侧栏。
+    // 手机详情回到首页后，订阅由底栏进入，账户菜单继续提供个人播放。
     await page.locator('.detail-nav-back').click(); await page.waitForURL('**/movie')
-    await page.locator('.brand-link').click(); await drawer.waitFor()
-    assert.deepEqual(await drawer.getByRole('link').allTextContents(), ['我的播放', '我的追更'])
-    await page.keyboard.press('Escape'); await drawer.waitFor({ state: 'detached' })
+    const mobileNav = page.getByRole('navigation', { name: '手机主导航', exact: true })
+    await mobileNav.getByRole('link', { name: '订阅', exact: true }).click(); await page.waitForURL('**/follows')
+    assert.equal(await mobileNav.getByRole('link', { name: '订阅', exact: true }).getAttribute('aria-current'), 'page')
+    await open()
+    assert.deepEqual(await personalLinks().evaluateAll(links => links.map(link => link.getAttribute('href'))), ['/account/playback'])
+    await close()
     await go('/tv')
     const ordinaryStart = requests.length
     for (const destination of ['/users', '/users/list', '/users/invites', '/emby/users']) {

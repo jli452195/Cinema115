@@ -1,19 +1,25 @@
 <script setup lang="ts">
 import { catalogAPI } from '../composables/usePortalAuth'
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
+import HistoryBackButton from '../components/HistoryBackButton.vue'
+import NavigationIcon from '../components/NavigationIcon.vue'
 import MediaCard from '../components/MediaCard.vue'
 import PersonCard from '../components/PersonCard.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import type { PersonItem } from '../types/person'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
 import type { MediaCardItem } from '../types/media'
+import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute()
 const router = useRouter()
+const compactViewport = window.matchMedia('(max-width: 639px)')
+const mobile = ref(compactViewport.matches)
+const searchInput = ref<HTMLInputElement>()
 const scopes = [{ value: 'multi', label: '聚合' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }, { value: 'person', label: '演员' }] as const
 const scope = computed(() => route.query.scope === 'movie' || route.query.scope === 'tv' || route.query.scope === 'person' ? route.query.scope : 'multi')
 const query = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')
@@ -34,12 +40,22 @@ let controller: AbortController | undefined
 function location(nextScope = scope.value, nextPage = 1, q = query.value) {
   return { path: '/search', query: { ...(q ? { q } : {}), scope: nextScope, ...(nextPage > 1 ? { page: String(nextPage) } : {}) } }
 }
+function navigate(nextScope = scope.value, nextPage = 1, q = query.value) {
+  const target = location(nextScope, nextPage, q)
+  // 手机端的关键词、范围和分页共用一条历史记录，返回直接回到搜索入口。
+  return mobile.value ? router.replace(target) : router.push(target)
+}
 function submit() {
   const q = input.value.trim()
+  if (mobile.value) searchInput.value?.blur()
   if (q === query.value && page.value === 1) { void load(); return }
-  void router.push(location(scope.value, 1, q))
+  void navigate(scope.value, 1, q)
 }
-function clear() { input.value = ''; void router.push(location(scope.value, 1, '')) }
+function clear() {
+  input.value = ''
+  if (mobile.value) searchInput.value?.focus({ preventScroll: true })
+  void navigate(scope.value, 1, '')
+}
 async function load() {
   controller?.abort()
   const current = new AbortController(); controller = current
@@ -66,25 +82,38 @@ async function load() {
 watch(query, value => { input.value = value })
 // 新搜索、范围切换和前进后退均由路由驱动，旧响应不能覆盖当前结果。
 watch([query, scope, page, () => props.token], () => { void load() }, { immediate: true })
-onBeforeUnmount(() => controller?.abort())
+function updateViewport() { mobile.value = compactViewport.matches }
+onMounted(() => {
+  compactViewport.addEventListener('change', updateViewport)
+  if (mobile.value && !query.value) searchInput.value?.focus({ preventScroll: true })
+})
+onBeforeUnmount(() => {
+  compactViewport.removeEventListener('change', updateViewport)
+  controller?.abort()
+})
 </script>
 
 <template>
   <div class="search-page flex min-h-screen flex-col">
-    <WorkbenchHeader @logout="$emit('logout')" />
-    <main class="workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-7 sm:px-8 lg:px-10 lg:pb-10">
+    <WorkbenchHeader v-if="!mobile" @logout="$emit('logout')" />
+    <main class="search-content workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-7 sm:px-8 lg:px-10 lg:pb-10">
       <header class="search-header mx-auto max-w-2xl text-center" :class="{ 'is-compact': query }">
-        <h1 class="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">搜索影视</h1>
-        <p v-if="!query" class="mt-2 text-sm text-slate-500 dark:text-slate-400">发现电影、剧集与喜爱的演员</p>
-        <form role="search" class="search-form flex gap-2" @submit.prevent="submit">
-          <input v-model="input" type="search" :aria-label="scope === 'person' ? '搜索演员姓名' : '搜索片名'" maxlength="100" :placeholder="scope === 'person' ? '输入演员姓名…' : '输入电影或剧集名称…'" class="min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
-          <button type="submit" class="search-submit shrink-0 px-5 py-2 text-sm font-medium">搜索</button>
-        </form>
-        <div class="search-scopes"><SegmentedControl :model-value="scope" :options="scopes" label="搜索范围" density="compact" appearance="neutral" @change="router.push(location($event))" /></div>
+        <h1 :class="mobile ? 'sr-only' : 'text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100'">搜索影视</h1>
+        <p v-if="!mobile && !query" class="mt-2 text-sm text-slate-500 dark:text-slate-400">发现电影、剧集与喜爱的演员</p>
+        <div class="search-fields">
+          <HistoryBackButton v-if="mobile" :fallback="rememberedDashboardHome" icon-only class="mobile-search-back glass-pill-surface" />
+          <form role="search" class="search-form flex gap-2" @submit.prevent="submit">
+            <NavigationIcon v-if="mobile" name="search" :size="18" class="mobile-search-icon" />
+            <input ref="searchInput" v-model="input" type="search" :aria-label="scope === 'person' ? '搜索演员姓名' : '搜索片名'" maxlength="100" :enterkeyhint="mobile ? 'search' : undefined" :placeholder="scope === 'person' ? '输入演员姓名…' : mobile ? '搜索电影、剧集' : '输入电影或剧集名称…'" class="min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
+            <button v-if="mobile && (input || query)" type="button" class="mobile-search-clear" aria-label="清空搜索" @click="clear"><NavigationIcon name="close" :size="17" /></button>
+            <button type="submit" class="search-submit shrink-0 px-5 py-2 text-sm font-medium">搜索</button>
+          </form>
+        </div>
+        <div class="search-scopes"><SegmentedControl :model-value="scope" :options="scopes" label="搜索范围" density="compact" :appearance="mobile ? 'subtle' : 'neutral'" @change="navigate($event)" /></div>
       </header>
       <div v-if="query" class="search-summary mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 text-xs text-slate-500 dark:text-slate-400" role="status" aria-live="polite">
         <span class="min-w-0 break-words">{{ loading ? '正在搜索…' : error ? '暂时无法搜索' : scope === 'person' ? `「${query}」· 本页 ${people.length} 位演员` : scope === 'multi' ? `「${query}」· 本页 ${items.length} 部影视` : `「${query}」· 找到 ${total.toLocaleString()} 部${scope === 'movie' ? '电影' : '剧集'}` }}</span>
-        <button type="button" class="search-clear shrink-0 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" @click="clear">清空搜索</button>
+        <button v-if="!mobile" type="button" class="search-clear shrink-0 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" @click="clear">清空搜索</button>
       </div>
       <div v-if="!query" class="py-24 text-center text-sm text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ scope === 'person' ? '输入演员姓名，查看照片、代表作和参演影视。' : '输入片名开始搜索，聚合范围同时展示电影与剧集。' }}</div>
       <div v-else-if="error" role="alert" class="rounded-xl border border-red-100 bg-red-50 p-6 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"><p>{{ error }}</p><button type="button" class="mt-4 rounded-lg border border-red-200 px-4 py-2 dark:border-red-800" @click="load">重新搜索</button></div>
@@ -96,9 +125,9 @@ onBeforeUnmount(() => controller?.abort())
         <MediaCard v-for="item in items" :key="`${item.kind}:${item.id}`" :item="item" :library="matches[`${item.kind}:${item.id}`]" />
       </div>
       <nav v-if="!loading && !error && query && (totalPages > 1 || page > 1)" aria-label="搜索分页" class="mt-9 flex items-center justify-center gap-4 text-sm">
-        <button type="button" :disabled="page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 disabled:opacity-40" @click="router.push(location(scope, page - 1))">上一页</button>
+        <button type="button" :disabled="page <= 1" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 disabled:opacity-40" @click="navigate(scope, page - 1)">上一页</button>
         <span class="text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ page }} / {{ totalPages }}</span>
-        <button type="button" :disabled="page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 disabled:opacity-40" @click="router.push(location(scope, page + 1))">下一页</button>
+        <button type="button" :disabled="page >= totalPages" class="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-4 py-2 disabled:opacity-40" @click="navigate(scope, page + 1)">下一页</button>
       </nav>
       <footer class="mt-10 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">数据与相关度排序来自 <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">TMDB</a>。聚合展示电影与剧集；演员范围展示表演部门人物（含配音），过滤其他工作人员，部分页面结果可能较少。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
     </main>
@@ -118,6 +147,55 @@ onBeforeUnmount(() => controller?.abort())
 .search-scopes { margin-top: .9rem; }
 .search-clear { min-height: 36px; }
 @media (hover: hover) { .search-submit:hover { background: #334155; }.dark .search-submit:hover { background: #cbd5e1; } }
-@media (max-width: 639px) { .search-submit { min-height: 44px; }.search-clear { min-height: 44px; } }
+@media (max-width: 639px) {
+  .search-content {
+    --search-start: max(12px, var(--app-safe-left));
+    --search-end: max(12px, var(--app-safe-right));
+    padding: 0 var(--search-end) max(1.75rem, var(--app-safe-bottom)) var(--search-start);
+  }
+  .search-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    max-width: none;
+    margin: 0 calc(-1 * var(--search-end)) 12px calc(-1 * var(--search-start));
+    padding: calc(var(--app-safe-top) + 8px) var(--search-end) 8px var(--search-start);
+    border-bottom: 1px solid rgb(var(--line-default) / .7);
+    background: rgb(var(--app-chrome-color));
+  }
+  .search-fields { display: flex; align-items: center; gap: 8px; }
+  .mobile-search-back { width: 44px; height: 44px; border-radius: 50%; }
+  .mobile-search-back:focus-visible, .search-submit:focus-visible, .mobile-search-clear:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+  .search-form, .is-compact .search-form {
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+    margin-top: 0;
+    padding: 0 1px 0 10px;
+    border-radius: 999px;
+    background: var(--glass-pill-background);
+    -webkit-backdrop-filter: var(--glass-pill-filter);
+    backdrop-filter: var(--glass-pill-filter);
+  }
+  .search-form:focus-within, .dark .search-form:focus-within { border-color: rgb(var(--focus) / .55); box-shadow: var(--glass-card-shadow); }
+  .search-form input { height: 44px; font-size: 16px; }
+  .search-form input::-webkit-search-cancel-button { -webkit-appearance: none; }
+  .mobile-search-icon { flex: none; color: var(--glass-muted); }
+  .mobile-search-clear { display: grid; flex: none; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: var(--glass-muted); }
+  .search-submit, .dark .search-submit { min-width: 48px; min-height: 44px; padding: 0; border-radius: 999px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+  .search-scopes { margin-top: 8px; --search-dialog-secondary-background: var(--glass-inset-surface); --search-dialog-action-background: rgb(var(--selection-surface)); }
+  .search-scopes :deep(.segmented-control) { display: flex; width: 100%; }
+  .search-scopes :deep(.segmented-control-option) { flex: 1 1 0; }
+  .search-summary { overflow-wrap: anywhere; }
+}
+@media (hover: hover) and (max-width: 639px) {
+  .mobile-search-clear:hover { background: rgb(var(--surface-hover) / .7); }
+  .search-submit:hover, .dark .search-submit:hover { background: rgb(var(--focus) / .18); }
+}
+@media (prefers-reduced-motion: no-preference) and (max-width: 639px) {
+  .search-fields { animation: search-toolbar-in 180ms cubic-bezier(.2, 0, 0, 1); }
+}
+@keyframes search-toolbar-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
 @media (prefers-reduced-motion: reduce) { .search-form, .search-submit { transition: none; } }
 </style>

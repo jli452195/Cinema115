@@ -92,9 +92,9 @@ const legacyStorageKey = 'cinema115-glass-settings'
     assert.equal(baseline.textBackdrop, 'none', '文字层不重复采样')
     assert(baseline.alpha > 0)
     await openMenu()
-    const baselineMenu = await material(menu().locator('.account-glass'))
+    const baselineMenu = await material(menu().locator('.account-surface'))
     assertNativeFilter(baselineMenu)
-    for (const selector of ['.account-surface', '.account-rim', '.account-clip', '.account-content', '.account-scrim']) {
+    for (const selector of ['.account-content', '.account-scrim']) {
       assert.equal((await material(menu().locator(selector))).filter, 'none', `${selector} 不重复采样玻璃`)
     }
     await screenshot('glass-surfaces-desktop-light')
@@ -110,7 +110,7 @@ const legacyStorageKey = 'cinema115-glass-settings'
       await page.reload(); await waitDetail()
       assert.deepEqual(await pillMaterial(), baseline, '刷新后旧参数不影响固定搜索胶囊')
       await openMenu()
-      assert.deepEqual(await material(menu().locator('.account-glass')), baselineMenu, '旧参数不影响固定菜单玻璃')
+      assert.deepEqual(await material(menu().locator('.account-surface')), baselineMenu, '旧参数不影响固定菜单玻璃')
       await closeMenu()
       await page.evaluate(({ key, value }) => window.dispatchEvent(new StorageEvent('storage', { key, newValue: value, storageArea: localStorage })), { key: legacyStorageKey, value })
       assert.deepEqual(await pillMaterial(), baseline, '旧配置同步事件不再改写材质')
@@ -135,7 +135,7 @@ const legacyStorageKey = 'cinema115-glass-settings'
       await detailPills().first().scrollIntoViewIfNeeded()
       await screenshot(`glass-surfaces-search-${width}-${theme}`)
       await openMenu()
-      assertNativeFilter(await material(menu().locator('.account-glass')))
+      assertNativeFilter(await material(menu().locator('.account-surface')))
       const box = await menu().locator('.account-surface').boundingBox(), viewport = page.viewportSize()
       assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 && box.y + box.height <= viewport.height + 1, JSON.stringify(box))
       await screenshot(`glass-surfaces-menu-${width}-${theme}`)
@@ -162,7 +162,7 @@ const legacyStorageKey = 'cinema115-glass-settings'
       assert.equal(fallback.filter, 'none', `${theme}/${feature} 关闭背景滤镜`)
       assert.equal(fallback.alpha, 1, `${theme}/${feature} 使用不透明底色`)
       await openMenu()
-      const fallbackMenu = await material(menu().locator('.account-glass'))
+      const fallbackMenu = await material(menu().locator('.account-surface'))
       assert.equal(fallbackMenu.filter, 'none')
       assert.equal(fallbackMenu.alpha, 1)
       assert.equal((await material(menu().locator('.account-scrim'))).filter, 'none')

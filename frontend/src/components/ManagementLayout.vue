@@ -8,17 +8,19 @@ import NavigationIcon from './NavigationIcon.vue'
 import { isPortalAdmin } from '../composables/usePortalAuth'
 import { useManagementSidebar } from '../composables/useManagementSidebar'
 import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigation'
+import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
 defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string; compactHeading?: boolean }>()
 defineEmits<{ logout: [] }>()
 const route = useRoute(), sidebar = ref<InstanceType<typeof ManagementSidebar>>()
 const { desktop } = useManagementSidebar()
 const showSidebar = computed(() => isPortalAdmin.value && adminAccountGroups.some(group => group.links.some(link => isAccountLinkActive(route, link))))
+const hasMobileDock = computed(() => !!mobileWorkspaceSection(route.name))
 const desktopSidebar = computed(() => showSidebar.value && desktop.value)
 </script>
 
 <template>
-  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-management-sidebar': desktopSidebar, 'has-compact-heading': compactHeading }">
+  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-management-sidebar': desktopSidebar, 'has-compact-heading': compactHeading, 'uses-mobile-dock': hasMobileDock }">
     <ManagementSidebar v-if="showSidebar" ref="sidebar" mobile-only :desktop="desktop" />
     <WorkbenchHeader :sidebar-layout="desktopSidebar" :tonal-surface="showSidebar" :managed-sidebar="showSidebar" :sidebar-open="sidebar?.opened" :sidebar-controls="sidebar?.drawerID" @toggle-sidebar="sidebar?.toggleDrawer($event)" @logout="$emit('logout')" />
     <div class="management-shell">
@@ -49,6 +51,8 @@ const desktopSidebar = computed(() => showSidebar.value && desktop.value)
 .management-title.with-title-tools { display: flex; align-items: center; gap: 6px; }
 @media (max-width: 639px) {
   .has-compact-heading .management-shell { --management-content-top: calc(var(--workbench-header-height) + 8px); }
+  .uses-mobile-dock .management-breadcrumb-row.navigation-only,
+  .uses-mobile-dock .management-navigation-trigger,
   .has-compact-heading .management-breadcrumb-row.navigation-only,
   .has-compact-heading .management-navigation-trigger,
   .has-compact-heading .management-description { display: none; }

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-defineProps<{ compact?: boolean; sidebar?: boolean; large?: boolean }>()
+defineProps<{ compact?: boolean; sidebar?: boolean; large?: boolean; mobileWordmark?: boolean }>()
 </script>
 
 <template>
-  <span class="cinema-logo" :class="{ 'is-compact': compact, 'in-sidebar': sidebar, 'is-large': large }" role="img" aria-label="Cinema115">
+  <span class="cinema-logo" :class="{ 'is-compact': compact, 'in-sidebar': sidebar, 'is-large': large, 'has-mobile-wordmark': mobileWordmark }" role="img" aria-label="Cinema115">
     <img class="cinema-logo-mark" src="/brand/cinema115-mark.svg" width="128" height="123" alt="" aria-hidden="true" draggable="false" />
     <span v-if="!compact" class="cinema-logo-wordmark" aria-hidden="true">Cinema<span class="cinema-logo-number">115</span></span>
   </span>
@@ -47,6 +47,6 @@ defineProps<{ compact?: boolean; sidebar?: boolean; large?: boolean }>()
 
 @media (max-width: 639px) {
   .cinema-logo:not(.is-large) { --cinema-logo-mark-width: 32px; }
-  .cinema-logo:not(.in-sidebar):not(.is-large) .cinema-logo-wordmark { display: none; }
+  .cinema-logo:not(.in-sidebar):not(.is-large):not(.has-mobile-wordmark) .cinema-logo-wordmark { display: none; }
 }
 </style>

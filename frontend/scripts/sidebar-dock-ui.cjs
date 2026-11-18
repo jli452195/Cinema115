@@ -204,7 +204,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   await nav().locator('a[href="/115"]').click(); await page.waitForURL('**/115')
   await expanded()
   assert.equal(await nav().locator('a > span:visible').count(), 10)
-  // Role scope stays unchanged, and the mobile drawer keeps its ordinary layout.
+  // 普通用户保留原有权限，首页显示底栏，通知页仍可打开旧侧栏。
   role = 'user'
   await page.goto(origin + '/movie', { waitUntil: 'networkidle' }); await resting()
   assert.deepEqual(await links().allTextContents(), ['我的播放', '我的追更'])
@@ -212,6 +212,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
   close((await boxes())[0].height, 44)
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await sidebar().count(), 0)
+  const mobileNav = page.getByRole('navigation', { name: '手机主导航', exact: true })
+  assert.deepEqual(await mobileNav.getByRole('link').allTextContents(), ['首页', '订阅', '更新'])
+  assert.equal(await page.getByRole('button', { name: '打开功能导航', exact: true }).count(), 0)
+  await page.goto(origin + '/notifications', { waitUntil: 'networkidle' })
   await page.locator('.workbench-header .brand-link').click()
   const drawer = page.getByRole('dialog', { name: '功能导航', exact: true })
   await drawer.waitFor()

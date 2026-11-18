@@ -16,6 +16,7 @@ import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useManagementSidebar } from '../composables/useManagementSidebar'
 import { useScrollBoundary } from '../composables/useScrollBoundary'
 import { useAnchoredMenuMotion } from '../composables/useAnchoredMenuMotion'
+import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
 const props = defineProps<{
   overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string
@@ -42,9 +43,26 @@ let scrollFrame: number | undefined
 const compactViewport = window.matchMedia('(max-width: 639px)')
 const compact = ref(compactViewport.matches)
 const mobileDetail = computed(() => compact.value && !!props.detailNavigation)
+const mobileSection = computed(() => compact.value && !props.detailNavigation ? mobileWorkspaceSection(route.name) : undefined)
+const mobileTabs = computed(() => {
+  if (mobileSection.value === 'home') return [
+    { key: 'movie', label: '电影', to: rememberedDashboardPaths.movie, selected: route.name === 'movie' },
+    { key: 'tv', label: '剧集', to: rememberedDashboardPaths.tv, selected: route.name === 'tv' || route.name === 'home' },
+  ]
+  if (mobileSection.value === 'subscriptions' && isPortalAdmin.value) return [
+    { key: 'follows', label: '我的追更', to: '/follows', selected: route.name === 'my-follows' },
+    { key: 'manage', label: '订阅管理', to: '/follows/manage', selected: route.name === 'follow-management' },
+    { key: 'rss', label: 'RSS 追番', to: '/anime', selected: route.path === '/anime' || route.path.startsWith('/anime/') },
+  ]
+  return []
+})
+const mobileTabsRef = ref<HTMLElement>()
+const { indicatorStyle: mobileIndicatorStyle } = useSlidingIndicator(mobileTabsRef, '[aria-current="page"]', [mobileTabs], {
+  insetY: 3, durationMs: 280, easing: 'cubic-bezier(.22,1,.36,1)',
+})
 function smoothstep(value: number) { return value * value * (3 - 2 * value) }
 function updateHeaderScroll() {
-  if (mobileDetail.value) return
+  if (mobileDetail.value || mobileSection.value) return
   // 已安装的 PWA 使用与系统栏相同的实色，不随海报和滚动改变透明度。
   if (isStandalone.value) {
     header.value?.style.setProperty('--header-surface-progress', '1')
@@ -66,7 +84,7 @@ function updateHeaderScroll() {
   header.value?.style.setProperty('--header-active-opacity', (0.45 + progress * 0.55).toFixed(4))
 }
 function onScroll() {
-  if (isStandalone.value || mobileDetail.value) return
+  if (isStandalone.value || mobileDetail.value || mobileSection.value) return
   if (!props.tonalSurface) {
     scrollY.value = window.scrollY
     return
@@ -118,20 +136,18 @@ const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const closingForTheme = ref(false)
 function accountMenuOrigin() {
-  return mobileDetail.value ? accountButton.value?.closest<HTMLElement>('.header-actions') || accountButton.value : accountButton.value
+  return (mobileDetail.value || mobileSection.value) ? accountButton.value?.closest<HTMLElement>('.header-actions') || accountButton.value : accountButton.value
 }
 const accountMenuMotion = useAnchoredMenuMotion({
-  origin: accountMenuOrigin,
   compact: () => compactViewport.matches,
   immediate: () => closingForTheme.value,
 })
 const accountMenuSizes = new WeakMap<Element, string>()
-let accountOpenedAt = 0
 let accountLeave: Promise<void> | undefined
 let finishAccountLeave: (() => void) | undefined
 let leavingAccountElement: Element | undefined
 const scrollY = ref(0)
-watch(() => [props.tonalSurface, props.overBackdrop, mobileDetail.value], onScroll, { flush: 'post' })
+watch(() => [props.tonalSurface, props.overBackdrop, mobileDetail.value, mobileSection.value], onScroll, { flush: 'post' })
 const highlightOverBackdrop = computed(() => !isStandalone.value && props.overBackdrop && !props.tonalSurface && scrollY.value < 64)
 const headerStyle = computed(() => {
   if (props.tonalSurface) return {}
@@ -203,25 +219,57 @@ function isWithinAccount(target: EventTarget | null) {
   return target instanceof Node && (accountButton.value?.contains(target) || header.value?.querySelector('#header-management')?.contains(target))
 }
 function onPointerDown(event: PointerEvent) {
-  if (accountOpen.value && compactViewport.matches && performance.now() - accountOpenedAt < 300) {
-    const source = accountMenuOrigin()?.getBoundingClientRect()
-    if (source && event.clientX >= source.left && event.clientX <= source.right && event.clientY >= source.top && event.clientY <= source.bottom) {
-      event.preventDefault()
-      closePanels()
-      return
-    }
+  if (!compactViewport.matches && !isWithinAccount(event.target)) closePanels()
+}
+function isInside(event: MouseEvent, element?: HTMLElement) {
+  const box = element?.getBoundingClientRect()
+  return !!box && event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom
+}
+function onAccountMenuClick(event: MouseEvent) {
+  if (!compactViewport.matches || !event.detail || !(event.currentTarget instanceof HTMLElement)) return
+  const menu = event.currentTarget
+  const scrim = event.target instanceof HTMLElement && event.target.hasAttribute('data-menu-scrim')
+  if (!accountOpen.value) {
+    if (scrim && isInside(event, accountButton.value)) toggleAccount(event)
+    return
   }
-  if (!isWithinAccount(event.target)) closePanels()
+  const entering = menu.dataset.menuMotion === 'entering'
+  const panel = menu.querySelector<HTMLElement>('[data-menu-panel]')
+  // 面板初始是透明的，避免误触尚未露出的选项。
+  const actionable = !entering || !!panel && Number(getComputedStyle(panel).opacity) >= .2
+  const control = event.target instanceof Element && event.target.closest('[data-menu-content] :is(a, button)')
+  if (control && actionable) return
+  if (control) {
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  if (entering && isInside(event, accountMenuOrigin())) {
+    event.preventDefault()
+    event.stopPropagation()
+    closePanels()
+    return
+  }
+  if (entering && (control || isInside(event, menu))) {
+    // 提前点按时先展开到位，再确认是否点中了主题按钮；不替尚未显示的其他选项执行操作。
+    accountMenuMotion.finish(menu)
+    const themeButton = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLButtonElement>('button.theme-toggle')
+    if (themeButton && menu.contains(themeButton)) {
+      themeButton.dispatchEvent(new MouseEvent('click', { clientX: event.clientX, clientY: event.clientY, detail: event.detail }))
+    }
+    return
+  }
+  if (scrim) closePanels()
 }
 function onFocusOut(event: FocusEvent) {
+  // 触摸点按可能没有后续焦点，由菜单或遮罩处理这次手势。
+  if (compactViewport.matches && !event.relatedTarget) return
   if (isWithinAccount(event.relatedTarget)) return
   // 子面板可能在同一次更新中挂载后才接收焦点。
   void nextTick(() => { if (!isWithinAccount(document.activeElement)) closePanels() })
 }
 function activateAccountMenu(element: Element) {
-  accountOpenedAt = performance.now()
   syncAccountMenuAnchor(element)
-  element.removeAttribute('inert')
+  element.querySelector('[data-menu-panel]')?.removeAttribute('inert')
   element.removeAttribute('aria-hidden')
 }
 function enterAccountMenu(element: Element, done: () => void) {
@@ -232,7 +280,8 @@ function deactivateAccountMenu(element: Element) {
   completeAccountLeave()
   leavingAccountElement = element
   accountLeave = new Promise(resolve => { finishAccountLeave = resolve })
-  element.setAttribute('inert', '')
+  // 退场中停用菜单项，但遮罩继续接住点按，直到玻璃动画结束。
+  element.querySelector('[data-menu-panel]')?.setAttribute('inert', '')
   element.setAttribute('aria-hidden', 'true')
 }
 function syncAccountMenuAnchor(element?: Element) {
@@ -284,7 +333,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-workspace': mobileSection, 'mobile-subscriptions': mobileSection === 'subscriptions' }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
@@ -294,17 +343,27 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
           <span class="detail-nav-name">{{ detailNavigation.title }}</span><span v-if="detailNavigation.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
         </div>
       </div>
-      <button v-if="!desktopSidebar && !mobileDetail" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" v-tooltip="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
+      <div v-if="mobileSection" class="workspace-brand glass-pill-surface">
+        <CinemaLogo v-if="mobileSection === 'home'" mobile-wordmark />
+        <span v-else>{{ mobileSection === 'subscriptions' ? '订阅' : '更新日历' }}</span>
+      </div>
+      <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileSection === 'home' ? '影视分类' : '订阅导航'" class="workspace-tabs glass-pill-surface">
+        <span class="workspace-tab-indicator" :style="mobileIndicatorStyle" aria-hidden="true"></span>
+        <RouterLink v-for="tab in mobileTabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
+          <a :href="href" :aria-current="tab.selected ? 'page' : undefined" @click="navigate">{{ tab.label }}</a>
+        </RouterLink>
+      </nav>
+      <button v-if="!desktopSidebar && !mobileDetail && !mobileSection" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" v-tooltip="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
       </button>
-      <nav v-if="!mobileDetail" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2" :class="{ 'has-anime-shortcut': showAnimeShortcut }">
+      <nav v-if="!mobileDetail && !mobileSection" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2" :class="{ 'has-anime-shortcut': showAnimeShortcut }">
         <div class="nav-indicator absolute inset-y-0 z-0 rounded-[0.6rem] bg-[#f1f5f9] dark:bg-slate-800" :style="navIndicatorStyle"></div>
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: movieActive }">电影</RouterLink>
         <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: tvActive }">剧集</RouterLink>
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
         <RouterLink v-if="showAnimeShortcut" to="/anime" aria-label="动漫订阅" :aria-current="animeActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: animeActive }">订阅</RouterLink>
       </nav>
-      <div class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail }">
+      <div class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail || mobileSection }">
         <RouterLink to="/notifications" class="icon-button desktop-action relative" v-tooltip="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
           <span v-if="websiteUnread" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] leading-4 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
@@ -323,11 +382,11 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         </button>
       </div>
       <Transition :css="false" @before-enter="activateAccountMenu" @enter="enterAccountMenu" @enter-cancelled="accountMenuMotion.cancel" @before-leave="deactivateAccountMenu" @leave="accountMenuMotion.leave" @after-leave="completeAccountLeave" @leave-cancelled="element => { accountMenuMotion.cancel(element); completeAccountLeave(element) }">
-        <HeaderAccountMenu v-if="accountOpen" :before-theme-change="prepareThemeChange" @close="closePanels" @logout="emit('logout')" />
+        <HeaderAccountMenu v-if="accountOpen" :show-follows="!mobileSection" :before-theme-change="prepareThemeChange" @click.capture="onAccountMenuClick" @close="closePanels" @logout="emit('logout')" />
       </Transition>
     </div>
   </header>
-  <ManagementSidebar v-if="!managedSidebar && !sidebarLayout" ref="navigationSidebar" mobile-only :desktop="desktop" />
+  <ManagementSidebar v-if="!managedSidebar && !sidebarLayout && !mobileSection" ref="navigationSidebar" mobile-only :desktop="desktop" />
 </template>
 
 
@@ -464,7 +523,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 @media (max-width: 639px) {
   .desktop-action { display: none; }
   .has-anime-shortcut .top-link { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; padding: 0 7px; }
-  [data-menu-origin-owned] { opacity: 0; }
   .account-trigger { transition: color 200ms, background-color 200ms; }
   .account-trigger > svg, .account-trigger > span { transition: transform 140ms ease; }
   .account-trigger:active > svg { transform: scale(.85); }
@@ -500,6 +558,42 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 @media (display-mode: standalone) {
   /* 系统栏安全区保持实色，下面的操作胶囊仍沿用用户选择的玻璃材质。 */
   .mobile-detail .header-surface, .mobile-detail .header-background {
+    display: block; height: var(--app-safe-top); background: rgb(var(--app-chrome-color)); opacity: 1; box-shadow: none;
+  }
+}
+/* 主入口使用独立玻璃胶囊；详情页与桌面顶栏保留原有布局。 */
+.workbench-header.mobile-workspace { pointer-events: none; border-color: transparent; }
+.mobile-workspace::after, .mobile-workspace .header-surface, .mobile-workspace .header-background { display: none; }
+.mobile-workspace .header-inner { gap: 7px; padding-inline: max(12px, var(--app-safe-left)) max(12px, var(--app-safe-right)); }
+.workspace-brand {
+  display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; padding-inline: 11px;
+  font-size: 14px; font-weight: 700; white-space: nowrap; pointer-events: auto;
+}
+.workspace-brand :deep(.cinema-logo) { --cinema-logo-mark-width: 23px; }
+.workspace-brand :deep(.cinema-logo-wordmark) { font-size: 13px; }
+.workspace-tabs { display: flex; flex: 1; min-width: 0; max-width: 280px; gap: 1px; padding: 0 3px; pointer-events: auto; }
+.workspace-tabs > a {
+  position: relative; display: grid; flex: 1; min-width: 0; min-height: 44px; place-items: center;
+  border-radius: 999px; color: rgb(var(--content-secondary)); font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.mobile-subscriptions .workspace-tabs > a { font-size: 12px; }
+.workspace-tabs > a[aria-current] { color: rgb(var(--selection-content)); }
+.workspace-tab-indicator { position: absolute; border-radius: 999px; background: rgb(var(--selection-surface)); pointer-events: none; }
+.mobile-workspace .header-actions { margin-left: auto; flex: none; height: 44px; gap: 0; padding: 0; border: 0; pointer-events: auto; }
+.mobile-workspace .icon-button { width: 44px; height: 44px; border-radius: 50%; color: var(--glass-text); }
+.mobile-workspace .icon-button:hover, .mobile-workspace .icon-button.selected { background: rgb(var(--surface-hover) / .56); color: var(--glass-text); }
+.mobile-workspace .header-actions > a[aria-label='搜索影视'] { position: relative; }
+.mobile-workspace .header-actions > a[aria-label='搜索影视']::after { content: ''; position: absolute; right: 0; width: 1px; height: 16px; background: var(--glass-edge); }
+.mobile-workspace :is(a, button):focus-visible { outline-color: rgb(var(--focus)); outline-offset: -2px; }
+.mobile-workspace :deep(#header-management) { right: max(12px, var(--app-safe-right)); }
+@media (max-width: 359px) {
+  .mobile-workspace .header-inner { gap: 5px; padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
+  .workspace-brand { padding-inline: 8px; }
+  .mobile-workspace .workspace-brand :deep(.cinema-logo-wordmark) { display: none; }
+  .mobile-subscriptions .workspace-brand { display: none; }
+}
+@media (display-mode: standalone) {
+  .mobile-workspace .header-surface, .mobile-workspace .header-background {
     display: block; height: var(--app-safe-top); background: rgb(var(--app-chrome-color)); opacity: 1; box-shadow: none;
   }
 }

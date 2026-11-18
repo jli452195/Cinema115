@@ -153,12 +153,12 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.evaluate(() => history.replaceState({ ...history.state, back: 'https://outside.invalid/path' }, ''))
     await page.locator('.detail-nav-back').click()
     await page.waitForURL('**/movie')
-    assert.equal(await page.getByRole('navigation', { name: '影视导航' }).isVisible(), true)
+    assert.equal(await page.getByRole('navigation', { name: '影视分类' }).isVisible(), true)
     await navigate('/tv/1'); await ready()
     await navigate('/tv/2'); await ready()
     await page.locator('.detail-nav-back').click()
     await page.waitForURL('**/tv/1'); await ready()
-    passed.push('外站历史使用电影回退页，同源详情历史正常返回，列表导航保持原样')
+    passed.push('外站历史使用电影回退页，同源详情历史正常返回，可返回新版电影列表')
 
     await page.evaluate(() => {
       let standalone = false

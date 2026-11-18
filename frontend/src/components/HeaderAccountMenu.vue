@@ -9,13 +9,14 @@ import { websiteUnread } from '../composables/useWebsiteNotifications'
 import { isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
 
 const emit = defineEmits<{ close: []; logout: [] }>()
-defineProps<{
+const props = defineProps<{
   beforeThemeChange?: () => void | Promise<void>
+  showFollows?: boolean
 }>()
 const route = useRoute()
 const personalLinks = computed<AccountLink[]>(() => [
   ...(!isPortalAdmin.value ? [{ label: '我的播放', to: '/account/playback', icon: 'playback' as const }] : []),
-  { label: '我的追更', to: '/follows', icon: 'follows' },
+  ...(props.showFollows !== false ? [{ label: '我的追更', to: '/follows', icon: 'follows' as const }] : []),
 ])
 
 function isActive(link: AccountLink) {
@@ -31,52 +32,47 @@ function logout() {
 
 <template>
   <nav id="header-management" aria-label="账户菜单" class="account-menu">
-    <div class="account-scrim" data-menu-scrim aria-hidden="true" @pointerdown.prevent="emit('close')"></div>
-    <div class="account-surface account-main floating-surface">
-      <div class="account-glass" data-menu-material aria-hidden="true"></div>
-      <div class="account-rim" data-menu-surface aria-hidden="true"></div>
-      <div class="account-clip" data-menu-clip>
-        <div class="account-origin" data-menu-origin aria-hidden="true" inert></div>
-        <div class="account-content" data-menu-content data-auto-scrollbar>
-          <div class="account-summary">
-            <span class="account-avatar" aria-hidden="true">
-              <NavigationIcon name="user" :size="20" />
-            </span>
-            <div class="account-identity">
-              <p class="account-name" :title="portalUser?.username">{{ portalUser?.username }}</p>
-              <span class="account-role">{{ isPortalAdmin ? '管理员' : '普通用户' }}</span>
-            </div>
+    <div class="account-scrim" data-menu-scrim aria-hidden="true" @pointerdown.prevent></div>
+    <div class="account-surface account-main floating-surface" data-menu-panel>
+      <div class="account-content" data-menu-content data-auto-scrollbar>
+        <div class="account-summary">
+          <span class="account-avatar" aria-hidden="true">
+            <NavigationIcon name="user" :size="20" />
+          </span>
+          <div class="account-identity">
+            <p class="account-name" :title="portalUser?.username">{{ portalUser?.username }}</p>
+            <span class="account-role">{{ isPortalAdmin ? '管理员' : '普通用户' }}</span>
           </div>
+        </div>
 
-          <div class="account-group mobile-utilities" role="group" aria-label="通知与外观">
-            <RouterLink to="/notifications" class="account-row ambient-glow" :class="{ 'is-active': route.path === '/notifications' }" :aria-current="route.path === '/notifications' ? 'page' : undefined" @click="emit('close')">
-              <NavigationIcon name="bell" class="account-icon" />
-              <span>站内通知</span>
-              <span v-if="websiteUnread" class="account-unread" :aria-label="`${websiteUnread} 条未读`">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
-            </RouterLink>
-            <ThemeSwitcher show-label :before-change="beforeThemeChange" />
-          </div>
+        <div class="account-group mobile-utilities" role="group" aria-label="通知与外观">
+          <RouterLink to="/notifications" class="account-row ambient-glow" :class="{ 'is-active': route.path === '/notifications' }" :aria-current="route.path === '/notifications' ? 'page' : undefined" @click="emit('close')">
+            <NavigationIcon name="bell" class="account-icon" />
+            <span>站内通知</span>
+            <span v-if="websiteUnread" class="account-unread" :aria-label="`${websiteUnread} 条未读`">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
+          </RouterLink>
+          <ThemeSwitcher show-label :before-change="beforeThemeChange" />
+        </div>
 
-          <div class="account-group" role="group" aria-label="个人">
-            <RouterLink v-for="link in personalLinks" :key="link.to" :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isActive(link) }" :aria-current="isActive(link) ? 'page' : undefined" @click="emit('close')">
-              <NavigationIcon :name="link.icon" class="account-icon" />
-              <span>{{ link.label }}</span>
-            </RouterLink>
-          </div>
+        <div v-if="personalLinks.length" class="account-group" role="group" aria-label="个人">
+          <RouterLink v-for="link in personalLinks" :key="link.to" :to="link.to" class="account-row ambient-glow" :class="{ 'is-active': isActive(link) }" :aria-current="isActive(link) ? 'page' : undefined" @click="emit('close')">
+            <NavigationIcon :name="link.icon" class="account-icon" />
+            <span>{{ link.label }}</span>
+          </RouterLink>
+        </div>
 
-          <div v-if="isPortalAdmin" class="account-group connection-test-utility">
-            <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
-              <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
-              <span>服务连通性</span>
-            </button>
-          </div>
+        <div v-if="isPortalAdmin" class="account-group connection-test-utility">
+          <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
+            <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
+            <span>服务连通性</span>
+          </button>
+        </div>
 
-          <div class="account-group">
-            <button type="button" class="account-row account-logout" @click="logout">
-              <NavigationIcon name="logout" class="account-icon" />
-              <span>退出登录</span>
-            </button>
-          </div>
+        <div class="account-group">
+          <button type="button" class="account-row account-logout" @click="logout">
+            <NavigationIcon name="logout" class="account-icon" />
+            <span>退出登录</span>
+          </button>
         </div>
       </div>
     </div>
@@ -96,6 +92,7 @@ function logout() {
   max-width: calc(100vw - 1.5rem);
   margin-top: 0.5rem;
 }
+.account-menu[aria-hidden="true"] { pointer-events: none; }
 .account-surface {
   --account-text: var(--floating-surface-text);
   --account-muted: var(--floating-surface-muted);
@@ -104,37 +101,10 @@ function logout() {
   border-radius: var(--account-radius);
   color: var(--account-text);
   border: 0;
-  background: transparent;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--floating-surface-edge), var(--floating-surface-shadow);
 }
-.account-glass {
-  position: absolute;
-  inset: calc(0px - var(--menu-reserve, 0px));
-  background: var(--floating-surface-glass);
-  -webkit-backdrop-filter: var(--floating-surface-filter);
-  backdrop-filter: var(--floating-surface-filter);
-  clip-path: inset(var(--menu-reserve, 0px) round var(--account-radius));
-  pointer-events: none;
-}
-.account-rim {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  border: 1px solid var(--floating-surface-edge);
-  border-radius: inherit;
-  box-shadow: var(--floating-surface-shadow);
-  pointer-events: none;
-}
-.account-clip { position: relative; border-radius: inherit; clip-path: inset(0 round var(--account-radius)); }
-.account-origin { position: absolute; opacity: 0; pointer-events: none; transform-origin: center; }
-.account-origin :deep(.glass-pill-surface)::before { display: none; }
 .account-scrim { display: none; }
 .account-content {
-  transform-origin: right top;
   max-height: calc(100dvh - var(--workbench-header-height) - 1rem);
   padding: calc(0.5rem + 1px);
   overflow-y: auto;
@@ -205,7 +175,7 @@ function logout() {
     z-index: 20;
     pointer-events: none;
   }
-  .account-clip { pointer-events: auto; }
+  .account-surface { transform-origin: calc(100% - 22px) top; pointer-events: auto; }
   .account-scrim { display: block; position: fixed; inset: 0; z-index: -1; background: var(--glass-scrim); pointer-events: auto; }
   .account-content { max-height: max(0px, calc(var(--menu-available-height, calc(100dvh - var(--app-safe-top) - 20px)) - max(12px, var(--app-safe-bottom)))); }
 }
