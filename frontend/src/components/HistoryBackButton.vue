@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 
-const props = defineProps<{ fallback: string; iconOnly?: boolean }>()
+const props = defineProps<{ fallback: string; target?: string; iconOnly?: boolean }>()
 const router = useRouter()
 
 function goBack() {
   const previous = window.history.state?.back
+  if (props.target) {
+    const destination = router.resolve(props.target).fullPath
+    if (previous === destination) router.back()
+    else void router.replace(destination)
+    return
+  }
   if (typeof previous === 'string' && previous) {
     try {
       const target = new URL(previous, window.location.href)

@@ -46,6 +46,26 @@ const season = computed(() => /^(20\d{2}|2100)-(01|04|07|10)$/.test(String(route
 const day = computed(() => route.query.day === 'all' ? 'all' : /^(?:[1-9]|1[0-2])$/.test(String(route.query.day)) && Number(route.query.day) <= labels.value.length ? Number(route.query.day) : season.value === currentSeason.value ? today.value : 'all')
 const page = computed(() => /^\d{1,3}$/.test(String(route.query.page)) ? Math.max(1, Number(route.query.page)) : 1)
 const input = ref(catalogDraft(provider.value as AnimeProviderID) ?? keyword.value), inputError = ref(''), inputElement = ref<HTMLInputElement>()
+const searchOpen = ref(false), searchTrigger = ref<HTMLButtonElement>()
+const searchVisible = computed(() => !compact.value || searchOpen.value)
+const catalogReturn = computed(() => ({ returnTo: route.fullPath }))
+const searchLabel = computed(() => provider.value === 'garden' ? '搜 Garden' : '搜 ' + providerName.value)
+async function openSearch() {
+  searchOpen.value = true
+  await nextTick()
+  inputElement.value?.focus({ preventScroll: true })
+}
+async function closeSearch() {
+  searchOpen.value = false
+  inputError.value = ''
+  await nextTick()
+  searchTrigger.value?.focus({ preventScroll: true })
+}
+function dismissSearch(event: KeyboardEvent) {
+  if (!compact.value || event.isComposing) return
+  event.preventDefault()
+  void closeSearch()
+}
 const result = ref<AnimeCatalog>(), loading = ref(false), error = ref('')
 const seasonIndex = ref<AnimeCatalogSeasons>(), seasonsLoading = ref(false), seasonsError = ref('')
 const key = computed(() => `${provider.value}:${mode.value}:${mode.value === 'calendar' ? season.value : keyword.value}`)
@@ -159,10 +179,17 @@ function submit() {
   const value = input.value.trim()
   inputError.value = !value ? '请输入番剧名称' : Array.from(value).length > (provider.value === 'anibt' ? 120 : 128) || /[\u0000-\u001f\u007f]/.test(value) ? `名称最多 ${provider.value === 'anibt' ? 120 : 128} 个字符，不能含控制字符` : ''
   if (inputError.value) return
+  if (compact.value) void closeSearch()
   if (mode.value === 'search' && keyword.value === value) { void load(true); return }
   navigate({ view: 'search', q: value, page: undefined, item: undefined })
 }
-function clearSearch() { input.value = ''; inputError.value = ''; navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined }); inputElement.value?.focus() }
+function clearSearch() {
+  input.value = ''
+  inputError.value = ''
+  navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })
+  if (compact.value) void closeSearch()
+  else inputElement.value?.focus()
+}
 function savePosition() { rememberAnimeScroll(scrollKey.value, window.scrollY) }
 async function restorePosition(target: string) {
   cancelAnimationFrame(restoreFrame)
@@ -215,26 +242,48 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 </script>
 
 <template>
-  <ManagementLayout compact-heading title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
-    <template v-if="compact && available" #titleTools>
-      <div class="catalog-controls catalog-controls-inline">
-        <AnimeQuarterNavigation v-if="mode === 'calendar'" compact :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
-        <button v-else type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="16" aria-hidden="true" />季度浏览</button>
-      </div>
+  <ManagementLayout mobile-section-heading title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
+    <template #mobile-actions>
+      <RouterLink :to="{ path: '/anime/subscriptions', query: catalogReturn }" class="catalog-plan-link" aria-label="查看动漫订阅计划">
+        <IconBookmark :size="17" aria-hidden="true" /><span>订阅计划</span>
+      </RouterLink>
+      <RouterLink :to="{ path: '/anime/settings', query: catalogReturn }" class="catalog-settings-link" aria-label="动漫订阅设置">
+        <IconSettings :size="20" aria-hidden="true" />
+      </RouterLink>
     </template>
-    <template #actions><RouterLink :to="{ path: '/anime/settings', query: { returnTo: route.fullPath } }" class="anime-refresh" aria-label="动漫订阅设置"><IconSettings :size="18" aria-hidden="true" /><span class="hidden sm:inline">设置</span></RouterLink><RouterLink to="/anime/subscriptions" class="anime-refresh catalog-my-subscriptions" aria-label="我的订阅"><IconBookmark :size="18" aria-hidden="true" /><span>我的订阅</span></RouterLink><button v-if="!compact" type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+    <template #actions>
+      <RouterLink :to="{ path: '/anime/settings', query: catalogReturn }" class="anime-refresh" aria-label="动漫订阅设置"><IconSettings :size="18" aria-hidden="true" />设置</RouterLink>
+      <RouterLink to="/anime/subscriptions" class="anime-refresh" aria-label="我的订阅"><IconBookmark :size="18" aria-hidden="true" />我的订阅</RouterLink>
+      <button type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" />刷新</button>
+    </template>
     <div ref="browserElement" class="anime-browser" :style="viewportMinHeight ? { minHeight: `${viewportMinHeight}px` } : undefined">
       <div class="catalog-providers" role="group" aria-label="选择订阅站点"><AnimeProviderButton v-for="site in animeProviders" :compact="compact" :pill="compact" :key="site.id" :provider="site.id" :name="site.name" :available="site.available" :selected="provider === site.id" @select="switchProvider(site.id)" /></div>
       <template v-if="available">
-        <form class="anime-search-form catalog-search" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit"><label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label><div class="anime-search-input"><IconSearch :size="19" aria-hidden="true" /><input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="`在${providerName}搜索番剧`" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" /><button v-if="input || mode === 'search'" type="button" class="anime-input-clear" aria-label="清空搜索并返回日历" @click="clearSearch"><IconX :size="17" aria-hidden="true" /></button></div><button type="submit" class="anime-search-submit">搜索</button></form>
-        <p v-if="inputError" id="catalog-input-error" role="alert" class="anime-context text-red-600">{{ inputError }}</p>
+        <div v-if="compact && !searchOpen" class="catalog-workspace-controls">
+          <AnimeQuarterNavigation v-if="mode === 'calendar'" compact :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
+          <button v-else type="button" class="catalog-calendar-toggle" @click="clearSearch"><IconCalendar :size="17" aria-hidden="true" />返回{{ seasonLabel(season) }}</button>
+          <button ref="searchTrigger" type="button" class="catalog-search-trigger" :aria-label="`在${providerName}搜索番剧`" aria-expanded="false" aria-controls="catalog-site-search" @click="openSearch">
+            <IconSearch :size="17" aria-hidden="true" /><span>{{ searchLabel }}</span>
+          </button>
+        </div>
+        <form v-show="searchVisible" id="catalog-site-search" class="anime-search-form catalog-search" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit" @keydown.esc="dismissSearch">
+          <label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label>
+          <div class="anime-search-input">
+            <IconSearch :size="19" aria-hidden="true" />
+            <input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="`在${providerName}搜索番剧`" enterkeyhint="search" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" />
+            <button v-if="input || mode === 'search'" type="button" class="anime-input-clear" aria-label="清空搜索并返回季度浏览" @click="clearSearch"><IconX :size="17" aria-hidden="true" /></button>
+          </div>
+          <button type="submit" class="anime-search-submit">搜索</button>
+          <button v-if="compact" type="button" class="catalog-search-close" aria-label="收起站点搜索" aria-expanded="true" aria-controls="catalog-site-search" @click="closeSearch">收起</button>
+        </form>
+        <p v-if="inputError && searchVisible" id="catalog-input-error" role="alert" class="anime-context text-red-600">{{ inputError }}</p>
         <div v-if="!compact" class="catalog-controls">
           <AnimeQuarterNavigation v-if="mode === 'calendar'" :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
           <template v-else><button type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="17" aria-hidden="true" />季度浏览</button><span class="anime-context catalog-scope">{{ providerName }}搜索结果</span></template>
         </div>
         <p v-if="mode === 'calendar' && (!compact || seasonsError || seasonsLoading)" class="catalog-range"><span v-if="!compact">{{ providerName }}季度收录，范围以原站为准。</span><span v-if="seasonsError">季度目录暂时无法更新。<button type="button" :disabled="seasonsLoading" @click="loadSeasons(true)">重试目录</button></span><span v-else-if="seasonsLoading">正在读取季度目录…</span></p>
-        <AnimeCatalogCategories v-if="mode === 'calendar'" :entries="categoryEntries" :model-value="String(day)" :label="`${providerName}日历分类`" :today="season === currentSeason ? String(today) : undefined" @select="value => navigate({ day: value, page: undefined, item: undefined })" />
-        <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? day === 'all' ? `${seasonLabel(season)}收录` : labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><div class="catalog-result-tools"><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span><button v-if="compact" type="button" class="anime-refresh catalog-inline-refresh" :disabled="loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="17" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /></button></div></div>
+        <AnimeCatalogCategories v-if="mode === 'calendar'" :compact="compact" :entries="categoryEntries" :model-value="String(day)" :label="`${providerName}日历分类`" :today="season === currentSeason ? String(today) : undefined" @select="value => navigate({ day: value, page: undefined, item: undefined })" />
+        <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? day === 'all' ? `${seasonLabel(season)}收录` : labels[day - 1] : keyword ? `${compact ? providerName + ' · ' : ''}“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><div class="catalog-result-tools"><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span><button v-if="compact" type="button" class="anime-refresh catalog-inline-refresh" :disabled="loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="17" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /></button></div></div>
         <div class="anime-feedback" :class="{ 'has-feedback': error || loading && result || result && result.expiresAt <= Date.now() }" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
         <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span><span></span><span v-if="provider === 'anibt'"></span></div></div>
         <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="(item, index) in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><AnibtAnimeCard v-for="(item, index) in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><MikanAnimeCard v-for="(item, index) in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /></div>
@@ -286,15 +335,33 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 .dark .catalog-range button { color: #93c5fd; }
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) {
-  .catalog-controls-inline { margin-top: 0; }
+  .anime-browser { padding-top: 8px; }
+  .catalog-plan-link, .catalog-settings-link, .catalog-search-trigger, .catalog-search-close {
+    display: inline-flex; flex: none; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; gap: 5px;
+    padding-inline: 9px; border-radius: 999px; color: rgb(var(--selection-content)); font-size: 12px; font-weight: 600;
+  }
+  .catalog-settings-link { color: rgb(var(--content-secondary)); }
+  .catalog-plan-link, .catalog-search-trigger { background: rgb(var(--selection-surface)); }
+  .catalog-settings-link:hover, .catalog-search-close:hover { background: rgb(var(--surface-hover)); }
+  .catalog-plan-link:focus-visible, .catalog-settings-link:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+  .catalog-workspace-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .catalog-workspace-controls .catalog-calendar-toggle { flex: none; color: rgb(var(--selection-content)); }
   .anime-refresh { min-width: 44px; min-height: 44px; padding-inline: 8px; }
   .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 8px; }
-  .catalog-search :is(.anime-search-input, .anime-search-submit) { min-height: 44px; }
+  .catalog-search { gap: 5px; }
+  .catalog-search :is(.anime-search-input, .anime-search-submit, .anime-input-clear) { min-width: 44px; min-height: 44px; }
+  .catalog-search .anime-search-input { gap: 4px; padding-inline-start: 8px; }
+  .catalog-search input { font-size: 16px; }
+  .catalog-search .anime-search-submit { padding-inline: 9px; }
+  .catalog-search-close { padding-inline: 5px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .catalog-search { animation: catalog-open-search 140ms ease-out; }
+  }
+  @keyframes catalog-open-search { from { opacity: .5; } to { opacity: 1; } }
   .catalog-range { margin-top: 4px; }
   .anime-results-heading { margin-top: 0; column-gap: 8px; }
   .catalog-result-tools { display: flex; align-items: center; }
   .catalog-inline-refresh { margin-right: -6px; }
   .anime-feedback:not(.has-feedback) { min-height: 0; padding-bottom: 0; }
 }
-@media (max-width: 359px) { .catalog-my-subscriptions span { display: none; } }
 </style>

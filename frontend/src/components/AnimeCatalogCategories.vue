@@ -1,14 +1,24 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import SegmentedControl from './SegmentedControl.vue'
 
 const props = defineProps<{
   entries: { value: string; label: string; count?: number; date?: string }[]
   modelValue: string
   label: string
   today?: string
+  compact?: boolean
 }>()
 defineEmits<{ select: [value: string] }>()
 const root = ref<HTMLElement>(), id = useId()
+const compactEntries = computed(() => new Map(props.entries.map(entry => [entry.value, {
+  ...entry,
+  text: entry.value === props.today && entry.date ? String(Number(entry.date.slice(-2))) : entry.label,
+}])))
+const compactOptions = computed(() => [...compactEntries.value.values()].map(entry => ({
+  value: entry.value,
+  label: [entry.label, entry.date, props.today === entry.value ? '今天' : undefined, entry.count === undefined ? undefined : `${entry.count} 部收录`].filter(Boolean).join('，'),
+})))
 let observer: ResizeObserver | undefined
 function revealSelected() {
   const el = root.value, selected = el?.querySelector<HTMLElement>('[aria-pressed="true"]')
@@ -18,12 +28,24 @@ function revealSelected() {
   else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
 }
 watch([() => props.modelValue, () => props.entries, () => props.label], async () => { await nextTick(); revealSelected() })
-onMounted(() => { observer = new ResizeObserver(revealSelected); if (root.value) observer.observe(root.value); revealSelected() })
+watch(root, el => {
+  observer?.disconnect()
+  if (!el) return
+  observer = new ResizeObserver(revealSelected)
+  observer.observe(el)
+  revealSelected()
+}, { flush: 'post' })
 onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
-  <div ref="root" class="catalog-days" role="group" :aria-label="label">
+  <SegmentedControl v-if="compact" class="catalog-compact-days" :model-value="modelValue" :options="compactOptions" :label="label" density="compact" appearance="mobile-line" @change="$emit('select', $event)">
+    <template #option="{ option }">
+      {{ compactEntries.get(option.value)?.text }}
+      <span v-if="option.value === today" class="catalog-today-marker" aria-hidden="true">今</span>
+    </template>
+  </SegmentedControl>
+  <div v-else ref="root" class="catalog-days" role="group" :aria-label="label">
     <button
       v-for="entry in entries"
       :key="entry.value"
@@ -38,7 +60,7 @@ onBeforeUnmount(() => observer?.disconnect())
     >
       <span v-if="today === entry.value" class="catalog-day-today" aria-hidden="true">今天</span>
       <span class="catalog-day-number" aria-hidden="true"><template v-if="entry.date">{{ Number(entry.date.slice(-2)) }}</template><template v-else-if="entry.count !== undefined">{{ entry.count }}</template><span v-else class="catalog-day-placeholder"></span></span>
-      <span class="catalog-day-meta" aria-hidden="true"><span class="catalog-day-label">{{ entry.value === 'all' ? '本季' : entry.label }}</span><span v-if="today === entry.value" class="catalog-day-today-inline">今天</span><span class="catalog-day-unit"><template v-if="!entry.date"><span v-if="entry.count !== undefined" class="catalog-day-inline-count">{{ entry.count }}</span>部收录</template><template v-else-if="entry.count !== undefined">{{ entry.count }} 部</template><span v-else class="catalog-day-placeholder catalog-day-count-placeholder"></span></span></span>
+      <span class="catalog-day-meta" aria-hidden="true"><span class="catalog-day-label">{{ entry.value === 'all' ? '本季' : entry.label }}</span><span class="catalog-day-unit"><template v-if="!entry.date">部收录</template><template v-else-if="entry.count !== undefined">{{ entry.count }} 部</template><span v-else class="catalog-day-placeholder catalog-day-count-placeholder"></span></span></span>
       <span :id="`${id}-${entry.value}`" class="sr-only">{{ entry.date ? `${entry.date}，` : '' }}{{ entry.count === undefined ? '收录数量待更新' : `${entry.count} 部收录` }}</span>
     </button>
   </div>
@@ -73,18 +95,8 @@ onBeforeUnmount(() => observer?.disconnect())
 @keyframes catalog-today-settle { from { transform: rotate(-8deg) scale(.92); } 65% { transform: rotate(8deg) scale(1.03); } to { transform: rotate(4deg); } }
 @media (hover: hover) and (pointer: fine) { .catalog-day-card:hover { --catalog-lift: -2px; border-color: rgb(148 163 184 / .3); background: #fff; box-shadow: 0 2px 7px rgb(15 23 42 / .05); } .catalog-day-card:hover .catalog-day-number { transform: scale(1.06); } .dark .catalog-day-card:hover { background: rgb(var(--color-slate-800)); box-shadow: 0 2px 7px rgb(0 0 0 / .12); } }
 .catalog-day-card:active { transform: translateY(0) scale(.98); }
-.catalog-day-today-inline, .catalog-day-inline-count { display: none; }
-@media (max-width: 639px) {
-  .catalog-days { gap: 6px; padding-block: 6px 4px; }
-  .catalog-day-card { flex: 0 0 auto; height: 44px; gap: 5px; padding-inline: 10px; border-radius: 999px; }
-  .catalog-day-card[aria-pressed="true"], .dark .catalog-day-card[aria-pressed="true"] { border-color: rgb(var(--focus) / .36); background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); box-shadow: none; }
-  .catalog-day-card::before, .catalog-day-today, .catalog-day-card:not(.has-date) .catalog-day-number, .is-today .catalog-day-label { display: none; }
-  .catalog-day-number { height: auto; font-size: 13px; letter-spacing: 0; }
-  .catalog-day-card[aria-pressed="true"] .catalog-day-number, .dark .catalog-day-card[aria-pressed="true"] .catalog-day-number { color: inherit; }
-  .catalog-day-meta { flex-direction: row; align-items: center; gap: 5px; }
-  .catalog-day-today-inline, .catalog-day-inline-count { display: inline; }
-  .catalog-day-today-inline { color: rgb(var(--selection-content)); font-size: 12px; font-weight: 650; }
-  .catalog-day-inline-count { margin-right: 2px; }
-}
+.catalog-compact-days { display: flex; width: 100%; margin-block: 4px 2px; }
+.catalog-compact-days :deep(.segmented-control-option) { min-width: 44px; padding-inline: 9px; }
+.catalog-today-marker { border-radius: 4px; padding-inline: 2px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-size: 10px; font-weight: 650; line-height: 14px; }
 @media (prefers-reduced-motion: reduce) { .catalog-day-card, .catalog-day-card::before, .catalog-day-number, .catalog-day-today { transition: none; animation: none !important; } .catalog-day-card:hover, .catalog-day-card:active, .catalog-day-card:hover .catalog-day-number { --catalog-lift: 0px; transform: none; } }
 </style>

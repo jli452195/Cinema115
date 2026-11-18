@@ -44,11 +44,11 @@ onBeforeUnmount(() => { controller?.abort(); document.title = previousTitle })
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader :over-backdrop="!!collection?.backdropUrl && hasImage(collection.backdropUrl)" @logout="$emit('logout')" />
+    <WorkbenchHeader :over-backdrop="!!collection?.backdropUrl && hasImage(collection.backdropUrl)" :mobile-page="{ title: collection?.name || '电影系列', fallback: '/movie' }" @logout="$emit('logout')" />
     <main class="relative min-w-0 flex-1 overflow-hidden">
       <div v-if="collection && hasImage(collection.backdropUrl)" class="pointer-events-none absolute inset-x-0 top-0 h-[560px]" aria-hidden="true"><img :src="tmdbImageURL(collection.backdropUrl)" alt="" referrerpolicy="no-referrer" class="h-full w-full object-cover opacity-[0.15]" @error="failedImages.add(collection.backdropUrl)"/><div class="absolute inset-0 bg-gradient-to-b from-slate-50/20 to-slate-50 dark:from-slate-950/20 dark:to-slate-950"></div></div>
       <div class="workbench-content relative mx-auto max-w-[1440px] px-4 pb-6 sm:px-8 lg:px-10">
-        <nav aria-label="系列导航" class="mb-8 flex items-center justify-between text-xs text-slate-400 dark:text-slate-400"><HistoryBackButton fallback="/movie" class="text-sm" /><span>电影系列</span></nav>
+        <nav aria-label="系列导航" class="mb-8 hidden sm:flex items-center justify-between text-xs text-slate-400 dark:text-slate-400"><HistoryBackButton fallback="/movie" class="text-sm" /><span>电影系列</span></nav>
         <div v-if="loading" role="status" aria-label="正在加载电影系列" class="grid gap-8 motion-safe:animate-pulse sm:grid-cols-[200px_1fr]"><div class="aspect-[2/3] w-48 rounded-2xl bg-slate-200 dark:bg-slate-700"></div><div class="space-y-6 py-5"><div class="h-10 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="h-24 rounded bg-slate-200 dark:bg-slate-700/60"></div></div></div>
         <section v-else-if="error" role="alert" class="rounded-2xl border border-red-100 bg-white p-8 text-center dark:border-red-400/20 dark:bg-slate-900"><h1 class="text-xl font-semibold">暂时无法加载系列</h1><p class="mt-3 text-sm text-red-600 dark:text-red-300">{{ error }}</p><button class="mt-5 rounded-lg bg-slate-900 px-5 py-2.5 text-sm text-white dark:bg-slate-700 dark:hover:bg-slate-600" @click="load">重新加载</button></section>
         <template v-else-if="collection">

@@ -500,6 +500,7 @@ watch(() => [detail.value?.id, props.kind, route.query.botSearch, isPortalAdmin.
   }
 }
 @media (max-width: 639px) {
+  .media-detail { --workbench-toolbar-height: 56px; --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top)); }
   .detail-content { padding-top: calc(var(--workbench-header-height) + 12px); }
   .detail-poster { width: clamp(180px, 52vw, 208px); box-shadow: 0 18px 40px -14px rgb(15 23 42 / 32%); }
   .detail-backdrop {

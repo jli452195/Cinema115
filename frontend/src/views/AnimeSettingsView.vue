@@ -202,8 +202,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ManagementLayout class="ars-layout" title="动漫订阅设置" description="统一管理 RSS 检查、自动归档、下载整理目录与 Telegram 通知。" @logout="$emit('logout')">
-    <template #actions><RouterLink :to="returnTo" class="ars-link"><IconArrowLeft :size="17" aria-hidden="true" />返回选番</RouterLink><RouterLink to="/anime/subscriptions" class="ars-link"><IconBookmark :size="17" aria-hidden="true" />我的订阅</RouterLink></template>
+  <ManagementLayout class="ars-layout" title="动漫订阅设置" :mobile-back-target="returnTo" description="统一管理 RSS 检查、自动归档、下载整理目录与 Telegram 通知。" @logout="$emit('logout')">
+    <template #actions><RouterLink :to="returnTo" class="ars-link max-sm:!hidden"><IconArrowLeft :size="17" aria-hidden="true" />返回选番</RouterLink><RouterLink to="/anime/subscriptions" class="ars-link"><IconBookmark :size="17" aria-hidden="true" />我的订阅</RouterLink></template>
     <div class="anime-editor ars-settings">
       <nav ref="tabsNavRef" class="ars-tabs" aria-label="动漫设置分类" @keydown="onTabsKeydown">
         <button

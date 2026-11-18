@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import type { RecentUpdateItem } from '../types/updates'
 import { tmdbImageURL } from '../utils/tmdbImage'
+import '../styles/posterRating.css'
 
 const props = defineProps<{ item: RecentUpdateItem }>()
 const imageFailed = ref(false)
@@ -48,8 +49,8 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
         <svg class="h-9 w-9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m3 16 5-5 4 4 3-3 6 6M15 8h.01"/></svg>
         <span class="text-xs">暂无海报</span>
       </div>
-      <span class="update-type update-badge">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
-      <span v-if="rating" class="update-rating update-badge" :aria-label="`TMDB 评分 ${rating}`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg>{{ rating }}</span>
+      <span class="update-type poster-overlay-badge">{{ item.kind === 'tv' ? '剧集' : '电影' }}</span>
+      <span v-if="rating" class="update-rating poster-overlay-badge poster-rating-accent" :aria-label="`TMDB 评分 ${rating}`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3-5.6-3-5.6 3 1.1-6.3L2.9 9.6l6.3-.9Z" /></svg>{{ rating }}</span>
     </div>
     <h3 class="update-title" :title="item.title">{{ item.title }}</h3>
     </RouterLink>
@@ -70,7 +71,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 .dark .update-title { color: rgb(var(--color-slate-200)); }
 .update-poster { transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 150ms cubic-bezier(0.4, 0, 0.2, 1); }
 .update-badge { border-radius: 7px; background: var(--badge-surface); color: var(--badge-text); box-shadow: 0 2px 6px rgb(0 0 0 / 12%); }
-.update-type { position: absolute; top: 8px; right: 8px; padding: 4px 8px; font-size: 10px; font-weight: 500; line-height: 16px; }
+.update-type { position: absolute; top: 8px; right: 8px; }
 .update-range-row { position: absolute; z-index: 1; top: 8px; left: 8px; right: 56px; pointer-events: none; transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1); }
 .update-range { display: flex; align-items: center; gap: 4px; width: fit-content; max-width: 100%; min-height: 24px; margin: 0; padding: 4px 8px; border: 0; color: var(--badge-accent); font-size: 10px; font-weight: 600; line-height: 16px; text-align: left; }
 .update-range.is-tv { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
@@ -84,8 +85,7 @@ button.update-range:hover { background: color-mix(in srgb, var(--badge-accent) 5
 .update-range.is-expanded svg { transform: rotate(180deg); }
 .update-meta { margin: 4px 0 0; padding: 0 2px; color: rgb(var(--color-slate-400)); font-size: 12px; line-height: 18px; }
 .dark .update-meta { color: rgb(var(--color-text-muted)); }
-.update-rating { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; color: var(--badge-accent); font-size: 10px; font-weight: 600; line-height: 16px; font-variant-numeric: tabular-nums; }
-.update-rating svg { width: 11px; height: 11px; }
+.update-rating { position: absolute; right: 8px; bottom: 8px; }
 @media (hover: hover) and (pointer: fine) {
   .update-card:hover .update-poster, .update-card:hover .update-range-row { transform: translateY(-4px); }
   .update-card:hover .update-poster { box-shadow: 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%); }

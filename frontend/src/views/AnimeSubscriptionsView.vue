@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
-import { IconCalendar, IconChevronLeft, IconChevronRight, IconRefresh, IconSearch } from '@tabler/icons-vue'
+import { IconCalendar, IconChevronLeft, IconChevronRight, IconPlus, IconRefresh, IconSearch } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import AnimeCard from '../components/AnimeCard.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
@@ -21,6 +21,7 @@ const status = computed(() => ['enabled', 'paused', 'archived', 'all'].includes(
 const keyword = computed(() => typeof route.query.q === 'string' ? route.query.q.trim() : '')
 const bangumiId = computed(() => /^[1-9]\d{0,11}$/.test(String(route.query.bangumiId)) ? String(route.query.bangumiId) : '')
 const returnTo = computed(() => animeReturnPath(route.query.returnTo))
+const newPlan = computed(() => ({ path: '/anime/new', state: { animeReturnTo: route.fullPath } }))
 const page = computed(() => /^\d+$/.test(String(route.query.page)) ? Math.min(1000000, Math.max(1, Number(route.query.page))) : 1)
 const input = ref(keyword.value), inputError = ref('')
 const statusOptions = [{ value: 'enabled', label: '已启用' }, { value: 'paused', label: '已暂停' }, { value: 'archived', label: '已归档' }, { value: 'all', label: '全部' }]
@@ -80,8 +81,12 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); if (frame !== unde
 </script>
 
 <template>
-  <ManagementLayout title="我的动漫订阅" description="管理订阅、下载进度与资源执行记录。" @logout="$emit('logout')">
-    <template #actions><RouterLink :to="returnTo || '/anime'" class="as-link"><IconCalendar :size="17" aria-hidden="true" />返回选番</RouterLink><button type="button" class="anime-refresh" aria-label="刷新订阅列表" :disabled="loading" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+  <ManagementLayout title="我的动漫订阅" mobile-title="动漫订阅计划" description="管理订阅、下载进度与资源执行记录。" :mobile-back-target="returnTo || '/anime'" @logout="$emit('logout')">
+    <template #mobile-actions>
+      <button type="button" class="icon-button disabled:opacity-45" aria-label="刷新订阅列表" :disabled="loading" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /></button>
+      <RouterLink :to="newPlan" class="icon-button" aria-label="新建动漫订阅计划"><IconPlus :size="20" aria-hidden="true" /></RouterLink>
+    </template>
+    <template #actions><div class="hidden items-center gap-3 sm:flex"><RouterLink :to="returnTo || '/anime'" class="as-link"><IconCalendar :size="17" aria-hidden="true" />返回选番</RouterLink><button type="button" class="anime-refresh" aria-label="刷新订阅列表" :disabled="loading" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span>刷新</span></button></div></template>
     <div class="anime-browser">
       <p v-if="bangumiId" class="anime-context">当前篇章的订阅配置（Bangumi {{ bangumiId }}）<RouterLink :to="{ path: '/anime/subscriptions', query: query({ bangumiId: undefined, page: undefined }) }" class="as-link">查看全部</RouterLink></p>
       <div class="as-toolbar">

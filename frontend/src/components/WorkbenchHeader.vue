@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useSlots, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import CinemaLogo from './CinemaLogo.vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
@@ -20,6 +20,8 @@ import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
 const props = defineProps<{
   overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string
+  mobileSectionHeading?: boolean
+  mobilePage?: { title: string; fallback: string; target?: string }
   detailNavigation?: { title: string; year: string; fallback: string; titleElement: HTMLElement | null }
   toolNavigation?: { title: string; back: { label: string; to: string }; controls: string; opened: boolean }
 }>()
@@ -35,20 +37,53 @@ function toggleNavigation(event: MouseEvent) {
   else navigationSidebar.value?.toggleDrawer(event)
 }
 const route = useRoute(), router = useRouter()
-const notificationController = new AbortController()
-useWebsiteNotificationSync(() => { void refreshWebsiteUnread(notificationController.signal) })
+const slots = useSlots()
 const standaloneMedia = window.matchMedia('(display-mode: standalone)')
 const isStandalone = ref(standaloneMedia.matches)
 let notificationTimer: ReturnType<typeof setInterval> | undefined
+let notificationController: AbortController | undefined
 let scrollFrame: number | undefined
 const compactViewport = window.matchMedia('(max-width: 639px)')
 const compact = ref(compactViewport.matches)
-const mobileDetail = computed(() => compact.value && !!props.detailNavigation)
-const mobileSection = computed(() => compact.value && !props.detailNavigation ? mobileWorkspaceSection(route.name) : undefined)
+const mobilePageNavigation = computed(() => props.detailNavigation ?? props.mobilePage)
+const mobileBackTarget = computed(() => !props.detailNavigation ? props.mobilePage?.target : undefined)
+const mobileDetail = computed(() => compact.value && !!mobilePageNavigation.value)
+const mobileSection = computed(() => compact.value && !mobilePageNavigation.value ? mobileWorkspaceSection(route.name) : undefined)
 const mobileTool = computed(() => compact.value && !mobileDetail.value && !mobileSection.value ? props.toolNavigation : undefined)
 const mobileWorkspace = computed(() => !!mobileSection.value || !!mobileTool.value)
+const mobileHome = computed(() => mobileSection.value === 'home')
+const mobileSectionHeading = computed(() => props.mobileSectionHeading && mobileSection.value === 'subscriptions')
+const flatMobileHeader = computed(() => mobileHome.value || mobileSectionHeading.value)
+// 手机顶栏按页面职责提供入口；工具页与订阅的局部搜索各自维护。
+const showAccount = computed(() => !compact.value || mobileHome.value)
+const showMediaSearch = computed(() => !compact.value || mobileHome.value ||
+  route.name === 'movie-detail' || route.name === 'tv-detail' || route.name === 'collection' || route.name === 'person')
+const showMobileActions = computed(() => (mobileSectionHeading.value || compact.value && !!props.mobilePage) && !!slots['mobile-actions'])
+const showHeaderActions = computed(() => showAccount.value || showMediaSearch.value || showMobileActions.value)
+const accountLabel = computed(() => {
+  const label = compact.value ? '账户菜单' : '更多功能'
+  return websiteUnread.value ? `${label}，${websiteUnread.value} 条未读通知` : label
+})
+function refreshHeaderUnread() {
+  if (showAccount.value && notificationController) void refreshWebsiteUnread(notificationController.signal)
+}
+function stopHeaderUnread() {
+  notificationController?.abort()
+  notificationController = undefined
+  clearInterval(notificationTimer)
+  notificationTimer = undefined
+}
+function syncHeaderUnread(visible: boolean) {
+  stopHeaderUnread()
+  if (!visible) return
+  notificationController = new AbortController()
+  refreshHeaderUnread()
+  notificationTimer = setInterval(refreshHeaderUnread, 60000)
+}
+useWebsiteNotificationSync(refreshHeaderUnread)
+watch(showAccount, syncHeaderUnread)
 const mobileTabs = computed(() => {
-  if (mobileSection.value === 'home') return [
+  if (mobileHome.value) return [
     { key: 'movie', label: '电影', to: rememberedDashboardPaths.movie, selected: route.name === 'movie' },
     { key: 'tv', label: '剧集', to: rememberedDashboardPaths.tv, selected: route.name === 'tv' || route.name === 'home' },
   ]
@@ -64,7 +99,12 @@ const { indicatorStyle: mobileIndicatorStyle } = useSlidingIndicator(mobileTabsR
   insetY: 3, durationMs: 280, easing: 'cubic-bezier(.22,1,.36,1)',
 })
 function smoothstep(value: number) { return value * value * (3 - 2 * value) }
+const mobileHomeScrolled = ref(false)
 function updateHeaderScroll() {
+  if (mobileHome.value) {
+    mobileHomeScrolled.value = window.scrollY > 5
+    return
+  }
   if (mobileDetail.value || mobileWorkspace.value) return
   // 已安装的 PWA 使用与系统栏相同的实色，不随海报和滚动改变透明度。
   if (isStandalone.value) {
@@ -87,6 +127,10 @@ function updateHeaderScroll() {
   header.value?.style.setProperty('--header-active-opacity', (0.45 + progress * 0.55).toFixed(4))
 }
 function onScroll() {
+  if (mobileHome.value) {
+    updateHeaderScroll()
+    return
+  }
   if (isStandalone.value || mobileDetail.value || mobileWorkspace.value) return
   if (!props.tonalSurface) {
     scrollY.value = window.scrollY
@@ -120,8 +164,7 @@ onMounted(() => {
   window.addEventListener('resize', onAccountLayoutChange, { passive: true })
   window.visualViewport?.addEventListener('resize', onAccountLayoutChange, { passive: true })
   updateHeaderScroll()
-  void refreshWebsiteUnread(notificationController.signal)
-  notificationTimer = setInterval(() => { void refreshWebsiteUnread(notificationController.signal) }, 60000)
+  syncHeaderUnread(showAccount.value)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('scroll', onScroll)
@@ -130,17 +173,13 @@ onBeforeUnmount(() => {
   compactViewport.removeEventListener('change', onCompactChange)
   standaloneMedia.removeEventListener('change', onStandaloneChange)
   if (scrollFrame !== undefined) cancelAnimationFrame(scrollFrame)
-  notificationController.abort()
-  clearInterval(notificationTimer)
+  stopHeaderUnread()
 })
 const header = ref<HTMLElement>()
 const detailTitleVisible = useScrollBoundary(() => props.detailNavigation?.titleElement, header, mobileDetail)
 const accountButton = ref<HTMLButtonElement>()
 const accountOpen = ref(false)
 const closingForTheme = ref(false)
-function accountMenuOrigin() {
-  return (mobileDetail.value || mobileWorkspace.value) ? accountButton.value?.closest<HTMLElement>('.header-actions') || accountButton.value : accountButton.value
-}
 const accountMenuMotion = useAnchoredMenuMotion({
   compact: () => compactViewport.matches,
   immediate: () => closingForTheme.value,
@@ -261,7 +300,7 @@ function onAccountMenuClick(event: MouseEvent) {
     event.preventDefault()
     event.stopPropagation()
   }
-  if (entering && isInside(event, accountMenuOrigin())) {
+  if (entering && isInside(event, accountButton.value)) {
     event.preventDefault()
     event.stopPropagation()
     closePanels()
@@ -304,7 +343,7 @@ function deactivateAccountMenu(element: Element) {
 }
 function syncAccountMenuAnchor(element?: Element) {
   const menu = (element || header.value?.querySelector('#header-management')) as HTMLElement | null
-  const button = accountMenuOrigin()
+  const button = accountButton.value
   const container = header.value?.querySelector<HTMLElement>('.header-inner')
   if (!menu || !button || !container) return
   if (!compactViewport.matches) {
@@ -351,14 +390,14 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-workspace': mobileWorkspace, 'mobile-subscriptions': mobileSection === 'subscriptions' }" :style="tonalSurface ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-home-scrolled': mobileHome && mobileHomeScrolled, 'mobile-section-heading': mobileSectionHeading, 'mobile-subscriptions': mobileSection === 'subscriptions' }" :style="tonalSurface || mobileSectionHeading || mobileHome ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
-      <HistoryBackButton v-if="mobileDetail && detailNavigation" :fallback="detailNavigation.fallback" icon-only class="detail-nav-back glass-pill-surface" />
-      <div v-if="mobileDetail && detailNavigation" class="detail-nav-title-slot" aria-hidden="true">
-        <div class="detail-nav-title glass-pill-surface" :class="{ 'is-visible': detailTitleVisible }">
-          <span class="detail-nav-name">{{ detailNavigation.title }}</span><span v-if="detailNavigation.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
+      <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation }" />
+      <div v-if="mobileDetail && mobilePageNavigation" class="detail-nav-title-slot" aria-hidden="true">
+        <div class="detail-nav-title glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation, 'is-visible': !detailNavigation || detailTitleVisible }">
+          <span class="detail-nav-name">{{ mobilePageNavigation.title }}</span><span v-if="detailNavigation?.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
         </div>
       </div>
       <template v-if="mobileTool">
@@ -372,11 +411,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
           <svg class="tool-nav-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
         </button>
       </template>
-      <div v-if="mobileSection" class="workspace-brand glass-pill-surface">
+      <div v-if="mobileSection" class="workspace-brand" :class="{ 'glass-pill-surface': !flatMobileHeader }">
         <CinemaLogo v-if="mobileSection === 'home'" mobile-wordmark />
         <span v-else>{{ mobileSection === 'subscriptions' ? '订阅' : '更新日历' }}</span>
+        <slot v-if="mobileSectionHeading" name="mobile-title-tools" />
       </div>
-      <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileSection === 'home' ? '影视分类' : '订阅导航'" class="workspace-tabs glass-pill-surface">
+      <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileHome ? '电影与剧集' : '订阅导航'" class="workspace-tabs" :class="{ 'glass-pill-surface': !flatMobileHeader }">
         <span class="workspace-tab-indicator" :style="mobileIndicatorStyle" aria-hidden="true"></span>
         <RouterLink v-for="tab in mobileTabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
           <a :href="href" :aria-current="tab.selected ? 'page' : undefined" @click="navigate">{{ tab.label }}</a>
@@ -392,26 +432,27 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
         <RouterLink v-if="showAnimeShortcut" to="/anime" aria-label="动漫订阅" :aria-current="animeActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: animeActive }">订阅</RouterLink>
       </nav>
-      <div class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail || mobileWorkspace }">
-        <RouterLink to="/notifications" class="icon-button desktop-action relative" v-tooltip="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
+      <div v-if="showHeaderActions" class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail, 'glass-pill-surface-soft': mobileDetail && detailNavigation }">
+        <slot v-if="showMobileActions" name="mobile-actions" />
+        <RouterLink v-if="!compact" to="/notifications" class="icon-button relative" v-tooltip="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
           <span v-if="websiteUnread" class="absolute -right-1 -top-1 min-w-4 rounded-full bg-amber-500 px-1 text-center text-[10px] leading-4 text-white">{{ websiteUnread > 99 ? '99+' : websiteUnread }}</span>
         </RouterLink>
-        <RouterLink to="/search" class="icon-button" :class="{ selected: route.path === '/search' }" v-tooltip="'搜索影视'" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
+        <RouterLink v-if="showMediaSearch" to="/search" class="icon-button" :class="{ selected: route.path === '/search' }" v-tooltip="'搜索影视'" aria-label="搜索影视" :aria-current="route.path === '/search' ? 'page' : undefined">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg>
         </RouterLink>
-        <button v-if="isPortalAdmin" type="button" class="icon-button connection-test-action" v-tooltip="'服务连通性'" aria-label="服务连通性" aria-haspopup="dialog" @click="closePanels(); openNetworkConnectionTest()">
+        <button v-if="!compact && isPortalAdmin" type="button" class="icon-button connection-test-action" v-tooltip="'服务连通性'" aria-label="服务连通性" aria-haspopup="dialog" @click="closePanels(); openNetworkConnectionTest()">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
         </button>
-        <div class="hidden sm:block"><ThemeSwitcher :before-change="prepareThemeChange" /></div>
-        <button ref="accountButton" type="button" class="icon-button account-trigger relative" :class="{ selected: accountOpen }" v-tooltip="accountOpen ? undefined : '账户与更多功能'" :aria-label="websiteUnread ? `更多功能，${websiteUnread} 条未读通知` : '更多功能'" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
-          <svg class="h-5 w-5 sm:hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
-          <svg class="hidden h-6 w-6 sm:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
+        <div v-if="!compact" class="hidden sm:block"><ThemeSwitcher :before-change="prepareThemeChange" /></div>
+        <button v-if="showAccount" ref="accountButton" type="button" class="icon-button account-trigger relative" :class="{ selected: accountOpen }" v-tooltip="accountOpen ? undefined : '账户与更多功能'" :aria-label="accountLabel" :aria-expanded="accountOpen" aria-controls="header-management" @click="toggleAccount">
+          <svg v-if="compact" class="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+          <svg v-else class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="9" r="3"/><path d="M5.5 18a6.7 6.7 0 0 1 13 0"/></svg>
           <span v-if="websiteUnread" class="absolute right-0 top-0 h-2 w-2 rounded-full bg-amber-500 sm:hidden" aria-hidden="true"></span>
         </button>
       </div>
       <Transition :css="false" @before-enter="activateAccountMenu" @enter="enterAccountMenu" @enter-cancelled="accountMenuMotion.cancel" @before-leave="deactivateAccountMenu" @leave="accountMenuMotion.leave" @after-leave="completeAccountLeave" @leave-cancelled="element => { accountMenuMotion.cancel(element); completeAccountLeave(element) }">
-        <HeaderAccountMenu v-if="accountOpen" :show-follows="!mobileWorkspace" :before-theme-change="prepareThemeChange" @click.capture="onAccountMenuClick" @close="closePanels" @logout="emit('logout')" />
+        <HeaderAccountMenu v-if="showAccount && accountOpen" :show-follows="!mobileWorkspace" :before-theme-change="prepareThemeChange" @click.capture="onAccountMenuClick" @close="closePanels" @logout="emit('logout')" />
       </Transition>
     </div>
   </header>
@@ -550,7 +591,6 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .connection-test-action { display: none; }
 }
 @media (max-width: 639px) {
-  .desktop-action { display: none; }
   .has-anime-shortcut .top-link { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; padding: 0 7px; }
   .account-trigger { transition: color 200ms, background-color 200ms; }
   .account-trigger > svg, .account-trigger > span { transition: transform 140ms ease; }
@@ -578,12 +618,19 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .detail-nav-name { overflow: hidden; min-width: 0; text-overflow: ellipsis; white-space: nowrap; }
 .detail-nav-year { flex-shrink: 0; color: var(--glass-muted); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .mobile-detail .header-actions { flex: 0 0 auto; gap: 0; height: 44px; padding: 0; border: 0; pointer-events: auto; }
-.mobile-detail .header-actions > a[aria-label='搜索影视'] { position: relative; }
-.mobile-detail .header-actions > a[aria-label='搜索影视']::after { content: ''; position: absolute; right: 0; width: 1px; height: 16px; background: var(--glass-edge); }
 .workbench-header.mobile-detail .icon-button { width: 44px; height: 44px; border-radius: 50%; color: var(--glass-text); }
 .workbench-header.mobile-detail .icon-button:hover, .workbench-header.mobile-detail .icon-button.selected { background: rgb(var(--surface-hover) / .6); color: var(--glass-text); }
 .workbench-header.mobile-detail :is(a, button):focus-visible { outline-color: rgb(var(--focus)); }
-.mobile-detail :deep(#header-management) { right: max(14px, var(--app-safe-right)); }
+/* 参考 Telegram 的 ActionBar：返回和操作各自绘制玻璃，避免全宽遮住海报。 */
+.mobile-media-detail .header-inner { padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
+.workbench-header.mobile-media-detail :is(.detail-nav-back, .detail-nav-title, .header-actions, .icon-button) { height: 46px; }
+.workbench-header.mobile-media-detail :is(.detail-nav-back, .icon-button) { width: 46px; }
+.mobile-media-detail :is(.detail-nav-back, .icon-button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+@media (hover: hover) {
+  .mobile-media-detail .detail-nav-back:hover { background: rgb(var(--surface-hover) / .6); }
+}
+.mobile-media-detail :is(.detail-nav-back, .icon-button):active { color: rgb(var(--selection-content)); }
+@media (prefers-reduced-motion: reduce) { .mobile-media-detail :is(.detail-nav-back, .icon-button) { transition: none; } }
 @media (display-mode: standalone) {
   /* 系统栏安全区保持实色，下面的操作胶囊仍沿用用户选择的玻璃材质。 */
   .mobile-detail .header-surface, .mobile-detail .header-background {
@@ -611,11 +658,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .mobile-workspace .header-actions { margin-left: auto; flex: none; height: 44px; gap: 0; padding: 0; border: 0; pointer-events: auto; }
 .mobile-workspace .icon-button { width: 44px; height: 44px; border-radius: 50%; color: var(--glass-text); }
 .mobile-workspace .icon-button:hover, .mobile-workspace .icon-button.selected { background: rgb(var(--surface-hover) / .56); color: var(--glass-text); }
-.mobile-workspace .header-actions > a[aria-label='搜索影视'] { position: relative; }
-.mobile-workspace .header-actions > a[aria-label='搜索影视']::after { content: ''; position: absolute; right: 0; width: 1px; height: 16px; background: var(--glass-edge); }
 .mobile-workspace :is(a, button):focus-visible { outline-color: rgb(var(--focus)); outline-offset: -2px; }
 .mobile-workspace :deep(#header-management) { right: max(12px, var(--app-safe-right)); }
-/* 固定搜索与更多的触控尺寸，长标题和返回标签只在各自的胶囊内截断。 */
+/* 长标题和返回标签在各自的胶囊内截断。 */
 .tool-nav-back, .tool-nav-switcher {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   height: 44px; min-width: 44px; padding-inline: 11px; pointer-events: auto;
@@ -636,7 +681,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 @media (max-width: 359px) {
   .mobile-workspace .header-inner { gap: 5px; padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
   .workspace-brand { padding-inline: 8px; }
-  .mobile-workspace .workspace-brand :deep(.cinema-logo-wordmark) { display: none; }
+  .mobile-workspace:not(.mobile-home) .workspace-brand :deep(.cinema-logo-wordmark) { display: none; }
   .mobile-subscriptions .workspace-brand { display: none; }
   .tool-nav-back, .tool-nav-switcher { gap: 4px; padding-inline: 8px; }
 }
@@ -645,6 +690,51 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
     display: block; height: var(--app-safe-top); background: rgb(var(--app-chrome-color)); opacity: 1; box-shadow: none;
   }
 }
+/* 首页用同一层背景承载品牌、一级导航和操作，保留右侧按钮的触控面积。 */
+.workbench-header.mobile-home { pointer-events: auto; background: rgb(var(--app-chrome-color)); }
+/* 滚动时沿整条顶栏下沿画渐隐阴影，不在控件周围画边。 */
+.workbench-header.mobile-home::after {
+  content: ''; display: block; position: absolute; inset: 100% 0 auto; height: 8px;
+  background: linear-gradient(to bottom, rgb(0 0 0 / .15), transparent);
+  opacity: 0; pointer-events: none;
+}
+.dark .workbench-header.mobile-home::after { background: linear-gradient(to bottom, rgb(0 0 0 / .36), transparent); }
+.workbench-header.mobile-home-scrolled::after { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .workbench-header.mobile-home::after { transition: opacity 150ms ease-out; }
+}
+.mobile-home .header-inner { gap: clamp(6px, 2vw, 12px); padding-inline: max(16px, var(--app-safe-left)) max(5px, var(--app-safe-right)); }
+.mobile-home .workspace-brand { padding-inline: 0; }
+.mobile-home .workspace-brand :deep(.cinema-logo-mark) { display: none; }
+.mobile-home .workspace-brand :deep(.cinema-logo-wordmark) { display: inline; font-size: clamp(18px, 5.4vw, 22px); font-weight: 700; }
+.mobile-home .workspace-tabs { position: relative; flex: 0 0 auto; padding: 0; gap: 0; }
+.mobile-home .workspace-tabs > a { flex: 0 0 auto; min-width: 48px; padding: 0 8px; border-radius: 8px; font-size: 15px; }
+.mobile-home .workspace-tabs > a[aria-current] { color: rgb(var(--content-primary)); font-weight: 700; }
+.mobile-home .workspace-tab-indicator { border-radius: 0; background: transparent; }
+.mobile-home .workspace-tab-indicator::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 20px; height: 3px; border-radius: 999px; background: rgb(var(--selection-content)); transform: translateX(-50%); }
+/* 和 Telegram 的 ActionBar 菜单一样，首页图标直接放在顶栏，只在交互时显示反馈。 */
+.workbench-header.mobile-home .header-actions .icon-button { width: 48px; color: rgb(var(--content-primary)); background: transparent; }
+@media (hover: hover) {
+  .workbench-header.mobile-home .header-actions .icon-button:hover { background: rgb(var(--content-primary) / .06); }
+}
+.workbench-header.mobile-home .header-actions .icon-button:is(:active, .selected) { background: rgb(var(--selection-content) / .12); color: rgb(var(--selection-content)); }
+@media (max-width: 359px) {
+  .mobile-home .header-inner { gap: 4px; padding-inline-start: max(12px, var(--app-safe-left)); }
+  .mobile-home .workspace-tabs > a { min-width: 44px; padding-inline: 5px; font-size: 14px; }
+}
+/* 订阅列表共用两行顶栏，只有当前入口带背景。 */
+.workbench-header.mobile-section-heading { pointer-events: auto; border-color: var(--glass-edge); background: rgb(var(--app-chrome-color)); }
+.mobile-section-heading .header-inner {
+  display: grid; grid-template: var(--workbench-toolbar-height) var(--workbench-section-tabs-height) / minmax(0, 1fr) auto;
+  height: calc(var(--workbench-toolbar-height) + var(--workbench-section-tabs-height));
+  gap: 0; padding-inline: max(16px, var(--app-safe-left)) max(12px, var(--app-safe-right));
+}
+.mobile-section-heading .workspace-brand { display: inline-flex; grid-area: 1 / 1; justify-self: start; padding: 0; color: rgb(var(--content-primary)); font-size: 21px; }
+.mobile-section-heading .workspace-tabs { position: relative; grid-area: 2 / 1 / 3 / 3; align-self: start; justify-self: start; gap: 4px; max-width: 100%; padding: 0; }
+.mobile-section-heading .workspace-tabs > a { flex: 0 0 auto; padding-inline: clamp(10px, 3.6vw, 16px); font-size: 13px; font-weight: 500; }
+.mobile-section-heading .workspace-tabs > a[aria-current] { font-weight: 650; }
+.mobile-section-heading .workspace-tab-indicator { border-block: 3px solid transparent; background: rgb(var(--content-primary) / .085); background-clip: padding-box; }
+.mobile-section-heading .header-actions { grid-area: 1 / 2; }
 @media (prefers-reduced-motion: reduce) { .detail-nav-title { transition: none; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .account-trigger, .account-trigger > svg, .account-trigger > span { transition: none; }

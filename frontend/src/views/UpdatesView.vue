@@ -180,8 +180,8 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader @logout="emit('logout')" />
-    <main class="catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
+    <WorkbenchHeader class="hidden sm:block" @logout="emit('logout')" />
+    <main class="updates-content catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <header class="updates-heading">
         <h1>每日更新</h1><span>最近 7 天</span>
       </header>
@@ -249,6 +249,7 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
 .updates-more button:disabled { opacity: 0.45; cursor: default; }
 @keyframes updates-fetching { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (max-width: 639px) {
+  .updates-content { padding-top: calc(var(--app-safe-top) + 1rem); }
   .updates-heading { margin-bottom: 12px; }
   .updates-heading h1 { font-size: 18px; line-height: 26px; }
   .updates-dates { width: 100%; }

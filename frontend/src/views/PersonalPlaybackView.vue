@@ -9,6 +9,7 @@ import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import P115SidePanel from '../components/P115SidePanel.vue'
 import P115Icon from '../components/P115Icon.vue'
 import { p115LoginClients } from '../lib/p115-login-clients'
+import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 import '../styles/personal-playback.css'
 
 const props = defineProps<{ token: string }>()
@@ -215,7 +216,7 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
 </script>
 
 <template>
-  <ManagementLayout title="我的播放" description="查看播放来源，管理个人网盘和播放子账号。" content-class="max-w-[1120px]" @logout="emit('logout')">
+  <ManagementLayout title="我的播放" description="查看播放来源，管理个人网盘和播放子账号。" content-class="max-w-[1120px]" :mobile-back-fallback="rememberedDashboardHome" @logout="emit('logout')">
     <template #actions><button type="button" class="pp-button !px-3" aria-label="播放与网盘使用说明" @click="openPanel('help')"><P115Icon name="help" /></button></template>
     <p v-if="error && !panel && !selecting" role="alert" class="pp-error mb-4">{{ error }} <button v-if="!state" type="button" class="ml-2 underline" :disabled="busy" @click="load()">重试</button></p>
     <p v-if="notice && !panel" role="status" class="mb-4 text-sm text-emerald-700 dark:text-emerald-300">{{ notice }}</p>

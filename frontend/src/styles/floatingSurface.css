@@ -120,6 +120,31 @@ dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdro
   :is(a, button).glass-pill-surface:hover::before { background: var(--glass-pill-hover); }
 }
 
+/* 顶部浮层用面光和向下扩散的柔影区分层级，不画环形轮廓。 */
+.glass-pill-surface-soft {
+  --soft-pill-fill: rgb(var(--surface-elevated) / .88);
+  --soft-pill-light: rgb(255 255 255 / .32);
+  --soft-pill-shadow: 0 1px 3px rgb(15 23 42 / .07), 0 4px 12px -3px rgb(15 23 42 / .14);
+}
+.dark .glass-pill-surface-soft {
+  --soft-pill-light: rgb(255 255 255 / .045);
+  --soft-pill-shadow: 0 2px 5px rgb(0 0 0 / .16), 0 5px 14px -3px rgb(0 0 0 / .24);
+}
+.glass-pill-surface.glass-pill-surface-soft::before {
+  border: 0;
+  background: linear-gradient(180deg, var(--soft-pill-light), transparent 75%), var(--soft-pill-fill);
+  box-shadow: var(--soft-pill-shadow);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-pill-surface-soft { --soft-pill-fill: rgb(var(--surface-elevated)); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .glass-pill-surface-soft { --soft-pill-fill: rgb(var(--surface-elevated)); }
+}
+@media (forced-colors: active) {
+  .glass-pill-surface.glass-pill-surface-soft::before { border: 1px solid ButtonText; background: Canvas; box-shadow: none; }
+}
+
 @media (prefers-contrast: more) {
   :root { --glass-edge: #64748b; --glass-inset-border: #64748b; --glass-muted: #334155; }
   .dark { --glass-edge: #94a3b8; --glass-inset-border: #94a3b8; --glass-muted: #e2e8f0; }

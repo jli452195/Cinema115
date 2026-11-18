@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import { IconFilter2 } from '@tabler/icons-vue'
 import { catalogAPI } from '../composables/usePortalAuth'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuard } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import DashboardFilterDialog from '../components/DashboardFilterDialog.vue'
 import DashboardYearMenu from '../components/DashboardYearMenu.vue'
@@ -18,7 +19,7 @@ const emit = defineEmits<{ logout: [] }>()
 const kind = computed(() => props.kind)
 const route = useRoute(), router = useRouter()
 const categories = computed(() => kind.value === 'tv'
-  ? [{ id: '', name: '全部' }, { id: 'series', name: '剧集' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }, { id: 'variety', name: '综艺' }]
+  ? [{ id: '', name: '全部' }, { id: 'series', name: '电视剧' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }, { id: 'variety', name: '综艺' }]
   : [{ id: '', name: '全部' }, { id: 'film', name: '电影' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }])
 type FilterKey = 'category' | 'genre' | 'region' | 'year' | 'sort' | 'page'
 function setFilters(values: Partial<Record<FilterKey, string>>) {
@@ -77,6 +78,7 @@ const sortOptions = sorts.map(({ id, name }) => ({ value: id, label: name }))
 const currentYear = new Date().getFullYear()
 const years = Array.from({ length: 8 }, (_, i) => String(currentYear - i))
 const mobileFiltersOpen = ref(false)
+const recentFilterYears = years.slice(0, 3)
 const activeMobileFilters = computed(() => {
   const values: string[] = []
   const genreName = visibleGenres.value.find(item => String(item.id) === genre.value)?.name
@@ -182,8 +184,12 @@ watch(() => [dashboardBrowseScope(), kind.value, route.fullPath], () => {
 function saveScroll(path = route.fullPath) {
   if (isDashboardPath(path.split('?')[0]!.split('#')[0]!) && hasLoaded.value) rememberDashboardScroll(path, { left: window.scrollX, top: window.scrollY })
 }
-onBeforeRouteLeave((_to, from) => { saveScroll(from.fullPath) })
-onBeforeRouteUpdate((_to, from) => { saveScroll(from.fullPath) })
+const beforeDashboardNavigation: NavigationGuard = (_to, from) => {
+  mobileFiltersOpen.value = false
+  saveScroll(from.fullPath)
+}
+onBeforeRouteLeave(beforeDashboardNavigation)
+onBeforeRouteUpdate(beforeDashboardNavigation)
 function pageHidden() { saveScroll() }
 onMounted(() => {
   window.addEventListener('pagehide', pageHidden)
@@ -199,16 +205,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
+  <div class="catalog-home flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
     <WorkbenchHeader @logout="emit('logout')" />
-    <main class="catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
+    <main class="catalog-dashboard catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="catalog-filters">
         <div class="catalog-primary-tools">
-          <SegmentedControl v-model="category" :options="categoryOptions" label="影视类别" class="catalog-categories" density="compact" />
-          <button type="button" class="catalog-chip catalog-filter-trigger" aria-haspopup="dialog" :aria-label="activeMobileFilters.length ? `筛选 ${activeMobileFilters.length}` : '筛选'" @click="mobileFiltersOpen = true">
-            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--filter-tone)" /><circle cx="15" cy="17" r="3" fill="var(--filter-tone)" /></svg><span class="catalog-filter-label">筛选</span><span v-if="activeMobileFilters.length" class="catalog-filter-count" aria-hidden="true">{{ activeMobileFilters.length }}</span>
-          </button>
+          <SegmentedControl v-model="category" :options="categoryOptions" label="影视类别" class="catalog-categories" density="compact" appearance="pwa-pill" />
         </div>
         <div class="catalog-desktop-filters">
           <div role="group" aria-label="影视题材" class="catalog-filter-row"><span class="catalog-row-label">题材</span><div class="catalog-options">
@@ -222,8 +225,14 @@ onBeforeUnmount(() => {
         </div>
       </section>
       <div class="catalog-result-toolbar">
-        <div class="catalog-result-heading"><span role="status">{{ loading ? hasLoaded ? '正在更新结果…' : '正在查询 TMDB…' : error ? hasLoaded ? '更新失败，保留上次结果' : '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><template v-if="activeMobileFilters.length"><span class="catalog-filter-summary" :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-filter-reset" @click="clearMobileFilters">清除筛选</button></template></div>
+        <div class="catalog-result-heading">
+          <span role="status"><template v-if="loading || error">{{ loading ? hasLoaded ? '正在更新结果…' : '正在查询 TMDB…' : hasLoaded ? '更新失败，保留上次结果' : '暂时无法加载' }}</template><template v-else>找到 <strong class="catalog-result-total">{{ total.toLocaleString() }}</strong> 部{{ kind === 'tv' ? '剧集' : '电影' }}</template></span>
+          <template v-if="activeMobileFilters.length"><span class="catalog-filter-summary" :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-filter-reset" @click="clearMobileFilters">清除筛选</button></template>
+        </div>
         <div class="catalog-sort-tools"><SegmentedControl v-model="sort" :options="sortOptions" label="结果排序" class="catalog-sort" density="compact" /><p v-if="sort === 'rating'">评分排序至少需要 100 人评价</p></div>
+        <button type="button" class="catalog-chip catalog-filter-trigger glass-pill-surface glass-pill-surface-soft" :class="{ 'has-filters': activeMobileFilters.length }" aria-haspopup="dialog" :aria-label="activeMobileFilters.length ? `筛选，已选 ${activeMobileFilters.length} 项` : '筛选'" :aria-expanded="mobileFiltersOpen" @click="mobileFiltersOpen = true">
+          <IconFilter2 :size="16" aria-hidden="true" /><span>筛选</span><span v-if="activeMobileFilters.length" class="catalog-filter-count" aria-hidden="true">{{ activeMobileFilters.length }}</span>
+        </button>
       </div>
       <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="loadGenres(); loadPage()">重新加载</button></div>
       <section aria-label="影视列表" :aria-busy="loading" class="catalog-results">
@@ -237,7 +246,7 @@ onBeforeUnmount(() => {
       <PaginationControl v-if="hasLoaded && pageCount > 1" class="mt-9" :page="loading || error ? loadedPage : page" :pages="pageCount" :disabled="loading || !!error" :label="kind === 'movie' ? '电影分页' : '剧集分页'" @change="changePage" />
       <footer class="mt-10 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">TMDB</a> · 评分为 TMDB 用户评分，地区按出品地筛选。点击海报查看影视详情。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
     </main>
-    <DashboardFilterDialog v-if="mobileFiltersOpen" :genres="visibleGenres" :regions="regions" :sorts="sorts" :genre="genre" :region="region" :year="year" :sort="sort" @close="mobileFiltersOpen = false" @apply="applyMobileFilters" />
+    <DashboardFilterDialog v-if="mobileFiltersOpen" :key="kind" :kind="kind" :recent-years="recentFilterYears" :genre-error="!!genreError" :genres="visibleGenres" :regions="regions" :sorts="sorts" :genre="genre" :region="region" :year="year" :sort="sort" @close="mobileFiltersOpen = false" @apply="applyMobileFilters" @retry-genres="loadGenres(true)" />
   </div>
 </template>
 
@@ -271,22 +280,21 @@ onBeforeUnmount(() => {
 .catalog-empty { padding: 72px 20px; text-align: center; font-size: 13px; color: var(--filter-muted); }
 @keyframes catalog-fetching { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (max-width: 639px) {
-  .catalog-filters { padding-bottom: 6px; }
-  .catalog-primary-tools { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
-  .catalog-categories { --segmented-selection-background: rgb(var(--selection-surface)); flex: 1; gap: 0; padding: 2px; }
-  .catalog-categories :deep(.segmented-control-option) { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0 4px; font-size: 12px; }
-  .catalog-desktop-filters, .catalog-sort-tools { display: none; }
-  .catalog-filter-trigger { position: relative; display: inline-flex; gap: 4px; min-width: 44px; min-height: 44px; padding: 0 8px; background: var(--filter-tone); color: var(--filter-on-tone); }
-  .catalog-filter-count { min-width: 16px; padding: 0 3px; border-radius: 6px; background: color-mix(in srgb, var(--filter-on-tone) 12%, transparent); font-size: 11px; line-height: 16px; }
-  .catalog-result-toolbar { min-height: 42px; padding: 3px 0; }
-  .catalog-result-heading { width: 100%; flex-wrap: nowrap; gap: 6px; }
-  .catalog-filter-summary { margin-left: auto; min-width: 0; text-align: right; font-size: 11px; }
-  .catalog-filter-reset { flex: none; min-height: 36px; padding: 0 4px; white-space: nowrap; }
+  .catalog-home { --workbench-toolbar-height: 56px; --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top)); }
+  .catalog-dashboard { padding-top: calc(var(--workbench-header-height) + 4px); padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
+  .catalog-filters { padding: 0; border-bottom: 0; }
+  .catalog-primary-tools { margin-bottom: 0; }
+  .catalog-categories { display: flex; width: 100%; }
+  .catalog-desktop-filters, .catalog-sort-tools, .catalog-filter-summary, .catalog-filter-reset { display: none; }
+  .catalog-result-toolbar { min-height: 48px; gap: 8px; padding: 0; }
+  .catalog-result-heading { font-size: 13px; }
+  .catalog-result-total { color: var(--filter-text); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .catalog-filter-trigger { position: relative; display: inline-flex; isolation: isolate; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px; background: transparent; color: var(--filter-text); font-size: 13px; font-weight: 600; }
+  .catalog-filter-trigger::before { inset: 4px 0; }
+  .catalog-filter-trigger.has-filters { --soft-pill-fill: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+  .catalog-filter-trigger:active { opacity: .8; }
+  .catalog-filter-count { min-width: 18px; padding-inline: 4px; border-radius: 999px; background: rgb(var(--selection-content) / .12); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
   .catalog-load-error { align-items: flex-start; padding: 12px; }
-}
-@media (max-width: 359px) {
-  .catalog-filter-label { display: none; }
-  .catalog-filter-count { position: absolute; top: 3px; right: 2px; min-width: 14px; padding: 0 2px; line-height: 14px; }
 }
 @media (pointer: coarse) { .catalog-row-label { padding-top: 12px; } .catalog-sort :deep(.segmented-control-option) { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .catalog-media-grid { transition: none; } .catalog-progress::after { animation: none; width: 100%; opacity: 0.5; } }

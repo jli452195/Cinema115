@@ -5,7 +5,8 @@ import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import FollowDialog from '../components/FollowDialog.vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
+import SubscriptionListLayout from '../components/SubscriptionListLayout.vue'
+import { IconRefresh, IconSearch, IconSettings } from '@tabler/icons-vue'
 import type { Follow } from '../types/follows'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
@@ -34,7 +35,7 @@ const statusTabs = ['pending', 'processing', 'caught_up', 'closed', 'completed']
 
 const statusFilters = computed(() => statusTabs.map(value => ({ value, label: labels[value]!, count: counts.value[value] })))
 
-const kindOptions = [{ value: '', label: '全部类型' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
+const kindOptions = [{ value: '', label: '全部' }, { value: 'movie', label: '电影' }, { value: 'tv', label: '剧集' }]
 const statusOptions = [{ value: 'pending', label: '待处理' }, { value: 'processing', label: '处理中' }, { value: 'closed', label: '已关闭' }]
 async function request(path: string, body?: object, signal = lifecycle.signal) {
   const response = await fetch(`/api/admin/follows${path}`, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${props.token}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
@@ -58,6 +59,7 @@ async function load() {
 function filter(nextOffset = 0) {
   return router.push({ path: '/follows/manage', query: { ...(kind.value ? { kind: kind.value } : {}), ...(status.value ? { status: status.value } : {}), ...(query.value.trim() ? { q: query.value.trim() } : {}), ...(nextOffset ? { offset: String(nextOffset) } : {}) } })
 }
+function refresh() { editing.value = undefined; error.value = ''; void load() }
 function edit(item: AdminFollow) { editing.value = item; editStatus.value = ['processing', 'closed'].includes(item.status) ? item.status : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = '' }
 async function save() {
   const item = editing.value
@@ -105,7 +107,11 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
 </script>
 
 <template>
-  <ManagementLayout title="追更管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
+  <SubscriptionListLayout title="订阅管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
+    <template #mobile-actions>
+      <button type="button" class="subscription-toolbar-action" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" aria-label="追更通知与自动搜资源设置" @click="settingsOpen = !settingsOpen"><IconSettings :size="20" aria-hidden="true" /></button>
+      <button type="button" class="subscription-toolbar-action" :disabled="loading || busy" aria-label="刷新订阅申请" @click="refresh"><IconRefresh :size="20" aria-hidden="true" /></button>
+    </template>
     <template #actions><button class="text-sm text-blue-600" @click="settingsOpen = !settingsOpen">通知设置</button></template>
     <FollowDialog v-if="editing" title="处理追更申请" :busy="busy" @close="editing = undefined">
       <form class="space-y-4" @submit.prevent="save">
@@ -119,9 +125,9 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         <div class="flex justify-end gap-4"><button type="button" :disabled="busy" class="px-3 py-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-500 disabled:opacity-40" @click="editing = undefined">取消</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-40">{{ busy ? '保存中…' : '保存处理' }}</button></div>
       </form>
     </FollowDialog>
-    <div class="space-y-5">
+    <div class="subscription-list space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-      <section v-if="settingsOpen" class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+      <section v-if="settingsOpen" id="follow-notification-settings" class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
         <p class="text-sm" :class="notificationsConfigured ? 'text-emerald-700' : 'text-amber-700'">{{ notificationsConfigured ? '追更通知 Bot 可用' : telegramEnabled ? '追更通知 Bot 未就绪' : '追更通知未启用' }}<RouterLink to="/telegram/bot" class="ml-3 text-blue-600">管理 Bot 功能</RouterLink></p>
         <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">使用 Bot 配置中的独立通知聊天 ID。同一影视在仍有人追更时仅发送一次申请通知；发送失败会自动重试。</p>
         <form class="space-y-5" @submit.prevent="saveSettings">
@@ -131,19 +137,23 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
           <label class="block text-sm text-slate-600 dark:text-slate-400 dark:text-slate-500">网站访问地址<input v-model="baseUrl" type="url" maxlength="2048" placeholder="例如 http://192.168.0.24:5173" class="mt-2 w-full rounded-lg border border-slate-200 dark:border-slate-700 p-3" /></label><p class="text-xs text-slate-400 dark:text-slate-500">用于 Telegram 通知中的管理页链接。请填写管理员可访问的网站根地址，留空时只发送片名与编号。</p><div class="flex flex-wrap gap-4"><button type="button" class="text-sm text-blue-600" @click="useCurrentAddress">使用当前访问地址</button><button :disabled="busy" class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">保存追更设置</button></div>
         </form>
       </section>
-      <div class="flex flex-wrap gap-4 sm:gap-6">
-        <SegmentedControl v-model="status" label="处理状态筛选" :options="statusFilters" :disabled="busy" @change="filter()" />
-        <SegmentedControl v-model="kind" label="影视类型筛选" :options="kindOptions" :disabled="busy" @change="filter()" />
+      <div class="subscription-filters subscription-filters-admin flex flex-wrap gap-4 sm:gap-6">
+        <SegmentedControl v-model="status" label="处理状态筛选" class="subscription-status" appearance="mobile-line" :options="statusFilters" :disabled="busy" @change="filter()" />
+        <SegmentedControl v-model="kind" label="影视类型筛选" class="subscription-kind" appearance="mobile-pill" :options="kindOptions" :disabled="busy" @change="filter()" />
+        <form class="subscription-search flex w-full gap-3" @submit.prevent="filter()">
+          <div class="subscription-search-field flex min-w-0 flex-1">
+            <input v-model="query" aria-label="搜索追更申请" maxlength="100" placeholder="片名或 TMDB ID" class="min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-sm" />
+            <button type="submit" aria-label="搜索订阅申请" :disabled="busy" class="subscription-search-submit ml-3 rounded-lg bg-slate-900 px-4 py-2 text-sm text-white"><span class="hidden sm:inline">搜索</span><IconSearch class="sm:hidden" :size="17" aria-hidden="true" /></button>
+          </div>
+          <button type="button" :disabled="loading || busy" class="hidden px-2 text-sm text-blue-600 disabled:opacity-50 sm:block" @click="refresh">刷新</button>
+        </form>
       </div>
-      <form class="flex flex-wrap gap-3" @submit.prevent="filter()">
-        <input v-model="query" aria-label="搜索追更申请" maxlength="100" placeholder="片名或 TMDB ID" class="min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-sm" /><button class="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white">搜索</button><button type="button" :disabled="loading || busy" class="px-2 text-sm text-blue-600 disabled:opacity-50" @click="editing = undefined; error = ''; load()">刷新</button>
-      </form>
       <p v-if="loading" role="status" class="py-8 text-center text-sm text-slate-400 dark:text-slate-500">正在读取申请…</p>
       <p v-else-if="!items.length && !error" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-14 text-center text-sm text-slate-400 dark:text-slate-500">暂无符合条件的有效追更申请</p>
-      <div v-else class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
-        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" admin :subscriber-count="item.subscriberCount" :busy="busy" @edit="edit(item)" />
+      <div v-else class="subscription-grid grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
+        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" compact-mobile admin :subscriber-count="item.subscriberCount" :busy="busy" @edit="edit(item)" />
       </div>
       <div v-if="offset || hasMore" class="flex justify-center gap-6 text-sm"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="filter(Math.max(0, offset - FOLLOW_PAGE_SIZE))">上一页</button><span class="text-slate-400 dark:text-slate-500">第 {{ Math.floor(offset / FOLLOW_PAGE_SIZE) + 1 }} 页</span><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="filter(offset + FOLLOW_PAGE_SIZE)">下一页</button></div>
     </div>
-  </ManagementLayout>
+  </SubscriptionListLayout>
 </template>

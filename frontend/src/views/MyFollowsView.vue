@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import FollowCard from '../components/FollowCard.vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
+import SubscriptionListLayout from '../components/SubscriptionListLayout.vue'
+import { IconRefresh } from '@tabler/icons-vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import { FOLLOW_PAGE_SIZE, followRequest, type Follow } from '../types/follows'
 
@@ -66,21 +67,24 @@ onBeforeUnmount(() => { controller?.abort(); lifecycle.abort() })
 </script>
 
 <template>
-  <ManagementLayout title="我的追更" description="查看你申请的电影和剧集。剧集默认追更所有正片季，不含特别篇。" @logout="emit('logout')">
+  <SubscriptionListLayout title="我的追更" description="查看你申请的电影和剧集。剧集默认追更所有正片季，不含特别篇。" @logout="emit('logout')">
+    <template #mobile-actions>
+      <button type="button" class="subscription-toolbar-action" :disabled="loading || !!busy" aria-label="刷新我的追更" @click="load"><IconRefresh :size="20" aria-hidden="true" /></button>
+    </template>
     <template #actions><button :disabled="loading || !!busy" class="text-sm text-blue-600 disabled:opacity-50" @click="load">刷新</button></template>
-    <div class="space-y-6">
-      <div class="flex flex-wrap gap-4 sm:gap-6">
-        <SegmentedControl :model-value="status" :options="statusOptions" label="追更状态" :disabled="!!busy" @update:model-value="value => navigate(kind, 0, value)" />
-        <SegmentedControl :model-value="kind" :options="kindOptions" label="追更类型" @update:model-value="value => navigate(value)" />
+    <div class="subscription-list space-y-6">
+      <div class="subscription-filters subscription-filters-personal flex flex-wrap gap-4 sm:gap-6">
+        <SegmentedControl :model-value="status" :options="statusOptions" label="追更状态" appearance="mobile-line" :disabled="!!busy" @update:model-value="value => navigate(kind, 0, value)" />
+        <SegmentedControl :model-value="kind" :options="kindOptions" label="追更类型" class="subscription-kind" appearance="mobile-pill" :disabled="!!busy" @update:model-value="value => navigate(value)" />
       </div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button class="ml-3 underline" @click="load">重试</button></p>
       <p v-if="notice" role="status" class="text-sm text-emerald-700">{{ notice }}</p>
       <p v-if="loading" role="status" class="py-10 text-center text-sm text-slate-400 dark:text-slate-500">正在加载追更…</p>
       <div v-else-if="!items.length && !error" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 py-14 text-center"><p class="text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无{{ status === 'completed' ? '已完成的' : status === 'closed' ? '已关闭的' : '进行中的' }}{{ kind === 'movie' ? '电影' : kind === 'tv' ? '剧集' : '' }}追更</p><RouterLink to="/" class="mt-4 inline-block text-sm text-blue-600">去发现影视</RouterLink></div>
-      <div v-else class="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
-        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" :busy="!!busy" :cancelling="busy === `${item.kind}:${item.tmdbId}`" @cancel="cancel(item)" />
+      <div v-else class="subscription-grid grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
+        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" compact-mobile :busy="!!busy" :cancelling="busy === `${item.kind}:${item.tmdbId}`" @cancel="cancel(item)" />
       </div>
       <div v-if="offset || hasMore" class="flex justify-center gap-6 text-sm"><button :disabled="!offset || loading || !!busy" class="disabled:opacity-30" @click="navigate(kind, Math.max(0, offset - FOLLOW_PAGE_SIZE))">上一页</button><span class="text-slate-400 dark:text-slate-500">第 {{ Math.floor(offset / FOLLOW_PAGE_SIZE) + 1 }} 页</span><button :disabled="!hasMore || loading || !!busy" class="disabled:opacity-30" @click="navigate(kind, offset + FOLLOW_PAGE_SIZE)">下一页</button></div>
     </div>
-  </ManagementLayout>
+  </SubscriptionListLayout>
 </template>

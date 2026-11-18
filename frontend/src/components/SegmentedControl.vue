@@ -3,7 +3,7 @@ import { onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 interface Option { value: T; label: string; count?: number | string; disabled?: boolean; title?: string }
-const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' }>()
+const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' | 'mobile-line' | 'mobile-pill' | 'pwa-pill' }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T]; change: [value: T] }>()
 const strip = ref<HTMLElement>(), countID = useId()
 const { indicatorStyle } = useSlidingIndicator(strip, '[aria-pressed="true"]', [() => props.modelValue, () => props.options])
@@ -40,7 +40,7 @@ function moveFocus(event: KeyboardEvent) {
 </script>
 
 <template>
-  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="{ 'segmented-control-compact': density === 'compact', 'segmented-control-neutral': appearance === 'neutral', 'segmented-control-underline': appearance === 'underline', 'segmented-control-subtle': appearance === 'subtle' }" @keydown="moveFocus">
+  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="[density === 'compact' && 'segmented-control-compact', appearance && appearance !== 'default' && `segmented-control-${appearance}`]" @keydown="moveFocus">
     <span class="segmented-control-indicator" :style="indicatorStyle" aria-hidden="true"></span>
     <button v-for="(option, index) in options" :key="option.value" type="button" class="segmented-control-option" :aria-label="option.label" :aria-describedby="option.count !== undefined ? `${countID}-${index}` : undefined" :aria-pressed="modelValue === option.value" :disabled="disabled || option.disabled" :title="option.title" @click="choose(option)">
       <slot name="option" :option="option" :selected="modelValue === option.value">{{ option.label }}</slot>
@@ -93,6 +93,56 @@ function moveFocus(event: KeyboardEvent) {
   .segmented-control-underline.segmented-control-compact .segmented-control-option { min-height: 44px; }
   .segmented-control-subtle { padding: 0; }
   .segmented-control-subtle.segmented-control-compact .segmented-control-option { min-width: 44px; min-height: 44px; padding-inline: 8px; font-size: 13px; }
+}
+@media (max-width: 639px) {
+  .segmented-control-mobile-line, .dark .segmented-control-mobile-line { gap: 0; padding: 0; border-radius: 0; background: transparent; }
+  .segmented-control-mobile-line .segmented-control-option { gap: 3px; min-width: 0; padding: 0 5px; font-size: 12px; }
+  .segmented-control-mobile-line .segmented-control-option[aria-pressed=true] { color: rgb(var(--content-primary)); font-weight: 650; }
+  .segmented-control-mobile-line .segmented-control-count { font-size: 10px; }
+  .segmented-control-mobile-line .segmented-control-option[aria-pressed=true] .segmented-control-count { color: rgb(var(--selection-content)); opacity: 1; }
+  .segmented-control-mobile-line .segmented-control-indicator, .dark .segmented-control-mobile-line .segmented-control-indicator { background: transparent; box-shadow: none; }
+  .segmented-control-mobile-line .segmented-control-indicator::after {
+    position: absolute; inset: auto 5px 4px; height: 2px; border-radius: 2px; background: rgb(var(--selection-content)); content: '';
+  }
+  .segmented-control-mobile-pill, .dark .segmented-control-mobile-pill { gap: 0; padding: 0 3px; border-radius: 999px; background: transparent; }
+  .segmented-control-mobile-pill::before { position: absolute; inset: 7px 0; border-radius: inherit; background: rgb(var(--content-primary) / .075); content: ''; }
+  .segmented-control-mobile-pill .segmented-control-option { min-width: 40px; padding: 0 7px; border-radius: 999px; font-size: 12px; }
+  .segmented-control-mobile-pill .segmented-control-option[aria-pressed=true] { font-weight: 650; }
+  .segmented-control-mobile-pill .segmented-control-indicator, .dark .segmented-control-mobile-pill .segmented-control-indicator {
+    border-block: 9px solid transparent; border-radius: 999px; background: rgb(var(--selection-surface)); background-clip: padding-box; box-shadow: none;
+  }
+}
+/* 整条分类底槽承载外阴影，不描边；选中项只用底色区分。 */
+@media (max-width: 639px), (display-mode: standalone) {
+  .segmented-control-pwa-pill, .dark .segmented-control-pwa-pill {
+    gap: 0; padding: 0 4px; border-radius: 999px;
+    background: color-mix(in srgb, rgb(var(--surface-hover)) 62%, rgb(var(--surface-page)));
+    box-shadow: 0 1px 3px rgb(15 23 42 / .08), 0 3px 9px -2px rgb(15 23 42 / .12);
+  }
+  .dark .segmented-control-pwa-pill { box-shadow: 0 1px 3px rgb(0 0 0 / .25), 0 3px 9px -2px rgb(0 0 0 / .34); }
+  .segmented-control-pwa-pill .segmented-control-option {
+    flex: 1 0 auto; min-width: 44px; min-height: 44px; padding: 0 6px;
+    border-radius: 999px; font-size: 14px; font-weight: 600;
+  }
+  .segmented-control-pwa-pill .segmented-control-option:not(:disabled):active { color: rgb(var(--selection-content)); }
+  .segmented-control-pwa-pill .segmented-control-indicator,
+  .dark .segmented-control-pwa-pill .segmented-control-indicator {
+    border-radius: 0; background: transparent; box-shadow: none;
+  }
+  .segmented-control-pwa-pill .segmented-control-indicator::before {
+    position: absolute; inset: 5px 2px; border-radius: 999px;
+    background: color-mix(in srgb, rgb(var(--selection-surface)) 96%, rgb(var(--selection-content)));
+    content: '';
+  }
+  @media (forced-colors: active) {
+    .segmented-control-pwa-pill, .dark .segmented-control-pwa-pill { box-shadow: none; }
+    .segmented-control-pwa-pill .segmented-control-option[aria-pressed=true] { color: Highlight; }
+    .segmented-control-pwa-pill .segmented-control-indicator::before { border: 1px solid Highlight; }
+  }
+}
+@media (max-width: 359px) {
+  .segmented-control-mobile-line .segmented-control-option { padding-inline: 3px; }
+  .segmented-control-mobile-pill .segmented-control-option { min-width: 37px; padding-inline: 5px; }
 }
 @media (prefers-reduced-motion: reduce) { .segmented-control-option { transition: none; } }
 </style>

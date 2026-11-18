@@ -4,6 +4,7 @@ import { RouterLink, useRouter } from 'vue-router'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import { notificationRequest, readWebsiteNotifications, useWebsiteNotificationSync, websiteUnread, type NotificationRead, type WebsiteNotification } from '../composables/useWebsiteNotifications'
 import { observeNotificationVisibility } from '../utils/notificationVisibility'
+import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
@@ -96,9 +97,9 @@ onBeforeUnmount(cleanup)
 
 <template>
   <div class="min-h-screen bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader @logout="emit('logout')" />
+    <WorkbenchHeader :mobile-page="{ title: '站内通知', fallback: rememberedDashboardHome }" @logout="emit('logout')" />
     <main class="workbench-content mx-auto max-w-3xl space-y-5 px-4 pb-10 sm:px-8">
-      <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="text-2xl font-bold text-slate-900 dark:text-slate-100">站内通知</h1><p class="mt-2 text-sm text-slate-500 dark:text-slate-400">追更入库、追平及后续变化会保存在这里。查看后自动标为已读。</p></div><div class="flex gap-4 text-sm"><button :disabled="loading || busy" class="text-blue-600 disabled:opacity-40" @click="load()">刷新</button><button :disabled="busy || loading || !websiteUnread || !items.length" class="text-slate-600 dark:text-slate-400 disabled:opacity-40" @click="read({ id: items[0]!.id, all: true })">全部已读</button></div></div>
+      <div class="flex flex-wrap items-center justify-between gap-4"><div><h1 class="sr-only text-2xl font-bold text-slate-900 sm:not-sr-only dark:text-slate-100">站内通知</h1><p class="text-sm sm:mt-2 text-slate-500 dark:text-slate-400">追更入库、追平及后续变化会保存在这里。查看后自动标为已读。</p></div><div class="flex gap-4 text-sm"><button :disabled="loading || busy" class="text-blue-600 disabled:opacity-40" @click="load()">刷新</button><button :disabled="busy || loading || !websiteUnread || !items.length" class="text-slate-600 dark:text-slate-400 disabled:opacity-40" @click="read({ id: items[0]!.id, all: true })">全部已读</button></div></div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
       <p v-if="!items.length" class="py-12 text-center text-sm text-slate-400 dark:text-slate-500">{{ loading ? '正在加载通知…' : error ? '请刷新重试' : '暂无通知' }}</p>
       <article v-for="item in items" :key="item.id" v-auto-read="item" class="rounded-xl border bg-white dark:bg-slate-900 p-5" :class="item.readAt ? 'border-slate-200 dark:border-slate-700' : 'border-amber-200'">
