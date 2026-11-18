@@ -2,12 +2,12 @@
 import type { AnimeProviderID } from '../types/animeCatalog'
 import AnimeProviderBrand from './AnimeProviderBrand.vue'
 
-defineProps<{ provider: AnimeProviderID; name: string; available: boolean; selected: boolean; compact?: boolean }>()
+defineProps<{ provider: AnimeProviderID; name: string; available: boolean; selected: boolean; compact?: boolean; pill?: boolean }>()
 defineEmits<{ select: [] }>()
 </script>
 
 <template>
-  <button type="button" class="anime-provider-button" :class="[`provider-${provider}`, { 'provider-compact': compact }]" :aria-label="available ? name : `${name} 待接入`" :aria-pressed="selected" :disabled="!available" :title="available ? `${compact ? '选择' : '浏览'}${name}` : `${name}将在后续步骤接入`" @click="$emit('select')">
+  <button type="button" class="anime-provider-button" :class="[`provider-${provider}`, { 'provider-compact': compact, 'provider-pill': pill }]" :aria-label="available ? name : `${name} 待接入`" :aria-pressed="selected" :disabled="!available" :title="available ? `${compact ? '选择' : '浏览'}${name}` : `${name}将在后续步骤接入`" @click="$emit('select')">
     <AnimeProviderBrand :provider="provider" :compact="compact" />
     <span class="provider-status" :aria-hidden="available ? 'true' : undefined">{{ available ? '' : '待接入' }}</span>
   </button>
@@ -40,5 +40,10 @@ defineEmits<{ select: [] }>()
 .anime-provider-button.provider-compact { min-width: 0; width: 116px; min-height: 44px; padding: 4px 10px; border-radius: 10px; }
 .provider-compact .provider-status { display: none; }
 .provider-compact[aria-pressed="true"]::after { bottom: 3px; height: 2px; }
-@media (max-width: 639px) { .anime-provider-button.provider-compact { width: 100%; padding-inline: 5px; } }
+@media (max-width: 639px) {
+  .anime-provider-button.provider-compact { width: 100%; padding-inline: 5px; }
+  .anime-provider-button.provider-pill { border-radius: 999px; }
+  .anime-provider-button.provider-pill[aria-pressed="true"] { background: rgb(var(--selection-surface)); box-shadow: inset 0 0 0 1px rgb(var(--focus) / .36); }
+  .anime-provider-button.provider-pill[aria-pressed="true"]::after { content: none; }
+}
 </style>

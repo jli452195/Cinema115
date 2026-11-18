@@ -34,6 +34,15 @@ const genreIDs = [10759, 16, 35, 80, 99, 18, 10751, 10762, 9648, 10763, 10764, 1
     const query = () => new URL(page.url()).searchParams
     const cards = page.locator('.catalog-media-grid > a')
     const loaded = () => page.locator('[aria-label="影视列表"][aria-busy="false"]').waitFor()
+    const selectDecade = async (scope, target) => {
+      const visibleDecade = scope.locator('.catalog-year-header-label')
+      const start = Number((await visibleDecade.innerText()).trim().split(' ')[0])
+      assert.ok(Number.isInteger(start) && start >= 1900 && start % 10 === 0)
+      for (let decade = start; decade !== target; decade += decade > target ? -10 : 10) {
+        await scope.getByRole('button', { name: decade > target ? '上一年代' : '下一年代', exact: true }).click()
+      }
+      await scope.getByRole('group', { name: `${target}年代年份`, exact: true }).waitFor()
+    }
     await page.goto(base + '/?page=3'); await loaded()
     assert.equal(await cards.count(), 6)
     const oldIDs = await cards.evaluateAll(elements => elements.map(e => e.getAttribute('href')))
@@ -50,19 +59,19 @@ const genreIDs = [10759, 16, 35, 80, 99, 18, 10751, 10762, 9648, 10763, 10764, 1
     mode = 'normal'; await page.getByRole('button', { name: '重新加载', exact: true }).click(); await loaded()
     await page.getByRole('button', { name: '更多年份', exact: true }).click()
     const years = page.locator('.catalog-year-menu:popover-open')
-    await years.getByRole('button', { name: '1990年代', exact: true }).click()
+    await selectDecade(years, 1990)
     await years.getByRole('button', { name: '1998', exact: true }).click(); await loaded()
     assert.equal(query().get('year'), '1998')
     const oldYearTrigger = page.getByRole('button', { name: '1998 年', exact: true })
     assert.equal(await oldYearTrigger.evaluate(el => document.activeElement === el), true)
     await oldYearTrigger.click(); await years.waitFor()
-    assert.equal(await years.getByRole('button', { name: '1990年代', exact: true }).getAttribute('aria-pressed'), 'true')
+    assert.equal(await years.getByRole('group', { name: '1990年代年份', exact: true }).getByRole('button', { name: '1998', exact: true }).getAttribute('aria-pressed'), 'true')
     await page.keyboard.press('ArrowRight')
-    assert.equal(await page.evaluate(() => document.activeElement.textContent), '1997')
+    assert.equal(await page.evaluate(() => document.activeElement.textContent.trim()), '1999')
     await page.keyboard.press('Escape')
     assert.equal(await page.locator('.catalog-year-menu:popover-open').count(), 0)
     assert.equal(await oldYearTrigger.evaluate(el => document.activeElement === el), true)
-    await oldYearTrigger.click(); await years.waitFor(); await page.getByRole('group', { name: '影视类别' }).getByRole('button', { name: '全部', exact: true }).click()
+    await oldYearTrigger.click(); await years.waitFor(); await page.getByRole('navigation', { name: '影视类别' }).getByRole('button', { name: '全部', exact: true }).click()
     assert.equal(await page.locator('.catalog-year-menu:popover-open').count(), 0)
     await page.goBack(); await loaded(); assert.equal(query().has('year'), false)
     // A slower superseded request must never overwrite the latest region.
@@ -72,7 +81,7 @@ const genreIDs = [10759, 16, 35, 80, 99, 18, 10751, 10762, 9648, 10763, 10764, 1
     await page.waitForTimeout(700)
     assert.equal(query().get('region'), 'CN'); assert.deepEqual(await cards.evaluateAll(elements => elements.map(e => e.getAttribute('href'))), finalIDs)
     await page.getByRole('group', { name: '影视题材', exact: true }).getByRole('button', { name: '犯罪', exact: true }).click(); await loaded()
-    await page.getByRole('group', { name: '影视类别', exact: true }).getByRole('button', { name: '动漫', exact: true }).click(); await loaded()
+    await page.getByRole('navigation', { name: '影视类别', exact: true }).getByRole('button', { name: '动漫', exact: true }).click(); await loaded()
     assert.equal(query().has('genre'), false)
     assert.equal(await page.getByRole('group', { name: '影视题材', exact: true }).getByRole('button', { name: '动画', exact: true }).count(), 0)
     for (const width of [1440, 768, 640, 390, 320]) for (const dark of [false, true]) {
@@ -102,7 +111,7 @@ const genreIDs = [10759, 16, 35, 80, 99, 18, 10751, 10762, 9648, 10763, 10764, 1
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
       })
       assert.ok(bounds.left >= 11 && bounds.right <= width - 11 && bounds.top >= 11 && bounds.bottom <= 289, JSON.stringify({ width, bounds }))
-      await years.getByRole('button', { name: '1900年代', exact: true }).click()
+      await selectDecade(years, 1900)
       await years.getByRole('button', { name: '1901', exact: true }).click(); await loaded()
       assert.equal(query().get('year'), '1901')
       await page.getByRole('button', { name: '1901 年', exact: true }).click(); await years.waitFor()
@@ -138,7 +147,7 @@ const genreIDs = [10759, 16, 35, 80, 99, 18, 10751, 10762, 9648, 10763, 10764, 1
     await dialog.getByRole('button', { name: '重置', exact: true }).click()
     assert.equal(page.url(), beforeDraft)
     await dialog.getByRole('button', { name: '韩国', exact: true }).click()
-    await dialog.getByRole('button', { name: '2000年代', exact: true }).click()
+    await selectDecade(dialog, 2000)
     await dialog.getByRole('button', { name: '2005', exact: true }).click()
     await dialog.getByRole('button', { name: 'TMDB 评分', exact: true }).click()
     await dialog.getByRole('button', { name: '应用筛选', exact: true }).click(); await loaded()

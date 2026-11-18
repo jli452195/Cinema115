@@ -68,9 +68,11 @@ function onResize() {
 }
 
 function onScroll(event: Event) {
-  // 允许浮层内部年份面板正常交互与滚动，不误触发关闭
-  if (event.target instanceof Node && popover.value?.contains(event.target)) return
-  if (open.value) popover.value?.hidePopover()
+  // 矮屏点击触发器时浏览器可能仍在滚到按钮，滚动期间让浮层跟随锚点。
+  if (!open.value || (event.target instanceof Node && popover.value?.contains(event.target))) return
+  const anchor = trigger.value?.getBoundingClientRect()
+  if (!anchor || anchor.bottom <= 0 || anchor.top >= innerHeight) popover.value?.hidePopover()
+  else place()
 }
 
 onMounted(() => {

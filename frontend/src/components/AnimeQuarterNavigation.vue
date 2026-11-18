@@ -9,6 +9,7 @@ const props = defineProps<{
   currentSeason: string
   providerName: string
   placeholder: string
+  compact?: boolean
 }>()
 defineEmits<{ change: [value: string] }>()
 const previous = computed(() => props.options.find(option => option.value < props.modelValue))
@@ -16,12 +17,12 @@ const next = computed(() => [...props.options].reverse().find(option => option.v
 </script>
 
 <template>
-  <div class="catalog-quarter-nav" role="group" :aria-label="`${providerName}季度浏览`">
-    <button type="button" class="catalog-quarter-step" aria-label="上一季" :title="previous ? `切换到 ${previous.label}` : '没有更早的已收录季度'" :disabled="!previous" @click="previous && $emit('change', previous.value)"><IconChevronLeft :size="20" aria-hidden="true" /></button>
+  <div class="catalog-quarter-nav" :class="{ 'is-compact': compact }" role="group" :aria-label="`${providerName}季度浏览`">
+    <button v-if="!compact" type="button" class="catalog-quarter-step" aria-label="上一季" :title="previous ? `切换到 ${previous.label}` : '没有更早的已收录季度'" :disabled="!previous" @click="previous && $emit('change', previous.value)"><IconChevronLeft :size="20" aria-hidden="true" /></button>
     <SelectMenu class="catalog-season" variant="anime" :model-value="modelValue" :options="options" :placeholder="placeholder" :label="`${providerName}季度`" :disabled="!options.length" @change="$emit('change', $event)">
       <template #trigger="{ label }"><span class="catalog-season-content"><IconCalendar :size="17" class="catalog-season-icon" aria-hidden="true" /><span class="catalog-season-label">{{ label }}</span><span v-if="modelValue === currentSeason" class="catalog-current-season">当季</span></span></template>
     </SelectMenu>
-    <button type="button" class="catalog-quarter-step" aria-label="下一季" :title="next ? `切换到 ${next.label}` : '没有更晚的已收录季度'" :disabled="!next" @click="next && $emit('change', next.value)"><IconChevronRight :size="20" aria-hidden="true" /></button>
+    <button v-if="!compact" type="button" class="catalog-quarter-step" aria-label="下一季" :title="next ? `切换到 ${next.label}` : '没有更晚的已收录季度'" :disabled="!next" @click="next && $emit('change', next.value)"><IconChevronRight :size="20" aria-hidden="true" /></button>
   </div>
 </template>
 
@@ -36,6 +37,11 @@ const next = computed(() => [...props.options].reverse().find(option => option.v
 .catalog-season-icon { flex: none; color: rgb(var(--action-link)); }
 .catalog-season-label { overflow: hidden; text-overflow: ellipsis; font-size: 13px; font-weight: 650; color: rgb(var(--content-primary)); font-variant-numeric: tabular-nums; }
 .catalog-current-season { flex: none; border-radius: 5px; padding: 2px 5px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-size: 11px; font-weight: 600; line-height: 16px; }
+.catalog-quarter-nav.is-compact { flex: none; }
+.is-compact .catalog-season { flex-basis: 108px; width: 108px; }
+.is-compact .catalog-season :deep(.select-menu-control) { gap: 4px; padding-inline: 8px; border-radius: 999px; background: rgb(var(--selection-surface)); box-shadow: none; }
+.is-compact .catalog-season-label { font-size: 12px; color: rgb(var(--selection-content)); }
+.is-compact .catalog-season-icon, .is-compact .catalog-current-season { display: none; }
 @media (hover: hover) and (pointer: fine) { .catalog-quarter-step:hover:not(:disabled), .catalog-season :deep(.select-menu-control:hover:not(:disabled)) { transform: translateY(-1px); background: rgb(var(--surface-hover)); box-shadow: 0 3px 0 rgb(148 163 184 / .14), 0 4px 8px rgb(15 23 42 / .04); } }
 .catalog-quarter-step:active:not(:disabled), .catalog-season :deep(.select-menu-control:active:not(:disabled)) { transform: translateY(1px); box-shadow: none; }
 .catalog-quarter-step:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }

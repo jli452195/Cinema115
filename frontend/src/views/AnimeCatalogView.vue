@@ -21,6 +21,9 @@ import '../styles/animeDiscovery.css'
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
 const browserElement = ref<HTMLElement>(), viewportMinHeight = ref(0)
+const compactViewport = window.matchMedia('(max-width: 639px)')
+const compact = ref(compactViewport.matches)
+function syncCompactLayout() { compact.value = compactViewport.matches }
 const route = useRoute(), router = useRouter()
 function shanghaiDate() { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()) }
 const calendarDate = ref(shanghaiDate())
@@ -207,26 +210,32 @@ watch(() => route.fullPath, () => {
   rememberAnimeQuery(canonical); rememberCatalogQuery(provider.value as AnimeProviderID, canonical)
 }, { immediate: true })
 onBeforeRouteUpdate(savePosition); onBeforeRouteLeave(savePosition)
-onMounted(() => { updateCalendarDate(); document.addEventListener('visibilitychange', recheckStatuses); window.addEventListener('focus', recheckStatuses); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interact, { passive: true }) })
-onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeout(statusTimer); controller?.abort(); seasonsController?.abort(); statusController?.abort(); document.removeEventListener('visibilitychange', recheckStatuses); window.removeEventListener('focus', recheckStatuses); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
+onMounted(() => { compactViewport.addEventListener('change', syncCompactLayout); updateCalendarDate(); document.addEventListener('visibilitychange', recheckStatuses); window.addEventListener('focus', recheckStatuses); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.addEventListener(event, interact, { passive: true }) })
+onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompactLayout); disposed = true; clearTimeout(calendarTimer); clearTimeout(statusTimer); controller?.abort(); seasonsController?.abort(); statusController?.abort(); document.removeEventListener('visibilitychange', recheckStatuses); window.removeEventListener('focus', recheckStatuses); cancelAnimationFrame(restoreFrame); for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) window.removeEventListener(event, interact) })
 </script>
 
 <template>
-  <ManagementLayout title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
-    <template #actions><RouterLink :to="{ path: '/anime/settings', query: { returnTo: route.fullPath } }" class="anime-refresh" aria-label="动漫订阅设置"><IconSettings :size="18" aria-hidden="true" /><span class="hidden sm:inline">设置</span></RouterLink><RouterLink to="/anime/subscriptions" class="anime-refresh"><IconBookmark :size="18" aria-hidden="true" />我的订阅</RouterLink><button type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
+  <ManagementLayout compact-heading title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
+    <template v-if="compact && available" #titleTools>
+      <div class="catalog-controls catalog-controls-inline">
+        <AnimeQuarterNavigation v-if="mode === 'calendar'" compact :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
+        <button v-else type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="16" aria-hidden="true" />季度浏览</button>
+      </div>
+    </template>
+    <template #actions><RouterLink :to="{ path: '/anime/settings', query: { returnTo: route.fullPath } }" class="anime-refresh" aria-label="动漫订阅设置"><IconSettings :size="18" aria-hidden="true" /><span class="hidden sm:inline">设置</span></RouterLink><RouterLink to="/anime/subscriptions" class="anime-refresh catalog-my-subscriptions" aria-label="我的订阅"><IconBookmark :size="18" aria-hidden="true" /><span>我的订阅</span></RouterLink><button v-if="!compact" type="button" class="anime-refresh" :disabled="!available || loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="18" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /><span class="hidden sm:inline">刷新</span></button></template>
     <div ref="browserElement" class="anime-browser" :style="viewportMinHeight ? { minHeight: `${viewportMinHeight}px` } : undefined">
-      <div class="catalog-providers" role="group" aria-label="选择订阅站点"><AnimeProviderButton v-for="site in animeProviders" :key="site.id" :provider="site.id" :name="site.name" :available="site.available" :selected="provider === site.id" @select="switchProvider(site.id)" /></div>
+      <div class="catalog-providers" role="group" aria-label="选择订阅站点"><AnimeProviderButton v-for="site in animeProviders" :compact="compact" :pill="compact" :key="site.id" :provider="site.id" :name="site.name" :available="site.available" :selected="provider === site.id" @select="switchProvider(site.id)" /></div>
       <template v-if="available">
         <form class="anime-search-form catalog-search" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit"><label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label><div class="anime-search-input"><IconSearch :size="19" aria-hidden="true" /><input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="`在${providerName}搜索番剧`" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" /><button v-if="input || mode === 'search'" type="button" class="anime-input-clear" aria-label="清空搜索并返回日历" @click="clearSearch"><IconX :size="17" aria-hidden="true" /></button></div><button type="submit" class="anime-search-submit">搜索</button></form>
         <p v-if="inputError" id="catalog-input-error" role="alert" class="anime-context text-red-600">{{ inputError }}</p>
-        <div class="catalog-controls">
+        <div v-if="!compact" class="catalog-controls">
           <AnimeQuarterNavigation v-if="mode === 'calendar'" :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
           <template v-else><button type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="17" aria-hidden="true" />季度浏览</button><span class="anime-context catalog-scope">{{ providerName }}搜索结果</span></template>
         </div>
-        <p v-if="mode === 'calendar'" class="catalog-range">{{ providerName }}季度收录，范围以原站为准。<span v-if="seasonsError">季度目录暂时无法更新。<button type="button" :disabled="seasonsLoading" @click="loadSeasons(true)">重试目录</button></span><span v-else-if="seasonsLoading">正在读取季度目录…</span></p>
+        <p v-if="mode === 'calendar' && (!compact || seasonsError || seasonsLoading)" class="catalog-range"><span v-if="!compact">{{ providerName }}季度收录，范围以原站为准。</span><span v-if="seasonsError">季度目录暂时无法更新。<button type="button" :disabled="seasonsLoading" @click="loadSeasons(true)">重试目录</button></span><span v-else-if="seasonsLoading">正在读取季度目录…</span></p>
         <AnimeCatalogCategories v-if="mode === 'calendar'" :entries="categoryEntries" :model-value="String(day)" :label="`${providerName}日历分类`" :today="season === currentSeason ? String(today) : undefined" @select="value => navigate({ day: value, page: undefined, item: undefined })" />
-        <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? day === 'all' ? `${seasonLabel(season)}收录` : labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span></div>
-        <div class="anime-feedback" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
+        <div class="anime-results-heading"><h2>{{ mode === 'calendar' ? day === 'all' ? `${seasonLabel(season)}收录` : labels[day - 1] : keyword ? `“${keyword}”的搜索结果` : `搜索${providerName}番剧` }}<span v-if="result" class="catalog-count">{{ allItems.length }} 部</span></h2><div class="catalog-result-tools"><span v-if="result" class="catalog-updated">读取于 {{ new Date(result.fetchedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) }}</span><button v-if="compact" type="button" class="anime-refresh catalog-inline-refresh" :disabled="loading || mode === 'search' && !keyword" aria-label="刷新当前站点" @click="load(true)"><IconRefresh :size="17" aria-hidden="true" :class="{ 'animate-spin motion-reduce:animate-none': loading }" /></button></div></div>
+        <div class="anime-feedback" :class="{ 'has-feedback': error || loading && result || result && result.expiresAt <= Date.now() }" role="status" aria-live="polite"><template v-if="error"><span>{{ error }}{{ result ? '，已保留上次结果。' : '' }}</span><button type="button" :disabled="loading" @click="load(true)">重试</button></template><span v-else-if="loading && result">正在更新{{ providerName }}资料…</span><span v-else-if="result && result.expiresAt <= Date.now()">当前为缓存资料。</span></div>
         <div v-if="loading && !result" class="anime-grid" :aria-label="`正在读取${providerName}番剧`" aria-busy="true"><div v-for="index in 8" :key="index" class="anime-skeleton" aria-hidden="true"><div></div><span></span><span></span><span></span><span v-if="provider === 'anibt'"></span></div></div>
         <div v-else-if="items.length" class="anime-grid" :aria-label="`${providerName}番剧列表`" :aria-busy="loading"><GardenAnimeCard v-for="(item, index) in gardenItems" :key="`garden:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><AnibtAnimeCard v-for="(item, index) in anibtItems" :key="`anibt:${item.id}`" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /><MikanAnimeCard v-for="(item, index) in mikanItems" :key="item.id" :item="item" :return-to="route.fullPath" :subscription="subscriptionStates[item.id]" :priority="index < 4" /></div>
         <div v-else-if="!error" class="anime-empty"><component :is="mode === 'calendar' ? IconCalendar : IconSearch" :size="30" aria-hidden="true" /><h3>{{ mode === 'calendar' ? '当前分类暂无条目' : keyword ? `${providerName}未找到相关番剧` : `在${providerName}查找想追的番剧` }}</h3><p>{{ mode === 'calendar' ? '可以切换分类、季度，或搜索番剧名称。' : '试试原名、简称或更短的关键词。' }}</p></div>
@@ -276,5 +285,16 @@ onBeforeUnmount(() => { disposed = true; clearTimeout(calendarTimer); clearTimeo
 .dark .catalog-calendar-toggle[aria-pressed="true"] { color: #93c5fd; }
 .dark .catalog-range button { color: #93c5fd; }
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
-@media (max-width: 639px) { .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; } }
+@media (max-width: 639px) {
+  .catalog-controls-inline { margin-top: 0; }
+  .anime-refresh { min-width: 44px; min-height: 44px; padding-inline: 8px; }
+  .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 8px; }
+  .catalog-search :is(.anime-search-input, .anime-search-submit) { min-height: 44px; }
+  .catalog-range { margin-top: 4px; }
+  .anime-results-heading { margin-top: 0; column-gap: 8px; }
+  .catalog-result-tools { display: flex; align-items: center; }
+  .catalog-inline-refresh { margin-right: -6px; }
+  .anime-feedback:not(.has-feedback) { min-height: 0; padding-bottom: 0; }
+}
+@media (max-width: 359px) { .catalog-my-subscriptions span { display: none; } }
 </style>

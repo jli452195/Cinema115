@@ -29,7 +29,7 @@ onBeforeUnmount(() => observer?.disconnect())
       :key="entry.value"
       type="button"
       class="catalog-day-card"
-      :class="{ 'catalog-day-overview': entry.value === 'all', 'catalog-day-extra': Number(entry.value) > 7 }"
+      :class="{ 'catalog-day-overview': entry.value === 'all', 'catalog-day-extra': Number(entry.value) > 7, 'has-date': entry.date, 'is-today': today === entry.value }"
       :aria-pressed="modelValue === entry.value"
       :aria-label="`${entry.label}${today === entry.value ? '，今天' : ''}`"
       :aria-describedby="`${id}-${entry.value}`"
@@ -38,7 +38,7 @@ onBeforeUnmount(() => observer?.disconnect())
     >
       <span v-if="today === entry.value" class="catalog-day-today" aria-hidden="true">今天</span>
       <span class="catalog-day-number" aria-hidden="true"><template v-if="entry.date">{{ Number(entry.date.slice(-2)) }}</template><template v-else-if="entry.count !== undefined">{{ entry.count }}</template><span v-else class="catalog-day-placeholder"></span></span>
-      <span class="catalog-day-meta" aria-hidden="true"><span class="catalog-day-label">{{ entry.value === 'all' ? '本季' : entry.label }}</span><span class="catalog-day-unit"><template v-if="!entry.date">部收录</template><template v-else-if="entry.count !== undefined">{{ entry.count }} 部</template><span v-else class="catalog-day-placeholder catalog-day-count-placeholder"></span></span></span>
+      <span class="catalog-day-meta" aria-hidden="true"><span class="catalog-day-label">{{ entry.value === 'all' ? '本季' : entry.label }}</span><span v-if="today === entry.value" class="catalog-day-today-inline">今天</span><span class="catalog-day-unit"><template v-if="!entry.date"><span v-if="entry.count !== undefined" class="catalog-day-inline-count">{{ entry.count }}</span>部收录</template><template v-else-if="entry.count !== undefined">{{ entry.count }} 部</template><span v-else class="catalog-day-placeholder catalog-day-count-placeholder"></span></span></span>
       <span :id="`${id}-${entry.value}`" class="sr-only">{{ entry.date ? `${entry.date}，` : '' }}{{ entry.count === undefined ? '收录数量待更新' : `${entry.count} 部收录` }}</span>
     </button>
   </div>
@@ -73,6 +73,18 @@ onBeforeUnmount(() => observer?.disconnect())
 @keyframes catalog-today-settle { from { transform: rotate(-8deg) scale(.92); } 65% { transform: rotate(8deg) scale(1.03); } to { transform: rotate(4deg); } }
 @media (hover: hover) and (pointer: fine) { .catalog-day-card:hover { --catalog-lift: -2px; border-color: rgb(148 163 184 / .3); background: #fff; box-shadow: 0 2px 7px rgb(15 23 42 / .05); } .catalog-day-card:hover .catalog-day-number { transform: scale(1.06); } .dark .catalog-day-card:hover { background: rgb(var(--color-slate-800)); box-shadow: 0 2px 7px rgb(0 0 0 / .12); } }
 .catalog-day-card:active { transform: translateY(0) scale(.98); }
-@media (max-width: 639px) { .catalog-day-card { flex: 0 0 104px; } .catalog-day-overview, .catalog-day-extra { flex-basis: 112px; } }
+.catalog-day-today-inline, .catalog-day-inline-count { display: none; }
+@media (max-width: 639px) {
+  .catalog-days { gap: 6px; padding-block: 6px 4px; }
+  .catalog-day-card { flex: 0 0 auto; height: 44px; gap: 5px; padding-inline: 10px; border-radius: 999px; }
+  .catalog-day-card[aria-pressed="true"], .dark .catalog-day-card[aria-pressed="true"] { border-color: rgb(var(--focus) / .36); background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); box-shadow: none; }
+  .catalog-day-card::before, .catalog-day-today, .catalog-day-card:not(.has-date) .catalog-day-number, .is-today .catalog-day-label { display: none; }
+  .catalog-day-number { height: auto; font-size: 13px; letter-spacing: 0; }
+  .catalog-day-card[aria-pressed="true"] .catalog-day-number, .dark .catalog-day-card[aria-pressed="true"] .catalog-day-number { color: inherit; }
+  .catalog-day-meta { flex-direction: row; align-items: center; gap: 5px; }
+  .catalog-day-today-inline, .catalog-day-inline-count { display: inline; }
+  .catalog-day-today-inline { color: rgb(var(--selection-content)); font-size: 12px; font-weight: 650; }
+  .catalog-day-inline-count { margin-right: 2px; }
+}
 @media (prefers-reduced-motion: reduce) { .catalog-day-card, .catalog-day-card::before, .catalog-day-number, .catalog-day-today { transition: none; animation: none !important; } .catalog-day-card:hover, .catalog-day-card:active, .catalog-day-card:hover .catalog-day-number { --catalog-lift: 0px; transform: none; } }
 </style>

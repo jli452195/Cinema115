@@ -52,7 +52,7 @@ function moveFocus(event: KeyboardEvent) {
 <style scoped>
 .segmented-control { position: relative; isolation: isolate; display: inline-flex; max-width: 100%; min-width: 0; gap: 4px; padding: 4px; border-radius: 12px; background: rgb(var(--color-slate-100)); overflow-x: auto; scrollbar-width: none; vertical-align: middle; }
 .segmented-control::-webkit-scrollbar { display: none; }
-.segmented-control-indicator { position: absolute; z-index: 0; pointer-events: none; border-radius: 8px; background: rgb(var(--surface-card)); box-shadow: 0 2px 8px rgb(15 23 42 / .08); }
+.segmented-control-indicator { position: absolute; z-index: 0; pointer-events: none; border-radius: 8px; background: var(--segmented-selection-background, rgb(var(--surface-card))); box-shadow: 0 2px 8px rgb(15 23 42 / .08); }
 .segmented-control-option { position: relative; z-index: 1; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; min-width: 64px; min-height: 44px; padding: 8px 14px; border: 0; border-radius: 8px; background: transparent; color: rgb(var(--content-secondary)); font-size: 14px; font-weight: 500; line-height: 20px; white-space: nowrap; cursor: pointer; transition: color 150ms; }
 .segmented-control-option[aria-pressed=true] { color: rgb(var(--selection-content)); }
 .segmented-control-option:disabled { opacity: .5; cursor: default; }
@@ -60,7 +60,7 @@ function moveFocus(event: KeyboardEvent) {
 .segmented-control-count { font-size: 11px; font-weight: 400; font-variant-numeric: tabular-nums; opacity: .7; }
 .segmented-control-compact .segmented-control-option { min-height: 36px; padding: 6px 12px; font-size: 13px; }
 .dark .segmented-control { background: rgb(var(--color-slate-800) / .6); }
-.dark .segmented-control-indicator { background: rgb(var(--color-slate-700)); box-shadow: 0 2px 8px rgb(0 0 0 / .2); }
+.dark .segmented-control-indicator { background: var(--segmented-selection-background, rgb(var(--color-slate-700))); box-shadow: 0 2px 8px rgb(0 0 0 / .2); }
 /* 嵌套分段控件沿用玻璃底色和高光，不重复采样父表面。 */
 .segmented-control.segmented-control-neutral { border: 1px solid var(--glass-inset-border); background: var(--glass-inset-surface); box-shadow: var(--glass-rim-shadow); }
 .segmented-control-neutral .segmented-control-option { padding-inline: 18px; color: #64748b; border-radius: 9px; }

@@ -5,7 +5,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import DashboardFilterDialog from '../components/DashboardFilterDialog.vue'
 import DashboardYearMenu from '../components/DashboardYearMenu.vue'
-import { useSlidingIndicator } from '../composables/useSlidingIndicator'
+import SegmentedControl from '../components/SegmentedControl.vue'
 import MediaCard from '../components/MediaCard.vue'
 import PaginationControl from '../components/PaginationControl.vue'
 import type { MediaCardItem } from '../types/media'
@@ -54,10 +54,7 @@ const year = filter('year', '', value => /^\d{4}$/.test(value) && Number(value) 
 const sort = filter('sort', 'popular', value => ['popular', 'latest', 'rating'].includes(value))
 const pageFilter = filter('page', '1', value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 500)
 const page = computed({ get: () => Number(pageFilter.value), set: (value: number) => { pageFilter.value = String(value) } })
-const categoryStrip = ref<HTMLElement>()
-const sortStrip = ref<HTMLElement>()
-const { indicatorStyle: categoryIndicator } = useSlidingIndicator(categoryStrip, '[aria-pressed="true"]', [category, categories])
-const { indicatorStyle: sortIndicator } = useSlidingIndicator(sortStrip, '[aria-pressed="true"]', [sort])
+const categoryOptions = computed(() => categories.value.map(({ id, name }) => ({ value: id, label: name })))
 const totalPages = ref(0)
 const pageCount = computed(() => Math.min(500, totalPages.value))
 function changePage(value: number) {
@@ -76,6 +73,7 @@ const loadedPage = ref(1)
 const loadedSummary = ref('')
 const regions = [{ id: '', name: '全部' }, { id: 'CN', name: '大陆' }, { id: 'HK', name: '香港' }, { id: 'TW', name: '台湾' }, { id: 'JP', name: '日本' }, { id: 'KR', name: '韩国' }, { id: 'TH', name: '泰国' }, { id: 'western', name: '欧美' }]
 const sorts = [{ id: 'popular', name: '热门' }, { id: 'latest', name: '最新' }, { id: 'rating', name: 'TMDB 评分' }]
+const sortOptions = sorts.map(({ id, name }) => ({ value: id, label: name }))
 const currentYear = new Date().getFullYear()
 const years = Array.from({ length: 8 }, (_, i) => String(currentYear - i))
 const mobileFiltersOpen = ref(false)
@@ -206,9 +204,11 @@ onBeforeUnmount(() => {
     <main class="catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
       <section aria-label="看板筛选" class="catalog-filters">
-        <div ref="categoryStrip" role="group" aria-label="影视类别" class="catalog-segments catalog-categories">
-          <div class="catalog-segment-indicator" :style="categoryIndicator" aria-hidden="true"></div>
-          <button v-for="item in categories" :key="item.id" type="button" :aria-pressed="category === item.id" @click="category = item.id">{{ item.name }}</button>
+        <div class="catalog-primary-tools">
+          <SegmentedControl v-model="category" :options="categoryOptions" label="影视类别" class="catalog-categories" density="compact" />
+          <button type="button" class="catalog-chip catalog-filter-trigger" aria-haspopup="dialog" :aria-label="activeMobileFilters.length ? `筛选 ${activeMobileFilters.length}` : '筛选'" @click="mobileFiltersOpen = true">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--filter-tone)" /><circle cx="15" cy="17" r="3" fill="var(--filter-tone)" /></svg><span class="catalog-filter-label">筛选</span><span v-if="activeMobileFilters.length" class="catalog-filter-count" aria-hidden="true">{{ activeMobileFilters.length }}</span>
+          </button>
         </div>
         <div class="catalog-desktop-filters">
           <div role="group" aria-label="影视题材" class="catalog-filter-row"><span class="catalog-row-label">题材</span><div class="catalog-options">
@@ -220,15 +220,10 @@ onBeforeUnmount(() => {
             <button type="button" class="catalog-chip" :aria-pressed="year === ''" @click="year = ''">全部</button><button v-for="value in years" :key="value" type="button" class="catalog-chip" :aria-pressed="year === value" @click="year = value">{{ value }}</button><DashboardYearMenu v-model="year" :recent-years="years" />
           </div></div>
         </div>
-        <div class="catalog-mobile-tools">
-          <button type="button" class="catalog-chip catalog-filter-trigger" aria-haspopup="dialog" @click="mobileFiltersOpen = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--filter-tone)" /><circle cx="15" cy="17" r="3" fill="var(--filter-tone)" /></svg>筛选<span v-if="activeMobileFilters.length" class="catalog-filter-count">{{ activeMobileFilters.length }}</span></button>
-          <p :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.length ? activeMobileFilters.join(' · ') : '全部题材 · 全部地区 · 全部年份' }}</p>
-          <button v-if="activeMobileFilters.length" type="button" class="catalog-text-button" @click="clearMobileFilters">清除</button>
-        </div>
       </section>
       <div class="catalog-result-toolbar">
-        <div class="catalog-result-heading"><span role="status">{{ loading ? hasLoaded ? '正在更新结果…' : '正在查询 TMDB…' : error ? hasLoaded ? '更新失败，保留上次结果' : '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><template v-if="activeMobileFilters.length"><span class="catalog-desktop-summary">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-desktop-reset" @click="clearMobileFilters">清除筛选</button></template></div>
-        <div class="catalog-sort-tools"><div ref="sortStrip" role="group" aria-label="结果排序" class="catalog-segments catalog-sort"><div class="catalog-segment-indicator" :style="sortIndicator" aria-hidden="true"></div><button v-for="item in sorts" :key="item.id" type="button" :aria-pressed="sort === item.id" @click="sort = item.id">{{ item.name }}</button></div><p v-if="sort === 'rating'">评分排序至少需要 100 人评价</p></div>
+        <div class="catalog-result-heading"><span role="status">{{ loading ? hasLoaded ? '正在更新结果…' : '正在查询 TMDB…' : error ? hasLoaded ? '更新失败，保留上次结果' : '暂时无法加载' : `找到 ${total.toLocaleString()} 部${kind === 'tv' ? '剧集' : '电影'}` }}</span><template v-if="activeMobileFilters.length"><span class="catalog-filter-summary" :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-filter-reset" @click="clearMobileFilters">清除筛选</button></template></div>
+        <div class="catalog-sort-tools"><SegmentedControl v-model="sort" :options="sortOptions" label="结果排序" class="catalog-sort" density="compact" /><p v-if="sort === 'rating'">评分排序至少需要 100 人评价</p></div>
       </div>
       <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="loadGenres(); loadPage()">重新加载</button></div>
       <section aria-label="影视列表" :aria-busy="loading" class="catalog-results">
@@ -248,22 +243,23 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .catalog-filters { padding: 2px 0 10px; border-bottom: 1px solid var(--filter-outline); }
-.catalog-categories { margin-bottom: 10px; }
+.catalog-primary-tools { margin-bottom: 10px; }
+.catalog-categories { vertical-align: top; }
 .catalog-desktop-filters { display: flex; flex-direction: column; gap: 6px; }
 .catalog-filter-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
 .catalog-row-label { flex-shrink: 0; width: 32px; padding-top: 8px; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
 .catalog-options { display: flex; min-width: 0; flex-wrap: wrap; gap: 3px; }
 .catalog-genre-error { margin: 0 0 4px 44px; color: #b34a4a; font-size: 12px; }
 .catalog-genre-error button { margin-left: 8px; text-decoration: underline; }
-.catalog-mobile-tools { display: none; }
+.catalog-filter-trigger { display: none; }
 .catalog-result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 58px; padding: 8px 0; }
 .catalog-result-heading { display: flex; align-items: center; min-width: 0; flex-wrap: wrap; gap: 8px 12px; color: var(--filter-muted); font-size: 12px; }
-.catalog-desktop-summary { max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.catalog-desktop-reset { font-size: 12px; min-height: 32px; padding: 0 8px; }
+.catalog-filter-summary { max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catalog-filter-reset { font-size: 12px; min-height: 32px; padding: 0 8px; }
 .catalog-sort-tools { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: 5px; }
 .catalog-sort-tools > p { margin: 0; font-size: 11px; color: var(--filter-muted); }
 .catalog-sort { padding: 3px; border-radius: 14px; }
-.catalog-sort button { min-height: 32px; padding: 0 13px; font-size: 12px; }
+.catalog-sort :deep(.segmented-control-option) { min-width: 0; min-height: 32px; padding: 0 13px; font-size: 12px; }
 .catalog-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; padding: 14px 18px; border-radius: 16px; background: color-mix(in srgb, #b34a4a 7%, var(--filter-surface)); color: var(--filter-text); font-size: 13px; }
 .catalog-load-error p { margin: 0; }
 .catalog-load-error .catalog-error-context { margin-top: 5px; color: var(--filter-muted); font-size: 12px; }
@@ -275,18 +271,23 @@ onBeforeUnmount(() => {
 .catalog-empty { padding: 72px 20px; text-align: center; font-size: 13px; color: var(--filter-muted); }
 @keyframes catalog-fetching { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (max-width: 639px) {
-  .catalog-filters { padding-bottom: 12px; }
-  .catalog-categories { display: flex; width: 100%; margin-bottom: 10px; gap: 0; padding: 3px; }
-  .catalog-categories button { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; font-size: 12px; }
-  .catalog-desktop-filters, .catalog-sort-tools, .catalog-desktop-summary, .catalog-desktop-reset { display: none; }
-  .catalog-mobile-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .catalog-filter-trigger { background: var(--filter-tone); color: var(--filter-on-tone); padding: 0 12px; }
-  .catalog-filter-count { min-width: 18px; padding: 0 4px; border-radius: 6px; background: color-mix(in srgb, var(--filter-on-tone) 10%, transparent); font-size: 11px; line-height: 18px; }
-  .catalog-mobile-tools p { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--filter-muted); font-size: 11px; }
-  .catalog-mobile-tools .catalog-text-button { padding: 0 5px; font-size: 12px; }
-  .catalog-result-toolbar { min-height: 52px; padding: 12px 0; }
+  .catalog-filters { padding-bottom: 6px; }
+  .catalog-primary-tools { display: flex; align-items: center; gap: 6px; margin-bottom: 0; }
+  .catalog-categories { --segmented-selection-background: rgb(var(--selection-surface)); flex: 1; gap: 0; padding: 2px; }
+  .catalog-categories :deep(.segmented-control-option) { flex: 1 0 44px; min-width: 44px; min-height: 44px; padding: 0 4px; font-size: 12px; }
+  .catalog-desktop-filters, .catalog-sort-tools { display: none; }
+  .catalog-filter-trigger { position: relative; display: inline-flex; gap: 4px; min-width: 44px; min-height: 44px; padding: 0 8px; background: var(--filter-tone); color: var(--filter-on-tone); }
+  .catalog-filter-count { min-width: 16px; padding: 0 3px; border-radius: 6px; background: color-mix(in srgb, var(--filter-on-tone) 12%, transparent); font-size: 11px; line-height: 16px; }
+  .catalog-result-toolbar { min-height: 42px; padding: 3px 0; }
+  .catalog-result-heading { width: 100%; flex-wrap: nowrap; gap: 6px; }
+  .catalog-filter-summary { margin-left: auto; min-width: 0; text-align: right; font-size: 11px; }
+  .catalog-filter-reset { flex: none; min-height: 36px; padding: 0 4px; white-space: nowrap; }
   .catalog-load-error { align-items: flex-start; padding: 12px; }
 }
-@media (pointer: coarse) { .catalog-row-label { padding-top: 12px; } .catalog-sort button { min-height: 44px; } }
+@media (max-width: 359px) {
+  .catalog-filter-label { display: none; }
+  .catalog-filter-count { position: absolute; top: 3px; right: 2px; min-width: 14px; padding: 0 2px; line-height: 14px; }
+}
+@media (pointer: coarse) { .catalog-row-label { padding-top: 12px; } .catalog-sort :deep(.segmented-control-option) { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .catalog-media-grid { transition: none; } .catalog-progress::after { animation: none; width: 100%; opacity: 0.5; } }
 </style>

@@ -150,12 +150,15 @@ const headerStyle = computed(() => {
 const movieActive = computed(() => route.path.startsWith('/movie') || route.path.startsWith('/collection/'))
 const tvActive = computed(() => route.path === '/' || route.path.startsWith('/tv'))
 const updatesActive = computed(() => route.path === '/updates')
+const animeActive = computed(() => route.path === '/anime' || route.path.startsWith('/anime/'))
+const showAnimeShortcut = computed(() => compact.value && isPortalAdmin.value &&
+  (route.name === 'home' || route.name === 'movie' || route.name === 'tv' || updatesActive.value || animeActive.value))
 
 const navContainerRef = ref<HTMLElement>()
 const { indicatorStyle: navIndicatorStyle } = useSlidingIndicator(
   navContainerRef, 
   '.top-link.selected', 
-  [movieActive, tvActive, updatesActive], 
+  [movieActive, tvActive, updatesActive, animeActive, showAnimeShortcut],
   { persistKey: '__nav_indicator_pos' }
 )
 
@@ -294,11 +297,12 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
       <button v-if="!desktopSidebar && !mobileDetail" type="button" :aria-label="navigationOpen ? '关闭侧栏' : '打开侧栏'" v-tooltip="navigationOpen ? '关闭侧栏' : '打开侧栏'" aria-haspopup="dialog" :aria-expanded="navigationOpen" :aria-controls="navigationControls" class="brand-link mr-auto inline-flex min-h-11 shrink-0 items-center rounded-xl outline-none" @click="toggleNavigation">
         <CinemaLogo />
       </button>
-      <nav v-if="!mobileDetail" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2">
+      <nav v-if="!mobileDetail" ref="navContainerRef" aria-label="影视导航" class="relative flex items-center gap-1 sm:gap-2" :class="{ 'has-anime-shortcut': showAnimeShortcut }">
         <div class="nav-indicator absolute inset-y-0 z-0 rounded-[0.6rem] bg-[#f1f5f9] dark:bg-slate-800" :style="navIndicatorStyle"></div>
         <RouterLink :to="rememberedDashboardPaths.movie" :aria-current="movieActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: movieActive }">电影</RouterLink>
         <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: tvActive }">剧集</RouterLink>
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
+        <RouterLink v-if="showAnimeShortcut" to="/anime" aria-label="动漫订阅" :aria-current="animeActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: animeActive }">订阅</RouterLink>
       </nav>
       <div class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail }">
         <RouterLink to="/notifications" class="icon-button desktop-action relative" v-tooltip="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
@@ -459,6 +463,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 }
 @media (max-width: 639px) {
   .desktop-action { display: none; }
+  .has-anime-shortcut .top-link { display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; padding: 0 7px; }
   [data-menu-origin-owned] { opacity: 0; }
   .account-trigger { transition: color 200ms, background-color 200ms; }
   .account-trigger > svg, .account-trigger > span { transition: transform 140ms ease; }
@@ -467,6 +472,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 @media (max-width: 420px) {
   .header-inner { gap: 0.25rem; padding-left: max(12px, var(--app-safe-left)); padding-right: max(12px, var(--app-safe-right)); }
   .top-link { padding-inline: 0.5rem; }
+  .has-anime-shortcut { gap: 0; }
   .icon-button { width: 2rem; height: 2rem; }
 }
 /* 详情页手机导航只在小胶囊采样，空白区域允许操作下方正文。 */
