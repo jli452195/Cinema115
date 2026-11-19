@@ -11,7 +11,7 @@ import AnimeCatalogCategories from '../components/AnimeCatalogCategories.vue'
 import AnimeQuarterNavigation from '../components/AnimeQuarterNavigation.vue'
 import { portalToken, portalUser } from '../composables/usePortalAuth'
 import { animeScroll, rememberAnimeQuery, rememberAnimeScroll } from '../composables/useAnimeDiscovery'
-import { catalogDraft, catalogQuery, catalogSnapshot, catalogSeasonsSnapshot, rememberCatalogDraft, rememberCatalogQuery, requestCatalog, requestCatalogSeasons } from '../composables/useAnimeCatalog'
+import { catalogCalendarPage, catalogDraft, catalogQuery, catalogSnapshot, catalogSeasonsSnapshot, rememberCatalogCalendarPage, rememberCatalogDraft, rememberCatalogQuery, requestCatalog, requestCatalogSeasons } from '../composables/useAnimeCatalog'
 import { animeCatalogStatusSnapshot, requestAnimeCatalogStatuses } from '../composables/useAnimeCatalogStatus'
 import { animeSubscriptionsVersion } from '../composables/useAnimeSubscriptionBrowser'
 import { animeConfigMessage } from '../lib/anime-config-api'
@@ -46,13 +46,14 @@ const season = computed(() => /^(20\d{2}|2100)-(01|04|07|10)$/.test(String(route
 const day = computed(() => route.query.day === 'all' ? 'all' : /^(?:[1-9]|1[0-2])$/.test(String(route.query.day)) && Number(route.query.day) <= labels.value.length ? Number(route.query.day) : season.value === currentSeason.value ? today.value : 'all')
 const page = computed(() => /^\d{1,3}$/.test(String(route.query.page)) ? Math.max(1, Number(route.query.page)) : 1)
 const input = ref(catalogDraft(provider.value as AnimeProviderID) ?? keyword.value), inputError = ref(''), inputElement = ref<HTMLInputElement>()
-const searchOpen = ref(false), searchTrigger = ref<HTMLButtonElement>()
+const searchOpen = ref(false), searchTrigger = ref<HTMLButtonElement>(), searchForm = ref<HTMLFormElement>()
 const searchVisible = computed(() => !compact.value || searchOpen.value)
 const catalogReturn = computed(() => ({ returnTo: route.fullPath }))
 const searchLabel = computed(() => provider.value === 'garden' ? '搜 Garden' : '搜 ' + providerName.value)
-async function openSearch() {
+function openSearch() {
+  // 在点按事件内解除 inert 并聚焦，让手机浏览器可以立即唤起键盘。
+  if (searchForm.value) searchForm.value.inert = false
   searchOpen.value = true
-  await nextTick()
   inputElement.value?.focus({ preventScroll: true })
 }
 async function closeSearch() {
@@ -132,7 +133,7 @@ const seasons = computed(() => {
   if (result.value?.provider === provider.value && result.value.season === season.value && mode.value === 'calendar' && result.value.days.some(group => group.items.length)) values.add(season.value)
   return [...values].sort().reverse().map(value => ({ value, label: seasonLabel(value) }))
 })
-function selectSeason(value?: string) { if (value) navigate({ view: 'calendar', season: value, day: 'all', page: undefined, item: undefined }) }
+function selectSeason(value?: string) { if (value && value !== season.value) navigate({ view: 'calendar', season: value, day: 'all', page: undefined, item: undefined }) }
 let seasonsController: AbortController | undefined
 async function loadSeasons(refresh = false) {
   seasonsController?.abort(); const active = new AbortController(); seasonsController = active
@@ -181,14 +182,20 @@ function submit() {
   if (inputError.value) return
   if (compact.value) void closeSearch()
   if (mode.value === 'search' && keyword.value === value) { void load(true); return }
+  if (mode.value === 'calendar' && day.value === 'all') rememberCatalogCalendarPage(provider.value as AnimeProviderID, season.value, page.value)
   navigate({ view: 'search', q: value, page: undefined, item: undefined })
 }
-function clearSearch() {
+function clearInput() {
   input.value = ''
   inputError.value = ''
-  navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })
-  if (compact.value) void closeSearch()
-  else inputElement.value?.focus()
+  inputElement.value?.focus({ preventScroll: true })
+}
+function returnToCalendar() {
+  input.value = ''
+  inputError.value = ''
+  const savedPage = day.value === 'all' ? catalogCalendarPage(provider.value as AnimeProviderID, season.value) : 1
+  navigate({ view: 'calendar', q: undefined, page: savedPage > 1 ? String(savedPage) : undefined, item: undefined }, false)
+  if (compact.value) searchTrigger.value?.focus({ preventScroll: true })
 }
 function savePosition() { rememberAnimeScroll(scrollKey.value, window.scrollY) }
 async function restorePosition(target: string) {
@@ -225,8 +232,10 @@ watch([provider, mode, () => portalUser.value?.id, () => portalUser.value?.role]
 watch([page, pages, paginated, result], () => {
   if (result.value && paginated.value && page.value > pages.value) void router.replace({ path: '/anime', query: query({ page: pages.value > 1 ? String(pages.value) : undefined }) })
 })
-watch(keyword, value => { input.value = value; inputError.value = '' })
-watch(provider, value => { input.value = catalogDraft(value as AnimeProviderID) ?? keyword.value; inputError.value = '' })
+watch([provider, keyword], ([site, value], [previousSite]) => {
+  input.value = site === previousSite ? value : catalogDraft(site as AnimeProviderID) ?? value
+  inputError.value = ''
+})
 watch(input, value => { if (available.value) rememberCatalogDraft(provider.value as AnimeProviderID, value) })
 watch(scrollKey, value => { void restorePosition(value) })
 watch([result, () => items.value.map(item => item.id).join(','), provider, animeSubscriptionsVersion, () => portalUser.value?.id, () => portalUser.value?.role], () => { void loadStatuses() }, { immediate: true })
@@ -259,27 +268,29 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
     <div ref="browserElement" class="anime-browser" :style="viewportMinHeight ? { minHeight: `${viewportMinHeight}px` } : undefined">
       <div class="catalog-providers" role="group" aria-label="选择订阅站点"><AnimeProviderButton v-for="site in animeProviders" :compact="compact" :pill="compact" :key="site.id" :provider="site.id" :name="site.name" :available="site.available" :selected="provider === site.id" @select="switchProvider(site.id)" /></div>
       <template v-if="available">
-        <div v-if="compact && !searchOpen" class="catalog-workspace-controls">
-          <AnimeQuarterNavigation v-if="mode === 'calendar'" compact :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
-          <button v-else type="button" class="catalog-calendar-toggle" @click="clearSearch"><IconCalendar :size="17" aria-hidden="true" />返回{{ seasonLabel(season) }}</button>
-          <button ref="searchTrigger" type="button" class="catalog-search-trigger" :aria-label="`在${providerName}搜索番剧`" aria-expanded="false" aria-controls="catalog-site-search" @click="openSearch">
-            <IconSearch :size="17" aria-hidden="true" /><span>{{ searchLabel }}</span>
-          </button>
-        </div>
-        <form v-show="searchVisible" id="catalog-site-search" class="anime-search-form catalog-search" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit" @keydown.esc="dismissSearch">
-          <label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label>
-          <div class="anime-search-input">
-            <IconSearch :size="19" aria-hidden="true" />
-            <input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="`在${providerName}搜索番剧`" enterkeyhint="search" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" />
-            <button v-if="input || mode === 'search'" type="button" class="anime-input-clear" aria-label="清空搜索并返回季度浏览" @click="clearSearch"><IconX :size="17" aria-hidden="true" /></button>
+        <div class="catalog-control-slot">
+          <div v-if="compact" class="catalog-workspace-controls" :inert="searchOpen">
+            <AnimeQuarterNavigation v-if="mode === 'calendar'" compact :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
+            <button v-else type="button" class="catalog-calendar-toggle" @click="returnToCalendar"><IconCalendar :size="17" aria-hidden="true" /><span>返回{{ seasonLabel(season) }}</span></button>
+            <button ref="searchTrigger" type="button" class="catalog-search-trigger" :aria-label="`在${providerName}搜索番剧`" :aria-expanded="searchOpen" aria-controls="catalog-site-search" @click="openSearch">
+              <IconSearch :size="17" aria-hidden="true" /><span>{{ searchLabel }}</span>
+            </button>
           </div>
-          <button type="submit" class="anime-search-submit">搜索</button>
-          <button v-if="compact" type="button" class="catalog-search-close" aria-label="收起站点搜索" aria-expanded="true" aria-controls="catalog-site-search" @click="closeSearch">收起</button>
-        </form>
+          <form ref="searchForm" id="catalog-site-search" class="anime-search-form catalog-search" :inert="!searchVisible" role="search" :aria-label="`搜索${providerName}番剧`" @submit.prevent="submit" @keydown.esc="dismissSearch">
+            <label for="anime-keyword" class="sr-only">{{ providerName }}番剧名称</label>
+            <div class="anime-search-input">
+              <IconSearch :size="18" aria-hidden="true" />
+              <input id="anime-keyword" ref="inputElement" v-model="input" type="search" :placeholder="compact ? '搜索番剧名称' : `在${providerName}搜索番剧`" enterkeyhint="search" autocomplete="off" :aria-invalid="!!inputError" :aria-describedby="inputError ? 'catalog-input-error' : undefined" />
+              <button v-if="input" type="button" class="anime-input-clear" aria-label="清空输入" @click="clearInput"><IconX :size="17" aria-hidden="true" /></button>
+            </div>
+            <button type="submit" class="anime-search-submit">搜索</button>
+            <button v-if="compact" type="button" class="catalog-search-close" @click="closeSearch">取消</button>
+          </form>
+        </div>
         <p v-if="inputError && searchVisible" id="catalog-input-error" role="alert" class="anime-context text-red-600">{{ inputError }}</p>
         <div v-if="!compact" class="catalog-controls">
           <AnimeQuarterNavigation v-if="mode === 'calendar'" :model-value="season" :options="seasons" :current-season="currentSeason" :provider-name="providerName" :placeholder="seasonLabel(season)" @change="selectSeason" />
-          <template v-else><button type="button" class="catalog-calendar-toggle" @click="navigate({ view: 'calendar', q: undefined, page: undefined, item: undefined })"><IconCalendar :size="17" aria-hidden="true" />季度浏览</button><span class="anime-context catalog-scope">{{ providerName }}搜索结果</span></template>
+          <template v-else><button type="button" class="catalog-calendar-toggle" @click="returnToCalendar"><IconCalendar :size="17" aria-hidden="true" />季度浏览</button><span class="anime-context catalog-scope">{{ providerName }}搜索结果</span></template>
         </div>
         <p v-if="mode === 'calendar' && (!compact || seasonsError || seasonsLoading)" class="catalog-range"><span v-if="!compact">{{ providerName }}季度收录，范围以原站为准。</span><span v-if="seasonsError">季度目录暂时无法更新。<button type="button" :disabled="seasonsLoading" @click="loadSeasons(true)">重试目录</button></span><span v-else-if="seasonsLoading">正在读取季度目录…</span></p>
         <AnimeCatalogCategories v-if="mode === 'calendar'" :compact="compact" :entries="categoryEntries" :model-value="String(day)" :label="`${providerName}日历分类`" :today="season === currentSeason ? String(today) : undefined" @select="value => navigate({ day: value, page: undefined, item: undefined })" />
@@ -319,6 +330,7 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 @container anime-catalog (min-width: 960px) { .anime-browser .anime-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 22px 16px; } }
 @container anime-catalog (min-width: 1360px) { .anime-browser .anime-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
 .catalog-providers { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+.catalog-control-slot { display: contents; }
 .catalog-search { max-width: 740px; }
 .catalog-controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; margin-top: 22px; }
 .catalog-calendar-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; border-radius: 10px; padding: 0 12px; background: rgb(148 163 184 / .08); color: rgb(var(--color-slate-600)); font-size: 12px; }
@@ -336,27 +348,28 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) {
   .anime-browser { padding-top: 8px; }
+  .catalog-control-slot { position: relative; display: block; height: 44px; }
+  .catalog-workspace-controls, .catalog-search { position: absolute; inset: 0; height: 44px; }
+  .catalog-workspace-controls[inert], .catalog-search[inert] { opacity: 0; pointer-events: none; }
   .catalog-search-trigger, .catalog-search-close {
-    display: inline-flex; flex: none; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; gap: 5px;
+    display: inline-flex; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; gap: 5px;
     padding-inline: 9px; border-radius: 999px; color: rgb(var(--selection-content)); font-size: 12px; font-weight: 600;
   }
   .catalog-plan-link { --mobile-header-action-color: rgb(var(--selection-content)); }
-  .catalog-search-trigger { background: rgb(var(--selection-surface)); }
+  .catalog-search-trigger { background: rgb(var(--selection-surface)); white-space: nowrap; }
+  .catalog-search-trigger > span, .catalog-calendar-toggle > span { overflow: hidden; text-overflow: ellipsis; }
+  .catalog-search-trigger > svg, .catalog-calendar-toggle > svg { flex: none; }
   .catalog-search-close:hover { background: rgb(var(--surface-hover)); }
   .catalog-workspace-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .catalog-workspace-controls .catalog-calendar-toggle { flex: none; color: rgb(var(--selection-content)); }
+  .catalog-workspace-controls .catalog-calendar-toggle { min-width: 44px; white-space: nowrap; color: rgb(var(--selection-content)); }
   .anime-refresh { min-width: 44px; min-height: 44px; padding-inline: 8px; }
   .catalog-providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-bottom: 8px; }
-  .catalog-search { gap: 5px; }
-  .catalog-search :is(.anime-search-input, .anime-search-submit, .anime-input-clear) { min-width: 44px; min-height: 44px; }
-  .catalog-search .anime-search-input { gap: 4px; padding-inline-start: 8px; }
-  .catalog-search input { font-size: 16px; }
-  .catalog-search .anime-search-submit { padding-inline: 9px; }
-  .catalog-search-close { padding-inline: 5px; }
-  @media (prefers-reduced-motion: no-preference) {
-    .catalog-search { animation: catalog-open-search 140ms ease-out; }
-  }
-  @keyframes catalog-open-search { from { opacity: .5; } to { opacity: 1; } }
+  .catalog-search { gap: 4px; align-items: center; }
+  .catalog-search .anime-search-input { height: 44px; gap: 4px; padding-inline-start: 8px; }
+  .catalog-search input { height: 42px; font-size: 16px; }
+  .catalog-search .anime-input-clear { width: 44px; }
+  .catalog-search .anime-search-submit { min-width: 44px; min-height: 44px; padding-inline: 9px; }
+  .catalog-search-close { flex: none; padding-inline: 5px; color: rgb(var(--content-secondary)); }
   .catalog-range { margin-top: 4px; }
   .anime-results-heading { margin-top: 0; column-gap: 8px; }
   .catalog-result-tools { display: flex; align-items: center; }

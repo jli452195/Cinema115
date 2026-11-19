@@ -13,7 +13,7 @@ defineEmits<{ select: [value: string] }>()
 const root = ref<HTMLElement>(), id = useId()
 const compactEntries = computed(() => new Map(props.entries.map(entry => [entry.value, {
   ...entry,
-  text: entry.value === props.today && entry.date ? String(Number(entry.date.slice(-2))) : entry.label,
+  text: entry.value === props.today ? '今天' : entry.label,
 }])))
 const compactOptions = computed(() => [...compactEntries.value.values()].map(entry => ({
   value: entry.value,
@@ -39,10 +39,9 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
-  <SegmentedControl v-if="compact" class="catalog-compact-days" :model-value="modelValue" :options="compactOptions" :label="label" density="compact" appearance="mobile-line" @change="$emit('select', $event)">
+  <SegmentedControl v-if="compact" class="catalog-compact-days" :model-value="modelValue" :options="compactOptions" :label="label" density="compact" appearance="mobile-line" fade-end @change="$emit('select', $event)">
     <template #option="{ option }">
       {{ compactEntries.get(option.value)?.text }}
-      <span v-if="option.value === today" class="catalog-today-marker" aria-hidden="true">今</span>
     </template>
   </SegmentedControl>
   <div v-else ref="root" class="catalog-days" role="group" :aria-label="label">
@@ -97,6 +96,5 @@ onBeforeUnmount(() => observer?.disconnect())
 .catalog-day-card:active { transform: translateY(0) scale(.98); }
 .catalog-compact-days { display: flex; width: 100%; margin-block: 4px 2px; }
 .catalog-compact-days :deep(.segmented-control-option) { min-width: 44px; padding-inline: 9px; }
-.catalog-today-marker { border-radius: 4px; padding-inline: 2px; background: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); font-size: 10px; font-weight: 650; line-height: 14px; }
 @media (prefers-reduced-motion: reduce) { .catalog-day-card, .catalog-day-card::before, .catalog-day-number, .catalog-day-today { transition: none; animation: none !important; } .catalog-day-card:hover, .catalog-day-card:active, .catalog-day-card:hover .catalog-day-number { --catalog-lift: 0px; transform: none; } }
 </style>

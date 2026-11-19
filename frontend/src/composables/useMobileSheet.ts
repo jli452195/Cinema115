@@ -9,6 +9,7 @@ interface MobileSheetOptions {
   closeDisabled: () => boolean
   allowSwipeClose?: () => boolean
   beforeClose?: (reason: DismissReason) => DismissDecision | Promise<DismissDecision>
+  commitClose?: () => Promise<void>
   onClosing?: () => void
   onClose: () => void
   onViewportChange?: (height: number) => void
@@ -32,7 +33,7 @@ let replacementBackdrop: { opacity: number } | undefined
 
 export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, options: MobileSheetOptions) {
   const expanded = ref(false)
-  let opened = false, closing = false, notified = false, disposed = false, listening = false, pendingClose = false
+  let opened = false, closing = false, notified = false, disposed = false, listening = false, pendingClose = false, committingClose = false
   let element: HTMLDialogElement | undefined
   let mobile: MediaQueryList | undefined, reduced: MediaQueryList | undefined
   let viewport: VisualViewport | null = null
@@ -44,7 +45,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
 
   const active = () => opened && !!element?.open && options.enabled() && !!mobile?.matches
   const reducedMotion = () => !!reduced?.matches
-  const closeBlocked = () => options.closeDisabled() || !!element?.hasAttribute('data-dialog-covered')
+  const closeBlocked = () => committingClose || options.closeDisabled() || !!element?.hasAttribute('data-dialog-covered')
 
   function cancelAnimation() {
     const current = animation
@@ -144,6 +145,13 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
   function performClose() {
     if (disposed || notified || closing || closeBlocked()) return
     releaseDrag()
+    if (options.commitClose) {
+      // 由路由卸载的弹层在导航提交前保持可见，避免屏外模态拦住底层页面。
+      committingClose = true
+      if (visualOffset()) snap(expanded.value)
+      void options.commitClose().finally(() => { committingClose = false })
+      return
+    }
     closing = true
     options.onClosing?.()
     if (!active() || reducedMotion()) {
@@ -290,7 +298,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     current.samples = current.samples.filter(point => time - point.time <= 120)
   }
   function onPointerDown(event: PointerEvent) {
-    if (!active() || closing || pendingClose || notified || drag || performance.now() < closeReadyAt || !event.isPrimary || event.button !== 0 || element?.hasAttribute('data-dialog-covered')) return
+    if (!active() || closing || committingClose || pendingClose || notified || drag || performance.now() < closeReadyAt || !event.isPrimary || event.button !== 0 || element?.hasAttribute('data-dialog-covered')) return
     if (!(event.target instanceof Element) || event.target.closest(interactive) || !(event.currentTarget instanceof Element)) return
     // 抓住进入或回弹中的表面时冻结当前视觉位置，后续位移从这里连续跟手。
     const baseOffset = visualOffset()

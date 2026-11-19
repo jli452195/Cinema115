@@ -107,6 +107,7 @@ test('字幕命名按用户确认版本、语言、扩展名输出，空版本�
 
 test('单资源真实请求同时传递字幕库和本地版本，保留主账号、摘要与附件安全边界', async t => {
   const { state: s, requests } = await harness(t)
+  s.openSubtitles()
   s.selectSubtitles([library('video-1', 'HKG'), library('video-1', 'KTXP')], [local('video-1', 'KTXP')])
   assert.deepEqual(s.localConflicts, {})
   await s.start()
@@ -130,6 +131,7 @@ test('单资源真实请求同时传递字幕库和本地版本，保留主账�
 
 test('只修改字幕库版本会改变快照并重新预览，正式命名回显继续带版本', async t => {
   const { state: s, requests } = await harness(t, { rename: true })
+  s.openSubtitles()
   s.selectSubtitles([library('video-1', 'HKG')], [])
   const before = s.snapshotKey
   await s.start()
@@ -148,6 +150,7 @@ test('只修改字幕库版本会改变快照并重新预览，正式命名回�
 
 test('版本参与跨来源冲突检测，重复版本阻止提交，改回不同版本即解除', async t => {
   const { state: s, requests } = await harness(t)
+  s.openSubtitles()
   s.selectSubtitles([library('video-1', 'HKG')], [local('video-1', 'hkg', { language: 'zh-CN', file: { name: '01.ass', data: new Uint8Array([1]), sha256: 'd'.repeat(64) } })])
   assert.match(s.localConflicts['video-1'], /同名/)
   assert.equal(s.submitDisabled, true)
@@ -162,6 +165,7 @@ test('版本参与跨来源冲突检测，重复版本阻止提交，改回不�
 
 test('分季修改及重新打开保留双方版本，未选视频的字幕不进入载荷', async t => {
   const { state: s } = await harness(t, { seasons: [1, 2] })
+  s.openSubtitles()
   s.selectSubtitles([library('video-1', 'HKG'), library('video-2', 'KTXP')], [local('video-2', 'HKG')])
   s.openSubtitles(1)
   s.selectSubtitles([library('video-1', 'KTXP')], [])
@@ -176,6 +180,7 @@ test('分季修改及重新打开保留双方版本，未选视频的字幕不�
 
 test('批量请求按资源归属还原视频 ID 并显式传递空版本', async t => {
   const { state: s, requests } = await harness(t, { batch: true })
+  s.openSubtitles()
   s.selectSubtitles([library(`${hash(0)}:video-1`, 'HKG'), library(`${hash(1)}:video-1`, 'KTXP', { language: 'zh-TW' })], [local(`${hash(1)}:video-1`, '')])
   assert.deepEqual(s.localConflicts, {})
   await s.start()

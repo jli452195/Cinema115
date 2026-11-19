@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter, type RouteLocationNormalized } from 'vue-router'
 import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
 import BottomSheetDialog from './BottomSheetDialog.vue'
 import FloatingDialog from './FloatingDialog.vue'
@@ -26,8 +26,8 @@ import type { DismissDecision, DismissReason } from '../composables/useMobileShe
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
-const props = withDefaults(defineProps<{ token: string; id?: string; bangumiId?: string; seed?: { provider: string; itemId: string } }>(), { id: '', bangumiId: '' })
-const emit = defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
+const props = withDefaults(defineProps<{ token: string; id?: string; bangumiId?: string; seed?: { provider: string; itemId: string }; returnTo: string; closeEditor: () => Promise<boolean> }>(), { id: '', bangumiId: '' })
+const emit = defineEmits<{ saved: [id: string]; open: [id: string] }>()
 const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), toRef(props, 'id'), toRef(props, 'bangumiId'), computed(() => props.seed || { provider: '', itemId: '' }))
 const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, pendingSave, receipt, duplicateID, conflict, now, locked, dirty, startIssue } = editor
 const hostDialog = ref<InstanceType<typeof BottomSheetDialog>>()
@@ -57,7 +57,16 @@ const actions = useAnimeSubscriptionActions(toRef(props, 'token'), props.id, asy
 })
 const actionLocked = computed(() => locked.value || dirty.value || actions.locked.value || childOpen.value || !!previewBusy.value || editor.naming.busy.value || editor.naming.searching.value)
 const rootHardBlocked = computed(() => !!pendingSave.value || saveBusy.value || !!actions.pending.value || actions.loading.value)
-let routeDecision: ((leave: boolean) => void) | undefined
+const router = useRouter(), history = router.options.history
+const historyPosition = () => typeof history.state.position === 'number' ? history.state.position : undefined
+let editorPosition = historyPosition()
+watch(() => router.currentRoute.value, () => { editorPosition = historyPosition() }, { flush: 'sync' })
+let historyExit: { from: string; to: string; delta: number } | undefined
+let replayOnRestore = false
+const approvedNavigationExit = ref<string>()
+const approvedHostExit = ref<string>()
+const exitPending = computed(() => !!(approvedNavigationExit.value || approvedHostExit.value))
+let routeDecision: { target: string; resolve: (leave: boolean) => void } | undefined
 let leaving = false
 const scroll = new Map<string, number>()
 let top = 0
@@ -68,16 +77,19 @@ function resetChildState() {
   pendingBackup.value = undefined
   childOpen.value = false
 }
+function showDiscard() {
+  if (flow.depth.value > 1) { flow.popToRoot(); resetChildState() }
+  if (discard.value) return
+  discard.value = true
+  void nextTick(() => { if (discard.value) shell.value?.scrollTo(0) })
+}
 function guardRootClose(fromChildGlobalClose = false): DismissDecision {
   if (rootHardBlocked.value) {
     feedback.value = '提交结果尚未确认，请先核对原请求。'
     return 'blocked'
   }
   if (fromChildGlobalClose && dirty.value) {
-    flow.popToRoot()
-    resetChildState()
-    discard.value = true
-    void nextTick(() => shell.value?.scrollTo(0))
+    showDiscard()
     return 'handled'
   }
   if (fromChildGlobalClose && confirmRemove.value) {
@@ -86,10 +98,9 @@ function guardRootClose(fromChildGlobalClose = false): DismissDecision {
     return 'handled'
   }
   if (confirmRemove.value) { confirmRemove.value = false; return 'handled' }
-  if (discard.value) { cancelDiscard(); return 'handled' }
+  if (discard.value) return 'handled'
   if (dirty.value) {
-    discard.value = true
-    void nextTick(() => shell.value?.scrollTo(0))
+    showDiscard()
     return 'handled'
   }
   return 'dismiss'
@@ -112,24 +123,83 @@ function setRootStage(element: unknown) {
   rootContainer.value = node
   flow.stage.value = node
 }
-function guard() {
-  if (leaving) return true
-  if (pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) { feedback.value = '提交结果尚未确认，请先核对原请求。'; return false }
+function guard(to: RouteLocationNormalized, from: RouteLocationNormalized) {
+  if (leaving || to.fullPath === from.fullPath) return true
+  if (rootHardBlocked.value) { feedback.value = '提交结果尚未确认，请先核对原请求。'; return false }
+  const fromHistory = history.location !== from.fullPath
+  const approvedTarget = approvedNavigationExit.value || (!fromHistory && approvedHostExit.value)
+  if (approvedTarget && (approvedTarget === to.fullPath || approvedTarget === to.redirectedFrom?.fullPath)) return true
   if (!dirty.value) return true
-  discard.value = true
-  return new Promise<boolean>(resolve => { routeDecision?.(false); routeDecision = resolve })
+  if (flow.blocked.value) return false
+  reloadConfirm.value = false
+  showDiscard()
+  replayOnRestore = false
+  if (fromHistory) {
+    // 浏览器返回先移动地址栏；立即拒绝，避免等确认时地址和打开的弹层不一致。
+    const targetPosition = historyPosition()
+    historyExit = { from: from.fullPath, to: to.fullPath, delta: targetPosition !== undefined && editorPosition !== undefined ? targetPosition - editorPosition : 0 }
+    routeDecision?.resolve(false); routeDecision = undefined
+    return false
+  }
+  historyExit = undefined
+  return new Promise<boolean>(resolve => {
+    routeDecision?.resolve(false)
+    routeDecision = { target: to.fullPath, resolve }
+  })
 }
-function cancelDiscard() { discard.value = false; reloadConfirm.value = false; routeDecision?.(false); routeDecision = undefined }
+function replayHistoryExit() {
+  const target = historyExit
+  if (!target || exitPending.value || history.location !== target.from) return
+  replayOnRestore = false
+  approvedNavigationExit.value = target.to
+  if (target.delta) router.go(target.delta)
+  else void router.push(target.to).catch(() => {})
+}
+function onPopState() { if (replayOnRestore) replayHistoryExit() }
+function cancelDiscard() {
+  discard.value = false; reloadConfirm.value = false
+  historyExit = undefined; replayOnRestore = false
+  routeDecision?.resolve(false); routeDecision = undefined
+}
+async function commitHostClose() {
+  try { await props.closeEditor() }
+  finally { approvedHostExit.value = undefined }
+}
 function discardChanges() {
-  discard.value = false; leaving = true
-  if (reloadConfirm.value) { leaving = false; reloadConfirm.value = false; void editor.initialize(); return }
-  if (routeDecision) { routeDecision(true); routeDecision = undefined } else hostDialog.value?.closeDirect()
+  if (exitPending.value) return
+  if (historyExit) {
+    // 用户若在地址回滚完成前就点了放弃，等历史条目恢复后再执行原返回。
+    replayOnRestore = true
+    replayHistoryExit()
+    return
+  }
+  if (reloadConfirm.value) { discard.value = false; reloadConfirm.value = false; void editor.initialize(); return }
+  if (routeDecision) {
+    approvedNavigationExit.value = routeDecision.target
+    routeDecision.resolve(true); routeDecision = undefined
+    return
+  }
+  approvedHostExit.value = props.returnTo
+  if (hostDialog.value?.closeDirect() !== 'dismiss') approvedHostExit.value = undefined
 }
 function unload(event: BeforeUnloadEvent) { if (dirty.value || pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) event.preventDefault() }
 window.addEventListener('beforeunload', unload)
+window.addEventListener('popstate', onPopState)
+function clearApprovedNavigation(to: RouteLocationNormalized) {
+  const target = approvedNavigationExit.value
+  if (target && (target === to.fullPath || target === to.redirectedFrom?.fullPath)) approvedNavigationExit.value = undefined
+}
+const stopAfterNavigation = router.afterEach(clearApprovedNavigation)
+const stopNavigationError = router.onError((_error, to) => clearApprovedNavigation(to))
 onBeforeRouteLeave(guard)
-onBeforeRouteUpdate((to, from) => to.fullPath === from.fullPath ? true : guard())
-onBeforeUnmount(() => { window.removeEventListener('beforeunload', unload); routeDecision?.(false) })
+onBeforeRouteUpdate(guard)
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', unload)
+  window.removeEventListener('popstate', onPopState)
+  stopAfterNavigation()
+  stopNavigationError()
+  routeDecision?.resolve(false)
+})
 watch(receipt, value => { if (value) { leaving = true; emit('saved', value.id) } })
 watch(tab, async (value, previous) => { scroll.set(previous, top); await nextTick(); shell.value?.scrollTo(scroll.get(value) || 0) })
 watch(() => active.value?.ruleError, async error => {
@@ -189,8 +259,8 @@ onBeforeUnmount(stopProgress)
     :close-disabled="flow.blocked.value"
     :allow-swipe-close="flow.depth.value === 1"
     :before-close="flow.requestDismiss"
+    :commit-close="commitHostClose"
     desktop-backdrop-dismiss
-    @close="emit('close')"
   >
     <div :ref="setRootStage" class="sheet-flow-stage">
       <FloatingDialog
@@ -218,7 +288,7 @@ onBeforeUnmount(stopProgress)
       </div>
     </template>
     <div class="anime-editor ac-editor">
-      <div v-if="discard" class="ac-confirm" role="alert"><p>{{ reloadConfirm ? '放弃未保存的修改，重新读取最新配置？' : '有尚未保存的修改，是否放弃？' }}</p><div><button type="button" class="ae-button" @click="cancelDiscard">继续编辑</button><button type="button" class="ae-button ae-danger" @click="discardChanges">放弃修改</button></div></div>
+      <div v-if="discard" class="ac-confirm" role="alert"><p>{{ reloadConfirm ? '放弃未保存的修改，重新读取最新配置？' : '有尚未保存的修改，是否放弃？' }}</p><div><button type="button" class="ae-button" :disabled="exitPending" @click="cancelDiscard">继续编辑</button><button type="button" class="ae-button ae-danger" :disabled="exitPending" @click="discardChanges">放弃修改</button></div></div>
       <p v-if="loading" role="status" class="ae-loading">正在读取订阅配置…</p>
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button></div>
       <template v-else-if="subject">

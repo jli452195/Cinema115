@@ -24,15 +24,20 @@ async function close() {
   const focusedID = id.value
   const sourceItem = window.history.state?.animeSource?.itemId
   const sourceSite = window.history.state?.animeSource?.provider
-  await router.replace(hostPath.value)
+  try {
+    if (await router.replace(hostPath.value)) return false
+  } catch {
+    return false
+  }
   await nextTick()
   const trigger = [...document.querySelectorAll<HTMLElement>('[data-subscription-id], [data-mikan-id], [data-anibt-id], [data-garden-id]')].find(el => !!focusedID && el.dataset.subscriptionId === focusedID || !!sourceItem && (sourceSite === 'mikan' && el.dataset.mikanId === sourceItem || sourceSite === 'anibt' && el.dataset.anibtId === sourceItem || sourceSite === 'garden' && el.dataset.gardenId === sourceItem))
   trigger?.focus({ preventScroll: true })
+  return true
 }
 function openExisting(id: string) { void router.replace({ path: `/anime/subscriptions/${encodeURIComponent(id)}`, query: { returnTo: hostPath.value } }) }
 </script>
 <template>
   <AnimeWorkspaceHost :token="token" :location="host" @logout="$emit('logout')" />
-  <AnimeNewSubscriptionView v-if="isNew" :token="token" @close="close" @saved="close" @open="openExisting" />
-  <AnimeSubscriptionDialog v-else-if="id" :key="id" :token="token" :id="id" @close="close" @saved="close" @open="openExisting" />
+  <AnimeNewSubscriptionView v-if="isNew" :token="token" :return-to="hostPath" :close-editor="close" @saved="close" @open="openExisting" />
+  <AnimeSubscriptionDialog v-else-if="id" :key="id" :token="token" :id="id" :return-to="hostPath" :close-editor="close" @saved="close" @open="openExisting" />
 </template>

@@ -79,6 +79,149 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     return {page,state,calls,go,navigate,search,count:()=>calls.filter(c=>c.endpoint.endsWith('/catalog/mikan')).length}
   }
   try {
+    for (const scenario of ['native-double-cancel', 'native-close', 'rejected-discard', 'rejected-history-discard', 'history-after-close', 'cancel-after-close', 'history-from-preview']) {
+      const mobile = await session({width:390,height:844},'admin',{hasTouch:true,isMobile:true})
+      const {page,state} = mobile
+      state.statusEnabled=true; state.links=['630160']
+      await mobile.go()
+      const card=page.locator('[data-mikan-id="4058"]')
+      await card.tap()
+      await page.locator('.ac-identity').waitFor()
+      await page.getByRole('button',{name:'选择资源',exact:true}).tap()
+      await page.getByRole('button',{name:/Kirara Fantasia/}).tap()
+      await page.getByRole('radio',{name:/^全部规格/}).tap()
+      await page.getByRole('button',{name:'使用此来源',exact:true}).tap()
+      const total=page.getByLabel('总集数',{exact:true})
+      await total.fill('13')
+      if (scenario !== 'native-double-cancel') {
+        await page.getByRole('button',{name:'预览',exact:true}).tap()
+        await page.getByRole('heading',{name:'匹配与重命名预览'}).waitFor()
+      } else {
+        await page.getByRole('heading',{name:'新增订阅',exact:true}).tap()
+      }
+      const keep=page.getByRole('button',{name:'继续编辑',exact:true})
+      const discard=page.getByRole('button',{name:'放弃修改',exact:true})
+      if (scenario !== 'history-from-preview' && scenario !== 'native-double-cancel') {
+        // 页内切换有防误触窗口；等窗口结束后再模拟用户按关闭。
+        await page.waitForTimeout(350)
+        await page.getByRole('button',{name:'关闭整个窗口'}).tap()
+        await keep.waitFor()
+      }
+      const editorURL=page.url(), editorPosition=await page.evaluate(()=>history.state.position)
+      const catalogPath=await page.evaluate(()=>history.state.back)
+      const readEditor=()=>page.evaluate(()=>{
+        const dialog=document.querySelector('dialog:modal'), bounds=dialog?.getBoundingClientRect()
+        return {
+          url:location.pathname,
+          route:document.querySelector('#app').__vue_app__.config.globalProperties.$router.currentRoute.value.path,
+          modal:!!dialog,
+          inViewport:!!bounds&&bounds.bottom>0&&bounds.top<innerHeight,
+          overflow:document.body.style.overflow,
+          warnsOnUnload:!dispatchEvent(new Event('beforeunload',{cancelable:true})),
+        }
+      })
+      const assertEditor=async action=>{
+        assert.deepEqual(await readEditor(),{url:'/anime/new',route:'/anime/new',modal:true,inViewport:true,overflow:'hidden',warnsOnUnload:true},action)
+        await keep.waitFor()
+        await discard.waitFor()
+        assert.equal(await total.inputValue(),'13',action)
+      }
+      const back=async()=>{
+        await page.evaluate(()=>{
+          window.__lastPopPath=''
+          window.addEventListener('popstate',()=>{window.__lastPopPath=location.pathname},{once:true})
+          history.back()
+        })
+        await page.waitForFunction(()=>window.__lastPopPath==='/anime')
+        await page.waitForURL(editorURL)
+      }
+      if (scenario.startsWith('native-')) {
+        await page.evaluate(()=>{
+          const dialog=document.querySelector('dialog:modal')
+          window.__animeDismissSignals=[]
+          for (const type of ['cancel','close']) dialog.addEventListener(type,event=>{
+            window.__animeDismissSignals.push({type,trusted:event.isTrusted,cancelable:event.cancelable,prevented:event.defaultPrevented,open:dialog.open})
+          })
+        })
+        if (scenario==='native-double-cancel') {
+          // 两次可信关闭请求之间没有点击或脚本执行，模拟连续两次系统返回。
+          await page.waitForTimeout(350)
+          await page.keyboard.press('Escape')
+          await page.waitForTimeout(350)
+          await page.keyboard.press('Escape')
+        } else {
+          await page.evaluate(()=>document.querySelector('dialog:modal').close())
+        }
+        const signals=await page.evaluate(async()=>{
+          await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))
+          return window.__animeDismissSignals
+        })
+        if (scenario==='native-double-cancel') {
+          assert.deepEqual(signals.filter(signal=>signal.type==='cancel').map(signal=>[signal.trusted,signal.cancelable]),[[true,true],[true,false]],'the second native cancel cannot be prevented')
+          assert.ok(signals.some(signal=>signal.type==='close'&&signal.trusted),'the browser actually closed the dialog')
+        }
+        if (scenario==='native-close') assert.ok(signals.some(signal=>signal.type==='close'&&signal.trusted),'the browser delivered the native close event')
+        await assertEditor(`${scenario} must leave confirmation actionable; native events: ${JSON.stringify(signals)}`)
+      } else if (scenario.startsWith('rejected-')) {
+        if (scenario === 'rejected-history-discard') await back()
+        await page.evaluate(()=>{
+          const router=document.querySelector('#app').__vue_app__.config.globalProperties.$router
+          const removeGuard=router.beforeEach(to=>to.path==='/anime' ? new Promise(resolve=>{
+            window.__rejectAnimeExit=()=>{removeGuard();resolve(false)}
+          }) : undefined)
+          const removeAfter=router.afterEach((to,from,failure)=>{
+            if (to.path==='/anime' && from.path==='/anime/new' && failure) {
+              window.__animeExitRejected=true
+              removeAfter()
+            }
+          })
+        })
+        await discard.tap()
+        await page.waitForFunction(()=>!!window.__rejectAnimeExit)
+        const pending={state:await readEditor(),confirmVisible:await keep.isVisible()&&await discard.isVisible()}
+        await page.evaluate(()=>window.__rejectAnimeExit())
+        await page.waitForFunction(()=>window.__animeExitRejected)
+        await page.waitForURL(editorURL)
+        await assertEditor('rejected navigation keeps the editor visible and preserves its draft')
+        assert.equal(pending.state.inViewport,true,'the editor stays visible while the router is deciding')
+        assert.equal(pending.confirmVisible,true,'the prompt stays visible while the router is deciding')
+      } else {
+        if (scenario==='cancel-after-close') {
+          await page.waitForTimeout(350)
+          await page.keyboard.press('Escape')
+        }
+        else await back()
+        await assertEditor(`${scenario} keeps the confirmation visible and preserves the draft`)
+        await keep.tap()
+        assert.equal(await total.inputValue(),'13')
+        await back()
+      }
+      await discard.tap()
+      await page.locator('dialog:modal').waitFor({state:'detached'})
+      assert.deepEqual(await readEditor(),{url:'/anime',route:'/anime',modal:false,inViewport:false,overflow:'',warnsOnUnload:false},'returning to the catalog releases the modal, scroll lock and unload warning')
+      assert.equal(new URL(page.url()).pathname+new URL(page.url()).search,catalogPath)
+      if (scenario!=='rejected-discard'&&!scenario.startsWith('native-')) assert.equal(await page.evaluate(()=>history.state.position),editorPosition-1)
+      await card.waitFor()
+      // 目录一直留在底层，元素可见并不能证明已解除原生模态；实际点击并触摸滚动。
+      const search=page.getByRole('button',{name:'在蜜柑搜索番剧',exact:true})
+      await search.tap()
+      assert.equal(await search.getAttribute('aria-expanded'),'true')
+      await page.getByRole('button',{name:'取消',exact:true}).tap()
+      const before=await page.evaluate(()=>scrollY)
+      const cdp=await page.context().newCDPSession(page)
+      try {
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:190,y:710}]})
+        for (const y of [670,610,550,490,430]) await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:190,y}]})
+        await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]})
+        await page.waitForFunction(start=>scrollY>start+100,before)
+      } finally { await cdp.detach() }
+    }
+    passed.push('mobile history, repeated native close requests and unexpected dialog close preserve the draft prompt; rejected discard keeps the sheet visible; successful discard restores catalog touch and scroll')
+    if (process.argv.includes('--dirty-history-only')) {
+      assert.deepEqual(errors,[])
+      console.log(JSON.stringify({passed,errors},null,2))
+      return
+    }
     const s=await session(),{page,state,calls}=s
     await s.go()
     const seasonLabel=page.locator('.catalog-season-label')

@@ -37,14 +37,24 @@ function enabledIndex(start: number, step: number) {
 async function show() {
   if (unavailable.value || button.value?.matches(':disabled') || !props.options.length) return
   activeIndex.value = selectedIndex.value >= 0 ? selectedIndex.value : enabledIndex(0, 1)
+  positionPanel()
   open.value = true
   await nextTick()
   if (!open.value || !panel.value || !button.value) return
-  positionPanel()
   panel.value.showPopover()
+  revealActiveOption()
+}
+function revealActiveOption() {
+  const menu = panel.value
+  const item = menu?.children[activeIndex.value] as HTMLElement | undefined
+  if (!menu?.matches(':popover-open') || !item) return
+  // 只滚动下拉列表，保持宿主页面位置不变。
+  const top = item.offsetTop, bottom = top + item.offsetHeight
+  if (top < menu.scrollTop) menu.scrollTop = top
+  else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight
 }
 function positionPanel() {
-  if (!panel.value || !button.value) return
+  if (!button.value) return
   const rect = button.value.getBoundingClientRect(), gap = 6, inset = 8
   const width = Math.min(Math.max(rect.width, props.menuMinWidth || 160), innerWidth - inset * 2)
   const below = innerHeight - rect.bottom - gap - inset, above = rect.top - gap - inset
@@ -110,13 +120,9 @@ function viewportChanged(event: Event) {
 watch(() => props.modelValue, () => { activeIndex.value = selectedIndex.value })
 watch(() => props.disabled, async () => { await nextTick(); syncDisabled() })
 watch(() => JSON.stringify(props.options), () => { activeIndex.value = selectedIndex.value; close() })
-watch(activeIndex, async index => {
+watch(activeIndex, async () => {
   await nextTick()
-  const item = panel.value?.children[index] as HTMLElement | undefined
-  if (!open.value || !item || !panel.value) return
-  const top = item.offsetTop, bottom = top + item.offsetHeight
-  if (top < panel.value.scrollTop) panel.value.scrollTop = top
-  else if (bottom > panel.value.scrollTop + panel.value.clientHeight) panel.value.scrollTop = bottom - panel.value.clientHeight
+  revealActiveOption()
 })
 onMounted(() => {
   syncDisabled()
@@ -187,6 +193,7 @@ onBeforeUnmount(() => { fieldsetObserver?.disconnect(); document.removeEventList
             <span v-if="option.value === modelValue" class="h-1.5 w-1.5 rounded-full bg-selection-content" aria-hidden="true" />
           </div>
           <span class="select-menu-label">{{ option.label }}</span>
+          <slot name="option-end" :option="option" />
         </button>
       </li>
     </ul>

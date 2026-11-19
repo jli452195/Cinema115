@@ -13,8 +13,8 @@ import { animeCatalogSubscriptionTarget } from '../utils/animeCatalogSubscriptio
 import type { AnimeSourceProvider } from '../types/animeCatalog'
 import '../styles/animeSubscriptionEditor.css'
 
-const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
+const props = defineProps<{ token: string; returnTo: string; closeEditor: () => Promise<boolean> }>()
+defineEmits<{ saved: [id: string]; open: [id: string] }>()
 const route = useRoute(), router = useRouter(), ready = ref(false), error = ref('')
 const browser = window
 const sourceSeed = computed(() => { const initial = browser.history.state?.animeSource; return { provider: String(initial?.provider || route.query.source || ''), itemId: String(initial?.itemId || route.query.itemId || '') } })
@@ -46,14 +46,20 @@ async function resolveEntry() {
     else ready.value = true
   } catch (reason) { if (!active.signal.aborted && controller === active) error.value = animeConfigMessage(reason) }
 }
-function closeLoading() { closed = true; cancel(); emit('close') }
+async function closeLoading() {
+  closed = true; cancel()
+  if (!await props.closeEditor() && closed) {
+    closed = false
+    if (!error.value) void resolveEntry()
+  }
+}
 watch([() => route.fullPath, () => portalUser.value?.id, () => portalUser.value?.role], () => { void resolveEntry() }, { immediate: true })
 onBeforeRouteLeave(cancel); onBeforeRouteUpdate(cancel); onBeforeUnmount(cancel)
 </script>
 
 <template>
-  <AnimeSubscriptionDialog v-if="ready" :token="token" :bangumi-id="String(route.query.bangumiId || '')" :seed="sourceSeed" @close="$emit('close')" @saved="$emit('saved', $event)" @open="$emit('open', $event)" />
-  <FloatingDialog v-else title="新增订阅" close-label="关闭新增订阅" size="config" @close="closeLoading">
+  <AnimeSubscriptionDialog v-if="ready" :token="token" :bangumi-id="String(route.query.bangumiId || '')" :seed="sourceSeed" :return-to="props.returnTo" :close-editor="closeEditor" @saved="$emit('saved', $event)" @open="$emit('open', $event)" />
+  <FloatingDialog v-else title="新增订阅" close-label="关闭新增订阅" size="config" :commit-close="closeLoading">
     <div v-if="error" class="ae-load-error" role="status"><p>{{ error }}</p><button type="button" class="ae-button" @click="resolveEntry">重新读取</button></div>
     <p v-else class="ae-loading" role="status" aria-busy="true">正在读取番剧与订阅来源…</p>
   </FloatingDialog>

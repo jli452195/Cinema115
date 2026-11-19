@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 interface Option { value: T; label: string; count?: number | string; disabled?: boolean; title?: string }
-const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' | 'mobile-line' | 'mobile-pill' | 'pwa-pill' | 'filter-row' }>()
+const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' | 'mobile-line' | 'mobile-pill' | 'pwa-pill' | 'filter-row'; fadeEnd?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T]; change: [value: T] }>()
 const strip = ref<HTMLElement>(), countID = useId()
 const isFilterRow = computed(() => props.appearance === 'filter-row')
+const tracksScrollEdges = computed(() => isFilterRow.value || props.fadeEnd)
 const indicatorContainer = computed(() => isFilterRow.value ? undefined : strip.value)
 const { indicatorStyle } = useSlidingIndicator(indicatorContainer, '[aria-pressed="true"]', [() => props.modelValue, () => props.options])
 const canScrollLeft = ref(false), canScrollRight = ref(false), isDragging = ref(false)
@@ -29,7 +30,7 @@ function measureRowLayout() {
 }
 function updateScrollEdges() {
   const container = strip.value
-  const maximum = isFilterRow.value && container ? Math.max(0, container.scrollWidth - container.clientWidth) : 0
+  const maximum = tracksScrollEdges.value && container ? Math.max(0, container.scrollWidth - container.clientWidth) : 0
   const left = Math.max(0, Math.min(maximum, container?.scrollLeft ?? 0))
   canScrollLeft.value = left > 1
   canScrollRight.value = maximum - left > 1
@@ -45,6 +46,20 @@ function centerButton(button: HTMLButtonElement, behavior: ScrollBehavior = 'ins
   })
   updateScrollEdges()
 }
+function revealButton(button: HTMLElement) {
+  const container = strip.value
+  if (!container) return
+  // 留出渐隐的宽度，只滚动当前轨道；抵达最右侧时渐隐消失。
+  const endInset = props.fadeEnd ? 20 : 4
+  const left = button.offsetLeft - 4
+  const right = button.offsetLeft + button.offsetWidth + endInset
+  if (left < container.scrollLeft) container.scrollLeft = left
+  else if (right > container.scrollLeft + container.clientWidth) container.scrollLeft = right - container.clientWidth
+}
+function revealFocused(event: FocusEvent) {
+  const button = event.target
+  if (props.fadeEnd && button instanceof HTMLButtonElement && button.parentElement === strip.value && button.matches(':focus-visible')) revealButton(button)
+}
 function revealSelected(behavior: ScrollBehavior = 'instant') {
   const container = strip.value
   if (isFilterRow.value) {
@@ -55,10 +70,8 @@ function revealSelected(behavior: ScrollBehavior = 'instant') {
     return
   }
   const selected = container?.querySelector<HTMLButtonElement>('[aria-pressed=true]')
-  if (!container || !selected) return
-  // 只滚动控件本身，避免恢复筛选值时改变页面的滚动位置。
-  if (selected.offsetLeft < container.scrollLeft + 4) container.scrollLeft = selected.offsetLeft - 4
-  else if (selected.offsetLeft + selected.offsetWidth > container.scrollLeft + container.clientWidth - 4) container.scrollLeft = selected.offsetLeft + selected.offsetWidth - container.clientWidth + 4
+  if (selected) revealButton(selected)
+  if (props.fadeEnd) updateScrollEdges()
 }
 function handleResize() {
   // 值切换已记录新的布局时，尺寸回调不打断正在进行的居中动画。
@@ -70,7 +83,7 @@ function observeResizeTargets() {
   const container = strip.value
   if (!container || !observer) return
   observer.observe(container)
-  if (isFilterRow.value) container.querySelectorAll<HTMLButtonElement>(':scope > button').forEach(button => observer!.observe(button))
+  if (tracksScrollEdges.value) container.querySelectorAll<HTMLButtonElement>(':scope > button').forEach(button => observer!.observe(button))
 }
 function observeRowContent() {
   contentObserver?.disconnect()
@@ -88,7 +101,7 @@ watch([() => props.modelValue, () => props.options], (values, previous) => {
   observeResizeTargets()
   revealSelected(isFilterRow.value && values[0] !== previous[0] ? 'smooth' : 'instant')
 }, { deep: true, flush: 'post' })
-watch(() => props.appearance, () => {
+watch([() => props.appearance, () => props.fadeEnd], () => {
   stopDrag(true)
   observeResizeTargets()
   observeRowContent()
@@ -183,12 +196,12 @@ function moveFocus(event: KeyboardEvent) {
   if (!button) return
   button.focus({ preventScroll: true })
   if (isFilterRow.value) centerButton(button)
-  else button.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+  else if (!props.fadeEnd) button.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
 }
 </script>
 
 <template>
-  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="[density === 'compact' && 'segmented-control-compact', appearance && appearance !== 'default' && `segmented-control-${appearance}`, { 'has-scroll-left': canScrollLeft, 'has-scroll-right': canScrollRight, 'is-dragging': isDragging }]" @keydown="moveFocus" @scroll.passive="updateScrollEdges" @pointerdown="startDrag" @click.capture="preventDragClick" @dragstart="preventNativeDrag">
+  <nav ref="strip" :aria-label="label" :aria-disabled="disabled || undefined" class="segmented-control" :class="[density === 'compact' && 'segmented-control-compact', appearance && appearance !== 'default' && `segmented-control-${appearance}`, { 'segmented-control-fade-end': fadeEnd, 'has-scroll-left': canScrollLeft, 'has-scroll-right': canScrollRight, 'is-dragging': isDragging }]" @keydown="moveFocus" @focusin="revealFocused" @scroll.passive="updateScrollEdges" @pointerdown="startDrag" @click.capture="preventDragClick" @dragstart="preventNativeDrag">
     <span v-if="!isFilterRow" class="segmented-control-indicator" :style="indicatorStyle" aria-hidden="true"></span>
     <button v-for="(option, index) in options" :key="option.value" type="button" :class="isFilterRow ? 'filter-chip' : 'segmented-control-option'" :aria-label="option.label" :aria-describedby="option.count !== undefined ? `${countID}-${index}` : undefined" :aria-pressed="modelValue === option.value" :disabled="disabled || option.disabled" :title="option.title" @click="choose(option)">
       <slot name="option" :option="option" :selected="modelValue === option.value">{{ option.label }}</slot>
@@ -221,8 +234,13 @@ function moveFocus(event: KeyboardEvent) {
 .segmented-control-filter-row.has-scroll-right { --filter-row-fade-right: transparent; }
 .segmented-control-filter-row:is(.has-scroll-left, .has-scroll-right) { cursor: grab; }
 .segmented-control-filter-row.is-dragging { --filter-chip-cursor: grabbing; cursor: grabbing; }
+.segmented-control-fade-end:not(.segmented-control-filter-row).has-scroll-right {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
+}
 @media (forced-colors: active) {
-  .segmented-control.segmented-control-filter-row { -webkit-mask-image: none; mask-image: none; }
+  .segmented-control.segmented-control-filter-row,
+  .segmented-control-fade-end:not(.segmented-control-filter-row).has-scroll-right { -webkit-mask-image: none; mask-image: none; }
 }
 .dark .segmented-control-indicator { background: var(--segmented-selection-background, rgb(var(--color-slate-700))); box-shadow: 0 2px 8px rgb(0 0 0 / .2); }
 /* 嵌套分段控件沿用玻璃底色和高光，不重复采样父表面。 */

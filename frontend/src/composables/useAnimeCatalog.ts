@@ -9,9 +9,10 @@ const catalogs = new Map<string, AnimeCatalog>()
 const seasons = new Map<AnimeProviderID, AnimeCatalogSeasons>()
 const queries = new Map<AnimeProviderID, Record<string, string>>()
 const drafts = new Map<AnimeProviderID, string>()
+const calendarPages = new Map<string, number>()
 const mikanEntries = new Map<string, { entry: MikanEntry; until: number }>()
 let generation = 0
-watch([() => portalUser.value?.id, () => portalUser.value?.role], () => { generation++; catalogs.clear(); seasons.clear(); queries.clear(); drafts.clear(); mikanEntries.clear() }, { flush: 'sync' })
+watch([() => portalUser.value?.id, () => portalUser.value?.role], () => { generation++; catalogs.clear(); seasons.clear(); queries.clear(); drafts.clear(); calendarPages.clear(); mikanEntries.clear() }, { flush: 'sync' })
 export function catalogSeasonsSnapshot(provider: AnimeProviderID) { return seasons.get(provider) }
 export async function requestCatalogSeasons(token: string, provider: AnimeProviderID, signal: AbortSignal, refresh = false) {
   const epoch = generation
@@ -54,6 +55,14 @@ export function catalogQuery(provider: AnimeProviderID) { return { ...queries.ge
 export function rememberCatalogQuery(provider: AnimeProviderID, query: Record<string, string>) { queries.set(provider, { ...query }) }
 export function catalogDraft(provider: AnimeProviderID) { return drafts.get(provider) }
 export function rememberCatalogDraft(provider: AnimeProviderID, value: string) { drafts.set(provider, value) }
+// 季度总览有独立分页，进入站内搜索时只保留原页号，滚动位置仍走现有缓存。
+export function catalogCalendarPage(provider: AnimeProviderID, season: string) { return calendarPages.get(`${provider}:${season}`) ?? 1 }
+export function rememberCatalogCalendarPage(provider: AnimeProviderID, season: string, page: number) {
+  const key = `${provider}:${season}`
+  calendarPages.delete(key)
+  if (page > 1) calendarPages.set(key, page)
+  if (calendarPages.size > 32) calendarPages.delete(calendarPages.keys().next().value!)
+}
 export async function requestCatalog(token: string, provider: AnimeSourceProvider, key: string, body: { mode: string; season?: string; keyword?: string; refresh: boolean }, signal: AbortSignal) {
   const epoch = generation
   const result = await animeConfigRequest<AnimeCatalog>(token, `catalog/${provider}`, { method: 'POST', body, signal })
