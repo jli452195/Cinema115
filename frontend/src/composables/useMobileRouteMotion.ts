@@ -4,8 +4,17 @@ import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
 type ToolGroup = (route: RouteLocationNormalized) => string | undefined
 
+function isMobileOverlay(route: RouteLocationNormalized) {
+  const overlay = route.meta.mobileOverlay
+  return typeof overlay === 'function' ? overlay(route) : overlay === true
+}
+
 function routeMotion(to: RouteLocationNormalized, from: RouteLocationNormalized, toolGroup: ToolGroup) {
   if (to.meta.public || from.meta.public) return
+
+  // 弹层进出时由弹层自己播放动画，共用的正文保持原位。
+  const page = to.matched.at(-1)?.components?.default
+  if (page && page === from.matched.at(-1)?.components?.default && (isMobileOverlay(to) || isMobileOverlay(from))) return
 
   const nextTool = toolGroup(to)
   const previousTool = toolGroup(from)

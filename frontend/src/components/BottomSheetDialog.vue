@@ -18,6 +18,7 @@ let backdropClick = false
 
 const sheet = useMobileSheet(dialog, {
   enabled: () => props.mobileSheet,
+  animateBackdrop: true,
   closeDisabled: () => !!props.closeDisabled,
   allowSwipeClose: () => props.allowSwipeClose,
   beforeClose: reason => props.beforeClose?.(reason) ?? 'dismiss',
@@ -110,6 +111,7 @@ defineExpose({ dialog, close: sheet.close, closeDirect: sheet.closeDirect, reque
   .bottom-sheet-dialog-mobile[open] { display: flex; flex-direction: column; }
   .bottom-sheet-dialog.bottom-sheet-dialog-mobile[data-sheet-expanded='true'] { --sheet-top-gap: 0px; border-radius: 0; padding-top: max(0px, calc(var(--app-safe-top) - var(--sheet-viewport-top, 0px))); }
   .bottom-sheet-dialog.bottom-sheet-dialog-mobile:not([data-dialog-covered])::backdrop { background: rgb(0 0 0 / .36); }
+  .bottom-sheet-dialog-mobile[data-sheet-backdrop-transparent]::backdrop { opacity: 0; }
   .bottom-sheet-dialog-mobile :deep([data-sheet-drag]) { touch-action: none; user-select: none; }
   .bottom-sheet-dialog-mobile .bottom-sheet-grabber-zone { display: grid; flex: none; height: 16px; place-items: center; touch-action: none; cursor: grab; }
   .bottom-sheet-grabber-zone span { width: 36px; height: 4px; border-radius: 999px; background: rgb(var(--content-secondary) / .4); }

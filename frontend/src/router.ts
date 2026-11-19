@@ -58,10 +58,10 @@ export const router = createRouter({
       // 恢复选番条件，但不覆盖打开工具前的页面。
       if (!Object.keys(to.query).length && query) return { path: '/anime', query }
     } },
-    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
+    { path: '/anime/new', name: 'anime-subscription-new', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false, mobileOverlay: true } },
     { path: '/anime/settings', name: 'anime-settings', component: AnimeSettingsView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
-    { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
-    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false } },
+    { path: '/anime/subscriptions/:id/edit', name: 'anime-subscription-edit', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false, mobileOverlay: true } },
+    { path: '/anime/subscriptions/:id?', name: 'anime-subscriptions', component: AnimeWorkspaceView, meta: { managementSection: '/anime', defaultSidebarCollapsed: false, mobileOverlay: ({ params }) => !!params.id } },
     { path: '/follows', name: 'my-follows', component: MyFollowsView, meta: { defaultSidebarCollapsed: false } },
     { path: '/users', name: 'users-category', component: HomeView, props: { category: 'users' }, meta: { categoryPage: true, defaultSidebarCollapsed: false } },
     { path: '/users/list', name: 'user-management', component: EmbyUsersView, meta: { defaultSidebarCollapsed: false } },

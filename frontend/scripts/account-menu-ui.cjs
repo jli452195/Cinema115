@@ -94,6 +94,23 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
     }
     return titleBox
   }
+  const assertCenteredToolTitle = async (title, back) => {
+    const visualTitle = header.getByText(title, { exact: true })
+    await visualTitle.waitFor()
+    assert.equal(await visualTitle.getAttribute('aria-hidden'), 'true')
+    const heading = titleRow.getByRole('heading', { name: title, level: 1, exact: true })
+    const [titleBox, headerBox, backBox, headingBox] = await Promise.all([
+      visualTitle.boundingBox(), header.boundingBox(), back.boundingBox(), heading.boundingBox(),
+    ])
+    assert(titleBox && headerBox && backBox && headingBox)
+    assert(headingBox.width <= 1 && headingBox.height <= 1, '正文仍有可访问的一级标题')
+    assert(Math.abs(titleBox.x + titleBox.width / 2 - headerBox.x - headerBox.width / 2) <= 1, '标题相对整个顶栏居中')
+    assert(Math.abs(titleBox.y + titleBox.height / 2 - backBox.y - backBox.height / 2) <= 1, '标题和返回键垂直居中')
+    assert(titleBox.x >= backBox.x + backBox.width, '标题区域不覆盖返回键')
+    assert.equal(backBox.width, 46)
+    assert.equal(backBox.height, 46)
+    assert(await titleRow.locator('.management-description').isVisible())
+  }
   const tab = name => followTabs(page).getByRole('link', { name, exact: true })
   const home = mobileNav(page).getByRole('link', { name: '首页', exact: true })
   const updates = mobileNav(page).getByRole('link', { name: '更新', exact: true })
@@ -140,15 +157,15 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
 
   await openTools()
   await clickTo(tools.getByRole('link', { name: '资源配置', exact: true }), '/resources')
-  await assertRoundBack('返回首页', homePath)
+  const resourcesBack = await assertRoundBack('返回首页', homePath)
   await assertNoOldToolControls()
-  await assertBodyTitle('资源配置')
+  await assertCenteredToolTitle('资源配置', resourcesBack)
   await openTools()
   await closeTools()
   await clickTo(page.getByRole('main').getByRole('link', { name: '字幕', exact: true }), '/resources/subtitles')
   const parentBack = await assertRoundBack('返回资源配置', '/resources')
   await assertNoOldToolControls()
-  await assertBodyTitle('字幕')
+  await assertCenteredToolTitle('字幕', parentBack)
   await openTools()
   await closeTools()
   await clickTo(parentBack, '/resources')
@@ -158,6 +175,7 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByRole('navigation', { name: '上级导航' }).getByRole('link', { name: '返回 资源配置', exact: true }).waitFor()
   assert.equal(await page.locator('.mobile-nav-back:visible, .dock-launcher:visible').count(), 0, '桌面保留面包屑而非手机返回和工具入口')
+  await assertBodyTitle('字幕')
   await page.setViewportSize({ width: 320, height: 844 })
   await clickTo(await assertRoundBack('返回资源配置', '/resources'), '/resources')
   await clickTo(await assertRoundBack('返回首页', homePath), homePath)
@@ -221,13 +239,49 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
     assert.equal(await provider.getAttribute('aria-pressed'), 'true')
     assert.equal(await follow.getAttribute('aria-current'), null)
   }
+  const subscriptionPlans = header.getByRole('link', { name: '订阅计划', exact: true })
+  const subscriptionSettings = header.getByRole('link', { name: '动漫订阅设置', exact: true })
+  const catalogBack = header.getByRole('link', { name: '返回首页', exact: true })
+  const catalogTitle = header.getByText('动漫订阅', { exact: true })
+  for (const width of [320, 399]) {
+    await page.setViewportSize({ width, height: 844 })
+    const [frame, title, back, plans, settings] = await Promise.all(
+      [header, catalogTitle, catalogBack, subscriptionPlans, subscriptionSettings].map(el => el.boundingBox())
+    )
+    assert.equal(await catalogTitle.evaluate(el => el.scrollWidth <= el.clientWidth), true, '手机顶栏标题完整显示')
+    assert(Math.abs(title.x + title.width / 2 - frame.x - frame.width / 2) < 1, '标题相对整个顶栏居中')
+    assert(title.x >= back.x + back.width && title.x + title.width <= plans.x, '标题与两边控件不重叠')
+    for (const action of [back, plans, settings]) {
+      assert(action.width >= 44 && action.height >= 44, '三个入口均保留至少 44px 点击范围')
+      assert(Math.abs(title.y + title.height / 2 - action.y - action.height / 2) < 1, '标题和控件同一行居中')
+    }
+  }
+  await page.setViewportSize({ width: 320, height: 844 })
+  const catalogBackBox = await catalogBack.boundingBox()
+  const catalogTrailingAction = await subscriptionSettings.boundingBox()
   for (const [link, to] of [
-    [header.getByRole('link', { name: '订阅计划', exact: true }), '/anime/subscriptions'],
-    [header.getByRole('link', { name: '动漫订阅设置', exact: true }).filter({ hasText: '设置' }), '/anime/settings'],
+    [subscriptionPlans, '/anime/subscriptions'],
+    [subscriptionSettings, '/anime/settings'],
   ]) {
     await clickTo(link, to)
     assert.equal(new URL(page.url()).searchParams.get('returnTo'), catalogLocation.pathname + catalogLocation.search)
-    await header.getByRole('button', { name: '返回上一页', exact: true }).click()
+    const back = header.getByRole('button', { name: '返回上一页', exact: true })
+    const isPlans = to === '/anime/subscriptions'
+    const pageTitle = isPlans ? '动漫订阅计划' : '动漫订阅设置'
+    const action = isPlans
+      ? header.getByRole('button', { name: '刷新订阅列表', exact: true })
+      : header.getByRole('link', { name: '订阅计划', exact: true })
+    const [frame, title, left, right] = await Promise.all(
+      [header, header.getByText(pageTitle, { exact: true }), back, action].map(el => el.boundingBox())
+    )
+    assert(Math.abs(title.x + title.width / 2 - frame.x - frame.width / 2) < 1)
+    assert(title.x >= left.x + left.width && title.x + title.width <= right.x)
+    assert.deepEqual(left, catalogBackBox, '目录、计划和设置的返回控件位置与大小相同')
+    assert.deepEqual(right, catalogTrailingAction, '单个操作与目录最右侧操作对齐')
+    assert.equal(await header.locator('a[href="/anime/new"]').count(), 0)
+    await page.getByRole('heading', { name: pageTitle, level: 1, exact: true }).waitFor({ state: 'attached' })
+    if (!isPlans) assert.equal(new URL(await action.getAttribute('href'), origin).searchParams.get('returnTo'), catalogLocation.pathname + catalogLocation.search)
+    await back.click()
     await page.waitForURL(catalogURL)
     await assertCatalogFilters()
   }

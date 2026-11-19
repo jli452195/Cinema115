@@ -69,6 +69,7 @@ onMounted(() => {
 })
 
 const returnTo = computed(() => animeReturnPath(route.query.returnTo) || '/anime')
+const plansLocation = computed(() => ({ path: '/anime/subscriptions', query: { returnTo: returnTo.value } }))
 const data = ref<RSSSettings>(), minutes = ref('15'), archive = ref(true), inactive = ref(60)
 const loading = ref(false), saving = ref(false), error = ref(''), notice = ref(''), baseline = ref(''), directoryBlocked = ref(false)
 const pending = ref<{ key: string; body: RSSSettings }>(), discard = ref(false)
@@ -202,8 +203,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <ManagementLayout class="ars-layout" title="动漫订阅设置" :mobile-back-target="returnTo" description="统一管理 RSS 检查、自动归档、下载整理目录与 Telegram 通知。" @logout="$emit('logout')">
-    <template #actions><RouterLink :to="returnTo" class="ars-link max-sm:!hidden"><IconArrowLeft :size="17" aria-hidden="true" />返回选番</RouterLink><RouterLink :to="{ path: '/anime/subscriptions', query: { returnTo } }" class="ars-link"><IconBookmark :size="17" aria-hidden="true" /><span class="sm:hidden">订阅计划</span><span class="hidden sm:inline">我的订阅</span></RouterLink></template>
+  <ManagementLayout title="动漫订阅设置" mobile-centered-header :mobile-back-target="returnTo" description="统一管理 RSS 检查、自动归档、下载整理目录与 Telegram 通知。" @logout="$emit('logout')">
+    <template #mobile-actions>
+      <RouterLink :to="plansLocation" class="mobile-header-action ars-plans-action" aria-label="订阅计划" title="订阅计划"><IconBookmark :size="20" aria-hidden="true" /></RouterLink>
+    </template>
+    <template #actions>
+      <div class="hidden items-center gap-3 sm:flex"><RouterLink :to="returnTo" class="ars-link"><IconArrowLeft :size="17" aria-hidden="true" />返回选番</RouterLink><RouterLink :to="plansLocation" class="ars-link"><IconBookmark :size="17" aria-hidden="true" />我的订阅</RouterLink></div>
+    </template>
     <div class="anime-editor ars-settings">
       <nav ref="tabsNavRef" class="ars-tabs" aria-label="动漫设置分类" @keydown="onTabsKeydown">
         <button
@@ -675,12 +681,7 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 639px) {
-  .ars-layout :deep(.management-heading) {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .ars-layout :deep(.management-heading > *) {
-    grid-column: 1 / -1;
-  }
+  .ars-plans-action { --mobile-header-action-color: rgb(var(--selection-content)); }
   .ars-tabs {
     gap: 6px;
     padding: 5px;

@@ -11,7 +11,7 @@ import { mobileToolNavigationKey } from '../composables/useMobileToolNavigation'
 import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigation'
 import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
-const props = defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string; mobileSectionHeading?: boolean; mobileBackFallback?: string; mobileBackTarget?: string; mobileTitle?: string }>()
+const props = defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string; mobileSectionHeading?: boolean; mobileCenteredHeader?: boolean; mobileBackFallback?: string; mobileBackTarget?: string; mobileTitle?: string }>()
 defineEmits<{ logout: [] }>()
 const mobilePage = computed(() => {
   const fallback = props.mobileBackTarget || props.mobileBackFallback
@@ -29,12 +29,15 @@ const mobileBack = computed(() => {
   if (!tool || !toolNavigation) return
   return props.parent || (route.path.toLowerCase().replace(/\/$/, '') === tool.to ? toolNavigation.toolBack.value : tool)
 })
+const mobileCenteredTitle = computed(() => (mobilePage.value ? props.mobileCenteredHeader : mobileBack.value)
+  ? props.mobileTitle || props.title
+  : undefined)
 </script>
 
 <template>
   <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-section-heading': mobileSectionHeading, 'has-follow-heading': isFollowSection, 'without-mobile-header': isFollowSection && !isPortalAdmin }">
     <ManagementSidebar v-if="showSidebar && !mobileTool && !desktop" ref="sidebar" mobile-only :desktop="desktop" />
-    <WorkbenchHeader :sidebar-layout="desktopSidebar" :tonal-surface="showSidebar" :managed-sidebar="showSidebar" :sidebar-open="sidebar?.opened" :sidebar-controls="sidebar?.drawerID" :mobile-back="mobileBack" :mobile-page="mobilePage" :mobile-section-heading="mobileSectionHeading" :mobile-section-title="mobileTitle || title" @toggle-sidebar="sidebar?.toggleDrawer($event)" @logout="$emit('logout')">
+    <WorkbenchHeader :sidebar-layout="desktopSidebar" :tonal-surface="showSidebar" :managed-sidebar="showSidebar" :sidebar-open="sidebar?.opened" :sidebar-controls="sidebar?.drawerID" :mobile-back="mobileBack" :mobile-page="mobilePage" :mobile-section-heading="mobileSectionHeading" :mobile-centered-title="mobileCenteredTitle" @toggle-sidebar="sidebar?.toggleDrawer($event)" @logout="$emit('logout')">
       <template v-if="$slots['mobile-actions']" #mobile-actions><slot name="mobile-actions" /></template>
     </WorkbenchHeader>
     <div class="management-shell">
@@ -44,7 +47,7 @@ const mobileBack = computed(() => {
           <PageBreadcrumb v-if="parent" :parent="parent" />
         </div>
         <header class="management-heading mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1">
-          <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100" :class="{ 'sr-only sm:not-sr-only': mobilePage }">
+          <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100" :class="{ 'sr-only sm:not-sr-only': mobilePage || mobileCenteredTitle }">
             <template v-if="mobileTitle">
               <span class="sm:hidden">{{ mobileTitle }}</span><span class="hidden sm:inline">{{ title }}</span>
             </template>
@@ -65,7 +68,6 @@ const mobileBack = computed(() => {
 .management-breadcrumb-row { display: flex; min-width: 0; align-items: center; gap: 12px; margin-bottom: 4px; }
 .management-navigation-trigger { display: inline-flex; min-height: 44px; flex-shrink: 0; align-items: center; gap: 7px; padding: 0 10px; margin-left: -10px; border-radius: 10px; font-size: 12px; color: rgb(var(--color-slate-600)); cursor: pointer; }.management-navigation-trigger svg { width: 18px; height: 18px; }.management-navigation-trigger:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }.dark .management-navigation-trigger { color: rgb(var(--color-slate-300)); }
 @media (max-width: 639px) {
-  .has-section-heading { --workbench-toolbar-height: 52px; }
   .has-follow-heading .management-shell { --management-content-top: calc(var(--workbench-header-height) + 4px); }
   :is(.has-follow-heading, .has-section-heading) .management-content { padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
   .has-follow-heading .management-heading { align-items: center; column-gap: 4px; margin-bottom: 12px; }

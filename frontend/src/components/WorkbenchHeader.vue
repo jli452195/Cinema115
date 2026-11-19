@@ -10,7 +10,6 @@ import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTe
 import HeaderAccountMenu from './HeaderAccountMenu.vue'
 import HistoryBackButton from './HistoryBackButton.vue'
 import ManagementSidebar from './ManagementSidebar.vue'
-import NavigationIcon from './NavigationIcon.vue'
 import { websiteUnread, refreshWebsiteUnread, useWebsiteNotificationSync } from '../composables/useWebsiteNotifications'
 import { rememberedDashboardPaths } from '../utils/dashboardPreferences'
 
@@ -24,7 +23,7 @@ import type { MobileToolBackTarget } from '../composables/useMobileToolNavigatio
 const props = defineProps<{
   overBackdrop?: boolean; tonalSurface?: boolean; sidebarLayout?: boolean; managedSidebar?: boolean; sidebarOpen?: boolean; sidebarControls?: string
   mobileSectionHeading?: boolean
-  mobileSectionTitle?: string
+  mobileCenteredTitle?: string
   mobilePage?: { title: string; fallback: string; target?: string; titleElement?: HTMLElement | null }
   detailNavigation?: { title: string; year: string; fallback: string; titleElement: HTMLElement | null }
   mobileBack?: MobileToolBackTarget
@@ -57,6 +56,9 @@ const mobileBack = computed(() => compact.value && !mobileDetail.value ? props.m
 const mobileWorkspace = computed(() => !!mobileSection.value || !!mobileBack.value)
 const mobileHome = computed(() => mobileSection.value === 'home')
 const mobileSectionHeading = computed(() => props.mobileSectionHeading && !!mobileBack.value)
+const mobilePageFade = computed(() => mobileDetail.value && !props.detailNavigation && !!props.mobileCenteredTitle)
+const centeredPageControls = computed(() => mobileSectionHeading.value || mobilePageFade.value)
+const mobileCenteredTitle = computed(() => mobileBack.value || mobilePageFade.value ? props.mobileCenteredTitle : undefined)
 // 手机顶栏按页面职责提供入口；工具页与追更的局部搜索各自维护。
 const showAccount = computed(() => !compact.value || mobileHome.value)
 const showMediaSearch = computed(() => !compact.value || mobileHome.value ||
@@ -100,10 +102,10 @@ const { indicatorStyle: mobileIndicatorStyle } = useSlidingIndicator(mobileTabsR
   insetY: 3, durationMs: 280, easing: 'cubic-bezier(.22,1,.36,1)',
 })
 function smoothstep(value: number) { return value * value * (3 - 2 * value) }
-const mobileHomeScrolled = ref(false)
+const mobileHeaderScrolled = ref(false)
 function updateHeaderScroll() {
   if (mobileHome.value) {
-    mobileHomeScrolled.value = window.scrollY > 5
+    mobileHeaderScrolled.value = window.scrollY > 5
     return
   }
   if (mobileDetail.value || mobileWorkspace.value) return
@@ -387,25 +389,23 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header v-if="mobileSection !== 'follows' || isPortalAdmin" ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-follow-tabs': mobileSection === 'follows' && mobileTabs.length > 0, 'mobile-home-scrolled': mobileHome && mobileHomeScrolled, 'mobile-section-heading': mobileSectionHeading }" :style="tonalSurface || mobileSectionHeading || mobileHome ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header v-if="mobileSection !== 'follows' || isPortalAdmin" ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-follow-tabs': mobileSection === 'follows' && mobileTabs.length > 0, 'mobile-home-scrolled': mobileHome && mobileHeaderScrolled, 'mobile-fade-header': mobileCenteredTitle }" :style="tonalSurface || mobileHome || mobileCenteredTitle ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
-    <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6">
-      <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back mobile-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation }" />
-      <div v-if="mobileDetail && mobilePageNavigation" class="detail-nav-title-slot" aria-hidden="true">
+    <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6" :class="{ 'header-inner-centered-page': centeredPageControls }">
+      <HistoryBackButton v-if="mobileDetail && mobilePageNavigation" :fallback="mobilePageNavigation.fallback" :target="mobileBackTarget" icon-only class="detail-nav-back mobile-nav-back glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation || mobilePageFade }" />
+      <div v-if="mobileDetail && mobilePageNavigation && !mobilePageFade" class="detail-nav-title-slot" aria-hidden="true">
         <div class="detail-nav-title glass-pill-surface" :class="{ 'glass-pill-surface-soft': detailNavigation, 'is-visible': mobileTitleVisible }">
           <span class="detail-nav-name">{{ mobilePageNavigation.title }}</span><span v-if="detailNavigation?.year" class="detail-nav-year">{{ detailNavigation.year }}</span>
         </div>
       </div>
-      <RouterLink v-if="mobileBack && !mobileSectionHeading" :to="mobileBack.to" class="mobile-nav-back glass-pill-surface glass-pill-surface-soft" :aria-label="`返回${mobileBack.label}`" :title="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
+      <RouterLink v-if="mobileBack" :to="mobileBack.to" class="mobile-nav-back glass-pill-surface glass-pill-surface-soft" :aria-label="`返回${mobileBack.label}`" :title="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
         <IconArrowLeft :size="20" stroke="1.8" aria-hidden="true" />
       </RouterLink>
-      <div v-if="mobileHome || mobileSection === 'updates' || mobileSectionHeading" class="workspace-brand" :class="{ 'glass-pill-surface': mobileSection === 'updates' }">
-        <RouterLink v-if="mobileSectionHeading && mobileBack" :to="mobileBack.to" class="section-nav-back glass-pill-surface glass-pill-surface-soft" :aria-label="`返回${mobileBack.label}`" :title="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
-          <NavigationIcon name="back" :size="22" />
-        </RouterLink>
+      <span v-if="mobileCenteredTitle" class="mobile-centered-title" aria-hidden="true">{{ mobileCenteredTitle }}</span>
+      <div v-if="mobileHome || mobileSection === 'updates'" class="workspace-brand" :class="{ 'glass-pill-surface': mobileSection === 'updates' }">
         <CinemaLogo v-if="mobileHome" mobile-wordmark />
-        <span v-else class="workspace-brand-label">{{ mobileSectionHeading ? mobileSectionTitle : '更新日历' }}</span>
+        <span v-else-if="mobileSection === 'updates'" class="workspace-brand-label">更新日历</span>
       </div>
       <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileHome ? '电影与剧集' : '追更导航'" class="workspace-tabs">
         <span class="workspace-tab-indicator" :style="mobileIndicatorStyle" aria-hidden="true"></span>
@@ -422,7 +422,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <RouterLink :to="rememberedDashboardPaths.tv" :aria-current="tvActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: tvActive }">剧集</RouterLink>
         <RouterLink to="/updates" :aria-current="updatesActive ? 'page' : undefined" class="top-link relative z-10" :class="{ selected: updatesActive }">更新</RouterLink>
       </nav>
-      <div v-if="showHeaderActions" class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail, 'glass-pill-surface-soft': mobileDetail && detailNavigation }">
+      <div v-if="showHeaderActions" class="header-actions flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-2 sm:gap-3 sm:pl-5" :class="{ 'glass-pill-surface': mobileDetail || centeredPageControls, 'glass-pill-surface-soft': centeredPageControls || (mobileDetail && detailNavigation) }">
         <slot v-if="showMobileActions" name="mobile-actions" />
         <RouterLink v-if="!compact" to="/notifications" class="icon-button relative" v-tooltip="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'" :aria-label="websiteUnread ? `站内通知，${websiteUnread} 条未读` : '站内通知'">
           <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9ZM10 21h4" /></svg>
@@ -462,7 +462,13 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </style>
 <style scoped>
 /* 背景覆盖顶部安全区，工具栏与页面偏移仍共用准确的总高度。 */
-.workbench-header { padding-top: var(--app-safe-top); }
+.workbench-header {
+  --mobile-workspace-control-size: 46px;
+  --mobile-workspace-gutter: 12px;
+  --mobile-workspace-start: max(var(--mobile-workspace-gutter), var(--app-safe-left));
+  --mobile-workspace-end: max(var(--mobile-workspace-gutter), var(--app-safe-right));
+  padding-top: var(--app-safe-top);
+}
 .header-inner { padding-left: max(16px, var(--app-safe-left)); padding-right: max(16px, var(--app-safe-right)); }
 .with-management-sidebar .header-inner { justify-content: flex-end; }
 .workbench-header.over-backdrop { --cinema-logo-ink: #f1f4fc; --cinema-logo-blue: #7595ff; }
@@ -594,8 +600,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .workbench-header.mobile-detail { pointer-events: none; border-color: transparent; }
 .mobile-detail::after, .mobile-detail .header-surface, .mobile-detail .header-background { display: none; }
 .mobile-detail .header-inner { gap: 8px; padding-inline: max(14px, var(--app-safe-left)) max(14px, var(--app-safe-right)); }
-.workbench-header .mobile-nav-back { display: grid; flex: none; width: 46px; height: 46px; place-items: center; border-radius: 50%; color: var(--glass-text); pointer-events: auto; }
-.workbench-header.mobile-detail:not(.mobile-media-detail) .mobile-nav-back { width: 44px; height: 44px; }
+.workbench-header .mobile-nav-back { display: grid; flex: none; width: var(--mobile-workspace-control-size); height: var(--mobile-workspace-control-size); place-items: center; border-radius: 50%; color: var(--glass-text); pointer-events: auto; }
+.workbench-header.mobile-detail:not(.mobile-media-detail) .header-inner:not(.header-inner-centered-page) .mobile-nav-back { width: 44px; height: 44px; }
 .workbench-header .mobile-nav-back:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
 .workbench-header .mobile-nav-back:active { color: rgb(var(--selection-content)); }
 .detail-nav-title-slot { display: flex; flex: 1; min-width: 0; justify-content: center; }
@@ -631,7 +637,23 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 /* 主入口使用独立玻璃胶囊；详情页与桌面顶栏保留原有布局。 */
 .workbench-header.mobile-workspace { pointer-events: none; border-color: transparent; }
 .mobile-workspace::after, .mobile-workspace .header-surface, .mobile-workspace .header-background { display: none; }
-.mobile-workspace .header-inner { gap: 7px; padding-inline: max(12px, var(--app-safe-left)) max(12px, var(--app-safe-right)); }
+.mobile-workspace .header-inner { gap: 7px; padding-inline: var(--mobile-workspace-start) var(--mobile-workspace-end); }
+.mobile-centered-title {
+  /* 两侧按较宽的安全区对称留出 46px 返回键和 12px 间距，标题独立居中。 */
+  position: absolute;
+  inset-inline: calc(max(var(--mobile-workspace-start), var(--mobile-workspace-end)) + var(--mobile-workspace-control-size) + 12px);
+  top: 50%;
+  transform: translateY(-50%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  pointer-events: none;
+  color: rgb(var(--content-primary));
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
 .workspace-brand {
   display: inline-flex; min-height: 44px; flex: 0 0 auto; align-items: center; padding-inline: 11px;
   font-size: 14px; font-weight: 700; white-space: nowrap; pointer-events: auto;
@@ -651,7 +673,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .mobile-workspace :is(a, button):focus-visible { outline-color: rgb(var(--focus)); outline-offset: -2px; }
 .mobile-workspace :deep(#header-management) { right: max(12px, var(--app-safe-right)); }
 @media (max-width: 359px) {
-  .mobile-workspace .header-inner { gap: 5px; padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
+  .workbench-header { --mobile-workspace-gutter: 8px; }
+  .mobile-workspace .header-inner { gap: 5px; }
   .workspace-brand { padding-inline: 8px; }
 }
 @media (display-mode: standalone) {
@@ -659,9 +682,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
     display: block; height: var(--app-safe-top); background: rgb(var(--app-chrome-color)); opacity: 1; box-shadow: none;
   }
 }
-/* 首页用同一层背景承载品牌、一级导航和操作，保留右侧按钮的触控面积。 */
+/* 首页保留实色底面，滚动后在下沿显示轻阴影。 */
 .workbench-header.mobile-home { pointer-events: auto; background: rgb(var(--app-chrome-color)); }
-/* 滚动时沿整条顶栏下沿画渐隐阴影，不在控件周围画边。 */
 .workbench-header.mobile-home::after {
   content: ''; display: block; position: absolute; inset: 100% 0 auto; height: 8px;
   background: linear-gradient(to bottom, rgb(0 0 0 / .15), transparent);
@@ -671,6 +693,40 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 .workbench-header.mobile-home-scrolled::after { opacity: 1; }
 @media (prefers-reduced-motion: no-preference) {
   .workbench-header.mobile-home::after { transition: opacity 150ms ease-out; }
+}
+/* 管理页用独立背景渐隐，返回按钮、标题和操作留在交互层。 */
+.workbench-header.mobile-fade-header { pointer-events: auto; }
+.workbench-header.mobile-fade-header::after,
+.workbench-header.mobile-fade-header :is(.header-surface, .header-background) { display: none; }
+.mobile-fade-header::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: rgb(var(--app-chrome-color));
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and
+          ((mask-image: linear-gradient(black, transparent)) or (-webkit-mask-image: linear-gradient(black, transparent))) {
+  .mobile-fade-header::before {
+    --header-fade-mask: linear-gradient(to bottom, black calc(100% - 28px), transparent);
+    inset-block-end: -16px;
+    background: linear-gradient(to bottom,
+      rgb(var(--app-chrome-color)) var(--app-safe-top),
+      rgb(var(--app-chrome-color) / .92) var(--app-safe-top),
+      rgb(var(--app-chrome-color) / .63) calc(100% - 28px),
+      rgb(var(--app-chrome-color) / 0));
+    -webkit-backdrop-filter: blur(10px) saturate(1.6);
+    backdrop-filter: blur(10px) saturate(1.6);
+    -webkit-mask-image: var(--header-fade-mask);
+    mask-image: var(--header-fade-mask);
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  .mobile-fade-header::before {
+    inset-block-end: 0;
+    background: rgb(var(--app-chrome-color));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
 }
 .mobile-home .header-inner { gap: clamp(6px, 2vw, 12px); padding-inline: max(16px, var(--app-safe-left)) max(5px, var(--app-safe-right)); }
 .mobile-home .workspace-brand { padding-inline: 0; }
@@ -693,23 +749,28 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
 }
 /* 正文滑过固定的追更标签时，不与标签文字叠在一起。 */
 .workbench-header.mobile-follow-tabs { background: rgb(var(--app-chrome-color)); }
-/* 有页面级入口时保留原来的扁平标题栏。 */
-.workbench-header.mobile-section-heading { pointer-events: auto; border-color: var(--glass-edge); background: rgb(var(--app-chrome-color)); }
-.mobile-section-heading .header-inner {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  column-gap: 6px; padding-inline: max(16px, var(--app-safe-left)) max(12px, var(--app-safe-right));
+/* 目录和子页共用按钮位置；标题两侧按较宽的操作组对称留白。 */
+.workbench-header .header-inner-centered-page {
+  --centered-header-actions-width: var(--mobile-workspace-control-size);
+  padding-inline: var(--mobile-workspace-start) var(--mobile-workspace-end);
 }
-.mobile-section-heading .workspace-brand { grid-area: 1 / 1; min-width: 0; padding: 0; color: rgb(var(--content-primary)); font-size: 21px; }
-.mobile-section-heading .workspace-brand-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.section-nav-back { display: grid; flex: none; width: 44px; height: 44px; margin-inline-start: -8px; place-items: center; border-radius: 50%; }
-.section-nav-back:is(:hover, :active) { background: rgb(var(--surface-hover)); }
-.section-nav-back:focus-visible { outline: 2px solid rgb(var(--focus)); }
-@media (max-width: 359px) {
-  .mobile-section-heading .header-inner { padding-inline: max(8px, var(--app-safe-left)) max(8px, var(--app-safe-right)); }
-  .mobile-section-heading .workspace-brand { font-size: 19px; }
-  .section-nav-back { margin-inline-start: 0; }
+.header-inner-centered-page:has(> .header-actions > :deep(.mobile-header-action + .mobile-header-action)) {
+  --centered-header-actions-width: calc(2 * var(--mobile-workspace-control-size));
 }
-.mobile-section-heading .header-actions { grid-area: 1 / 2; gap: 6px; }
+.header-inner-centered-page .mobile-centered-title {
+  inset-inline: calc(max(var(--mobile-workspace-start) + var(--mobile-workspace-control-size), var(--mobile-workspace-end) + var(--centered-header-actions-width)) + 8px);
+}
+.header-inner-centered-page .header-actions { margin-inline-start: auto; height: var(--mobile-workspace-control-size); }
+.header-inner-centered-page :deep(.mobile-header-action) {
+  display: grid; flex: none; width: var(--mobile-workspace-control-size); height: var(--mobile-workspace-control-size);
+  place-items: center; border-radius: 50%;
+  color: var(--mobile-header-action-color, var(--glass-text));
+}
+.header-inner-centered-page :deep(.mobile-header-action:active:not(:disabled)) { background: rgb(var(--surface-hover) / .6); }
+.header-inner-centered-page :deep(.mobile-header-action:focus-visible) { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+@media (hover: hover) {
+  .header-inner-centered-page :deep(.mobile-header-action:hover:not(:disabled)) { background: rgb(var(--surface-hover) / .6); }
+}
 @media (prefers-reduced-motion: reduce) { .detail-nav-title { transition: none; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .account-trigger, .account-trigger > svg, .account-trigger > span { transition: none; }

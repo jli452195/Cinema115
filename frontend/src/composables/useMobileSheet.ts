@@ -5,6 +5,7 @@ export type DismissDecision = 'handled' | 'blocked' | 'dismiss'
 
 interface MobileSheetOptions {
   enabled: () => boolean
+  animateBackdrop?: boolean
   closeDisabled: () => boolean
   allowSwipeClose?: () => boolean
   beforeClose?: (reason: DismissReason) => DismissDecision | Promise<DismissDecision>
@@ -27,6 +28,7 @@ interface SheetDrag {
 }
 
 const interactive = 'button, a, input, select, textarea, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="combobox"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], [role="slider"], [data-sheet-no-drag]'
+let replacementBackdrop: { opacity: number } | undefined
 
 export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, options: MobileSheetOptions) {
   const expanded = ref(false)
@@ -36,6 +38,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
   let viewport: VisualViewport | null = null
   let drag: SheetDrag | undefined, frame = 0
   let animation: Animation | undefined
+  let backdropAnimation: Animation | undefined
   let closeReadyAt = 0
   let suppressedClick: { pointerId: number; x: number; y: number; until: number } | undefined
 
@@ -47,6 +50,37 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     const current = animation
     animation = undefined
     current?.cancel()
+  }
+  function cancelBackdropAnimation() {
+    const current = backdropAnimation
+    backdropAnimation = undefined
+    if (current) { current.onfinish = null; current.cancel() }
+  }
+  function hasOtherModal() {
+    return [...document.querySelectorAll('dialog:modal')].some(dialog => dialog !== element)
+  }
+  function backdropOpacity() {
+    return Number.parseFloat(getComputedStyle(element!, '::backdrop').opacity) || 0
+  }
+  function moveBackdrop(from: number, to: 0 | 1, timing: KeyframeAnimationOptions) {
+    if (!element || typeof KeyframeEffect === 'undefined' || !('pseudoElement' in KeyframeEffect.prototype)) return
+    // 先设置最终样式，动画结束后取消动画也不会把遮罩跳回全黑。
+    element.toggleAttribute('data-sheet-backdrop-transparent', to === 0)
+    cancelBackdropAnimation()
+    if (from === to) return
+    try {
+      const current = element.animate([{ opacity: from }, { opacity: to }], { ...timing, pseudoElement: '::backdrop' })
+      if ((current.effect as KeyframeEffect | null)?.pseudoElement !== '::backdrop') {
+        current.cancel()
+        element.removeAttribute('data-sheet-backdrop-transparent')
+        return
+      }
+      backdropAnimation = current
+      current.onfinish = () => { if (backdropAnimation === current) cancelBackdropAnimation() }
+    } catch {
+      // 不支持伪元素动画时沿用静态遮罩，面板仍正常关闭。
+      element.removeAttribute('data-sheet-backdrop-transparent')
+    }
   }
   function cancelFrame() { if (frame) cancelAnimationFrame(frame); frame = 0 }
   function clearTransform() {
@@ -70,16 +104,18 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     const transform = getComputedStyle(element).transform
     return transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m42
   }
-  async function move(from: number, to: number, duration: number) {
+  async function move(from: number, to: number, duration: number, backdrop?: { from: number; to: 0 | 1 }) {
     cancelAnimation()
     const surface = element
     if (!surface || disposed) return false
     surface.style.transform = `translateY(${to}px)`
     if (reducedMotion() || typeof surface.animate !== 'function') return true
     surface.style.willChange = 'transform'
+    const timing = { duration, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both' as const }
     const current = surface.animate([
       { transform: `translateY(${from}px)` }, { transform: `translateY(${to}px)` },
-    ], { duration, easing: 'cubic-bezier(.2,.8,.2,1)', fill: 'both' })
+    ], timing)
+    if (backdrop) moveBackdrop(backdrop.from, backdrop.to, timing)
     animation = current
     try { await current.finished } catch { return false }
     if (animation !== current || disposed) return false
@@ -96,7 +132,8 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     setExpanded(value)
     if (!active()) return
     const offset = previousTop - surface.getBoundingClientRect().top
-    void move(offset, 0, 200).then(finished => { if (finished && !closing) clearTransform() })
+    const backdrop = surface.hasAttribute('data-sheet-backdrop-transparent') ? { from: backdropOpacity(), to: 1 as const } : undefined
+    void move(offset, 0, 200, backdrop).then(finished => { if (finished && !closing) clearTransform() })
   }
   function notifyClose() {
     if (notified || disposed) return
@@ -113,7 +150,8 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
       cancelAnimation(); clearTransform(); notifyClose(); return
     }
     const from = visualOffset(), destination = element!.getBoundingClientRect().height + 32
-    void move(from, destination, 180).then(finished => {
+    const backdrop = options.animateBackdrop ? { from: backdropOpacity(), to: hasOtherModal() ? 1 as const : 0 as const } : undefined
+    void move(from, destination, 180, backdrop).then(finished => {
       if (!finished || !closing) return
       if (closeBlocked()) { closing = false; snap(expanded.value); return }
       notifyClose()
@@ -181,6 +219,8 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     if (closing && active()) { updateViewport(); return }
     releaseDrag(); cancelAnimation(); clearTransform()
     if (!active()) {
+      cancelBackdropAnimation()
+      element?.removeAttribute('data-sheet-backdrop-transparent')
       setExpanded(false)
       if (closing) {
         closing = false
@@ -192,11 +232,12 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
   }
   function motionChanged() {
     if (!reducedMotion()) return
-    releaseDrag(); cancelAnimation(); clearTransform()
+    releaseDrag(); cancelAnimation(); cancelBackdropAnimation(); clearTransform()
     if (closing) {
       closing = false
-      if (!closeBlocked()) notifyClose()
+      if (!closeBlocked()) { notifyClose(); return }
     }
+    element?.removeAttribute('data-sheet-backdrop-transparent')
   }
   function captureClick(event: MouseEvent) {
     const click = suppressedClick
@@ -235,7 +276,12 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     cancelAnimation(); clearTransform()
     if (!options.enabled()) return
     addListeners(); setExpanded(false); updateViewport()
-    if (active()) void move(element.getBoundingClientRect().height + 32, 0, 220).then(finished => { if (finished && !closing) clearTransform() })
+    if (active()) {
+      // 父子层直接交接遮罩；同一渲染批次替换加载面板时延续原遮罩透明度。
+      const backdrop = options.animateBackdrop ? { from: hasOtherModal() ? 1 : replacementBackdrop?.opacity ?? 0, to: 1 as const } : undefined
+      if (backdrop) replacementBackdrop = undefined
+      void move(element.getBoundingClientRect().height + 32, 0, 220, backdrop).then(finished => { if (finished && !closing) clearTransform() })
+    }
   }
 
   function sample(event: PointerEvent, current: SheetDrag) {
@@ -305,8 +351,12 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     snap(expanded.value)
   })
   onBeforeUnmount(() => {
+    if (options.animateBackdrop && active() && !hasOtherModal()) {
+      const previous = replacementBackdrop = { opacity: backdropOpacity() }
+      queueMicrotask(() => { if (replacementBackdrop === previous) replacementBackdrop = undefined })
+    }
     disposed = true; opened = false
-    releaseDrag(); cancelAnimation(); removeListeners(); clearTransform()
+    releaseDrag(); cancelAnimation(); cancelBackdropAnimation(); removeListeners(); clearTransform()
     element?.style.removeProperty('--sheet-viewport-height')
     element?.style.removeProperty('--sheet-viewport-bottom')
     element?.style.removeProperty('--sheet-viewport-top')

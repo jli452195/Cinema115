@@ -244,11 +244,11 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 <template>
   <ManagementLayout mobile-section-heading title="动漫订阅" description="按站点找番，选择字幕组与订阅来源。" @logout="$emit('logout')">
     <template #mobile-actions>
-      <RouterLink :to="{ path: '/anime/subscriptions', query: catalogReturn }" class="catalog-plan-link">
-        <IconBookmark :size="17" aria-hidden="true" /><span>订阅计划</span>
+      <RouterLink :to="{ path: '/anime/subscriptions', query: catalogReturn }" class="mobile-header-action catalog-plan-link" aria-label="订阅计划" title="订阅计划">
+        <IconBookmark :size="20" aria-hidden="true" />
       </RouterLink>
-      <RouterLink :to="{ path: '/anime/settings', query: catalogReturn }" class="catalog-settings-link" aria-label="动漫订阅设置">
-        <IconSettings :size="18" aria-hidden="true" /><span>设置</span>
+      <RouterLink :to="{ path: '/anime/settings', query: catalogReturn }" class="mobile-header-action" aria-label="动漫订阅设置" title="动漫订阅设置">
+        <IconSettings :size="20" aria-hidden="true" />
       </RouterLink>
     </template>
     <template #actions>
@@ -336,21 +336,13 @@ onBeforeUnmount(() => { compactViewport.removeEventListener('change', syncCompac
 .catalog-calendar-toggle:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
 @media (max-width: 639px) {
   .anime-browser { padding-top: 8px; }
-  .catalog-plan-link, .catalog-settings-link, .catalog-search-trigger, .catalog-search-close {
+  .catalog-search-trigger, .catalog-search-close {
     display: inline-flex; flex: none; min-width: 44px; min-height: 44px; align-items: center; justify-content: center; gap: 5px;
     padding-inline: 9px; border-radius: 999px; color: rgb(var(--selection-content)); font-size: 12px; font-weight: 600;
   }
-  :is(.catalog-plan-link, .catalog-settings-link) { padding-inline: 8px; font-size: 14px; line-height: 1.2; white-space: nowrap; }
-  :is(.catalog-plan-link, .catalog-settings-link) svg { flex: none; }
-  .catalog-settings-link { color: rgb(var(--content-primary)); }
+  .catalog-plan-link { --mobile-header-action-color: rgb(var(--selection-content)); }
   .catalog-search-trigger { background: rgb(var(--selection-surface)); }
   .catalog-search-close:hover { background: rgb(var(--surface-hover)); }
-  @media (hover: hover) {
-    .catalog-plan-link:hover { background: rgb(var(--selection-content) / .12); }
-    .catalog-settings-link:hover { background: rgb(var(--selection-surface)); }
-  }
-  :is(.catalog-plan-link, .catalog-settings-link):active { background: rgb(var(--selection-content) / .20); }
-  .catalog-plan-link:focus-visible, .catalog-settings-link:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
   .catalog-workspace-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .catalog-workspace-controls .catalog-calendar-toggle { flex: none; color: rgb(var(--selection-content)); }
   .anime-refresh { min-width: 44px; min-height: 44px; padding-inline: 8px; }
