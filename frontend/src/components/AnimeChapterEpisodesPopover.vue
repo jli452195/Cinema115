@@ -121,17 +121,17 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.ac-chapter-reference-button { min-height: var(--ae-control-height); flex: none; padding-inline: 9px; font-size: 12px; }
+.ac-chapter-reference-button { min-height: var(--dialog-control-height); flex: none; padding-inline: 9px; font-size: 12px; }
 .ac-chapter-popover[popover] { position: fixed; inset: auto; margin: 0; padding: 14px; overflow: clip; border-radius: 14px; color: var(--floating-surface-text); }
 .ac-chapter-popover:popover-open { display: flex; flex-direction: column; }
 .ac-chapter-popover-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ac-chapter-popover-header h3 { font-size: 13px; font-weight: 600; }
-.ac-chapter-popover-close { min-height: var(--ae-control-height); width: var(--ae-control-height); border-radius: 9px; }
+.ac-chapter-popover-close { min-height: var(--dialog-control-height); width: var(--dialog-control-height); border-radius: 9px; }
 .ac-chapter-popover-hint { flex: none; margin: 1px 0 10px; color: var(--floating-surface-muted); font-size: 11px; line-height: 1.7; }
 .ac-chapter-popover-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .ac-chapter-popover-body:focus-visible { outline: 2px solid var(--ae-blue); outline-offset: 2px; }
 @media (max-width: 639px) {
   .ac-chapter-popover[popover] { padding: 12px; }
 }
-@media (max-width: 479px) { .ac-chapter-reference-button { width: var(--ae-control-height); padding: 0; justify-content: center; } .ac-chapter-reference-button > span { display: none; } }
+@media (max-width: 479px) { .ac-chapter-reference-button { width: var(--dialog-control-height); padding: 0; justify-content: center; } .ac-chapter-reference-button > span { display: none; } }
 </style>

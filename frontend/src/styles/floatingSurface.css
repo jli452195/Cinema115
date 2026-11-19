@@ -17,6 +17,7 @@
   --glass-pill-filter: blur(6px) saturate(3);
   --glass-panel-filter: blur(24px) saturate(3);
   --glass-header-filter: blur(6px) saturate(3);
+  --glass-selection-alpha: .78;
   --glass-inset-surface: rgb(241 245 249 / .85);
   --glass-inset-border: rgb(148 163 184 / .3);
   --glass-badge-background: rgb(15 23 42 / .76);
@@ -33,6 +34,7 @@
   --glass-card-shadow: var(--glass-rim-shadow);
   --glass-dialog-shadow: var(--glass-rim-shadow);
   --glass-inset-surface: rgb(30 37 49 / .85);
+  --glass-selection-alpha: .68;
 }
 
 /* 无透明能力时统一换成实色，所有迁入的独立表面也遵守同一降级。 */
@@ -151,11 +153,13 @@ dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdro
     --floating-pill-fill: rgb(var(--surface-card) / .78);
     --floating-pill-shadow: inset 0 .55px 0 rgb(255 255 255 / .92), 0 2px 8px -2px rgb(15 23 42 / .08);
     --floating-pill-stuck-shadow: inset 0 .55px 0 rgb(255 255 255 / .95), 0 6px 18px -4px rgb(15 23 42 / .16);
+    --floating-pill-filter: blur(14px) saturate(2);
+    border-radius: 999px;
     border: 1px solid var(--glass-edge);
     background: var(--floating-pill-fill);
     box-shadow: var(--floating-pill-shadow);
-    -webkit-backdrop-filter: blur(14px) saturate(2);
-    backdrop-filter: blur(14px) saturate(2);
+    -webkit-backdrop-filter: var(--floating-pill-filter);
+    backdrop-filter: var(--floating-pill-filter);
     transition: box-shadow 220ms ease, background-color 220ms ease;
   }
   .dark .glass-floating-pill {
@@ -164,15 +168,20 @@ dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdro
     --floating-pill-stuck-shadow: inset 0 .55px 0 rgb(255 255 255 / .16), 0 8px 22px -4px rgb(0 0 0 / .58);
   }
   .glass-floating-pill[data-stuck='true'] { box-shadow: var(--floating-pill-stuck-shadow); }
+  /* 分段控件只负责选中态，外层胶囊统一承载透明度、模糊和外阴影。 */
+  .glass-floating-pill > .segmented-control-pwa-pill {
+    --segmented-pwa-background: transparent;
+    --segmented-pwa-shadow: none;
+  }
   @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); }
+    .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); --floating-pill-filter: none; }
   }
 }
 @media (max-width: 639px) and (prefers-reduced-motion: reduce) {
   .glass-floating-pill { transition: none; }
 }
 @media (max-width: 639px) and (prefers-reduced-transparency: reduce), (max-width: 639px) and (prefers-contrast: more) {
-  .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); --floating-pill-filter: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @media (max-width: 639px) and (forced-colors: active) {
   .glass-floating-pill, .glass-floating-pill[data-stuck='true'] { border-color: ButtonText; background: Canvas; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }

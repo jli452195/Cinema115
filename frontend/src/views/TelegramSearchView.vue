@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconBroadcast, IconPlus, IconRobot, IconSearch } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
-import FloatingDialog from '../components/AnimeFloatingDialog.vue'
+import FloatingDialog from '../components/FloatingDialog.vue'
 import TelegramAvatar from '../components/TelegramAvatar.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
 import { telegramUserRequest, TelegramSearchError, type TelegramChannel, type TelegramChannelConfig, type TelegramChannelPage, type TelegramUserStatus } from '../types/telegramUser'
@@ -127,7 +127,7 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 </template>
 
 <style scoped>
-:global(dialog.anime-floating.channel-picker) { width: min(680px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 48px)); }
+@media (min-width: 640px) { :global(dialog.floating-dialog.channel-picker) { width: min(680px, calc(100vw - 32px)); height: min(600px, calc(100dvh - 48px)); } }
 .channel-settings { @apply text-slate-800 dark:text-slate-200; max-width: 1120px; display: grid; gap: 16px; }
 .telegram-search-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); align-items: start; gap: 16px; }
 .search-section-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -176,7 +176,7 @@ onBeforeUnmount(() => { lifecycle.abort(); picker?.abort() })
 .channel-picker-footer, .channel-picker-footer > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .channel-picker-footer > span { @apply text-slate-500 dark:text-slate-400; font-size: 12px; }
 @media (max-width: 639px) { .channel-panel { padding: 16px; } .channel-account { gap: 10px; flex-wrap: wrap; } .channel-button { min-height: 44px; } .channel-filter { min-height: 44px; } .channel-filter input { font-size: 16px; } }
-@media (max-width: 639px) { :global(dialog.anime-floating.channel-picker) { width: calc(100vw - 16px); height: min(640px, calc(100dvh - 24px)); } }
+
 @media (max-width: 760px) { .telegram-search-grid { grid-template-columns: 1fr; } }
 @media (max-width: 639px) { .search-bot-form input { font-size: 16px; } }
 </style>

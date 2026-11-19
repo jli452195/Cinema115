@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
-import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
 import SelectMenu from './SelectMenu.vue'
 import { analyzeSubtitle, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
@@ -11,6 +11,7 @@ import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelec
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
 import { useToast } from '../composables/useToast'
+import type { DismissDecision, DismissReason } from '../composables/useMobileSheet'
 import type { OrganizeRow } from '../types/organize'
 
 const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
@@ -20,7 +21,7 @@ type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
 const lifecycle = new AbortController()
 const toast = useToast()
 const query = ref(props.title), busy = ref<'' | 'search' | 'files'>(''), searchError = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref(props.version), showResults = ref(!props.library.length && !props.local.length)
-const dialogRef = ref<InstanceType<typeof AnimeFloatingDialog>>()
+const dialogRef = ref<InstanceType<typeof FloatingDialog>>()
 const matchList = ref<InstanceType<typeof SubtitleMatchList>>()
 const batchOpen = ref(false)
 let searched = false, savedScroll = 0
@@ -39,11 +40,12 @@ watch([showResults, batchOpen], async ([searchView, batchView], [oldSearch, oldB
     else { const trigger = [...document.querySelectorAll<HTMLElement>('.subtitle-picker [data-subtitle-action]')].find(element => element.getAttribute('data-subtitle-action') === savedAction); (trigger || document.querySelector<HTMLElement>('.subtitle-picker .match-batch-button, .subtitle-picker .picker-back'))?.focus({ preventScroll: true }) }
   }
 }, { flush: 'pre' })
-async function closeView() {
-  if (batchOpen.value) { batchOpen.value = false; return }
-  if (showResults.value && rows.value.length) { showResults.value = false; return }
-  if (await matchList.value?.closeEditor()) return
-  emit('close')
+async function beforeDismiss(_reason: DismissReason): Promise<DismissDecision> {
+  if (reading.value || choosing.value) return 'blocked'
+  if (batchOpen.value) { batchOpen.value = false; return 'handled' }
+  if (showResults.value && rows.value.length) { showResults.value = false; return 'handled' }
+  if (await matchList.value?.closeEditor()) return 'handled'
+  return 'dismiss'
 }
 function openSearch() { showResults.value = true; if (!searched) void search(true) }
 const choosing = computed(() => busy.value === 'files')
@@ -209,7 +211,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
 </script>
 
 <template>
-  <AnimeFloatingDialog ref="dialogRef" :title="batchOpen ? '批量处理字幕' : '选择字幕'" close-label="关闭字幕选择" size="organize" class="subtitle-picker" @close="closeView">
+  <FloatingDialog ref="dialogRef" :title="batchOpen ? '批量处理字幕' : '选择字幕'" close-label="关闭字幕选择" size="organize" class="subtitle-picker" :close-disabled="reading || choosing" :before-dismiss="beforeDismiss" @close="emit('close')">
     <div class="picker-content" @dragover.prevent @drop.prevent="!batchOpen && read(Array.from($event.dataTransfer?.files || []))">
       <input ref="picker" type="file" multiple accept=".zip,.rar,.7z,.ass,.ssa,.srt,.vtt,.idx,.sub" class="sr-only" aria-label="选择本地字幕或压缩包" :disabled="reading" @change="selectFiles" />
       <template v-if="!batchOpen">
@@ -238,7 +240,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
       <div v-else class="picker-footer"><div class="picker-selection"><span>已选 <strong>{{ selected.length }}</strong> 个<span class="picker-size"> · {{ formatSubtitleSize(total) }}</span></span><div v-if="issue" class="picker-validation" role="alert"><button v-if="conflicts.length" type="button" @click="matchList?.showConflicts(); dialogRef?.scrollTo(0)">{{ conflicts.length }} 组重名，查看冲突</button><span v-else>{{ issue }}</span></div></div><button type="button" class="picker-apply" :disabled="reading || choosing || !!issue" @click="apply">使用字幕</button></div>
       <p v-if="!batchOpen && (assrtConfigured || assrtItems.length || localRows.some(row => row.file.origin === 'assrt'))" class="picker-attribution">字幕服务由 <a href="https://secure.assrt.net/" target="_blank" rel="noopener noreferrer">assrt.net</a> 提供</p>
     </template>
-  </AnimeFloatingDialog>
+  </FloatingDialog>
 </template>
 
 <style scoped>
@@ -255,5 +257,27 @@ button { display:inline-flex;align-items:center;justify-content:center;gap:6px;m
 .picker-selection { display:flex;flex-direction:column;align-items:flex-start!important;gap:2px!important;min-width:0;color:rgb(var(--content-secondary));font-size:12px; }.picker-selection .picker-validation { margin-top:0; }.picker-selection .picker-validation button { min-height:20px;font-size:11px; }
 .picker-validation { display:flex;align-items:center;gap:8px;justify-content:space-between;color:rgb(var(--status-warning));font-size:12px;margin-top:6px; }.picker-validation>span { min-width:0;overflow-wrap:anywhere; }.picker-validation button { flex:none;min-height:28px;background:transparent;padding:2px 0; }.picker-error { color:rgb(var(--status-danger));margin-top:8px;font-size:12px;overflow-wrap:anywhere; }
 .picker-help { margin-top:18px;border-top:1px solid rgb(var(--line-default));padding-top:12px;color:rgb(var(--content-secondary));font-size:12px;line-height:1.7; }.picker-help summary { cursor:pointer;width:fit-content; }.picker-help p,.picker-help button { margin-top:8px; }.picker-description { white-space:pre-wrap;overflow-wrap:anywhere; }.picker-local { flex-wrap:wrap;margin-top:8px; }.picker-local label { display:flex;align-items:center;gap:6px; }.picker-attribution { color:rgb(var(--content-secondary));font-size:11px;margin-top:5px; }input { accent-color:rgb(var(--action-primary)); }
-@media(max-width:639px) { button,.picker-search input { min-height:44px; }.picker-search input { font-size:16px; }.picker-heading { align-items:flex-start;margin-bottom:12px; }.picker-heading h3 { font-size:17px; }.picker-heading .picker-back { font-size:12px;padding:6px 2px; }.picker-heading p span { display:block; }.picker-actions { flex-wrap:wrap; }.picker-search { flex-basis:100%; }.picker-search button { padding:6px 8px; }.picker-import { margin-left:auto; }.picker-stats { flex:1; }.picker-footer { gap:8px; }.picker-footer>div { gap:6px; }.picker-size { display:none; }.picker-apply { min-width:96px;padding:6px 12px; }.picker-validation { font-size:11px; }.picker-selection .picker-validation button { min-height:44px;text-align:left;justify-content:flex-start; }.picker-validation button { min-height:44px; }.picker-empty { padding:32px 12px; } }
+@media (max-width: 639px) {
+  .subtitle-picker { font-size: var(--sheet-font-body); }
+  button, .picker-search input { min-height: var(--sheet-touch-size); }
+  .picker-search input { font-size: var(--sheet-font-input); }
+  .picker-heading { align-items: flex-start; margin-bottom: 10px; }
+  .picker-heading h3 { font-size: var(--sheet-font-title); line-height: 24px; }
+  .picker-heading .picker-back { font-size: var(--sheet-font-meta); padding: 6px 4px; }
+  .picker-heading p span { display: block; }
+  .picker-actions { flex-wrap: wrap; }
+  .picker-search { flex-basis: 100%; }
+  .picker-search button { padding: 6px 10px; }
+  .picker-import { margin-left: auto; }
+  .picker-stats { flex: 1; }
+  .picker-versions button { padding: 12px; }
+  .picker-source, .picker-validation, .picker-attribution { font-size: var(--sheet-font-meta); }
+  .picker-footer { gap: 8px; }
+  .picker-footer > div { gap: 6px; }
+  .picker-size { display: none; }
+  .picker-apply { min-width: 96px; padding: 6px 12px; }
+  .picker-selection .picker-validation button, .picker-validation button { min-height: var(--sheet-touch-size); font-size: var(--sheet-font-meta); text-align: left; justify-content: flex-start; }
+  .picker-help summary { display: flex; align-items: center; min-height: var(--sheet-touch-size); }
+  .picker-empty { padding: 32px 12px; }
+}
 </style>

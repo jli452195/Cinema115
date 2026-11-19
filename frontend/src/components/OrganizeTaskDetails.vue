@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import P115Icon from './P115Icon.vue'
 import SegmentedControl from './SegmentedControl.vue'
 import { historyDuration, historyTasks, historyTime, isActiveTask, isCleanupOnly, itemStatus, needsAttention, resultSummary, shareTaskStatus, taskCounts, taskStatus, taskTone, type HistoryTask } from '../utils/organizeHistory'
@@ -64,7 +64,7 @@ async function copy(value: string) {
 </script>
 
 <template>
-  <AnimeFloatingDialog :title="task.pipeline ? '下载整理详情' : '整理历史详情'" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
+  <FloatingDialog :title="task.pipeline ? '下载整理详情' : '整理历史详情'" close-label="关闭详情弹窗" size="organize" class="organize-task-dialog" @close="$emit('close')">
     <div class="task-detail-sections">
       <p v-if="resumeError" ref="resumeAlert" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ resumeError }}</p>
       <p v-if="retryError" role="alert" class="rounded-xl bg-amber-50 p-3 text-xs leading-6 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">{{ retryError }}</p>
@@ -144,12 +144,12 @@ async function copy(value: string) {
       </section>
     </div>
     <template #footer><footer class="task-detail-footer"><p role="status" class="min-w-0 flex-1 text-xs text-slate-500 dark:text-slate-400">{{ resuming ? (cleanupOnly ? '正在重试清理…' : '正在恢复原任务…') : feedback || (resumable ? (cleanupOnly ? '仅回收本任务临时目录' : '沿用原目录与进度') : '记录刷新不会关闭详情或改变当前筛选。') }}</p><button v-if="resumable || resuming" ref="resumeButton" class="resume" :disabled="resuming || !!blockedReason" :title="blockedReason" :aria-busy="resuming" @click="$emit('resume')"><P115Icon v-if="resuming" name="refresh" class="motion-safe:animate-spin" />{{ resuming ? (cleanupOnly ? '清理中…' : '检查中…') : cleanupOnly ? '重试清理' : '检查并继续' }}</button><button ref="closeButton" class="action" @click="$emit('close')">关闭详情</button></footer></template>
-  </AnimeFloatingDialog>
+  </FloatingDialog>
 </template>
 
 <style scoped>
 :global(.organize-task-dialog) { max-width: none; }
-:global(.organize-task-dialog .anime-floating-body) { padding-top: 10px; overflow-anchor: none; }
+:global(.organize-task-dialog .floating-dialog-body) { padding-top: 10px; overflow-anchor: none; }
 .task-detail-sections { display: grid; gap: 14px; }
 .detail-panel { min-width: 0; padding: 16px 18px; border-radius: 12px; background: rgb(255 255 255 / .8); }
 .dark .detail-panel { background: rgb(255 255 255 / .045); }
@@ -163,7 +163,7 @@ async function copy(value: string) {
 .dark .path-copy { color: #93c5fd; }
 .task-detail-footer { display: flex; align-items: center; gap: 12px; }
 @media (max-width: 639px) {
-  .detail-panel { padding: 14px; }
+  .detail-panel { padding: 12px; }
   .task-detail-meta { grid-template-columns: minmax(0, 1fr); }
   .task-detail-footer { flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
   .task-detail-footer > p { flex-basis: 100%; line-height: 18px; }

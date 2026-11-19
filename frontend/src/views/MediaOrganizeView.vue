@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolderExclamation, IconClock, IconRadar, IconAdjustmentsHorizontal, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconEdit, IconTrash, IconX } from '@tabler/icons-vue'
-import FloatingDialog from '../components/AnimeFloatingDialog.vue'
+import FloatingDialog from '../components/FloatingDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
 import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'

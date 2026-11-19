@@ -167,7 +167,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     const searchDialog = page.locator(isGying ? 'dialog.gy-dialog' : 'dialog.mikan-dialog')
     await open(row)
     const panel = page.getByRole('region', { name: '下载并整理映射' })
-    const organizeDialog = page.locator('dialog.anime-floating-organize')
+    const organizeDialog = page.locator('dialog.floating-dialog-organize')
     const fileRow = index => organizeDialog.locator(`[data-organize-file=${JSON.stringify(files[index].id)}]`)
     const stagedRow = index => organizeDialog.locator('.confirmation-zone li').filter({ has: page.getByText(files[index].name, { exact: true }) })
     async function stashSelection() {
@@ -208,7 +208,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(count('/download-organize/jobs'), 0)
     const stableLayout = () => organizeDialog.evaluate(el => {
       const rect = el.getBoundingClientRect()
-      return [rect.x, rect.y, rect.width, rect.height, el.querySelector('.anime-floating-body').clientWidth]
+      return [rect.x, rect.y, rect.width, rect.height, el.querySelector('.floating-dialog-body').clientWidth]
     })
     const expandedLayout = await stableLayout()
     const groupToggle = organizeDialog.getByRole('button', { name: /^展开或折叠/ }).first()
@@ -415,7 +415,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await picker().setInputFiles(zip)
       await imported.getByText(/已跳过 3 个重复字幕/).waitFor()
       // 损坏压缩包立即显示全局通知，保留原有匹配；RAR/7z 使用真实 WASM 工作线程。
-      await imported.locator('.anime-floating-body').evaluate(element => { element.scrollTop = 0 })
+      await imported.locator('.floating-dialog-body').evaluate(element => { element.scrollTop = 0 })
       await picker().setInputFiles({ name: 'broken.zip', mimeType: 'application/zip', buffer: Buffer.from('broken') })
       const archiveError = imported.locator('.picker-error')
       await archiveError.waitFor()
@@ -913,7 +913,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       await mobileFirst.getByRole('checkbox').click()
       await mobileFirst.locator('.subtitle-details > summary').click()
       await mobileFirst.getByText('整理后：百变之星.S01E27-测试组.zh-TW.default.srt', { exact: true }).waitFor()
-      assert.equal(await organizeDialog.locator('.anime-floating-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+      assert.equal(await organizeDialog.locator('.floating-dialog-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       assert.equal(await organizeDialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       await organizeDialog.getByRole('button', { name: '调整季集', exact: true }).click()
       await organizeDialog.getByRole('combobox', { name: '目标季', exact: true }).click()
@@ -922,7 +922,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       assert.equal(await organizeDialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
       // 下拉控件松开后的缩放过渡结束后，再测量真实触控尺寸。
       await page.waitForFunction(() => {
-        const controls = [...document.querySelectorAll('dialog.anime-floating-organize .mapping-bar input, dialog.anime-floating-organize .mapping-bar [role="combobox"]')]
+        const controls = [...document.querySelectorAll('dialog.floating-dialog-organize .mapping-bar input, dialog.floating-dialog-organize .mapping-bar [role="combobox"]')]
         return controls.length > 0 && controls.every(element => !element.getAnimations().some(animation => animation.playState === 'running') && element.getBoundingClientRect().height >= 44)
       })
       const controls = await organizeDialog.locator('.mapping-bar input, .mapping-bar [role="combobox"]').evaluateAll(elements => elements.map(el => el.getBoundingClientRect().height))
@@ -930,11 +930,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
       const buttons = await organizeDialog.locator('.numbering-bar button, .mapping-bar button, .subtitle-action, .file-editors input, .path-toggle, .directory-toggle, .directory-exclude').evaluateAll(elements => elements.filter(el => el.getClientRects().length).map(el => ({ name: el.getAttribute('aria-label') || el.textContent.trim(), height: el.getBoundingClientRect().height })))
       assert.ok(buttons.every(button => button.height >= 44), `移动端交互触摸高度至少 44px：${JSON.stringify(buttons)}`)
       await organizeDialog.getByRole('button', { name: '调整季集', exact: true }).click()
-      assert.deepEqual(await organizeDialog.evaluate(el => [...el.querySelectorAll('*')].filter(node => ['auto', 'scroll'].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight).map(node => node.className)), ['anime-floating-body'])
+      assert.deepEqual(await organizeDialog.evaluate(el => [...el.querySelectorAll('*')].filter(node => ['auto', 'scroll'].includes(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight).map(node => node.className)), ['floating-dialog-body'])
       if (process.env.CINEMA_UI_SHOTS) await page.screenshot({ path: path.join(process.env.CINEMA_UI_SHOTS, `${source}-organize-mobile-${theme}.png`) })
       const button = page.getByRole('button', { name: '下载并自动整理', exact: true })
       assert.equal(await button.evaluate(el => { const rect = el.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight }), true)
-      await organizeDialog.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
+      await organizeDialog.locator('.floating-dialog-body').evaluate(el => { el.scrollTop = el.scrollHeight })
       assert.equal(await button.evaluate(el => { const rect = el.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight }), true)
       await page.keyboard.press('Escape')
       await organizeDialog.waitFor({ state: 'detached' })

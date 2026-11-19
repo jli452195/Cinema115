@@ -108,15 +108,15 @@ onBeforeUnmount(() => {
         <p v-if="!mobile && !query" class="mt-2 text-sm text-slate-500 dark:text-slate-400">发现电影、剧集与喜爱的演员</p>
         <div class="search-fields">
           <HistoryBackButton v-if="mobile" :fallback="rememberedDashboardHome" icon-only class="mobile-search-back" />
-          <form role="search" class="search-form flex gap-2" @submit.prevent="submit">
+          <form role="search" class="search-form glass-floating-pill flex gap-2" :data-stuck="mobile && scrolled || undefined" @submit.prevent="submit">
             <NavigationIcon v-if="mobile" name="search" :size="18" class="mobile-search-icon" />
             <input ref="searchInput" v-model="input" type="search" :autocapitalize="mobile ? 'off' : undefined" :aria-label="scope === 'person' ? '搜索演员姓名' : '搜索片名'" maxlength="100" :enterkeyhint="mobile ? 'search' : undefined" :placeholder="scope === 'person' ? '输入演员姓名…' : mobile ? '搜索电影、剧集' : '输入电影或剧集名称…'" class="search-input min-w-0 flex-1 bg-transparent py-2 text-sm text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
             <button v-if="mobile && (input || query)" type="button" class="mobile-search-clear" aria-label="清空搜索" @click="clear"><NavigationIcon name="close" :size="17" /></button>
             <button v-if="!mobile || input.trim()" type="submit" class="search-submit shrink-0 px-5 py-2 text-sm font-medium">搜索</button>
           </form>
         </div>
-        <div class="search-scopes"><SegmentedControl :model-value="scope" :options="mobile ? mobileScopes : scopes" label="搜索范围" density="compact" :appearance="mobile ? 'pwa-pill' : 'neutral'" @change="navigate($event)" /></div>
       </header>
+      <div class="search-scopes glass-floating-pill mx-auto max-w-2xl" :data-stuck="mobile && scrolled || undefined"><SegmentedControl :model-value="scope" :options="mobile ? mobileScopes : scopes" label="搜索范围" density="compact" :appearance="mobile ? 'pwa-pill' : 'neutral'" @change="navigate($event)" /></div>
       <div v-if="query" class="search-summary search-secondary mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-4 text-xs" role="status" aria-live="polite">
         <span class="min-w-0 break-words">{{ loading ? '正在搜索…' : error ? '暂时无法搜索' : scope === 'person' ? `「${query}」· 本页 ${people.length} 位演员` : scope === 'multi' ? `「${query}」· 本页 ${items.length} 部影视` : `「${query}」· 找到 ${total.toLocaleString()} 部${scope === 'movie' ? '电影' : '剧集'}` }}</span>
         <button v-if="!mobile" type="button" class="search-clear shrink-0 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200" @click="clear">清空搜索</button>
@@ -146,9 +146,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.search-header { padding-top: .25rem; margin-bottom: 1.5rem; }
+.search-header { padding-top: .25rem; margin-bottom: 0; }
 .search-header.is-compact h1 { font-size: 1.25rem; opacity: .9; }
-.search-form { margin-top: 1.5rem; padding: 5px 7px 5px 14px; border: 1px solid var(--glass-edge); border-radius: 14px; background: var(--glass-panel-background); box-shadow: var(--glass-card-shadow); -webkit-backdrop-filter: var(--glass-panel-filter); backdrop-filter: var(--glass-panel-filter); transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
+.search-form { margin-top: 1.5rem; padding: 5px 7px 5px 14px; border: 1px solid var(--glass-edge); border-radius: 14px; background: var(--floating-pill-fill, var(--glass-panel-background)); box-shadow: var(--floating-pill-shadow, var(--glass-card-shadow)); -webkit-backdrop-filter: var(--floating-pill-filter, var(--glass-panel-filter)); backdrop-filter: var(--floating-pill-filter, var(--glass-panel-filter)); transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
 .is-compact .search-form { margin-top: .85rem; }
 .search-form:focus-within { border-color: #64748b; box-shadow: 0 0 0 3px rgb(148 163 184 / .22), var(--glass-card-shadow); }
 .dark .search-form:focus-within { border-color: #94a3b8; box-shadow: 0 0 0 3px rgb(148 163 184 / .16), var(--glass-card-shadow); }
@@ -174,14 +174,16 @@ onBeforeUnmount(() => {
     top: 0;
     z-index: 20;
     max-width: none;
-    margin: 0 calc(-1 * var(--search-end)) 16px calc(-1 * var(--search-start));
-    padding: calc(var(--app-safe-top) + 8px) var(--search-end) 12px var(--search-start);
-    background: rgb(var(--surface-page));
+    margin: 0 calc(-1 * var(--search-end)) 0 calc(-1 * var(--search-start));
+    padding: calc(var(--app-safe-top) + 8px) var(--search-end) 8px var(--search-start);
+    background: rgb(var(--app-chrome-color));
+    box-shadow: none;
+    pointer-events: none;
   }
   .search-header.is-scrolled { box-shadow: 0 8px 18px -14px rgb(15 23 42 / .38); }
   .dark .search-header.is-scrolled { box-shadow: 0 8px 18px -12px rgb(0 0 0 / .75); }
-  .search-fields { display: flex; align-items: center; gap: 4px; }
-  .mobile-search-back { width: 44px; height: 44px; margin-inline-start: -8px; border-radius: 50%; color: rgb(var(--content-primary)); }
+  .search-fields { display: flex; align-items: center; gap: 4px; pointer-events: auto; }
+  .mobile-search-back { width: 44px; height: 40px; margin-inline-start: -8px; border-radius: 50%; color: rgb(var(--content-primary)); }
   .search-form, .is-compact .search-form {
     flex: 1;
     min-width: 0;
@@ -189,22 +191,19 @@ onBeforeUnmount(() => {
     gap: 4px;
     margin-top: 0;
     padding: 0 4px 0 12px;
-    border: 0;
     border-radius: 999px;
-    background: rgb(var(--surface-elevated));
-    box-shadow: 0 1px 3px rgb(0 0 0 / .12);
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
   }
-  .search-form:focus-within, .dark .search-form:focus-within { box-shadow: inset 0 0 0 1px rgb(var(--line-control) / .55), 0 1px 3px rgb(0 0 0 / .12); }
-  .search-input { height: 44px; font-size: 16px; color: rgb(var(--content-primary)); }
+  .search-form:focus-within, .dark .search-form:focus-within { border-color: var(--glass-edge); box-shadow: var(--floating-pill-stuck-shadow); }
+  /* 搜索栏沿用首页顶栏的实色承载，分类胶囊单独保留首页的半透明选中层。 */
+  .search-page .search-form { background: rgb(var(--app-chrome-color)); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .search-input { height: 40px; font-size: 16px; color: rgb(var(--content-primary)); }
   .search-input::placeholder { color: rgb(var(--content-secondary)); opacity: 1; }
   .search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
   .mobile-search-icon { flex: none; color: rgb(var(--content-secondary)); }
-  .mobile-search-clear { display: grid; flex: none; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: rgb(var(--content-secondary)); }
-  .search-submit, .dark .search-submit { min-width: 48px; min-height: 44px; padding: 0; border-radius: 999px; background: transparent; color: rgb(var(--action-link)); }
-  .search-scopes { margin-top: 10px; }
-  .search-scopes :deep(.segmented-control) { display: flex; width: 100%; }
+  .mobile-search-clear { display: grid; flex: none; width: 44px; height: 40px; place-items: center; border-radius: 50%; color: rgb(var(--content-secondary)); }
+  .search-submit, .dark .search-submit { min-width: 48px; min-height: 40px; padding: 0; border-radius: 999px; background: transparent; color: rgb(var(--action-link)); }
+  .search-scopes { position: sticky; top: calc(var(--app-safe-top) + 66px); z-index: 30; display: flex; width: 100%; height: 44px; margin-top: 10px; margin-bottom: 16px; pointer-events: auto; }
+  .search-scopes :deep(.segmented-control) { display: flex; flex: 1; width: 100%; min-width: 0; background: transparent; box-shadow: none; }
   .search-scopes :deep(.segmented-control-option) { flex: 1 1 0; }
   .search-summary { margin-bottom: 12px; padding-bottom: 0; border: 0; overflow-wrap: anywhere; }
   .search-grid { column-gap: 14px; row-gap: 24px; }

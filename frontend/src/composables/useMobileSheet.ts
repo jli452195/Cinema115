@@ -1,8 +1,13 @@
 import { onBeforeUnmount, ref, watch, type Ref } from 'vue'
 
+export type DismissReason = 'button' | 'escape' | 'backdrop' | 'swipe'
+export type DismissDecision = 'handled' | 'blocked' | 'dismiss'
+
 interface MobileSheetOptions {
   enabled: () => boolean
   closeDisabled: () => boolean
+  allowSwipeClose?: () => boolean
+  beforeClose?: (reason: DismissReason) => DismissDecision | Promise<DismissDecision>
   onClosing?: () => void
   onClose: () => void
   onViewportChange?: (height: number) => void
@@ -25,12 +30,13 @@ const interactive = 'button, a, input, select, textarea, [contenteditable]:not([
 
 export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, options: MobileSheetOptions) {
   const expanded = ref(false)
-  let opened = false, closing = false, notified = false, disposed = false, listening = false
+  let opened = false, closing = false, notified = false, disposed = false, listening = false, pendingClose = false
   let element: HTMLDialogElement | undefined
   let mobile: MediaQueryList | undefined, reduced: MediaQueryList | undefined
   let viewport: VisualViewport | null = null
   let drag: SheetDrag | undefined, frame = 0
   let animation: Animation | undefined
+  let closeReadyAt = 0
   let suppressedClick: { pointerId: number; x: number; y: number; until: number } | undefined
 
   const active = () => opened && !!element?.open && options.enabled() && !!mobile?.matches
@@ -98,7 +104,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     removeListeners()
     options.onClose()
   }
-  function close() {
+  function performClose() {
     if (disposed || notified || closing || closeBlocked()) return
     releaseDrag()
     closing = true
@@ -113,8 +119,36 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
       notifyClose()
     })
   }
+  // 返回页内视图必须先于离场；只有明确退出宿主才改变手势和动画状态。
+  async function requestClose(reason: DismissReason = 'button'): Promise<DismissDecision> {
+    if (disposed || notified || closing || pendingClose || performance.now() < closeReadyAt) return 'blocked'
+    const restoreSwipe = () => { if (reason === 'swipe' && !disposed && !closing) snap(expanded.value) }
+    if (closeBlocked()) { restoreSwipe(); return 'blocked' }
+    if (reason === 'swipe' && options.allowSwipeClose?.() === false) { restoreSwipe(); return 'handled' }
+    pendingClose = true
+    try {
+      const decision = await options.beforeClose?.(reason) ?? 'dismiss'
+      if (disposed || notified || closing) return 'blocked'
+      if (decision !== 'dismiss' || closeBlocked()) {
+        if (decision === 'handled') closeReadyAt = performance.now() + 300
+        restoreSwipe()
+        return decision === 'handled' ? 'handled' : 'blocked'
+      }
+      performClose()
+      return 'dismiss'
+    } catch {
+      restoreSwipe()
+      return 'blocked'
+    } finally { pendingClose = false }
+  }
+  // 全局关闭只绕过页内返回守卫，仍由宿主的 closeDisabled 和当前动画状态保护。
+  function closeDirect(): DismissDecision {
+    if (disposed || notified || closing || pendingClose || closeBlocked()) return 'blocked'
+    performClose()
+    return 'dismiss'
+  }
   function toggleExpanded() {
-    if (!active() || closing || notified || element?.hasAttribute('data-dialog-covered')) return
+    if (!active() || closing || pendingClose || notified || element?.hasAttribute('data-dialog-covered')) return
     releaseDrag()
     snap(!expanded.value)
   }
@@ -210,7 +244,7 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     current.samples = current.samples.filter(point => time - point.time <= 120)
   }
   function onPointerDown(event: PointerEvent) {
-    if (!active() || closing || notified || drag || !event.isPrimary || event.button !== 0 || element?.hasAttribute('data-dialog-covered')) return
+    if (!active() || closing || pendingClose || notified || drag || performance.now() < closeReadyAt || !event.isPrimary || event.button !== 0 || element?.hasAttribute('data-dialog-covered')) return
     if (!(event.target instanceof Element) || event.target.closest(interactive) || !(event.currentTarget instanceof Element)) return
     // 抓住进入或回弹中的表面时冻结当前视觉位置，后续位移从这里连续跟手。
     const baseOffset = visualOffset()
@@ -234,7 +268,8 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     }
     if (event.cancelable) event.preventDefault()
     sample(event, current)
-    current.offset = current.baseOffset + (delta < 0 ? Math.max(-36, delta * .35) : delta)
+    const downward = options.allowSwipeClose?.() === false ? Math.min(36, delta * .25) : delta
+    current.offset = current.baseOffset + (delta < 0 ? Math.max(-36, delta * .35) : downward)
     if (!frame) frame = requestAnimationFrame(() => {
       frame = 0
       if (drag !== current || !element) return
@@ -253,8 +288,8 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     const delta = event.clientY - current.y, first = current.samples[0]!, last = current.samples.at(-1)!
     const speed = last.time > first.time ? (last.y - first.y) / (last.time - first.time) : 0
     const shouldClose = delta >= 110 || delta > 64 && speed > .65
-    if (shouldClose && !closeBlocked()) { close(); return }
-    if (shouldClose || element?.hasAttribute('data-dialog-covered')) { snap(current.expanded); return }
+    if (shouldClose && options.allowSwipeClose?.() !== false) { void requestClose('swipe'); return }
+    if (element?.hasAttribute('data-dialog-covered')) { snap(current.expanded); return }
     snap(delta <= -18 ? true : current.expanded && delta >= 18 ? false : current.expanded)
   }
   function onPointerCancel(event?: PointerEvent) {
@@ -278,5 +313,5 @@ export function useMobileSheet(dialog: Ref<HTMLDialogElement | undefined>, optio
     if (element) delete element.dataset.sheetExpanded
   })
 
-  return { open, close, expanded, toggleExpanded, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
+  return { open, close: () => requestClose('button'), closeDirect, requestClose, expanded, toggleExpanded, onPointerDown, onPointerMove, onPointerUp, onPointerCancel }
 }

@@ -57,7 +57,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       await page.getByRole('button', { name: isMikan ? 'Mikan 搜索' : 'Garden 搜索', exact: true }).click()
       await page.getByRole('list', { name: isMikan ? '蜜柑资源列表' : 'Garden资源列表' }).waitFor()
     }
-    const search = page.locator('dialog.mikan-dialog'), editor = page.locator('dialog.anime-floating-organize')
+    const search = page.locator('dialog.mikan-dialog'), editor = page.locator('dialog.floating-dialog-organize')
     const submit = () => page.getByRole('button', { name: '下载并自动整理', exact: true })
     async function episodeInput(row) {
       const input = row.getByRole('spinbutton', { name: 'Show.mkv 集', exact: true })
@@ -133,7 +133,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.getByRole('button', { name: '继续解析', exact: true }).click()
     await editor.getByRole('alert').filter({ hasText: '模拟种子读取失败' }).waitFor()
     await page.waitForFunction(() => document.querySelectorAll('[data-organize-file]').length === 3)
-    await page.waitForFunction(() => [...document.querySelectorAll('dialog.anime-floating-organize button')].some(button => /^暂存这 \d+ 项$/.test(button.textContent) && !button.disabled))
+    await page.waitForFunction(() => [...document.querySelectorAll('dialog.floating-dialog-organize button')].some(button => /^暂存这 \d+ 项$/.test(button.textContent) && !button.disabled))
     assert.equal(await submit().isEnabled(), true, 'ready checked files submit without staging despite another resource failure')
     assert.equal(await (await episodeInput(editor.locator('[data-organize-file]').first())).inputValue(), '9')
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
@@ -184,10 +184,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await editor.getByText('已解析 61 / 61 项资源', { exact: true }).waitFor()
     assert.equal(count('/download-organize/files') - before, 61)
     assert.equal(await editor.locator('[data-organize-file]').count(), 61)
-    await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = 0 })
+    await editor.locator('.floating-dialog-body').evaluate(el => { el.scrollTop = 0 })
     await page.waitForFunction(() => {
-      const bar = document.querySelector('dialog.anime-floating-organize .numbering-bar')
-      const body = document.querySelector('dialog.anime-floating-organize .anime-floating-body')
+      const bar = document.querySelector('dialog.floating-dialog-organize .numbering-bar')
+      const body = document.querySelector('dialog.floating-dialog-organize .floating-dialog-body')
       return bar.getBoundingClientRect().top > body.getBoundingClientRect().top + 1
     })
     if (process.env.SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.SCREENSHOT_DIR, `batch-${source}-numbering-in-flow.png`) })
@@ -216,10 +216,10 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     assert.equal(await uncheckedRow.getByRole('spinbutton').count(), 2)
     assert.equal(await uncheckedRow.getByRole('checkbox').isChecked(), false, '手动编辑不纳入提交选择')
     const assertStickyNumbering = async () => {
-      await editor.locator('.anime-floating-body').evaluate(el => { el.scrollTop = el.scrollHeight })
+      await editor.locator('.floating-dialog-body').evaluate(el => { el.scrollTop = el.scrollHeight })
       await page.waitForFunction(() => {
-        const dialog = document.querySelector('dialog.anime-floating-organize')
-        const body = dialog.querySelector('.anime-floating-body'), bar = dialog.querySelector('.numbering-bar'), mapping = dialog.querySelector('.mapping-bar')
+        const dialog = document.querySelector('dialog.floating-dialog-organize')
+        const body = dialog.querySelector('.floating-dialog-body'), bar = dialog.querySelector('.numbering-bar'), mapping = dialog.querySelector('.mapping-bar')
         const bounds = bar.getBoundingClientRect(), viewport = body.getBoundingClientRect()
         const stage = bar.querySelector('.stage-action')
         if (!stage || stage.disabled) return false
@@ -242,7 +242,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.setViewportSize({ width: 320, height: 740 })
     await page.evaluate(() => document.documentElement.classList.remove('dark'))
     assert.equal(await editor.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
-    const footer = await editor.locator('.anime-floating-footer').boundingBox()
+    const footer = await editor.locator('.floating-dialog-footer').boundingBox()
     assert.ok(footer.y >= 0 && footer.y + footer.height <= 740)
     await assertStickyNumbering()
     const numberingHeight = (await editor.locator('.numbering-bar').boundingBox()).height

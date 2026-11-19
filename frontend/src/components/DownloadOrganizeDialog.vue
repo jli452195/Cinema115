@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { IconFolder, IconArrowBackUp, IconChevronDown, IconRefresh, IconShare2, IconSubtitles } from '@tabler/icons-vue'
-import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import SelectMenu from './SelectMenu.vue'
@@ -22,13 +22,14 @@ import { subtitleSelectionIssue } from '../utils/subtitleLimits'
 import { subtitleTargetName, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
 import { formatEpisodeRanges } from '../types/seasonLibrary'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
+  active?: boolean
   token: string; entries: DownloadOrganizeResource[]; hiddenCount?: number; batch?: boolean
   tmdbId: number; kind: 'movie' | 'tv'; title: string; date: string
   seasons: { number: number; name: string; episodeCount: number }[]
   themeColors?: Record<string, string>
   animationLibrary?: boolean; originalTitle?: string
-}>()
+}>(), { active: true })
 const emit = defineEmits<{ close: []; submitted: [keys: string[]]; uncertain: [keys: string[]] }>()
 const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
@@ -52,6 +53,7 @@ const selectedExternal = computed(() => [...selectedLibrary.value, ...selectedLo
 const externalIssue = computed(() => subtitleSelectionIssue(selectedExternal.value.length, selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0)))
 const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, sub.version)
 function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion) {
+  if (!props.active || !subtitleOpen.value) return
   const ids = subtitleIDs.value
   externalSubtitles.value = [...externalSubtitles.value.filter(sub => !ids.has(sub.videoId)), ...library]
   localSubtitles.value = [...localSubtitles.value.filter(sub => !ids.has(sub.videoId)), ...local]
@@ -64,7 +66,7 @@ const errorElement = ref<HTMLElement>()
 watch(error, async value => { if (value) { await nextTick(); errorElement.value?.scrollIntoView({ block: 'nearest' }) } })
 const batchOpen = ref(window.matchMedia('(min-width: 640px)').matches)
 const mappingPanelID = useId()
-const floatingDialog = ref<InstanceType<typeof AnimeFloatingDialog>>()
+const floatingDialog = ref<InstanceType<typeof FloatingDialog>>()
 const scrollBody = computed(() => floatingDialog.value?.body)
 const numberingAnchor = ref<HTMLElement>()
 const numberingStuck = useStickySurface(scrollBody, numberingAnchor)
@@ -79,6 +81,19 @@ watch(numberingBar, (element, _, onCleanup) => {
 }, { flush: 'post' })
 const editDisabled = computed(() => busy.value || loading.value || confirming.value)
 const directoryOpen = ref(false), accountId = ref(''), targetCID = ref(''), targetPath = ref(''), downloadPath = ref('')
+watch(() => props.active, active => {
+  if (!active) {
+    // 未确认的目录和字幕草稿随子页关闭；滚动位置由共享页面保存。
+    directoryOpen.value = false
+    subtitleOpen.value = false
+  }
+}, { flush: 'pre' })
+function selectDirectory(value: { id: string; path: string }) {
+  if (!props.active || !directoryOpen.value) return
+  targetCID.value = value.id
+  targetPath.value = value.path
+  directoryOpen.value = false
+}
 const season = ref(String(props.seasons.find(s => s.number > 0)?.number ?? 1)), sourceStart = ref(1), targetStart = ref(1)
 const stagedIDs = ref(new Set<string>())
 const staged = computed(() => rows.value.filter(row => stagedIDs.value.has(row.id)))
@@ -304,7 +319,7 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <AnimeFloatingDialog ref="floatingDialog" class="download-organize-dialog" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
+  <FloatingDialog ref="floatingDialog" class="download-organize-dialog" :active="props.active" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
       <div class="organize-config">
@@ -447,14 +462,14 @@ onBeforeUnmount(() => lifecycle.abort())
       <p v-if="!targetCID && !loading" class="share-config-note">普通整理需选择目录；115 分享 STRM 使用主网盘根目录的独立文件夹。</p>
       <p v-if="shareIssue" class="share-config-note">{{ shareIssue }} · <RouterLink to="/115/share" target="_blank" rel="noopener">分享设置</RouterLink><button v-if="!loading" type="button" :disabled="editDisabled" @click="loadConfig">重新读取配置</button></p>
     </template>
-  </AnimeFloatingDialog>
-  <P115DirectoryDialog v-if="directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="value => { targetCID = value.id; targetPath = value.path; directoryOpen = false }" />
-  <SubtitlePickerDialog v-if="subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :target-names="Object.fromEntries(subtitleVideos.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
+  </FloatingDialog>
+  <P115DirectoryDialog v-if="props.active && directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="selectDirectory" />
+  <SubtitlePickerDialog v-if="props.active && subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :target-names="Object.fromEntries(subtitleVideos.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
 </template>
 
 <style scoped>
 /* 外壳与搜索窗口共用玻璃材质，内部只在容器上铺底，避免逐行叠加成实色面板。 */
-:global(dialog.download-organize-dialog) {
+:global(.download-organize-dialog) {
   --organize-card-bg: rgb(255 255 255 / 54%);
   --organize-sub-bg: rgb(241 245 249 / 60%);
   --organize-row-bg: transparent;
@@ -464,7 +479,7 @@ onBeforeUnmount(() => lifecycle.abort())
   --organize-control-border: rgb(100 116 139 / 34%);
   --organize-footer-bg: rgb(241 245 249 / 58%);
 }
-:global(.dark dialog.download-organize-dialog) {
+:global(.dark .download-organize-dialog) {
   --organize-card-bg: rgb(255 255 255 / 5%);
   --organize-sub-bg: rgb(255 255 255 / 3.5%);
   --organize-row-hover: rgb(255 255 255 / 6%);
@@ -473,8 +488,8 @@ onBeforeUnmount(() => lifecycle.abort())
   --organize-control-border: rgb(255 255 255 / 16%);
   --organize-footer-bg: rgb(10 15 24 / 38%);
 }
-:global(.download-organize-dialog .anime-floating-footer) { background: var(--organize-footer-bg); box-shadow: 0 -1px 0 var(--organize-border); }
-:global(.download-organize-dialog .anime-floating-body) { scroll-padding-top: 60px; }
+:global(.download-organize-dialog .floating-dialog-footer) { background: var(--organize-footer-bg); border-top-color: var(--organize-border); }
+:global(.download-organize-dialog .floating-dialog-body) { scroll-padding-top: 60px; }
 .download-organize { @apply min-w-0 space-y-3 pt-1.5 text-content-primary; }
 .download-organize :is(button, summary, a, input):focus-visible, .submit-bar button:focus-visible, .share-config-note :is(a, button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
 .resource-title { @apply truncate text-xs leading-5 text-content-secondary; }
@@ -510,7 +525,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .confirmation-heading > span, .confirmation-subtitles { @apply text-xs leading-5 text-content-secondary; }
 .confirmed-group { @apply min-w-0 border-b border-line-default py-1 last:border-b-0; }
 .confirmed-group details { @apply block w-full min-w-0; }
-.confirmed-group summary { @apply flex w-full cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md text-xs text-content-secondary; min-height: var(--ae-control-height); }
+.confirmed-group summary { @apply flex w-full cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md text-xs text-content-secondary; min-height: var(--dialog-control-height); }
 .confirmed-group summary::-webkit-details-marker { display: none; }
 .confirmed-summary-main { @apply flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5; flex: 1 1 12rem; }
 .confirmed-summary-main strong { @apply font-medium text-content-primary; }
@@ -546,21 +561,21 @@ onBeforeUnmount(() => lifecycle.abort())
 .subtitle-details[open] > summary > svg { transform: rotate(180deg); }
 .subtitle-file { @apply mb-2 min-w-0 break-all pl-2; }
 .subtitle-target { @apply text-content-primary; }
-.numbering-bar { @apply sticky top-0 z-10 -mx-[22px] flex items-center gap-2 px-[22px] py-2; background: transparent; }
+.numbering-bar { @apply sticky top-0 z-10 flex items-center gap-2 py-2; margin-inline: calc(-1 * var(--dialog-content-inset)); padding-inline: var(--dialog-content-inset); background: transparent; }
 .numbering-bar.is-stuck { background: var(--floating-surface-container); box-shadow: 0 1px 0 rgb(var(--line-default)); }
 .editing-count { @apply text-xs text-content-secondary; font-variant-numeric: tabular-nums; }
-.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line-default bg-surface-card px-3 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-surface-hover; min-height: var(--ae-control-height); }
+.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line-default bg-surface-card px-3 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-surface-hover; min-height: var(--dialog-control-height); }
 .batch-toggle[aria-expanded='true'] { @apply border-action-primary/40 bg-selection-surface text-selection-content; }
 .mapping-bar { @apply flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border p-3 text-xs; scroll-margin-top: 60px; }
 .mapping-bar label { @apply flex items-center gap-1.5 whitespace-nowrap text-content-secondary; }
 .mapping-range { @apply flex items-center gap-2; }
 .mapping-range > span { @apply text-content-secondary; }
 .mapping-actions { @apply ml-auto flex flex-wrap items-center gap-1.5; }
-.mapping-bar input { @apply w-16 min-w-0 rounded-lg border text-content-primary outline-none focus:border-focus disabled:bg-surface-hover disabled:text-content-secondary; background: var(--organize-input-bg); border-color: var(--organize-control-border); height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); font-variant-numeric: tabular-nums; }
+.mapping-bar input { @apply w-16 min-w-0 rounded-lg border text-content-primary outline-none focus:border-focus disabled:bg-surface-hover disabled:text-content-secondary; background: var(--organize-input-bg); border-color: var(--organize-control-border); height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-control-font); font-variant-numeric: tabular-nums; }
 .season-select { @apply w-40; }
 .stage-action { @apply ml-auto border-action-primary/40 text-action-link; }
 .selection-prompt { @apply flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs leading-5 text-content-secondary; }
-.secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border font-medium text-content-primary transition-colors enabled:hover:border-line-control enabled:hover:bg-surface-hover disabled:opacity-40; background: var(--organize-card-bg); border-color: var(--organize-control-border); min-height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); }
+.secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border font-medium text-content-primary transition-colors enabled:hover:border-line-control enabled:hover:bg-surface-hover disabled:opacity-40; background: var(--organize-card-bg); border-color: var(--organize-control-border); min-height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-control-font); }
 .secondary.mapping-apply { @apply border-action-primary/40 bg-selection-surface text-selection-content enabled:hover:border-action-link; }
 .secondary.tool-action { @apply border-transparent bg-transparent text-content-secondary enabled:hover:border-transparent enabled:hover:bg-surface-hover enabled:hover:text-action-link; }
 .primary { @apply rounded-lg bg-action-primary px-4 py-2.5 text-sm font-medium text-action-on-primary enabled:hover:bg-action-primary-hover disabled:opacity-40; }
@@ -579,7 +594,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .error a { @apply text-sm text-action-link underline; }
 /* 减少透明效果、高对比及不支持背景模糊时，恢复完整的实色阅读表面。 */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :global(dialog.download-organize-dialog.floating-surface) {
+  :global(.download-organize-dialog) {
     --organize-card-bg: rgb(var(--surface-card));
     --organize-sub-bg: rgb(var(--surface-page));
     --organize-row-hover: rgb(var(--surface-hover));
@@ -590,7 +605,7 @@ onBeforeUnmount(() => lifecycle.abort())
   }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
-  :global(dialog.download-organize-dialog.floating-surface) {
+  :global(.download-organize-dialog) {
     --organize-card-bg: rgb(var(--surface-card));
     --organize-sub-bg: rgb(var(--surface-page));
     --organize-row-hover: rgb(var(--surface-hover));
@@ -601,27 +616,27 @@ onBeforeUnmount(() => lifecycle.abort())
   }
 }
 @media (max-width: 639px), (pointer: coarse) {
-  .download-organize { --ae-control-height: 44px; --ae-control-padding: 8px 10px; --ae-control-font: 14px; }
-  .mapping-bar input { font-size: 16px; }
-  .mapping-bar .season-select :deep(.select-menu-control.select-menu-compact) { min-height: 44px; height: 44px; font-size: 16px; }
+  .mapping-bar input { font-size: var(--sheet-font-input); }
+  .mapping-bar .season-select :deep(.select-menu-control.select-menu-compact) { min-height: var(--sheet-touch-size); height: var(--sheet-touch-size); font-size: var(--sheet-font-body); }
   .naming-details summary, .organize-help summary, .subtitle-details summary { min-height: 44px; }
 }
 @media (max-width: 639px) {
-  :global(.download-organize-dialog .anime-floating-body) { scroll-padding-top: 68px; }
+  :global(.download-organize-dialog .floating-dialog-body) { scroll-padding-top: 68px; }
   .resource-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
-  .organize-config { @apply px-2.5 py-1.5; }
+  .organize-config { padding: 8px 10px; border: 0; background: var(--organize-sub-bg); }
   .directory-bar { gap: 6px; }
   .directory-info p:first-child { @apply flex-col items-start gap-0; }
-  .directory-info strong { max-width: 100%; }
+  .directory-info strong { max-width: 100%; font-size: var(--sheet-font-body); line-height: var(--sheet-line-body); }
+  .directory-pick { padding-inline: 8px; border: 0; background: transparent; color: rgb(var(--action-link)); }
   .naming-details { padding-left: 23px; }
   .workbench-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
   .workbench-title { display: contents; }
   .workbench-counts { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
   .workbench-actions { grid-column: 2; grid-row: 1; margin-left: 0; }
-  .subtitle-action { font-size: 13px; }
+  .subtitle-action { font-size: var(--sheet-font-body); }
   .confirmed-summary-main { flex-basis: 100%; }
   .confirmed-actions { margin-left: 18px; }
-  .numbering-bar { margin-inline: -16px; padding-inline: 16px; gap: 6px; }
+  .numbering-bar { gap: 6px; }
   .editing-count { display: none; }
   .mapping-bar { align-items: stretch; gap: 10px; padding: 10px; scroll-margin-top: 68px; }
   .mapping-season { width: 100%; }
@@ -635,7 +650,7 @@ onBeforeUnmount(() => lifecycle.abort())
   .submit-summary { flex-basis: 100%; }
   .submit-composition { width: auto; }
   .submit-actions { width: 100%; }
-  .submit-actions > button { flex: 1 1 auto; min-width: 0; padding-inline: 8px; font-size: 13px; }
+  .submit-actions > button { flex: 1 1 auto; min-width: 0; padding-inline: 8px; font-size: var(--sheet-font-body); }
   .submit-actions > .primary { flex-grow: 1.4; }
 }
 @media (max-width: 359px) {

@@ -72,7 +72,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
     }
     async function organize(index, loseReceipt = false) {
       await rows.nth(index).locator('[data-gy-action="organize"]').click()
-      const child = page.locator('dialog.anime-floating-organize')
+      const child = page.locator('dialog.floating-dialog-organize')
       await child.getByText('版本 3', { exact: true }).waitFor()
       await child.getByRole('checkbox', { name: '选择目录 show 及下级', exact: true }).check()
       state.lostJob = loseReceipt
@@ -179,7 +179,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
         await f.rows.first().locator('[data-gy-action="cloud"]').click()
         await f.rows.first().getByRole('button', { name: '提交中…', exact: true }).waitFor()
         await f.rows.nth(4).locator('[data-gy-action="organize"]').click()
-        const child = f.page.locator('dialog.anime-floating-organize')
+        const child = f.page.locator('dialog.floating-dialog-organize')
         await child.getByText('版本 3', { exact: true }).waitFor()
         await child.getByRole('checkbox', { name: '选择目录 show 及下级', exact: true }).check()
         await child.getByRole('button', { name: '下载并自动整理', exact: true }).click()

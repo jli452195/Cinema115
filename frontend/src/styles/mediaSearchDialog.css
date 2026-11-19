@@ -1,4 +1,18 @@
-/* Search content tokens build on the shared floating surface shell. */
+/* 资源搜索共用尺寸，手机的外壳几何仍由 BottomSheetDialog 控制。 */
+:is(.mikan-dialog, .gy-dialog) { color: var(--search-dialog-text); }
+:is(.mikan-layout, .gy-layout) { display: flex; flex-direction: column; max-height: 90dvh; }
+.sheet-flow-host[open] { display: flex; flex-direction: column; }
+.sheet-flow-host > .sheet-flow-stage { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.sheet-flow-host > .sheet-flow-stage > :is(.mikan-layout, .gy-layout) { flex: 1; min-height: 0; }
+.sheet-flow-host :is(.mikan-body, .gy-body) { flex: 1; }
+@media (min-width: 640px) {
+  :is(.mikan-dialog, .gy-dialog) { margin: auto; padding: 0; width: min(1080px, calc(100vw - 48px)); max-width: none; max-height: 90dvh; border-radius: 24px; overflow: hidden; }
+  /* 固定搜索宿主高度，切换内页时保持同一舞台尺寸。 */
+  :is(.mikan-dialog, .gy-dialog).sheet-flow-host { height: min(860px, 90dvh); }
+}
+@media (max-width: 639px) {
+  :is(.mikan-layout, .gy-layout) { flex: 1; min-height: 0; max-height: none; }
+}
 .search-log-footer {
   display: flex;
   flex-wrap: wrap;
@@ -23,7 +37,7 @@
 .search-log-footer a:hover { text-decoration: underline; }
 .search-log-footer a:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 3px; }
 @media (max-width: 639px) {
-  .search-log-footer { padding: 4px 16px 8px; }
+  .search-log-footer { padding: 4px var(--sheet-content-inset) 8px; font-size: var(--sheet-font-meta); }
   .search-log-footer a { min-height: 44px; }
 }
 
@@ -219,7 +233,8 @@ dialog.media-search-dialog .mikan-batch-footer {
 }
 
 @media (max-width: 639px) {
-  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) { min-height: 48px; }
+  .media-search-dialog { --search-dialog-font-meta: var(--sheet-font-meta); }
+  .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) { min-height: var(--sheet-touch-size); font-size: var(--sheet-font-body); }
 }
 
 @media (prefers-reduced-motion: reduce) {

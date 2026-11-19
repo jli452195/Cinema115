@@ -46,7 +46,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.goto(`${origin}/tv/42`)
     await page.getByRole('button', { name: 'Garden 搜索', exact: true }).click()
     await page.getByRole('button', { name: '115 整理', exact: true }).click()
-    const dialog = page.locator('dialog.anime-floating-organize'), confirmed = dialog.getByRole('region', { name: '已暂存的整理文件' })
+    const dialog = page.locator('dialog.floating-dialog-organize'), confirmed = dialog.getByRole('region', { name: '已暂存的整理文件' })
     const row = id => dialog.locator(`[data-organize-file="${id}"]`)
     const confirm = () => dialog.getByRole('button', { name: /^暂存这 \d+ 项$/ })
     const start = () => dialog.getByRole('button', { name: '下载并自动整理', exact: true })
@@ -112,7 +112,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     for (const [width, theme] of [[1440, 'light'], [455, 'light'], [390, 'light'], [320, 'dark']]) {
       await page.setViewportSize({ width, height: 900 }); await page.evaluate(t => document.documentElement.classList.toggle('dark', t === 'dark'), theme)
       assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
-      const footer = await dialog.locator('.anime-floating-footer').boundingBox()
+      const footer = await dialog.locator('.floating-dialog-footer').boundingBox()
       assert.ok(footer.y >= 0 && footer.y + footer.height <= 900)
       const group = confirmed.locator('.confirmed-group').first()
       await group.locator('summary').press('Space')

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { IconFolder } from '@tabler/icons-vue'
-import P115ActionDialog from './P115ActionDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
 import { useAnimeStorageSettings } from '../composables/useAnimeStorageSettings'
 import type { AnimeSettingsView } from '../types/animeSubscription'
@@ -36,7 +36,7 @@ onUnmounted(() => emit('blocked', false))
 </script>
 
 <template>
-  <component :is="inline ? 'section' : P115ActionDialog" v-bind="inline ? { 'aria-label': '下载与整理目录' } : { title: '动漫存储设置', busy: saving }" @close="emit('close')">
+  <component :is="inline ? 'section' : FloatingDialog" v-bind="inline ? { 'aria-label': '下载与整理目录' } : { title: '动漫存储设置', closeLabel: '关闭动漫存储设置', closeDisabled: saving || !!pending }" @close="emit('close')">
     <div class="anime-storage-settings" :aria-busy="loading || saving">
       <p class="storage-note">所有订阅共用，选择目录后立即保存。</p>
       <p v-if="loading && !settings" role="status" class="storage-note">正在读取目录设置…</p>

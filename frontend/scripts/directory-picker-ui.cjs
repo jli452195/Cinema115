@@ -56,7 +56,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const { createApp, h, reactive, Fragment, nextTick } = await import('/node_modules/.vite/deps/vue.js')
       const [local, cloud, strm, floating] = await Promise.all([
         import('/src/components/MediaLocalDirectoryDialog.vue'), import('/src/components/P115DirectoryDialog.vue'),
-        import('/src/components/STRMDirectoryDialog.vue'), import('/src/components/AnimeFloatingDialog.vue'),
+        import('/src/components/STRMDirectoryDialog.vue'), import('/src/components/FloatingDialog.vue'),
       ])
       const state = reactive({ kind: '', parentOpen: true, saving: false, saveError: '', selected: [], created: [] })
       const adapters = { '本地': local.default, '115': cloud.default, STRM: strm.default }
@@ -168,7 +168,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await open('本地'); await idle()
     await dialog().getByRole('textbox', { name: '目录路径', exact: true }).fill('/many')
     await dialog().getByRole('button', { name: '前往', exact: true }).click(); await idle()
-    const scroller = dialog().locator('.anime-floating-body')
+    const scroller = dialog().locator('.floating-dialog-body')
     assert.equal(await scroller.evaluate(el => el.scrollHeight > el.clientHeight), true)
     const beforeScroll = { path: await dialog().getByRole('textbox', { name: '目录路径', exact: true }).boundingBox(), confirm: await choose().boundingBox() }
     await scroller.evaluate(el => { el.scrollTop = el.scrollHeight })

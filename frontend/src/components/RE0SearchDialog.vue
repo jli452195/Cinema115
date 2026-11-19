@@ -418,14 +418,14 @@ onBeforeUnmount(() => {
 .re0-resource-info { min-width: 0; }
 .re0-version-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .re0-version-heading h3 { margin: 0; font-size: 15px; line-height: 24px; font-weight: 650; overflow-wrap: anywhere; }
-.re0-badge { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px; font-size: 11px; line-height: 18px; font-weight: 550; }
+.re0-badge { display: inline-flex; flex-shrink: 0; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 8px; font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; font-weight: 550; }
 .re0-badge svg { width: 14px; height: 14px; }
 .re0-metrics { display: flex; flex-wrap: wrap; gap: 12px 22px; margin: 14px 0 0; }
 .re0-metrics div { min-width: 0; }
-.re0-metrics dt { color: var(--re0-muted); font-size: 11px; line-height: 16px; }
+.re0-metrics dt { color: var(--re0-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 16px; }
 .re0-metrics dd { margin: 3px 0 0; font-size: 12px; line-height: 20px; font-weight: 550; overflow-wrap: anywhere; }
 .re0-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.re0-resource-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 16px; color: var(--re0-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.re0-resource-meta { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 16px; color: var(--re0-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; overflow-wrap: anywhere; }
 .re0-info { color: var(--re0-on-tonal); background: var(--re0-tonal); }
 .re0-notice.re0-info { border: 1px solid color-mix(in srgb, var(--re0-outline) 45%, transparent); background: var(--re0-card); color: var(--re0-text); }
 .re0-success { color: var(--re0-success); background: var(--re0-success-bg); }
@@ -467,14 +467,21 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 639px) {
   .re0-layout { flex: 1; min-height: 0; max-height: none; }
-  .re0-header { gap: 10px; padding: 16px 16px 12px; }
-  .re0-heading h2 { font-size: 18px; line-height: 26px; }
-  .re0-toolbar { flex-wrap: wrap; gap: 4px; padding: 0 16px 12px; }
-  .re0-search-field { flex-basis: 100%; }
-  .re0-search-field input { font-size: 16px; }
+  .re0-header { gap: 10px; padding: 16px var(--sheet-content-inset) 12px; }
+  .re0-heading h2 { font-size: var(--sheet-font-title); line-height: 24px; }
+  .re0-icon-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); }
+  .re0-toolbar { flex-wrap: wrap; gap: 4px; padding: 0 var(--sheet-content-inset) 12px; }
+  .re0-search-field { flex-basis: 100%; min-height: var(--sheet-touch-size); padding-inline: var(--sheet-content-inset); border-radius: 12px; }
+  .re0-search-field input { height: calc(var(--sheet-touch-size) - 2px); font-size: var(--sheet-font-input); }
   .re0-tools { justify-content: flex-end; width: 100%; }
-  .re0-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
-  .re0-resource { padding: 16px; border-radius: 18px; }
+  .re0-tool-button, .re0-text-button { min-height: var(--sheet-touch-size); font-size: var(--sheet-font-body); line-height: var(--sheet-line-body); }
+  .re0-body { padding: 0 var(--sheet-content-inset) var(--sheet-content-inset); font-size: var(--sheet-font-body); line-height: var(--sheet-line-body); scrollbar-gutter: auto; }
+  .re0-results-heading h3, .re0-version-heading h3, .re0-notice, .re0-selection h4, .re0-selection p, .re0-field, .re0-retry-confirmation, .search-log-footer a { font-size: var(--sheet-font-body); line-height: var(--sheet-line-body); }
+  .re0-resource, .re0-skeleton div { padding: var(--sheet-content-inset); border-radius: 12px; }
+  .re0-resource-main { gap: 12px; }
+  .re0-notice { padding: var(--sheet-content-inset); }
+  .re0-selection { margin-top: 12px; padding-top: 12px; }
+  .re0-retry-confirmation { min-height: var(--sheet-touch-size); }
   .re0-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .re0-metrics { gap: 10px 20px; }
 }

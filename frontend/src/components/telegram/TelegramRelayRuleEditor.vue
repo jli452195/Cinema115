@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { IconBroadcast, IconEdit, IconRobot, IconUsers } from '@tabler/icons-vue'
-import FloatingDialog from '../AnimeFloatingDialog.vue'
+import FloatingDialog from '../FloatingDialog.vue'
 import SettingSwitch from '../SettingSwitch.vue'
 import TelegramAvatar from '../TelegramAvatar.vue'
 import TelegramRelayPeerPicker from '../TelegramRelayPeerPicker.vue'

@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconBroadcast, IconRobot, IconSearch, IconUsers } from '@tabler/icons-vue'
-import FloatingDialog from './AnimeFloatingDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import TelegramAvatar from './TelegramAvatar.vue'
 import { telegramRelayRequest } from '../lib/telegram-relay-api'
 import type { TelegramRelayPeer, TelegramRelayPeerPage } from '../types/telegramRelay'

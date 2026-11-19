@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { IconArrowUp, IconChevronRight, IconFolder, IconRefresh, IconServer } from '@tabler/icons-vue'
-import FloatingDialog from './AnimeFloatingDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 
 interface DirectoryEntry { id: string; name: string; path?: string; ariaLabel?: string }
 
@@ -106,11 +106,13 @@ function navigate() {
 </template>
 
 <style scoped>
-:global(dialog.directory-picker-dialog.anime-floating) {
-  width: min(640px, calc(100vw - 32px));
-  height: min(620px, calc(100dvh - 64px));
+@media (min-width: 640px) {
+  :global(dialog.directory-picker-dialog.floating-dialog) {
+    width: min(640px, calc(100vw - 32px));
+    height: min(620px, calc(100dvh - 64px));
+  }
+  :global(dialog.directory-picker-dialog .floating-dialog-body) { scrollbar-gutter: stable; }
 }
-:global(dialog.directory-picker-dialog .anime-floating-body) { scrollbar-gutter: stable; }
 .dp-help { font-size: 12px; line-height: 1.7; color: var(--floating-surface-muted); overflow-wrap: anywhere; }
 .dp-description { margin-bottom: 12px; }
 .dp-path { display: flex; align-items: flex-end; gap: 8px; }
@@ -148,15 +150,18 @@ function navigate() {
 .dp-current + .dp-actions, .dp-save-error + .dp-actions { margin-top: 10px; }
 .dp-actions .dp-button { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 639px) {
-  /* 按可用宽度留白，避免页面滚动条槽挤占窄屏外沿。 */
-  :global(dialog.directory-picker-dialog.anime-floating) { width: calc(100% - 48px); height: min(620px, calc(100dvh - 48px)); }
+  .dp-description { margin-bottom: 8px; }
+  .dp-navigation { margin-top: 8px; }
+  .dp-button, .dp-entry span { font-size: var(--sheet-font-body); }
+  .dp-list { border-inline: 0; border-radius: 0; background: transparent; }
+  .dp-entry { padding-inline: 4px; }
   .dp-navigation { flex-wrap: wrap; }
   .dp-navigation .dp-button { padding-inline: 8px; }
   .dp-entry { min-height: 52px; }
   .dp-actions .dp-create { order: -1; width: 100%; }
 }
 @media (max-width: 639px), (pointer: coarse) {
-  :global(dialog.directory-picker-dialog .anime-floating-toolbar button) { min-width: 44px; min-height: 44px; }
+  :global(dialog.directory-picker-dialog .floating-dialog-toolbar button) { min-width: 44px; min-height: 44px; }
   .dp-button { min-width: 44px; min-height: 44px; }
   .dp-entry { min-width: 44px; }
   .dp-path input { min-height: 44px; font-size: 16px; }

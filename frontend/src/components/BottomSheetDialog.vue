@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useMobileSheet } from '../composables/useMobileSheet'
+import { useMobileSheet, type DismissDecision, type DismissReason } from '../composables/useMobileSheet'
 import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 
-const props = withDefaults(defineProps<{ mobileSheet?: boolean; closeDisabled?: boolean; desktopBackdropDismiss?: boolean }>(), { mobileSheet: true })
+const props = withDefaults(defineProps<{
+  mobileSheet?: boolean
+  closeDisabled?: boolean
+  desktopBackdropDismiss?: boolean
+  allowSwipeClose?: boolean
+  beforeClose?: (reason: DismissReason) => DismissDecision | Promise<DismissDecision>
+}>(), { mobileSheet: true, allowSwipeClose: true })
 const emit = defineEmits<{ closing: []; close: []; 'viewport-change': [short: boolean] }>()
 const dialog = ref<HTMLDialogElement>()
 const lifecycle = createDialogLifecycle({ coverParent: true })
@@ -13,6 +19,8 @@ let backdropClick = false
 const sheet = useMobileSheet(dialog, {
   enabled: () => props.mobileSheet,
   closeDisabled: () => !!props.closeDisabled,
+  allowSwipeClose: () => props.allowSwipeClose,
+  beforeClose: reason => props.beforeClose?.(reason) ?? 'dismiss',
   onClosing: () => emit('closing'),
   onClose: () => emit('close'),
   onViewportChange(height) {
@@ -51,7 +59,7 @@ function pointerCancel(event: PointerEvent) {
   sheet.onPointerCancel(event)
 }
 function click(event: MouseEvent) {
-  if (backdropClick && canDismissOnBackdrop() && isBackdrop(event)) sheet.close()
+  if (backdropClick && canDismissOnBackdrop() && isBackdrop(event)) void sheet.requestClose('backdrop')
   backdropClick = false
 }
 
@@ -66,17 +74,26 @@ onBeforeUnmount(() => {
   dialog.value?.close()
   lifecycle.release()
 })
-defineExpose({ dialog })
+defineExpose({ dialog, close: sheet.close, closeDirect: sheet.closeDirect, requestClose: sheet.requestClose, expanded: sheet.expanded, toggleExpanded: sheet.toggleExpanded })
 </script>
 
 <template>
-  <dialog ref="dialog" class="bottom-sheet-dialog floating-surface" :class="{ 'bottom-sheet-dialog-mobile': mobileSheet }" @cancel.prevent="sheet.close" @pointerdown="pointerDown" @pointermove="sheet.onPointerMove" @pointerup="pointerUp" @pointercancel="pointerCancel" @lostpointercapture="sheet.onPointerCancel" @click="click">
+  <dialog ref="dialog" class="bottom-sheet-dialog floating-surface" :class="{ 'bottom-sheet-dialog-mobile': mobileSheet }" @cancel.prevent="sheet.requestClose('escape')" @pointerdown="pointerDown" @pointermove="sheet.onPointerMove" @pointerup="pointerUp" @pointercancel="pointerCancel" @lostpointercapture="sheet.onPointerCancel" @click="click">
     <div v-if="mobileSheet" class="bottom-sheet-grabber-zone" data-sheet-drag aria-hidden="true"><span></span></div>
     <slot :close="sheet.close" :expanded="sheet.expanded.value" :toggle-expanded="sheet.toggleExpanded" />
   </dialog>
 </template>
 
 <style scoped>
+.bottom-sheet-dialog {
+  --sheet-font-title: 16px;
+  --sheet-font-body: 14px;
+  --sheet-font-meta: 12px;
+  --sheet-font-input: 16px;
+  --sheet-line-body: 22px;
+  --sheet-touch-size: 44px;
+  --sheet-content-inset: 12px;
+}
 .bottom-sheet-grabber-zone { display: none; }
 @media (max-width: 639px) {
   .bottom-sheet-dialog.bottom-sheet-dialog-mobile {
@@ -88,6 +105,7 @@ defineExpose({ dialog })
     overflow: clip; border: 0; border-radius: 20px 20px 0 0;
     background: var(--floating-surface-container); box-shadow: 0 -4px 22px rgb(0 0 0 / .16);
     -webkit-backdrop-filter: none; backdrop-filter: none;
+    font-size: var(--sheet-font-body); line-height: var(--sheet-line-body);
   }
   .bottom-sheet-dialog-mobile[open] { display: flex; flex-direction: column; }
   .bottom-sheet-dialog.bottom-sheet-dialog-mobile[data-sheet-expanded='true'] { --sheet-top-gap: 0px; border-radius: 0; padding-top: max(0px, calc(var(--app-safe-top) - var(--sheet-viewport-top, 0px))); }

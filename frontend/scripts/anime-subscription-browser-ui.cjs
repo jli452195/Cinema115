@@ -197,7 +197,7 @@ const wait = async fn => { for (let i = 0; i < 150; i++) { if (await fn()) retur
     await touch.page.locator('.ac-identity').waitFor()
     const b=await td.boundingBox()
     assert.ok(b.x>=0&&b.width<=320)
-    assert.equal(await td.locator('.anime-floating-body').evaluate(el=>el.scrollWidth>el.clientWidth),false)
+    assert.equal(await td.locator('.floating-dialog-body').evaluate(el=>el.scrollWidth>el.clientWidth),false)
     await touch.page.screenshot({path:'test-results/anime-subscription-mobile-light.png'})
     await touch.page.evaluate(()=>document.documentElement.classList.add('dark'))
     await touch.page.screenshot({path:'test-results/anime-subscription-mobile-dark.png'})

@@ -121,7 +121,7 @@ defineExpose({ locateIssue, revealRows })
           <div v-for="row in group.rows" :key="row.id" :data-organize-file="row.id" class="file-columns organize-file-row gap-x-3 gap-y-2 px-3 py-2" :class="[tv ? 'tv-columns' : 'movie-columns', { 'lg:grid lg:items-center': !compact, 'file-selected': row.selected, 'file-has-issue': !!conflicts?.[row.id], 'file-disabled': disabled }]" @click="clickRow(row, $event)" @mousedown="event => { if (event.shiftKey && !(event.target as HTMLElement).closest('input')) event.preventDefault() }">
             <div class="file-main flex min-w-0 items-start gap-2">
               <label class="file-check"><input type="checkbox" :checked="row.selected" :aria-label="`选择 ${row.name}`" :disabled="disabled" @click.stop="toggleRow(row, $event)" /></label>
-              <div class="min-w-0 flex-1">
+              <div class="file-content min-w-0 flex-1">
                 <button type="button" tabindex="-1" class="file-name" :disabled="disabled" :aria-pressed="row.selected" :title="compact && plannedName(row) ? plannedName(row) : row.name" @click.stop="toggleRow(row, $event)"><template v-if="compact && plannedName(row)"><span v-if="row.titleOnly" class="file-name-label">预计命名：</span><span>{{ plannedName(row) }}</span></template><span v-else>{{ row.name }}</span></button>
                 <p v-if="compact && plannedName(row)" class="file-original" :title="row.name"><span>{{ row.titleOnly ? '资源' : '原名' }}：</span><span>{{ row.name }}</span></p>
                 <p v-else-if="targetNames?.[row.id]" class="mt-1 break-all text-xs leading-5 text-content-secondary">{{ compact ? targetNames[row.id] : `${row.titleOnly ? '预计命名' : '整理后'}：${targetNames[row.id]}` }}</p>
@@ -166,7 +166,7 @@ defineExpose({ locateIssue, revealRows })
 .path-toggle, .editor-collapse { @apply inline-flex shrink-0 items-center justify-center gap-1 rounded-md px-1.5 text-xs text-action-link enabled:hover:bg-selection-surface disabled:cursor-not-allowed disabled:opacity-40; min-height: 32px; }
 .path-toggle { margin: -6px -4px 0 0; color: rgb(var(--content-secondary)); }
 .path-toggle:hover, .path-toggle[aria-expanded='true'] { color: rgb(var(--action-link)); }
-.episode-summary { @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-transparent px-2 text-xs text-content-secondary enabled:hover:border-focus enabled:hover:bg-selection-surface enabled:hover:text-action-link disabled:cursor-not-allowed disabled:opacity-50; background: var(--organize-sub-bg, rgb(var(--surface-hover) / .5)); justify-self: start; min-height: var(--ae-control-height, 36px); margin-left: 32px; }
+.episode-summary { @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-transparent px-2 text-xs text-content-secondary enabled:hover:border-focus enabled:hover:bg-selection-surface enabled:hover:text-action-link disabled:cursor-not-allowed disabled:opacity-50; background: var(--organize-sub-bg, rgb(var(--surface-hover) / .5)); justify-self: start; min-height: var(--dialog-control-height, 36px); margin-left: 32px; }
 .compact-selection { container-type: inline-size; }
 .organize-file-row { background: var(--organize-row-bg, rgb(var(--surface-card))); padding-left: calc(28px + var(--directory-indent, 0px)); scroll-margin-top: calc(var(--organize-sticky-offset, 0px) + 12px); cursor: pointer; }
 .organize-file-row:not(.file-disabled):hover { background: var(--organize-row-hover, rgb(var(--surface-hover) / .6)); }
@@ -182,7 +182,7 @@ defineExpose({ locateIssue, revealRows })
 .file-name-label { font-size: 12px; font-weight: 400; color: rgb(var(--content-secondary)); }
 .compact-selection .file-editors { align-items: center; margin: 0 0 0 32px; gap: 8px; min-width: 0; }
 .compact-selection .edit-label { flex-direction: row; align-items: center; white-space: nowrap; }
-.compact-selection .input, .compact-selection .secondary { height: var(--ae-control-height, 36px); padding: var(--ae-control-padding, 6px 10px); font-size: var(--ae-control-font, 13px); }
+.compact-selection .input, .compact-selection .secondary { height: var(--dialog-control-height, 36px); padding: var(--dialog-control-padding, 6px 10px); font-size: var(--dialog-control-font, 13px); }
 .compact-selection .edit-label > .input { width: 4rem; min-width: 0; padding-inline: 6px; }
 @container (min-width: 720px) {
  .compact-selection .tv-columns { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
@@ -194,12 +194,30 @@ defineExpose({ locateIssue, revealRows })
   .movie-columns { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 639px), (pointer: coarse) {
-  .file-check { width: 44px; min-height: 44px; margin: -6px 0 -6px -14px; }
-  .path-toggle, .editor-collapse, .episode-summary, .secondary { min-height: 44px; }
+  .file-check { width: var(--sheet-touch-size, 44px); min-height: var(--sheet-touch-size, 44px); margin: -6px 0 -6px -14px; }
+  .path-toggle, .editor-collapse, .episode-summary, .secondary { min-height: var(--sheet-touch-size, 44px); }
   .path-toggle { margin-top: -8px; }
-  .input, .compact-selection .input { min-height: 44px; font-size: 16px; }
+  .input, .compact-selection .input { min-height: var(--sheet-touch-size, 44px); font-size: var(--sheet-font-input, 16px); }
   .compact-selection .edit-label > .input { width: 4.25rem; }
   .compact-selection .file-editors, .episode-summary { margin-left: 38px; }
   .file-path-details { padding-left: 38px; }
+}
+@media (max-width: 639px) {
+  .compact-selection { margin-inline: calc(-1 * var(--dialog-content-inset, 0px)); border-inline: 0; border-radius: 0; background: transparent; }
+  .compact-selection .selection-header { padding-inline: var(--sheet-content-inset, 12px); border-radius: 0; }
+  .organize-file-row { padding-left: calc(var(--sheet-content-inset, 12px) + var(--directory-indent, 0px)); padding-right: var(--sheet-content-inset, 12px); }
+  .file-selection .organize-file-row { display: grid; grid-template-columns: var(--sheet-touch-size, 44px) minmax(0, 1fr) auto; gap: 4px; }
+  .file-main { display: contents; }
+  .file-check { grid-column: 1; grid-row: 1; align-self: start; margin: 0; }
+  .file-content { grid-column: 2 / -1; grid-row: 1; }
+  .file-name, .compact-selection .file-name { min-height: var(--sheet-touch-size, 44px); font-size: var(--sheet-font-body, 14px); line-height: 20px; }
+  .file-original, .file-name-label, .path-toggle, .editor-collapse, .episode-summary, .edit-label, .secondary, .compact-selection .secondary { font-size: var(--sheet-font-meta, 12px); line-height: 20px; }
+  .path-toggle, .editor-collapse { min-width: var(--sheet-touch-size, 44px); }
+  .path-toggle { grid-column: 3; grid-row: 2; justify-self: end; margin: 0; }
+  .file-editors, .compact-selection .file-editors { grid-column: 2; grid-row: 2; align-items: center; min-width: 0; margin: 0; gap: 8px; }
+  .edit-label { flex-direction: row; align-items: center; white-space: nowrap; }
+  .edit-label > .input, .compact-selection .edit-label > .input { width: 4.25rem; min-width: 0; padding-inline: 6px; }
+  .compact-selection .episode-summary, .episode-summary { grid-column: 2; grid-row: 2; margin-left: 0; }
+  .file-path-details { grid-column: 2 / -1; padding-left: 0; font-size: var(--sheet-font-meta, 12px); line-height: var(--sheet-line-body, 22px); }
 }
 </style>

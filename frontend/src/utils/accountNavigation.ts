@@ -6,7 +6,7 @@ import {
   IconFolderShare, IconBooks, IconListSearch, IconArrowsShuffle,
   IconDatabaseCog, IconUsers, IconMovie, IconSearch, IconLink,
   IconLayoutSidebar, IconLayoutSidebarLeftCollapse, IconCalendar, IconSubtitles,
-  IconChevronRight, IconChevronLeft, IconX,
+  IconChevronRight, IconArrowLeft, IconX,
 } from '@tabler/icons-vue'
 import { managementCategories, resourceSources } from './managementFeatures'
 
@@ -43,7 +43,7 @@ export const accountIcons = {
   sidebar: IconLayoutSidebar,
   sidebarCollapse: IconLayoutSidebarLeftCollapse,
   chevron: IconChevronRight,
-  back: IconChevronLeft,
+  back: IconArrowLeft,
   close: IconX,
 } as const
 

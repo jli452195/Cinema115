@@ -135,7 +135,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await dialog.getByRole('textbox', { name: '目录路径' }).fill('/many')
     await dialog.getByRole('button', { name: '前往', exact: true }).click()
     await dialog.getByText('目录内容较多，列表仅展示部分文件夹。可输入完整路径前往。', { exact: true }).waitFor()
-    assert.equal(await dialog.locator('.anime-floating-body').evaluate(el => el.scrollHeight > el.clientHeight), true)
+    assert.equal(await dialog.locator('.floating-dialog-body').evaluate(el => el.scrollHeight > el.clientHeight), true)
     assert.equal(Math.round((await dialog.boundingBox()).width), 640)
     await page.screenshot({ path: 'test-results/media-local-directories-desktop.png' })
     await page.setViewportSize({ width: 320, height: 740 })

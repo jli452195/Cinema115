@@ -581,7 +581,7 @@ async function loadingModels(browser) {
       for (const dark of [false, true]) {
         await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true)
-        assert.equal(await detail.locator('.anime-floating-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
+        assert.equal(await detail.locator('.floating-dialog-body').evaluate(el => el.scrollWidth <= el.clientWidth + 1), true)
         await page.screenshot({ path: `test-results/media-result-${width}-${dark ? 'dark' : 'light'}.png`, animations: 'disabled' })
       }
     }

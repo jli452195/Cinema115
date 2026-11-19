@@ -1,13 +1,18 @@
-.anime-floating, .anime-editor { --ae-ink: #1e293b; --ae-muted: #475569; --ae-surface: #fff; --ae-inset: #edf1f6; --ae-blue: #2563eb; min-width: 0; color: var(--ae-ink); font-size: 13px; color-scheme: light; }
-.dark .anime-floating, .dark .anime-editor { --ae-ink: #e2e8f0; --ae-muted: #b8c4d4; --ae-surface: #202832; --ae-inset: #303b49; --ae-blue: #93c5fd; color-scheme: dark; }
+.floating-dialog, .anime-editor { --ae-ink: #1e293b; --ae-muted: #475569; --ae-surface: #fff; --ae-inset: #edf1f6; --ae-blue: #2563eb; color-scheme: light; }
+.dark .floating-dialog, .dark .anime-editor { --ae-ink: #e2e8f0; --ae-muted: #b8c4d4; --ae-surface: #202832; --ae-inset: #303b49; --ae-blue: #93c5fd; color-scheme: dark; }
+.anime-editor { min-width: 0; color: var(--ae-ink); font-size: 13px; }
+@media (max-width: 639px) {
+  .floating-dialog .anime-editor { font-size: var(--sheet-font-body); }
+  .floating-dialog :is(.ae-button, .ae-link) { font-size: var(--dialog-control-font); }
+}
 .anime-editor button:focus-visible, .anime-editor a:focus-visible, .anime-editor summary:focus-visible, .ae-release-list:focus-visible { outline: 2px solid var(--ae-blue); outline-offset: 3px; }
 .anime-editor fieldset { min-width: 0; }
 .anime-editor input:not([type=checkbox]):not([type=radio]), .anime-editor textarea { width: 100%; min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid rgb(148 163 184 / .23); border-radius: 10px; background: var(--ae-surface); color: var(--ae-ink); font-size: 13px; outline: none; }
 .anime-editor textarea { resize: vertical; line-height: 1.7; }
-.anime-floating .anime-editor input:not([type=checkbox]):not([type=radio]), .anime-floating .anime-editor textarea { min-height: var(--ae-control-height); padding: var(--ae-control-padding); font-size: var(--ae-control-font); border-radius: 8px; }
-.anime-floating .ae-button, .anime-floating .ae-icon, .anime-floating .ae-link { min-height: var(--ae-control-height); border-radius: 8px; }
-.anime-floating .ae-button { padding-inline: 11px; }
-.anime-floating .ae-icon { width: var(--ae-control-height); }
+.floating-dialog .anime-editor input:not([type=checkbox]):not([type=radio]), .floating-dialog .anime-editor textarea { min-height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-input-font); border-radius: 8px; }
+.floating-dialog .ae-button, .floating-dialog .ae-icon, .floating-dialog .ae-link { min-height: var(--dialog-control-height); border-radius: 8px; }
+.floating-dialog .ae-button { padding-inline: 11px; }
+.floating-dialog .ae-icon { width: var(--dialog-control-height); }
 .ae-pair.ae-patterns { grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 640px) { .ae-pair.ae-patterns { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 .anime-editor input:focus, .anime-editor textarea:focus { border-color: #60a5fa; box-shadow: 0 0 0 3px rgb(96 165 250 / .12); }
@@ -50,7 +55,7 @@
 .ae-disclosure { margin-top: 22px; padding-top: 18px; box-shadow: 0 -1px 0 rgb(148 163 184 / .10); }
 .ae-disclosure > summary, .ae-advanced > summary { display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 12px; list-style: none; cursor: pointer; font-size: 13px; font-weight: 500; }
 .ae-disclosure > summary::-webkit-details-marker, .ae-advanced > summary::-webkit-details-marker { display: none; }
-.anime-floating .ae-advanced > summary { min-height: var(--ae-control-height); }
+.floating-dialog .ae-advanced > summary { min-height: var(--dialog-control-height); }
 .ae-disclosure > summary svg, .ae-advanced > summary svg { flex: none; color: var(--ae-muted); transform: rotate(-90deg); }.ae-disclosure[open] > summary svg, .ae-advanced[open] > summary svg { transform: rotate(0); }
 .ae-summary-note { display: block; margin-top: 3px; font-size: 11px; font-weight: 400; color: var(--ae-muted); }
 .ae-advanced > summary { font-size: 12px; color: var(--ae-muted); }.ae-advanced .ae-pair { margin: 12px 0 8px; }
@@ -147,7 +152,7 @@
 .ae-source-tools { display: flex; flex: none; align-items: center; gap: 4px; }
 .ae-source-toolbar .ae-source-tools { width: 100%; gap: 8px; }
 .ae-source-switch { margin-right: auto; }
-.ae-source-switch > label { align-items: center; min-height: var(--ae-control-height, 44px); gap: 8px; }
+.ae-source-switch > label { align-items: center; min-height: var(--dialog-control-height, 44px); gap: 8px; }
 .ae-source-switch input + span { margin-top: 0; }
 .ae-source-switch .setting-switch-label { font-size: 12px; }
 .ae-summary-title h3, .ae-choose-source h3 { font-size: 14px; font-weight: 600; }
@@ -199,12 +204,12 @@
 .ae-target-identity > .ae-label { flex: none; color: var(--ae-muted); }
 .ae-naming-heading h3 { min-width: 0; font-size: 14px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
 .ae-naming-heading h3 small { margin-left: 4px; white-space: nowrap; color: var(--ae-muted); font-size: 12px; font-weight: 400; }
-.ae-target-change.ae-button { min-height: var(--ae-control-height, 40px); padding-inline: 10px; background: transparent; }
+.ae-target-change.ae-button { min-height: var(--dialog-control-height, 40px); padding-inline: 10px; background: transparent; }
 .ae-target-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
 .ae-target-season { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .ae-target-season > .ae-label { flex: none; }
 .ae-target-season > .ae-target-season-menu { width: 300px; min-width: 0; max-width: 100%; }
-.ae-target-options.ae-button { min-width: 0; max-width: 100%; min-height: var(--ae-control-height, 44px); padding-inline: 8px; background: transparent; color: var(--ae-muted); }
+.ae-target-options.ae-button { min-width: 0; max-width: 100%; min-height: var(--dialog-control-height, 44px); padding-inline: 8px; background: transparent; color: var(--ae-muted); }
 .ae-target-options > span { flex: none; }
 .ae-target-options > .ae-target-group-name { flex: 0 1 auto; min-width: 0; text-align: left; overflow-wrap: anywhere; }
 .ae-target-options svg { transform: rotate(-90deg); }.ae-target-options svg.is-open { transform: rotate(0); }

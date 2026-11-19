@@ -3,10 +3,11 @@ import { IconFolder, IconLoader2, IconMagnet } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink } from 'vue-router'
 import MikanFilterSelect from './MikanFilterSelect.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
+import { provideSheetFlow } from '../composables/useSheetFlow'
 import { useCloudDownloadBatch } from '../composables/useCloudDownloadBatch'
 import { magnetKey } from '../lib/cloud-download-batch'
 import mikanMascot from '../assets/mikan/mikan-pic.svg?no-inline'
@@ -25,6 +26,9 @@ const props = withDefaults(defineProps<{ token: string; title: string; originalT
 const emit = defineEmits<{ close: [] }>()
 const sheetDialog = ref<InstanceType<typeof BottomSheetDialog>>()
 const dialog = computed(() => sheetDialog.value?.dialog)
+const organizeDialog = ref<InstanceType<typeof DownloadOrganizeDialog>>()
+const rootID = 'anime-resource-search-root'
+const rootContainer = ref<HTMLElement>()
 const shortViewport = ref(false)
 const scrollBody = ref<HTMLElement>()
 const filterAnchor = ref<HTMLElement>()
@@ -45,7 +49,34 @@ const searchState = useAnimeResourceSearch(props, lifecycle.signal, {
 })
 const { isGarden, isDmhy, pagedSearch, providerName, categoryScope, categoryOptions, interactionBusy, query, group, groups, result, busy, loadingMessage, error, filter, resolution, specOptions, specActive, resetSpecFilters, visible, selectedBangumi, bangumis, expansions, groupOptions, resolutionOptions, filtered, siteURL, specChecked, toggleSpecOption, search, searchGarden, selectGroup, useTitle, backToSearch, loadBangumi, selectBangumi } = searchState
 const actions = useAnimeResourceActions({ ...props, searching: () => busy.value, filtered: () => filtered.value, groups: () => groups.value, updateMagnet: searchState.updateMagnet }, lifecycle.signal, batch)
-const { preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizingBatch, organizeHiddenCount, prepareNotices, openBatchOrganize, openOrganize, organizeUncertain, organized, submit } = actions
+const { preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizeVisible, organizingBatch, organizeHiddenCount, prepareNotices, hasOrganizeDraft, batchDraftMatchesSelection, openBatchOrganize, resumeBatchOrganizeDraft, openOrganize, closeOrganize, organizeUncertain, organized, submit } = actions
+const rootBlocked = computed(() => batchRunning.value || singleSubmitting.value || !!organizeDialog.value?.busy)
+const flow = provideSheetFlow({
+  rootId: rootID,
+  rootHeadingID: 'mikan-search-title',
+  getRootBody: () => scrollBody.value,
+  getRootContainer: () => rootContainer.value,
+  isRootBlocked: () => rootBlocked.value,
+  getExpanded: () => sheetDialog.value?.expanded ?? false,
+  toggleExpanded: () => sheetDialog.value?.toggleExpanded(),
+  onCloseHost: () => { sheetDialog.value?.closeDirect() },
+})
+function canLeave() { return !rootBlocked.value }
+onBeforeRouteLeave(canLeave)
+onBeforeRouteUpdate(canLeave)
+
+const batchOrganizeLabel = computed(() => {
+  if (!batchDraftMatchesSelection.value) return `批量整理（${batchCount.value}）`
+  return organizeEntries.value.some(entry => (batch.statuses.value[magnetKey(entry.resource.magnet)] || submissions.value[magnetKey(entry.resource.magnet)])?.uncertain) ? '确认任务状态' : '继续整理'
+})
+function organizeBlocked(item: Item) {
+  // 恢复草稿不受成功或待核对状态阻挡，普通云下载仍沿用重复提交保护。
+  return lifecycle.signal.aborted || interactionBusy.value || rootBlocked.value || (!hasOrganizeDraft(item) && (!magnetKey(item.magnet) || !!submission(item)?.success || !!submission(item)?.uncertain))
+}
+function organizeLabel(item: Item, compact = false) {
+  if (hasOrganizeDraft(item)) return submission(item)?.uncertain ? '确认任务状态' : '继续整理'
+  return preparingItem.value === item.id ? compact ? '解析…' : '解析中…' : compact ? '整理' : '115 整理'
+}
 const itemStrip = ref<HTMLElement>()
 const activeBangumiId = computed(() => selectedBangumi.value?.id || 'all')
 const { indicatorStyle: itemIndicatorStyle } = useSlidingIndicator(itemStrip, '[aria-pressed="true"]', [activeBangumiId, bangumis])
@@ -115,146 +146,150 @@ onBeforeUnmount(() => lifecycle.abort())
     <BottomSheetDialog
       ref="sheetDialog"
       :style="themeColors"
-      aria-labelledby="mikan-search-title"
-      aria-describedby="mikan-work-title"
-      class="mikan-dialog media-search-dialog"
+      :aria-labelledby="flow.headingID.value"
+      :aria-describedby="flow.isActive(rootID) ? 'mikan-work-title' : undefined"
+      class="mikan-dialog media-search-dialog sheet-flow-host"
       :class="{ 'mikan-short-viewport': shortViewport }"
-      :close-disabled="organizeEntries.length > 0"
+      :close-disabled="flow.blocked.value"
+      :allow-swipe-close="flow.depth.value === 1"
+      :before-close="flow.requestDismiss"
       @closing="batch.stop"
       @close="emit('close')"
       @viewport-change="shortViewport = $event"
       v-slot="{ close, expanded, toggleExpanded }"
     >
-      <div class="mikan-layout">
-        <header class="mikan-header" data-mikan-brand data-sheet-drag>
-          <div v-if="!pagedSearch" class="mikan-brand" aria-hidden="true"><img :src="mikanMascot" alt="" width="400" height="400" draggable="false" /></div>
-          <div class="mikan-heading">
-            <h2 id="mikan-search-title"><span class="sr-only">{{ providerName }}搜索</span><span v-if="isDmhy" class="dmhy-brand" aria-hidden="true"><img :src="dmhyLogo" alt="" width="30" height="30" />动漫花园</span><AnimeProviderBrand v-else-if="isGarden" provider="garden" /><img v-else :src="mikanWordmark" alt="" width="117" height="29" draggable="false" /></h2>
-            <p id="mikan-work-title" :title="title" data-mikan-brand-title>{{ title }}</p>
-          </div>
-          <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
-          <button autofocus type="button" :aria-label="batchRunning ? `停止提交并关闭${providerName}搜索` : `关闭${providerName}搜索`" class="mikan-icon-button" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
-        </header>
-        <div ref="scrollBody" class="mikan-body" data-auto-scrollbar>
-          <form class="mikan-search-form" @submit.prevent="search()">
-            <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
-            <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
-            <button type="button" :disabled="interactionBusy || (!selectedBangumi && !query.trim())" aria-label="强制刷新" title="强制刷新，重新读取原站资源" class="mikan-tool-button mikan-refresh-button" @click="refreshCurrent"><svg aria-hidden="true" :class="{ 'mikan-loading-spinner': busy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg><span>强制刷新</span></button>
-          </form>
-          <div class="mikan-search-tools">
-            <button type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(title)">用中文标题</button>
-            <button v-if="originalTitle && originalTitle !== title" type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(originalTitle)">用原名</button>
-            <a :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-tool-button mikan-site-link"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg>{{ selectedBangumi ? '番剧原页' : `${providerName}原站` }}</a>
-          </div>
-          <section v-if="bangumis.length" class="mikan-item-picker" aria-label="蜜柑相关番剧">
-            <div class="mikan-picker-heading">
-              <h3>影视条目</h3>
-              <span>{{ bangumis.length }} 个番剧<span class="mikan-picker-hint">，全部条目显示关键词搜索结果</span></span>
-              <button v-if="hasBrokenCovers" type="button" class="mikan-tool-button mikan-cover-retry" @click="retryCovers">重试封面</button>
+      <div :ref="element => { flow.stage.value = (element as HTMLElement | null) || undefined }" class="sheet-flow-stage">
+        <div ref="rootContainer" v-show="flow.isActive(rootID)" :inert="!flow.isActive(rootID)" tabindex="-1" class="mikan-layout">
+          <header class="mikan-header" data-mikan-brand data-sheet-drag>
+            <div v-if="!pagedSearch" class="mikan-brand" aria-hidden="true"><img :src="mikanMascot" alt="" width="400" height="400" draggable="false" /></div>
+            <div class="mikan-heading">
+              <h2 id="mikan-search-title"><span class="sr-only">{{ providerName }}搜索</span><span v-if="isDmhy" class="dmhy-brand" aria-hidden="true"><img :src="dmhyLogo" alt="" width="30" height="30" />动漫花园</span><AnimeProviderBrand v-else-if="isGarden" provider="garden" /><img v-else :src="mikanWordmark" alt="" width="117" height="29" draggable="false" /></h2>
+              <p id="mikan-work-title" :title="title" data-mikan-brand-title>{{ title }}</p>
             </div>
-            <nav ref="itemStrip" aria-label="蜜柑影视条目" :aria-busy="interactionBusy" class="mikan-item-strip" data-auto-scrollbar>
-              <div class="mikan-item-indicator" :style="itemIndicatorStyle" aria-hidden="true"></div>
-              <button type="button" class="mikan-item-card mikan-all-items" :aria-disabled="interactionBusy" :aria-pressed="activeBangumiId === 'all'" aria-label="全部条目：显示关键词搜索结果" title="恢复关键词搜索结果与筛选" @click="backToSearch">
-                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
-                <span><strong>全部条目</strong><small>关键词搜索结果</small></span>
-              </button>
-              <button v-for="card in bangumis" :key="card.id" type="button" :aria-disabled="interactionBusy" :aria-pressed="activeBangumiId === card.id" :aria-label="`查看番剧：${card.title}`" :title="card.title" class="mikan-item-card" @click="selectBangumi(card)">
-                <span class="mikan-item-cover">
-                  <img v-if="coverSource(card) && !brokenCovers[card.id]" :src="coverSource(card)" alt="" loading="lazy" referrerpolicy="no-referrer" @error="brokenCovers[card.id] = true" />
-                  <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="m9 8 6 4-6 4Z" /></svg>
-                </span>
-                <span class="mikan-item-name"><strong>{{ card.title }}</strong><small>蜜柑番剧资源</small></span>
-              </button>
-            </nav>
-          </section>
-          <div v-if="!result && (busy || error)" class="mikan-initial-feedback">
-            <p v-if="busy" role="status" class="mikan-loading">
-              <svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg>
-              <span>{{ loadingMessage }}</span>
-            </p>
-            <div v-else-if="error" class="mikan-initial-error">
-              <div role="alert"><strong>搜索暂时失败</strong><p class="mikan-load-error">{{ error }}</p></div>
-              <button type="button" :disabled="!query.trim()" class="mikan-button mikan-outlined-button" @click="search(true)">重新搜索</button>
+            <BottomSheetExpandButton :expanded="expanded" @click="toggleExpanded" />
+            <button autofocus data-sheet-close type="button" :aria-label="`关闭${providerName}搜索`" :disabled="flow.blocked.value" :title="rootBlocked ? batchRunning ? '正在批量提交，请先停止提交' : '正在等待下载任务回执，请稍候' : undefined" class="mikan-icon-button" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
+          </header>
+          <div ref="scrollBody" class="mikan-body" data-auto-scrollbar>
+            <form class="mikan-search-form" @submit.prevent="search()">
+              <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
+              <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
+              <button type="button" :disabled="interactionBusy || (!selectedBangumi && !query.trim())" aria-label="强制刷新" title="强制刷新，重新读取原站资源" class="mikan-tool-button mikan-refresh-button" @click="refreshCurrent"><svg aria-hidden="true" :class="{ 'mikan-loading-spinner': busy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg><span>强制刷新</span></button>
+            </form>
+            <div class="mikan-search-tools">
+              <button type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(title)">用中文标题</button>
+              <button v-if="originalTitle && originalTitle !== title" type="button" :disabled="interactionBusy" class="mikan-tool-button" @click="useTitle(originalTitle)">用原名</button>
+              <a :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-tool-button mikan-site-link"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg>{{ selectedBangumi ? '番剧原页' : `${providerName}原站` }}</a>
             </div>
-          </div>
-          <p v-if="result && !selectedBangumi && result.attempts.length > 1" role="status" class="mikan-search-note">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
-          <div v-if="result" ref="filterAnchor" class="mikan-filter-anchor search-filter-anchor" aria-hidden="true"></div>
-          <section v-if="result" :aria-label="`${providerName}结果筛选`" class="mikan-filter-controls search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }">
-            <div v-if="isDmhy" class="dmhy-category-filter"><SegmentedControl v-model="categoryScope" :options="categoryOptions" label="动漫花园结果范围" density="compact" :disabled="interactionBusy" /><p>影视包含动画、全集、RAW、日剧和特摄；音乐及未知分类保留在补充中，漫画、游戏可在全部中查看。</p></div>
-            <div class="mikan-filter-row">
-              <span class="mikan-filter-label" aria-hidden="true">{{ isGarden ? '发布方' : '字幕组' }}</span>
-              <MikanFilterSelect :model-value="group" :options="groupOptions" :label="`${providerName}${isGarden ? '发布方' : '字幕组'}`" :disabled="interactionBusy" @update:model-value="selectGroup" />
-            </div>
-            <div v-if="!batchMode" class="mikan-filter-row">
-              <span class="mikan-filter-label" aria-hidden="true">分辨率</span>
-              <MikanFilterSelect v-model="resolution" :options="resolutionOptions" :label="`${providerName}分辨率`" :disabled="interactionBusy" />
-            </div>
-            <input v-model="filter" :aria-label="`筛选${providerName}结果`" :placeholder="pagedSearch ? '已加载结果内筛选：合集 / 第二季 / 简繁…' : '结果内筛选：合集 / 第二季 / 简繁…'" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
-          </section>
-          <template v-if="result">
-            <div class="mikan-result-summary">
-              <p>匹配 {{ filtered.length }} / {{ selectedBangumi || pagedSearch ? '已加载' : '已获取' }} {{ result.items.length }} 条<span v-if="pagedSearch || result.more?.length">，仅筛选已加载资源</span></p>
-              <p v-if="busy" role="status" class="mikan-loading" :title="loadingMessage"><svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg><span>更新中，暂显旧结果</span></p>
-              <details v-else-if="error" role="alert" class="mikan-load-error mikan-error-details"><summary><span>更新失败，已保留原结果</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg></summary><p>{{ error }}</p></details>
-              <button type="button" class="mikan-tool-button mikan-batch-entry" :disabled="interactionBusy" :aria-pressed="batchMode" @click="batchMode ? batch.exit() : batchMode = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5" /><path d="M13 7h8M13 17h8m-17 0 2 2 4-5" /></svg>{{ batchMode ? '退出选择' : '批量选择' }}</button>
-            </div>
-            <div v-if="batchMode" class="mikan-selection-tools">
-              <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
-              <div v-if="specOptions.length" class="mikan-spec-options" role="group" aria-label="资源规格筛选">
-                <span class="mikan-spec-label">筛选</span>
-                <label v-for="option in specOptions" :key="`${option.group}:${option.value}`" class="mikan-spec-chip"><input type="checkbox" :aria-label="`筛选${option.label}`" :checked="specChecked(option)" :disabled="interactionBusy" @change="toggleSpecOption(option)" /><span>{{ option.label }}</span></label>
-                <button type="button" class="mikan-tool-button" aria-label="重置规格筛选" :disabled="interactionBusy || !specActive" @click="resetSpecFilters">重置</button>
+            <section v-if="bangumis.length" class="mikan-item-picker" aria-label="蜜柑相关番剧">
+              <div class="mikan-picker-heading">
+                <h3>影视条目</h3>
+                <span>{{ bangumis.length }} 个番剧<span class="mikan-picker-hint">，全部条目显示关键词搜索结果</span></span>
+                <button v-if="hasBrokenCovers" type="button" class="mikan-tool-button mikan-cover-retry" @click="retryCovers">重试封面</button>
               </div>
-              <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空选择</button>
-            </div>
-            <p v-if="!result.items.length" class="mikan-empty">{{ pagedSearch ? `${providerName}未找到资源，可修改片名、尝试原名或调整字幕组。` : selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
-            <p v-else-if="!filtered.length" class="mikan-empty">{{ isDmhy ? `已加载结果中没有符合当前范围和筛选的资源，可切换范围${result.hasMore ? '或继续读取下一页' : ''}。` : '没有符合筛选条件的资源，请调整关键词或规格筛选。' }}</p>
-            <ul class="mikan-resource-list" :aria-label="`${providerName}资源列表`">
-              <li v-for="item in filtered.slice(0, visible)" :key="item.id" class="mikan-resource" :class="{ 'mikan-selectable': batchMode, 'mikan-resource-selected': batchMode && batchSelected.has(magnetKey(item.magnet)) }" @click="selectCard(item, $event)">
-                <label v-if="batchMode" class="mikan-resource-checkbox" @click.stop><input type="checkbox" :checked="batchSelected.has(magnetKey(item.magnet))" :disabled="interactionBusy || !canSelect(item)" :aria-label="`选择资源：${item.title}`" @change="toggleResource(item)" /><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" /><path v-if="batchSelected.has(magnetKey(item.magnet))" d="m7 12 3 3 7-7" /></svg></label>
-                <div class="mikan-resource-main">
-                  <div class="mikan-resource-title">
-                    <h4>{{ item.title }}</h4>
-                    <button type="button" class="mikan-copy-button" :disabled="!magnetKey(item.magnet)" @click="copy(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg>{{ copied === item.id ? '已复制' : '复制磁力' }}</button>
-                  </div>
-                  <div class="mikan-resource-meta"><span v-if="isDmhy" class="dmhy-category">{{ item.categoryName || '未知分类' }}</span><span class="mikan-resolution">{{ item.resolution }}</span><span>{{ item.size }}</span><span :title="'原站时间：' + item.updatedAt">{{ item.updatedAt }}</span><template v-if="pagedSearch"><span v-if="isGarden">{{ item.originName }}</span><span :title="`发布者：${item.publisher}`">{{ item.fansub || item.publisher }}</span></template><template v-if="isDmhy"><span v-if="item.seeders !== undefined && item.seeders >= 0">做种 {{ item.seeders }}</span><span v-if="item.leechers !== undefined && item.leechers >= 0">下载 {{ item.leechers }}</span><span v-if="!magnetKey(item.magnet)">{{ item.magnetIssue === 'conflict' ? '磁力信息冲突，请查看原帖核对' : item.magnetIssue === 'invalid' ? '列表磁力无法核验，可读取原帖' : '列表未提供磁力，可读取原帖' }}</span></template></div>
-                  <div class="mikan-resource-actions">
-                    <button v-if="canReadMagnet(item)" type="button" class="mikan-button mikan-outlined-button dmhy-read-magnet" aria-label="读取磁力" :aria-busy="readingMagnet === item.id" :disabled="interactionBusy || singleSubmitting" @click="readMagnet(item, $event)"><component :is="readingMagnet === item.id ? IconLoader2 : IconMagnet" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': readingMagnet === item.id }" /><span>{{ readingMagnet === item.id ? '读取中…' : '读取磁力' }}</span></button>
-                    <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : `查看${providerName}原帖`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
-                    <button v-if="tmdbId && !batchMode && (pagedSearch || item.torrentUrl)" type="button" class="mikan-button mikan-outlined-button" aria-label="115 整理" :aria-busy="preparingItem === item.id" :disabled="!magnetKey(item.magnet) || interactionBusy || singleSubmitting || submission(item)?.success || submission(item)?.uncertain" @click="openOrganize(item, $event)"><component :is="preparingItem === item.id ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': preparingItem === item.id }" /><span class="mikan-action-label-desktop">{{ preparingItem === item.id ? '解析中…' : '115 整理' }}</span><span class="mikan-action-label-mobile">{{ preparingItem === item.id ? '解析…' : '整理' }}</span></button>
-                    <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
-                    <button v-else type="button" :disabled="!magnetKey(item.magnet) || interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
-                  </div>
-                </div>
-                <div v-if="copyError === item.id" role="alert" class="mikan-notice mikan-warning"><p>浏览器未允许复制，请手动复制下方磁力：</p><textarea :value="item.magnet" readonly aria-label="手动复制磁力" @focus="($event.target as HTMLTextAreaElement).select()" /></div>
-                <p v-if="preparingItem === item.id || readingMagnet === item.id" role="status" class="mikan-notice garden-prepare-notice">{{ readingMagnet === item.id ? '正在读取原帖磁力…' : isGarden ? '读取 Garden 文件清单…' : `正在解析${providerName}种子清单…` }}</p>
-                <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button v-if="magnetKey(item.magnet)" type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
-                <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
-                <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
-              </li>
-            </ul>
-            <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>
-            <div v-if="pagedSearch && result.hasMore && filtered.length <= visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy" @click="searchGarden(false, group, (result.page || 1) + 1)">读取更多搜索结果</button><p v-if="error" role="status" class="mikan-load-error">{{ error }}</p></div>
-            <section v-if="selectedBangumi && expansions.length" aria-label="加载更多番剧资源" class="mikan-expansions">
-              <p>部分字幕组还有更多资源，可继续读取。</p>
-              <div>
-                <template v-for="more in expansions" :key="more.groupId"><a v-if="more.take > 10000" :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button">原站查看：{{ groups.find(g => g.id === more.groupId)?.name || more.groupId }}</a><button v-else type="button" :disabled="interactionBusy" class="mikan-button mikan-outlined-button" @click="loadBangumi(selectedBangumi!, false, more)">加载更多：{{ groups.find(g => g.id === more.groupId)?.name || more.groupId }}</button></template>
-              </div>
+              <nav ref="itemStrip" aria-label="蜜柑影视条目" :aria-busy="interactionBusy" class="mikan-item-strip" data-auto-scrollbar>
+                <div class="mikan-item-indicator" :style="itemIndicatorStyle" aria-hidden="true"></div>
+                <button type="button" class="mikan-item-card mikan-all-items" :aria-disabled="interactionBusy" :aria-pressed="activeBangumiId === 'all'" aria-label="全部条目：显示关键词搜索结果" title="恢复关键词搜索结果与筛选" @click="backToSearch">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></svg>
+                  <span><strong>全部条目</strong><small>关键词搜索结果</small></span>
+                </button>
+                <button v-for="card in bangumis" :key="card.id" type="button" :aria-disabled="interactionBusy" :aria-pressed="activeBangumiId === card.id" :aria-label="`查看番剧：${card.title}`" :title="card.title" class="mikan-item-card" @click="selectBangumi(card)">
+                  <span class="mikan-item-cover">
+                    <img v-if="coverSource(card) && !brokenCovers[card.id]" :src="coverSource(card)" alt="" loading="lazy" referrerpolicy="no-referrer" @error="brokenCovers[card.id] = true" />
+                    <svg v-else aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="3" width="16" height="18" rx="2" /><path d="m9 8 6 4-6 4Z" /></svg>
+                  </span>
+                  <span class="mikan-item-name"><strong>{{ card.title }}</strong><small>蜜柑番剧资源</small></span>
+                </button>
+              </nav>
             </section>
-          </template>
+            <div v-if="!result && (busy || error)" class="mikan-initial-feedback">
+              <p v-if="busy" role="status" class="mikan-loading">
+                <svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg>
+                <span>{{ loadingMessage }}</span>
+              </p>
+              <div v-else-if="error" class="mikan-initial-error">
+                <div role="alert"><strong>搜索暂时失败</strong><p class="mikan-load-error">{{ error }}</p></div>
+                <button type="button" :disabled="!query.trim()" class="mikan-button mikan-outlined-button" @click="search(true)">重新搜索</button>
+              </div>
+            </div>
+            <p v-if="result && !selectedBangumi && result.attempts.length > 1" role="status" class="mikan-search-note">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
+            <div v-if="result" ref="filterAnchor" class="mikan-filter-anchor search-filter-anchor" aria-hidden="true"></div>
+            <section v-if="result" :aria-label="`${providerName}结果筛选`" class="mikan-filter-controls search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }">
+              <div v-if="isDmhy" class="dmhy-category-filter"><SegmentedControl v-model="categoryScope" :options="categoryOptions" label="动漫花园结果范围" density="compact" :disabled="interactionBusy" /><p>影视包含动画、全集、RAW、日剧和特摄；音乐及未知分类保留在补充中，漫画、游戏可在全部中查看。</p></div>
+              <div class="mikan-filter-row">
+                <span class="mikan-filter-label" aria-hidden="true">{{ isGarden ? '发布方' : '字幕组' }}</span>
+                <MikanFilterSelect :model-value="group" :options="groupOptions" :label="`${providerName}${isGarden ? '发布方' : '字幕组'}`" :disabled="interactionBusy" @update:model-value="selectGroup" />
+              </div>
+              <div v-if="!batchMode" class="mikan-filter-row">
+                <span class="mikan-filter-label" aria-hidden="true">分辨率</span>
+                <MikanFilterSelect v-model="resolution" :options="resolutionOptions" :label="`${providerName}分辨率`" :disabled="interactionBusy" />
+              </div>
+              <input v-model="filter" :aria-label="`筛选${providerName}结果`" :placeholder="pagedSearch ? '已加载结果内筛选：合集 / 第二季 / 简繁…' : '结果内筛选：合集 / 第二季 / 简繁…'" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
+            </section>
+            <template v-if="result">
+              <div class="mikan-result-summary">
+                <p>匹配 {{ filtered.length }} / {{ selectedBangumi || pagedSearch ? '已加载' : '已获取' }} {{ result.items.length }} 条<span v-if="pagedSearch || result.more?.length">，仅筛选已加载资源</span></p>
+                <p v-if="busy" role="status" class="mikan-loading" :title="loadingMessage"><svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg><span>更新中，暂显旧结果</span></p>
+                <details v-else-if="error" role="alert" class="mikan-load-error mikan-error-details"><summary><span>更新失败，已保留原结果</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg></summary><p>{{ error }}</p></details>
+                <button type="button" class="mikan-tool-button mikan-batch-entry" :disabled="interactionBusy" :aria-pressed="batchMode" @click="batchMode ? batch.exit() : batchMode = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5" /><path d="M13 7h8M13 17h8m-17 0 2 2 4-5" /></svg>{{ batchMode ? '退出选择' : '批量选择' }}</button>
+              </div>
+              <div v-if="batchMode" class="mikan-selection-tools">
+                <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
+                <div v-if="specOptions.length" class="mikan-spec-options" role="group" aria-label="资源规格筛选">
+                  <span class="mikan-spec-label">筛选</span>
+                  <label v-for="option in specOptions" :key="`${option.group}:${option.value}`" class="mikan-spec-chip"><input type="checkbox" :aria-label="`筛选${option.label}`" :checked="specChecked(option)" :disabled="interactionBusy" @change="toggleSpecOption(option)" /><span>{{ option.label }}</span></label>
+                  <button type="button" class="mikan-tool-button" aria-label="重置规格筛选" :disabled="interactionBusy || !specActive" @click="resetSpecFilters">重置</button>
+                </div>
+                <button type="button" class="mikan-tool-button" :disabled="interactionBusy || !batchCount" @click="batch.clear">清空选择</button>
+              </div>
+              <p v-if="!result.items.length" class="mikan-empty">{{ pagedSearch ? `${providerName}未找到资源，可修改片名、尝试原名或调整字幕组。` : selectedBangumi ? '该番剧当前没有可读取的资源，可返回全部条目或访问原站。' : bangumis.length ? '关键词未找到磁力资源，可点击上方相关番剧继续查看。' : '蜜柑未找到资源，可修改片名、尝试其他译名或访问原站。' }}</p>
+              <p v-else-if="!filtered.length" class="mikan-empty">{{ isDmhy ? `已加载结果中没有符合当前范围和筛选的资源，可切换范围${result.hasMore ? '或继续读取下一页' : ''}。` : '没有符合筛选条件的资源，请调整关键词或规格筛选。' }}</p>
+              <ul class="mikan-resource-list" :aria-label="`${providerName}资源列表`">
+                <li v-for="item in filtered.slice(0, visible)" :key="item.id" class="mikan-resource" :class="{ 'mikan-selectable': batchMode, 'mikan-resource-selected': batchMode && batchSelected.has(magnetKey(item.magnet)) }" @click="selectCard(item, $event)">
+                  <label v-if="batchMode" class="mikan-resource-checkbox" @click.stop><input type="checkbox" :checked="batchSelected.has(magnetKey(item.magnet))" :disabled="interactionBusy || !canSelect(item)" :aria-label="`选择资源：${item.title}`" @change="toggleResource(item)" /><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" /><path v-if="batchSelected.has(magnetKey(item.magnet))" d="m7 12 3 3 7-7" /></svg></label>
+                  <div class="mikan-resource-main">
+                    <div class="mikan-resource-title">
+                      <h4>{{ item.title }}</h4>
+                      <button type="button" class="mikan-copy-button" :disabled="!magnetKey(item.magnet)" @click="copy(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V4H4v12h4" /></svg>{{ copied === item.id ? '已复制' : '复制磁力' }}</button>
+                    </div>
+                    <div class="mikan-resource-meta"><span v-if="isDmhy" class="dmhy-category">{{ item.categoryName || '未知分类' }}</span><span class="mikan-resolution">{{ item.resolution }}</span><span>{{ item.size }}</span><span :title="'原站时间：' + item.updatedAt">{{ item.updatedAt }}</span><template v-if="pagedSearch"><span v-if="isGarden">{{ item.originName }}</span><span :title="`发布者：${item.publisher}`">{{ item.fansub || item.publisher }}</span></template><template v-if="isDmhy"><span v-if="item.seeders !== undefined && item.seeders >= 0">做种 {{ item.seeders }}</span><span v-if="item.leechers !== undefined && item.leechers >= 0">下载 {{ item.leechers }}</span><span v-if="!magnetKey(item.magnet)">{{ item.magnetIssue === 'conflict' ? '磁力信息冲突，请查看原帖核对' : item.magnetIssue === 'invalid' ? '列表磁力无法核验，可读取原帖' : '列表未提供磁力，可读取原帖' }}</span></template></div>
+                    <div class="mikan-resource-actions">
+                      <button v-if="canReadMagnet(item)" type="button" class="mikan-button mikan-outlined-button dmhy-read-magnet" aria-label="读取磁力" :aria-busy="readingMagnet === item.id" :disabled="interactionBusy || singleSubmitting" @click="readMagnet(item, $event)"><component :is="readingMagnet === item.id ? IconLoader2 : IconMagnet" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': readingMagnet === item.id }" /><span>{{ readingMagnet === item.id ? '读取中…' : '读取磁力' }}</span></button>
+                      <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : `查看${providerName}原帖`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
+                      <button v-if="hasOrganizeDraft(item) || (tmdbId && !batchMode && (pagedSearch || item.torrentUrl))" type="button" class="mikan-button mikan-outlined-button" :aria-label="organizeLabel(item)" :aria-busy="preparingItem === item.id" :disabled="organizeBlocked(item)" @click="openOrganize(item, $event)"><component :is="preparingItem === item.id ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': preparingItem === item.id }" /><span class="mikan-action-label-desktop">{{ organizeLabel(item) }}</span><span class="mikan-action-label-mobile">{{ organizeLabel(item, true) }}</span></button>
+                      <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
+                      <button v-else type="button" :disabled="!magnetKey(item.magnet) || interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
+                    </div>
+                  </div>
+                  <div v-if="copyError === item.id" role="alert" class="mikan-notice mikan-warning"><p>浏览器未允许复制，请手动复制下方磁力：</p><textarea :value="item.magnet" readonly aria-label="手动复制磁力" @focus="($event.target as HTMLTextAreaElement).select()" /></div>
+                  <p v-if="preparingItem === item.id || readingMagnet === item.id" role="status" class="mikan-notice garden-prepare-notice">{{ readingMagnet === item.id ? '正在读取原帖磁力…' : isGarden ? '读取 Garden 文件清单…' : `正在解析${providerName}种子清单…` }}</p>
+                  <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button v-if="magnetKey(item.magnet)" type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
+                  <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
+                  <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
+                </li>
+              </ul>
+              <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>
+              <div v-if="pagedSearch && result.hasMore && filtered.length <= visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy" @click="searchGarden(false, group, (result.page || 1) + 1)">读取更多搜索结果</button><p v-if="error" role="status" class="mikan-load-error">{{ error }}</p></div>
+              <section v-if="selectedBangumi && expansions.length" aria-label="加载更多番剧资源" class="mikan-expansions">
+                <p>部分字幕组还有更多资源，可继续读取。</p>
+                <div>
+                  <template v-for="more in expansions" :key="more.groupId"><a v-if="more.take > 10000" :href="siteURL" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button">原站查看：{{ groups.find(g => g.id === more.groupId)?.name || more.groupId }}</a><button v-else type="button" :disabled="interactionBusy" class="mikan-button mikan-outlined-button" @click="loadBangumi(selectedBangumi!, false, more)">加载更多：{{ groups.find(g => g.id === more.groupId)?.name || more.groupId }}</button></template>
+                </div>
+              </section>
+            </template>
+          </div>
+          <footer v-if="batchMode" class="mikan-batch-footer" aria-label="批量云下载操作">
+            <div class="mikan-batch-count" tabindex="-1" aria-live="polite" aria-atomic="true"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
+            <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId || batchDraftMatchesSelection" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || rootBlocked || (!batchDraftMatchesSelection && !batchCount)" @click="batchDraftMatchesSelection ? resumeBatchOrganizeDraft($event) : openBatchOrganize($event)"><IconFolder :size="16" aria-hidden="true" />{{ batchOrganizeLabel }}</button><button type="button" class="mikan-button mikan-primary-button" :aria-label="`提交到 115（${batchCount}）`" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><span class="mikan-action-label-desktop">提交到 115（{{ batchCount }}）</span><span class="mikan-action-label-mobile">云下载（{{ batchCount }}）</span></button></template></div>
+            <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
+            <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="close()">前往配置</RouterLink></p>
+            <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
+          </footer>
+          <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
         </div>
-        <footer v-if="batchMode" class="mikan-batch-footer" aria-label="批量云下载操作">
-          <div class="mikan-batch-count" tabindex="-1" aria-live="polite" aria-atomic="true"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
-          <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="openBatchOrganize"><IconFolder :size="16" aria-hidden="true" />批量整理（{{ batchCount }}）</button><button type="button" class="mikan-button mikan-primary-button" :aria-label="`提交到 115（${batchCount}）`" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><span class="mikan-action-label-desktop">提交到 115（{{ batchCount }}）</span><span class="mikan-action-label-mobile">云下载（{{ batchCount }}）</span></button></template></div>
-          <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
-          <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="close()">前往配置</RouterLink></p>
-          <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
-        </footer>
-        <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
       </div>
     </BottomSheetDialog>
   </Teleport>
-  <DownloadOrganizeDialog :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="organizeEntries = []" @submitted="organized" @uncertain="organizeUncertain" />
+  <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :active="organizeVisible" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="organizeUncertain" />
 </template>
 
 <style scoped>
@@ -265,16 +300,12 @@ onBeforeUnmount(() => lifecycle.abort())
 .garden-prepare-notice { color: var(--search-dialog-muted, #64748b); }
 
 .mikan-dialog {
-  --mikan-max-height: 90dvh;
   --mikan-success: #246044; --mikan-success-bg: #e6f2e9;
   --mikan-warning: #765500; --mikan-warning-bg: #fff1cd;
   --mikan-error: #a12b2b; --mikan-error-bg: #ffe9e7;
-  margin: auto; padding: 0; width: min(1080px, calc(100% - 48px)); max-width: none; max-height: var(--mikan-max-height);
-  border-radius: 24px; color: var(--search-dialog-text); color-scheme: light;
-  overflow: hidden;
+  color-scheme: light;
 }
 .dark .mikan-dialog { --mikan-success: #a5d8b8; --mikan-success-bg: #223d31; --mikan-warning: #eed085; --mikan-warning-bg: #42371e; --mikan-error: #ffb4ab; --mikan-error-bg: #502c2b; color-scheme: dark; }
-.mikan-layout { display: flex; flex-direction: column; max-height: var(--mikan-max-height); }
 .mikan-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
 .mikan-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--search-dialog-card); }
 .mikan-brand img { width: 40px; height: 40px; object-fit: contain; }
@@ -293,15 +324,15 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-input[readonly] { cursor: wait; }
 .mikan-input:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; }
 .mikan-search-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
-.mikan-tool-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 24px; background: transparent; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; text-decoration: none; white-space: nowrap; }
+.mikan-tool-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 24px; background: transparent; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; text-decoration: none; white-space: nowrap; }
 .mikan-tool-button svg { width: 18px; height: 18px; margin: 0; }
 .mikan-site-link { margin-left: auto; }
 .mikan-cover-retry { min-height: 32px; }
-.mikan-search-note { margin: 8px 0; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.mikan-search-note { margin: 8px 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; overflow-wrap: anywhere; }
 .mikan-item-picker { min-width: 0; margin-top: 8px; }
 .mikan-picker-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
 .mikan-picker-heading h3 { margin: 0; color: var(--search-dialog-text); font-size: 13px; line-height: 20px; font-weight: 600; }
-.mikan-picker-heading > span { color: var(--search-dialog-muted); font-size: 11px; }
+.mikan-picker-heading > span { color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); }
 .mikan-picker-heading > button { margin-left: auto; }
 .mikan-item-strip { position: relative; isolation: isolate; display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
 .mikan-item-indicator { position: absolute; z-index: 1; border-radius: 16px; background: var(--search-dialog-action-background); pointer-events: none; }
@@ -315,7 +346,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-item-cover svg { width: 24px; height: 24px; }
 .mikan-item-name { min-width: 0; padding-right: 4px; }
 .mikan-item-card strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; font-size: 12px; line-height: 18px; font-weight: 600; overflow-wrap: anywhere; }
-.mikan-item-card small { display: block; margin-top: 4px; color: var(--search-dialog-muted); font-size: 10px; line-height: 16px; }
+.mikan-item-card small { display: block; margin-top: 4px; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 10px); line-height: 16px; }
 .mikan-all-items { width: 160px; padding: 12px; }
 .mikan-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
 .mikan-initial-feedback { margin-top: 12px; }
@@ -335,11 +366,11 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-short-viewport .mikan-filter-controls { position: static; }
 .mikan-filter-row { display: flex; min-width: 0; align-items: center; gap: 10px; }
 .mikan-filter-row > nav { flex: 1; }
-.mikan-filter-label { flex-shrink: 0; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
+.mikan-filter-label { flex-shrink: 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
 .mikan-result-input { width: 100%; min-height: 40px; padding-block: 8px; font-size: 16px; }
-.mikan-result-summary { display: flex; min-height: 32px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; margin: 8px 0; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
+.mikan-result-summary { display: flex; min-height: 32px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; margin: 8px 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
 .mikan-result-summary p { margin: 0; }
-.mikan-result-summary .mikan-loading { font-size: 11px; }
+.mikan-result-summary .mikan-loading { font-size: var(--search-dialog-font-meta, 11px); }
 .mikan-resource-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
 .mikan-resource { min-width: 0; padding: 16px 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--search-dialog-card); }
 .mikan-resource.mikan-selectable { position: relative; cursor: pointer; }
@@ -353,34 +384,34 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-resource-checkbox:has(input:focus-visible) { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; border-radius: 12px; }
 .mikan-selection-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 4px; }
 .mikan-spec-options { display: flex; flex: 1; flex-wrap: wrap; min-width: 0; align-items: center; gap: 4px 6px; }
-.mikan-spec-label { color: var(--search-dialog-muted); font-size: 11px; }
-.mikan-spec-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 8px; border-radius: 10px; background: var(--search-dialog-card); color: var(--search-dialog-muted); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.mikan-spec-label { color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); }
+.mikan-spec-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 8px; border-radius: 10px; background: var(--search-dialog-card); color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); white-space: nowrap; cursor: pointer; }
 .mikan-spec-chip input { width: 14px; height: 14px; accent-color: var(--search-dialog-primary); }
 .mikan-spec-chip:has(input:checked) { background: var(--search-dialog-action-background); color: var(--search-dialog-on-tonal); }
 .mikan-spec-chip:has(input:focus-visible) { outline: 2px solid var(--search-dialog-primary); outline-offset: 1px; }
 .mikan-spec-chip:has(input:disabled) { opacity: .5; cursor: default; }
 .mikan-select-all { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; color: var(--search-dialog-text); font-size: 12px; cursor: pointer; }
 .mikan-select-all input { width: 18px; height: 18px; accent-color: var(--search-dialog-primary); }
-.mikan-select-all small { color: var(--search-dialog-muted); font-size: 11px; }
+.mikan-select-all small { color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); }
 .mikan-result-summary .mikan-batch-entry { min-height: 32px; padding-inline: 8px; color: var(--search-dialog-primary); }
 .mikan-batch-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; flex-shrink: 0; align-items: center; gap: 4px 12px; padding: 12px 24px 16px; background: var(--search-dialog-container); box-shadow: 0 -4px 16px rgb(0 0 0 / 3%); }
 .mikan-batch-count { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
 .mikan-batch-count:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 3px; border-radius: 4px; }
 .mikan-batch-count strong { color: var(--search-dialog-text); font-size: 13px; line-height: 20px; font-weight: 600; }
-.mikan-batch-count > span { color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.mikan-batch-count > span { color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; overflow-wrap: anywhere; }
 .mikan-batch-actions { display: flex; align-items: center; gap: 4px; }
 .mikan-batch-progress { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 4px; background: var(--search-dialog-outline); }
 .mikan-batch-progress > span { display: block; height: 100%; background: var(--search-dialog-primary); transition: width .2s; }
-.mikan-batch-notice { grid-column: 1 / -1; max-height: 72px; margin: 4px 0 0; overflow: auto; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; overflow-wrap: anywhere; }
+.mikan-batch-notice { grid-column: 1 / -1; max-height: 72px; margin: 4px 0 0; overflow: auto; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; overflow-wrap: anywhere; }
 .mikan-batch-notice a { display: inline-flex; min-height: 32px; align-items: center; margin-left: 8px; color: var(--search-dialog-primary); }
 .mikan-batch-check { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-.mikan-batch-check > a { display: inline-flex; min-height: 44px; align-items: center; color: var(--search-dialog-primary); font-size: 11px; }
+.mikan-batch-check > a { display: inline-flex; min-height: 44px; align-items: center; color: var(--search-dialog-primary); font-size: var(--search-dialog-font-meta, 11px); }
 .mikan-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; }
 .mikan-resource-title { grid-column: 1 / -1; min-width: 0; line-height: 23px; }
 .mikan-resource-title h4 { display: inline; margin: 0; color: var(--search-dialog-text); font-size: 14px; line-height: 23px; font-weight: 600; overflow-wrap: anywhere; }
-.mikan-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; margin-left: 8px; padding: 6px 10px; border: 0; border-radius: 20px; background: transparent; color: var(--search-dialog-primary); font-size: 11px; vertical-align: middle; cursor: pointer; }
+.mikan-copy-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; margin-left: 8px; padding: 6px 10px; border: 0; border-radius: 20px; background: transparent; color: var(--search-dialog-primary); font-size: var(--search-dialog-font-meta, 11px); vertical-align: middle; cursor: pointer; }
 .mikan-copy-button svg { width: 14px; height: 14px; flex-shrink: 0; }
-.mikan-resource-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
+.mikan-resource-meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 12px; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
 .mikan-resource-meta > span { overflow-wrap: anywhere; }
 .mikan-resolution { padding: 3px 8px; border-radius: 8px; background: var(--search-dialog-secondary-background); font-weight: 550; }
 .mikan-resource-actions { display: flex; align-items: center; gap: 6px; }
@@ -396,7 +427,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-warning { color: var(--mikan-warning); background: var(--mikan-warning-bg); }
 .mikan-error { color: var(--mikan-error); background: var(--mikan-error-bg); }
 .mikan-list-end { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-top: 20px; }
-.mikan-list-end > span, .mikan-expansions > p { margin: 0; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; }
+.mikan-list-end > span, .mikan-expansions > p { margin: 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
 .mikan-expansions { margin-top: 20px; }
 .mikan-expansions > div { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 8px; }
 .mikan-dialog button { cursor: pointer; }
@@ -421,39 +452,38 @@ onBeforeUnmount(() => lifecycle.abort())
   .mikan-action-label-mobile { display: inline; }
 }
 @media (max-width: 639px) {
-  .mikan-layout { flex: 1; min-height: 0; max-height: none; }
-  .mikan-header { gap: 10px; padding: 16px 16px 8px; }
-  .mikan-heading h2 { height: 26px; }
+  .mikan-header { gap: 10px; padding: 4px var(--sheet-content-inset) 8px; }
+  .mikan-heading h2 { height: 24px; }.dmhy-brand { font-size: var(--sheet-font-title); }
   .mikan-heading h2 img { height: 20px; }
   .mikan-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 18px; }
-  .mikan-body { padding: 0 16px 16px; scrollbar-gutter: auto; }
-  .mikan-search-form > input { min-height: 48px; }
-  .mikan-refresh-button { width: 48px; height: 48px; padding: 0; }
+  .mikan-body { padding: 0 var(--sheet-content-inset) 12px; scrollbar-gutter: auto; }
+  .mikan-search-form > input { min-height: var(--sheet-touch-size); }
+  .mikan-refresh-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); padding: 0; }.mikan-icon-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); }
   .mikan-refresh-button > span { display: none; }
   .mikan-search-tools { flex-wrap: wrap; gap: 0; }
-  .mikan-tool-button { min-height: 48px; padding-inline: 8px; }
-  .mikan-filter-controls { margin-inline: -16px; padding-inline: 16px; }
+  .mikan-tool-button { min-height: var(--sheet-touch-size); padding-inline: 8px; font-size: var(--sheet-font-body); }
+  .mikan-filter-controls { margin-inline: calc(-1 * var(--sheet-content-inset)); padding-inline: var(--sheet-content-inset); }
   .mikan-result-input { min-height: 44px; }
-  .mikan-resource { padding: 16px; border-radius: 18px; }
+  .mikan-resource { padding: 12px; border-radius: 12px; }
   .mikan-resource-checkbox { top: 8px; left: 8px; width: 48px; height: 48px; }
   .mikan-selection-tools .mikan-select-all { min-height: 48px; }
   .mikan-selection-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
   .mikan-spec-options { grid-column: 1 / -1; grid-row: 2; }
-  .mikan-spec-chip { min-height: 44px; }
-  .mikan-batch-footer { grid-template-columns: minmax(0, 1fr); padding: 8px 16px 12px; gap: 4px 8px; }
+  .mikan-spec-chip { min-height: var(--sheet-touch-size); font-size: var(--sheet-font-meta); }
+  .mikan-batch-footer { grid-template-columns: minmax(0, 1fr); padding: 8px var(--sheet-content-inset) 12px; gap: 4px 8px; }
   .mikan-batch-actions .mikan-button { flex: 1; }
   .mikan-batch-count strong { font-size: 12px; }
-  .mikan-batch-count > span { font-size: 10px; line-height: 16px; }
-  .mikan-batch-actions .mikan-button { padding-inline: 10px; font-size: 11px; white-space: nowrap; }
+  .mikan-batch-count > span { font-size: var(--search-dialog-font-meta, 10px); line-height: 16px; }
+  .mikan-batch-actions .mikan-button { padding-inline: 8px; white-space: nowrap; }
   .mikan-copy-button { min-height: 48px; }
   .mikan-resource-actions { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .mikan-resource-actions:has(.dmhy-read-magnet) { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-flow: row; }
   .dmhy-read-magnet { grid-column: 1 / -1; }
-  .mikan-resource-actions > :is(a, button) { min-width: 0; padding-inline: 6px; font-size: 11px; }
+  .mikan-resource-actions > :is(a, button) { min-width: 0; padding-inline: 6px; }
   .mikan-resource-actions > :is(a, button) > span { white-space: nowrap; }
   .mikan-cover-retry { min-height: 32px; }
   .mikan-picker-hint { display: none; }
-  .mikan-picker-heading > span { font-size: 10px; }
+  .mikan-picker-heading > span { font-size: var(--search-dialog-font-meta, 10px); }
   .mikan-item-strip { padding-top: 0; }
   .mikan-item-card { width: 176px; min-height: 80px; gap: 8px; }
   .mikan-item-cover { width: 40px; height: 58px; }

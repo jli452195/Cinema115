@@ -16,7 +16,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const { createApp, h, nextTick, ref } = await import(dependency('vue'))
       const { createMemoryHistory, createRouter } = await import(dependency('vue-router'))
       const SidePanel = (await import('/src/components/P115SidePanel.vue')).default
-      const FloatingDialog = (await import('/src/components/AnimeFloatingDialog.vue')).default
+      const FloatingDialog = (await import('/src/components/FloatingDialog.vue')).default
       const Sidebar = (await import('/src/components/ManagementSidebar.vue')).default
       const passed = []
       function check(condition, message) { if (!condition) throw new Error(message) }
@@ -105,7 +105,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       check(document.body.style.overflow === 'hidden', '实际侧面板获取滚动锁')
       document.getElementById('open-nested-lifecycle').focus()
       await click('open-nested-lifecycle')
-      const nested = document.querySelector('.anime-floating[open]')
+      const nested = document.querySelector('.floating-dialog[open]')
       check(nested, '实际子弹窗成功打开')
       panelOpen.value = false; await nextTick()
       check(document.body.style.overflow === 'hidden' && nested.open, '实际侧面板先卸载后子弹窗仍持锁')

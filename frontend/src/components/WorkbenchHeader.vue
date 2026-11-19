@@ -401,7 +401,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <IconArrowLeft :size="20" stroke="1.8" aria-hidden="true" />
       </RouterLink>
       <div v-if="mobileHome || mobileSection === 'updates' || mobileSectionHeading" class="workspace-brand" :class="{ 'glass-pill-surface': mobileSection === 'updates' }">
-        <RouterLink v-if="mobileSectionHeading && mobileBack" :to="mobileBack.to" class="section-nav-back" :aria-label="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
+        <RouterLink v-if="mobileSectionHeading && mobileBack" :to="mobileBack.to" class="section-nav-back glass-pill-surface glass-pill-surface-soft" :aria-label="`返回${mobileBack.label}`" :title="`返回${mobileBack.label}`" @click.capture="onWorkspaceBack">
           <NavigationIcon name="back" :size="22" />
         </RouterLink>
         <CinemaLogo v-if="mobileHome" mobile-wordmark />

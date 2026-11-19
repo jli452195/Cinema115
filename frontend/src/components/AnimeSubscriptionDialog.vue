@@ -2,7 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
 import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
-import AnimeFloatingDialog from './AnimeFloatingDialog.vue'
+import BottomSheetDialog from './BottomSheetDialog.vue'
+import FloatingDialog from './FloatingDialog.vue'
 import AnimeSourceForm from './AnimeSourceForm.vue'
 import AnimeSourceProgress from './AnimeSourceProgress.vue'
 import AnimeProviderBrand from './AnimeProviderBrand.vue'
@@ -20,6 +21,8 @@ import { animeImageURL } from '../composables/useAnimeDiscovery'
 import { animeProviderName, animeOriginLabel, newAnimeSource, type SourceForm } from '../utils/animeSourceForm'
 import { sourceProgressDescription, subscriptionStatus } from '../utils/animeSubscriptionPresentation'
 import type { AnimeDownloadPage, AnimeSourceProgress as SourceProgress } from '../types/animeSubscription'
+import { provideSheetFlow } from '../composables/useSheetFlow'
+import type { DismissDecision, DismissReason } from '../composables/useMobileSheet'
 import '../styles/animeSubscriptionEditor.css'
 import '../styles/animeSubscriptions.css'
 
@@ -27,7 +30,11 @@ const props = withDefaults(defineProps<{ token: string; id?: string; bangumiId?:
 const emit = defineEmits<{ close: []; saved: [id: string]; open: [id: string] }>()
 const editor = useAnimeSubscriptionEditor(toRef(props, 'token'), toRef(props, 'id'), toRef(props, 'bangumiId'), computed(() => props.seed || { provider: '', itemId: '' }))
 const { sources, activeRef, active, subject, settings, local, loading, loadError, feedback, settingsError, previewBusy, saveBusy, pendingSave, receipt, duplicateID, conflict, now, locked, dirty, startIssue } = editor
-const shell = ref<InstanceType<typeof AnimeFloatingDialog>>()
+const hostDialog = ref<InstanceType<typeof BottomSheetDialog>>()
+const shell = ref<InstanceType<typeof FloatingDialog>>()
+const rootContainer = ref<HTMLElement>()
+const rootID = 'anime-subscription-root'
+const rootHeadingID = 'anime-subscription-title'
 const tab = ref<'basic' | 'backup' | 'jobs'>('basic'), previewOpen = ref(false), settingsOpen = ref(false), childOpen = ref(false), imageFailed = ref(false)
 const discard = ref(false), confirmRemove = ref(false), jobsVersion = ref(0)
 const pendingBackup = ref<SourceForm>()
@@ -49,17 +56,61 @@ const actions = useAnimeSubscriptionActions(toRef(props, 'token'), props.id, asy
   jobsVersion.value++; await editor.initialize()
 })
 const actionLocked = computed(() => locked.value || dirty.value || actions.locked.value || childOpen.value || !!previewBusy.value || editor.naming.busy.value || editor.naming.searching.value)
+const rootHardBlocked = computed(() => !!pendingSave.value || saveBusy.value || !!actions.pending.value || actions.loading.value)
 let routeDecision: ((leave: boolean) => void) | undefined
 let leaving = false
 const scroll = new Map<string, number>()
 let top = 0
-function close() {
-  if (childOpen.value || previewOpen.value || settingsOpen.value) return
-  if (confirmRemove.value) { confirmRemove.value = false; return }
-  if (discard.value) { cancelDiscard(); return }
-  if (pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) { feedback.value = '提交结果尚未确认，请先核对原请求。'; return }
-  if (dirty.value) { discard.value = true; return }
-  emit('close')
+function requestClose() { void hostDialog.value?.requestClose('button') }
+function resetChildState() {
+  previewOpen.value = false
+  settingsOpen.value = false
+  pendingBackup.value = undefined
+  childOpen.value = false
+}
+function guardRootClose(fromChildGlobalClose = false): DismissDecision {
+  if (rootHardBlocked.value) {
+    feedback.value = '提交结果尚未确认，请先核对原请求。'
+    return 'blocked'
+  }
+  if (fromChildGlobalClose && dirty.value) {
+    flow.popToRoot()
+    resetChildState()
+    discard.value = true
+    void nextTick(() => shell.value?.scrollTo(0))
+    return 'handled'
+  }
+  if (fromChildGlobalClose && confirmRemove.value) {
+    flow.popToRoot()
+    resetChildState()
+    return 'handled'
+  }
+  if (confirmRemove.value) { confirmRemove.value = false; return 'handled' }
+  if (discard.value) { cancelDiscard(); return 'handled' }
+  if (dirty.value) {
+    discard.value = true
+    void nextTick(() => shell.value?.scrollTo(0))
+    return 'handled'
+  }
+  return 'dismiss'
+}
+function beforeRootDismiss(_reason: DismissReason): DismissDecision { return guardRootClose(false) }
+const flow = provideSheetFlow({
+  rootId: rootID,
+  rootHeadingID,
+  getRootBody: () => shell.value?.body,
+  getRootContainer: () => rootContainer.value,
+  isRootBlocked: () => rootHardBlocked.value,
+  beforeDismissRoot: beforeRootDismiss,
+  beforeCloseAll: () => guardRootClose(flow.depth.value > 1),
+  getExpanded: () => hostDialog.value?.expanded ?? false,
+  toggleExpanded: () => hostDialog.value?.toggleExpanded(),
+  onCloseHost: () => { hostDialog.value?.closeDirect() },
+})
+function setRootStage(element: unknown) {
+  const node = element instanceof HTMLElement ? element : undefined
+  rootContainer.value = node
+  flow.stage.value = node
 }
 function guard() {
   if (leaving) return true
@@ -72,7 +123,7 @@ function cancelDiscard() { discard.value = false; reloadConfirm.value = false; r
 function discardChanges() {
   discard.value = false; leaving = true
   if (reloadConfirm.value) { leaving = false; reloadConfirm.value = false; void editor.initialize(); return }
-  if (routeDecision) { routeDecision(true); routeDecision = undefined } else emit('close')
+  if (routeDecision) { routeDecision(true); routeDecision = undefined } else hostDialog.value?.closeDirect()
 }
 function unload(event: BeforeUnloadEvent) { if (dirty.value || pendingSave.value || saveBusy.value || actions.pending.value || actions.loading.value) event.preventDefault() }
 window.addEventListener('beforeunload', unload)
@@ -131,7 +182,27 @@ onBeforeUnmount(stopProgress)
 </script>
 
 <template>
-  <AnimeFloatingDialog ref="shell" :title="id ? '修改订阅' : '新增订阅'" close-label="关闭订阅配置" size="config" @close="close" @scroll="top = $event">
+  <BottomSheetDialog
+    ref="hostDialog"
+    class="sheet-flow-host"
+    :aria-labelledby="flow.headingID.value"
+    :close-disabled="flow.blocked.value"
+    :allow-swipe-close="flow.depth.value === 1"
+    :before-close="flow.requestDismiss"
+    desktop-backdrop-dismiss
+    @close="emit('close')"
+  >
+    <div :ref="setRootStage" class="sheet-flow-stage">
+      <FloatingDialog
+        ref="shell"
+        flow-root
+        :heading-i-d="rootHeadingID"
+        :title="id ? '修改订阅' : '新增订阅'"
+        close-label="关闭订阅配置"
+        size="config"
+        :close-disabled="rootHardBlocked"
+        @scroll="top = $event"
+      >
     <template #header>
       <div v-if="subject" class="ac-header-grid">
         <div class="ac-identity">
@@ -199,19 +270,27 @@ onBeforeUnmount(stopProgress)
     </div>
     <template #footer>
       <div v-if="feedback || actions.error.value || actions.notice.value || actions.pending.value" class="ac-feedback" role="status"><p>{{ feedback || actions.error.value || actions.notice.value }}</p><button v-if="pendingSave" type="button" class="ae-button" :disabled="saveBusy" @click="editor.retrySave">核对原保存请求</button><button v-if="actions.pending.value" type="button" class="ae-button" :disabled="actions.loading.value" @click="actions.confirmPending">核对原操作</button><button v-if="duplicateID" type="button" class="ae-button" @click="emit('open', duplicateID)">打开已有订阅</button><button v-if="conflict" type="button" class="ae-button" :disabled="saveBusy" @click="reload">重载最新配置</button></div>
-      <div class="ac-footer"><p id="anime-save-hint">{{ startIssue || (editor.resumesArchived.value ? '保存后继续订阅，新字幕组独立下载，原记录保留。' : local?.status === 'archived' ? '仅保存配置，订阅保持归档。添加并启用新字幕组可继续订阅。' : local?.status === 'paused' ? '仅保存配置，订阅保持暂停。' : '保存配置后，后台独立检查、下载并整理。') }}</p><div><button type="button" class="ae-button" :disabled="saveBusy || !!pendingSave" @click="close">取消</button><button ref="previewButton" type="button" class="ae-button" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !subject" @click="openPreview">预览</button><button type="button" class="ae-button ae-primary" aria-describedby="anime-save-hint" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !!startIssue || editor.naming.busy.value || editor.naming.searching.value" @click="editor.save">{{ saveBusy ? '保存中…' : editor.resumesArchived.value ? '保存并继续订阅' : '保存' }}</button></div></div>
+      <div class="ac-footer"><p id="anime-save-hint">{{ startIssue || (editor.resumesArchived.value ? '保存后继续订阅，新字幕组独立下载，原记录保留。' : local?.status === 'archived' ? '仅保存配置，订阅保持归档。添加并启用新字幕组可继续订阅。' : local?.status === 'paused' ? '仅保存配置，订阅保持暂停。' : '保存配置后，后台独立检查、下载并整理。') }}</p><div><button type="button" class="ae-button" :disabled="saveBusy || !!pendingSave" @click="requestClose">取消</button><button ref="previewButton" type="button" class="ae-button" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !subject" @click="openPreview">预览</button><button type="button" class="ae-button ae-primary" aria-describedby="anime-save-hint" :disabled="locked || confirmRemove || actions.locked.value || childOpen || !!previewBusy || !!startIssue || editor.naming.busy.value || editor.naming.searching.value" @click="editor.save">{{ saveBusy ? '保存中…' : editor.resumesArchived.value ? '保存并继续订阅' : '保存' }}</button></div></div>
     </template>
-  </AnimeFloatingDialog>
-  <AnimeFloatingDialog v-if="previewOpen" title="匹配与重命名预览" close-label="关闭预览，返回配置" size="preview" @close="closePreview">
+      </FloatingDialog>
+    </div>
+  </BottomSheetDialog>
+  <FloatingDialog v-if="previewOpen" title="匹配与重命名预览" close-label="关闭预览，返回配置" size="preview" :close-disabled="previewActionBusy" @close="closePreview">
     <div class="anime-editor ac-preview">
       <AnimeReleasePreview :token="token" v-if="previewSource" :key="previewSource.ref" :source="previewSource" :state="previewState(previewSource.ref)" :valid="editor.validPreview(previewSource)" :busy="!!previewBusy" :disabled="locked" :now="now" :settings-available="!!settings" :naming-target="editor.naming.target.value" :naming-busy="editor.naming.busy.value" :organize-path="settings?.settings.organizePath" :subscription-id="local?.id" :subscription-revision="local?.revision" :settings-revision="settings?.settings.revision" :redownload-disabled="dirty || actions.locked.value" @busy="previewActionBusy = $event" @changed="jobsVersion++" @generate="editor.runPreview(previewSource)"><template #source><SelectMenu v-model="previewRef" :options="previewSourceOptions" :disabled="!!previewBusy || previewActionBusy" label="来源" variant="anime" density="compact" class="ac-preview-source" /></template></AnimeReleasePreview>
     </div><template #footer><div class="ac-preview-close"><span class="ae-note">查看预览不会下载；手动重新下载仅执行所选资源。</span><button type="button" class="ae-button" :disabled="previewActionBusy" @click="closePreview">返回配置</button></div></template>
-  </AnimeFloatingDialog>
+  </FloatingDialog>
   <AnimeSourceForm v-if="pendingBackup" :source="pendingBackup" selection-only :chapter-title="subject?.title || ''" :disabled="locked" :preview-busy="!!previewBusy" :now="now" @search="editor.search" @choose="editor.chooseEntry" @group="editor.groupChanged" @open="editor.openSource" @sample="source => editor.readSample(source, true)" @cancel="editor.cancelSourceEdit" @apply="confirmBackup" @child-open="childOpen = $event" @close="pendingBackup = undefined" />
   <AnimeStorageSettingsDialog v-if="settingsOpen" :token="token" @close="settingsOpen = false" @loaded="settings = $event; settingsError = ''" @changed="settings = $event; settingsError = ''" />
 </template>
 
 <style scoped>
+:global(dialog.sheet-flow-host[open]) { display: flex; flex-direction: column; }
+.sheet-flow-stage { display: flex; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.sheet-flow-stage > :deep(.sheet-flow-page) { flex: 1 1 auto; min-height: 0; }
+@media (min-width: 640px) {
+  :global(dialog.sheet-flow-host) { width: min(820px, calc(100vw - 32px)); height: min(760px, calc(100dvh - 48px)); max-height: calc(100dvh - 48px); margin: auto; padding: 0; border-radius: 20px; overflow: hidden; }
+}
 .ac-header-grid { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 8px; }
 .ac-identity { display: flex; grid-column: 1 / -1; grid-row: 1; min-width: 0; align-items: center; gap: 14px; margin: 0; }
 .ac-chapter-action { grid-column: 2; grid-row: 2; justify-self: end; }
@@ -221,7 +300,7 @@ onBeforeUnmount(stopProgress)
 .ac-identity h3 { font-size: 15px; font-weight: 600; line-height: 1.4; }
 .ac-identity p { display: flex; flex-wrap: wrap; gap: 5px 12px; margin-top: 6px; font-size: 11px; color: var(--floating-surface-muted); }
 .ac-tabs { display: flex; grid-column: 1; grid-row: 2; align-items: center; gap: 4px; }
-.ac-tabs button { min-height: var(--ae-control-height); padding: 5px 13px; border-radius: 8px; font-size: 12px; color: var(--floating-surface-muted); white-space: nowrap; }
+.ac-tabs button { min-height: var(--dialog-control-height); padding: 5px 13px; border-radius: 8px; font-size: 12px; color: var(--floating-surface-muted); white-space: nowrap; }
 .ac-tabs button[aria-selected=true] { color: var(--ae-blue); background: rgb(59 130 246 / .08); font-weight: 600; }
 .dark .ac-tabs button[aria-selected=true] { background: rgb(59 130 246 / .14); }
 .ac-tabs small { margin-left: 4px; opacity: .75; }
@@ -258,8 +337,8 @@ onBeforeUnmount(stopProgress)
 .ac-total > .ae-label, .ac-total-unit { flex: none; }
 .ac-total-unit { font-size: 12px; color: var(--ae-muted); }
 .ac-total-input { position: relative; width: 98px; flex: none; }
-.anime-editor .ac-total-input input { --ae-control-padding: 6px var(--ae-control-height) 6px 10px; font-variant-numeric: tabular-nums; }
-.ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: var(--ae-control-height); height: var(--ae-control-height); min-height: var(--ae-control-height); }
+.anime-editor .ac-total-input input { --dialog-control-padding: 6px var(--dialog-control-height) 6px 10px; font-variant-numeric: tabular-nums; }
+.ac-total-input .ae-icon { position: absolute; top: 0; right: 0; width: var(--dialog-control-height); height: var(--dialog-control-height); min-height: var(--dialog-control-height); }
 .ac-total-section { min-width: 0; }
 .ac-total-note { margin-top: 3px; font-size: 11px; }
 .ac-storage { display: flex; align-items: center; gap: 10px; margin-top: 16px; color: var(--floating-surface-muted); }

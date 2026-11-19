@@ -43,13 +43,13 @@ window.mountDesign = async (options = {}) => {
     const selected=()=>page.locator('.match-files input[type=checkbox]:checked').count()
     async function layout(label) {
       const result=await page.evaluate(()=>{
-        const dialog=document.querySelector('dialog[open]'),body=dialog.querySelector('.anime-floating-body'),footer=dialog.querySelector('.anime-floating-footer'),primary=dialog.querySelectorAll('.picker-apply');
+        const dialog=document.querySelector('dialog[open]'),body=dialog.querySelector('.floating-dialog-body'),footer=dialog.querySelector('.floating-dialog-footer'),primary=dialog.querySelectorAll('.picker-apply');
         const scrolls=[...dialog.querySelectorAll('*')].filter(el=>['auto','scroll'].includes(getComputedStyle(el).overflowY) && el.scrollHeight>el.clientHeight+2 && !el.closest('.select-menu-popover'));
         return {width:body.scrollWidth-body.clientWidth,document:document.documentElement.scrollWidth-innerWidth,primary:primary.length,bottom:primary[0]?.getBoundingClientRect().bottom,height:innerHeight,scrolls:scrolls.map(el=>el.className),fixed:footer.getBoundingClientRect().height+dialog.querySelector('header').getBoundingClientRect().height};
       })
       assert(result.width<=1, label+' 正文横向溢出 '+JSON.stringify(result)); assert(result.document<=1,label+' 页面横向溢出')
       assert.equal(result.primary,1,label+' 主按钮唯一'); assert(result.bottom<=result.height,label+' 底部操作可见')
-      assert(result.scrolls.length<=1 && result.scrolls.every(x=>x.includes('anime-floating-body')),label+' 仅正文滚动 '+JSON.stringify(result))
+      assert(result.scrolls.length<=1 && result.scrolls.every(x=>x.includes('floating-dialog-body')),label+' 仅正文滚动 '+JSON.stringify(result))
       if((await page.viewportSize()).width<=390) assert(result.fixed<=185,label+' 固定区域过高 '+result.fixed)
       await page.screenshot({path:path.join(artifacts,label+'.png')})
     }
@@ -115,10 +115,10 @@ window.mountDesign = async (options = {}) => {
     await button('更换字幕').click();await page.keyboard.press('Escape');assert.equal(await page.getByRole('textbox',{name:'字幕作品搜索词'}).count(),0)
     await button('批量处理').click();await page.keyboard.press('Escape');assert.equal(await page.locator('.subtitle-batch').count(),0);assert.equal(await page.evaluate(()=>window.fixtureCloseCount),0)
     assert.equal(await button('批量处理').evaluate(el=>el===document.activeElement),true,'取消批量后恢复触发按钮焦点')
-    const savedScroll=await button('保留多版').evaluate(el=>{el.scrollIntoView({block:'center'});return el.closest('.anime-floating-body').scrollTop})
+    const savedScroll=await button('保留多版').evaluate(el=>{el.scrollIntoView({block:'center'});return el.closest('.floating-dialog-body').scrollTop})
     await button('保留多版').click();await button('取消').click()
     assert.equal(await button('保留多版').evaluate(el=>el===document.activeElement),true,'恢复具体版本操作的焦点')
-    assert.equal(await page.locator('.anime-floating-body').evaluate(el=>el.scrollTop),savedScroll,'取消批量后恢复正文滚动位置')
+    assert.equal(await page.locator('.floating-dialog-body').evaluate(el=>el.scrollTop),savedScroll,'取消批量后恢复正文滚动位置')
     await button('批量处理').click();await page.getByRole('combobox',{name:'批量匹配目标季',exact:true}).click();await page.keyboard.press('Escape')
     assert.equal(await page.locator('.subtitle-batch').count(),1,'Escape 优先关闭内部下拉')
     await page.keyboard.press('Escape');assert.equal(await page.locator('.subtitle-batch').count(),0)

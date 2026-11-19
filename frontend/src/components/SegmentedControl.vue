@@ -280,10 +280,10 @@ function moveFocus(event: KeyboardEvent) {
 @media (max-width: 639px), (display-mode: standalone) {
   .segmented-control-pwa-pill, .dark .segmented-control-pwa-pill {
     gap: 0; padding: 0 4px; border-radius: 999px;
-    background: color-mix(in srgb, rgb(var(--surface-hover)) 62%, rgb(var(--surface-page)));
-    box-shadow: 0 1px 3px rgb(15 23 42 / .08), 0 3px 9px -2px rgb(15 23 42 / .12);
+    background: var(--segmented-pwa-background, color-mix(in srgb, rgb(var(--surface-hover)) 62%, rgb(var(--surface-page))));
+    box-shadow: var(--segmented-pwa-shadow, 0 1px 3px rgb(15 23 42 / .08), 0 3px 9px -2px rgb(15 23 42 / .12));
   }
-  .dark .segmented-control-pwa-pill { box-shadow: 0 1px 3px rgb(0 0 0 / .25), 0 3px 9px -2px rgb(0 0 0 / .34); }
+  .dark .segmented-control-pwa-pill { box-shadow: var(--segmented-pwa-shadow, 0 1px 3px rgb(0 0 0 / .25), 0 3px 9px -2px rgb(0 0 0 / .34)); }
   .segmented-control-pwa-pill .segmented-control-option {
     flex: 1 0 auto; min-width: 44px; min-height: 44px; padding: 0 6px;
     border-radius: 999px; font-size: 13px; font-weight: 600; line-height: 18px;
@@ -295,7 +295,7 @@ function moveFocus(event: KeyboardEvent) {
   }
   .segmented-control-pwa-pill .segmented-control-indicator::before {
     position: absolute; inset: 5px 2px; border-radius: 999px;
-    background: color-mix(in srgb, rgb(var(--selection-surface)) 96%, rgb(var(--selection-content)));
+    background: rgb(var(--selection-surface) / var(--glass-selection-alpha));
     content: '';
   }
   @media (forced-colors: active) {

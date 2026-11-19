@@ -175,7 +175,7 @@ onBeforeUnmount(() => { mobile.removeEventListener('change', onViewportChange); 
 .dock-selection {
   position: absolute; inset: var(--dock-inset) auto var(--dock-inset) var(--dock-inset); z-index: 0;
   width: calc((100% - 2 * var(--dock-inset)) / 3); border-radius: 999px;
-  background: rgb(var(--selection-surface)); box-shadow: inset 0 0 0 1px var(--glass-edge);
+  background: rgb(var(--selection-surface) / var(--glass-selection-alpha));
   transform: translateX(calc(var(--dock-selection) * 100%));
   transition: transform 360ms cubic-bezier(.22, 1, .36, 1); pointer-events: none;
 }

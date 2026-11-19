@@ -19,10 +19,10 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     page.on('console', message => { if (message.text().includes('[Vue warn]')) errors.push(message.text()) })
     await page.goto(origin + '/admin/login')
     await page.evaluate(async () => {
-      const source = await (await fetch('/src/components/AnimeFloatingDialog.vue')).text()
+      const source = await (await fetch('/src/components/FloatingDialog.vue')).text()
       const vueURL = source.match(/from ["']([^"']*\/vue\.js[^"']*)["']/)[1]
       const { createApp, h, reactive, nextTick } = await import(vueURL)
-      const Dialog = (await import('/src/components/AnimeFloatingDialog.vue')).default
+      const Dialog = (await import('/src/components/FloatingDialog.vue')).default
       const state = reactive({ open: false, child: false, presentation: 'sheet', closeDisabled: false, closed: [], trusted: [], savedScroll: 0 })
       const previousOverflow = document.body.style.overflow
       document.body.style.overflow = 'clip'
@@ -35,7 +35,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         h('button', { id: 'open-plain-dialog', onClick: () => { state.presentation = undefined; state.open = true } }, '打开普通弹窗'),
         state.open && h(Dialog, { class: 'sheet-fixture-parent', title: '移动弹窗验证', closeLabel: '关闭测试弹窗', size: 'config', mobilePresentation: state.presentation, closeDisabled: state.closeDisabled, onClose: () => { state.closed.push('parent'); state.open = false } }, {
           header: () => h('p', '仅用于验证公共弹窗的固定头部'),
-          default: () => [h('input', { id: 'sheet-preserved-input', value: '未提交内容', 'aria-label': '保留输入' }), h('div', { style: 'position:sticky;top:0;z-index:1;background:rgb(var(--surface-card));padding:8px 0' }, [h('button', { id: 'open-sheet-child', onClick: () => { state.savedScroll = document.querySelector('.sheet-fixture-parent .anime-floating-body').scrollTop; state.child = true } }, '打开嵌套弹窗')]), h('ul', { style: 'margin:0;padding:0;list-style:none' }, Array.from({ length: 80 }, (_, index) => h('li', { style: 'height:52px;border-bottom:1px solid #94a3b8;padding:12px' }, `文件 ${index + 1}`)))],
+          default: () => [h('input', { id: 'sheet-preserved-input', value: '未提交内容', 'aria-label': '保留输入' }), h('div', { style: 'position:sticky;top:0;z-index:1;background:rgb(var(--surface-card));padding:8px 0' }, [h('button', { id: 'open-sheet-child', onClick: () => { state.savedScroll = document.querySelector('.sheet-fixture-parent .floating-dialog-body').scrollTop; state.child = true } }, '打开嵌套弹窗')]), h('ul', { style: 'margin:0;padding:0;list-style:none' }, Array.from({ length: 80 }, (_, index) => h('li', { style: 'height:52px;border-bottom:1px solid #94a3b8;padding:12px' }, `文件 ${index + 1}`)))],
           footer: () => h('p', '公共弹窗底部插槽'),
         }),
         state.child && h(Dialog, { class: 'sheet-fixture-child', title: '嵌套弹窗验证', closeLabel: '关闭嵌套弹窗', mobilePresentation: 'sheet', onClose: () => { state.closed.push('child'); state.child = false } }, () => h('button', { id: 'child-action' }, '嵌套内容')),
@@ -44,7 +44,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       window.mobileSheetFixture = { state, nextTick, dispose: () => { app.unmount(); mount.remove(); document.removeEventListener('pointerdown', pointer); document.body.style.overflow = previousOverflow; document.querySelector('#app').style.display = '' } }
     })
     const parent = page.locator('dialog.sheet-fixture-parent[open]'), child = page.locator('dialog.sheet-fixture-child[open]')
-    const body = parent.locator('.anime-floating-body'), handle = parent.locator('.bottom-sheet-grabber-zone')
+    const body = parent.locator('.floating-dialog-body'), handle = parent.locator('.bottom-sheet-grabber-zone')
     const open = async (plain = false) => {
       await page.locator(plain ? '#open-plain-dialog' : '#open-mobile-sheet').click(); await parent.waitFor()
       const animations = await parent.evaluate(element => element.getAnimations().map(animation => ({ duration: Number(animation.effect.getTiming().duration), frames: animation.effect.getKeyframes().map(frame => Object.keys(frame).filter(key => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))) })))
@@ -56,7 +56,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       await page.waitForFunction(selector => { const element = document.querySelector(selector); return element && getComputedStyle(element).transform === 'none' && !element.getAnimations().some(animation => animation.playState === 'running') }, await dialog.evaluate(element => `dialog.${element.classList.contains('sheet-fixture-child') ? 'sheet-fixture-child' : 'sheet-fixture-parent'}[open]`))
     }
     const expanded = async expected => { await page.waitForFunction(expected => (document.querySelector('dialog.sheet-fixture-parent[open]')?.getAttribute('data-sheet-expanded') === 'true') === expected, expected); await stationary(parent) }
-    const geometry = dialog => dialog.evaluate(element => { const box = element.getBoundingClientRect(), content = element.querySelector('.anime-floating-body').getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height, viewportWidth: innerWidth, viewportHeight: innerHeight, bodyHeight: content.height, transform: getComputedStyle(element).transform } })
+    const geometry = dialog => dialog.evaluate(element => { const box = element.getBoundingClientRect(), content = element.querySelector('.floating-dialog-body').getBoundingClientRect(); return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height, viewportWidth: innerWidth, viewportHeight: innerHeight, bodyHeight: content.height, transform: getComputedStyle(element).transform } })
     const checkEdges = async full => {
       const box = await geometry(parent)
       assert.ok(Math.abs(box.left) <= 1 && Math.abs(box.right - box.viewportWidth) <= 1 && Math.abs(box.bottom - box.viewportHeight) <= 1, JSON.stringify(box))
@@ -103,7 +103,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.ok(full.bodyHeight > collapsed.bodyHeight, '全屏展开增加可滚动正文空间')
     await parent.getByRole('button', { name: '恢复弹窗高度', exact: true }).click(); await expanded(false)
     await mouseDrag(handle, 12); await expanded(false); await checkEdges(false)
-    await mouseDrag(parent.locator('.anime-floating-toolbar'), -28); await expanded(true); await checkEdges(true)
+    await mouseDrag(parent.locator('.floating-dialog-toolbar'), -28); await expanded(true); await checkEdges(true)
     await mouseDrag(handle, 48); await expanded(false); await checkEdges(false)
     passed.push('手机左右及底部贴边、默认留顶、44px展开按钮、上拖展开、全屏下拖恢复及短拖回弹')
 
@@ -119,7 +119,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ ...start, id: 1, radiusX: 1, radiusY: 1, force: 1 }] })
     for (let index = 1; index <= 8; index++) { await touchMove(start, -index * 35); await page.waitForTimeout(30) }
     await touchEnd(false)
-    await page.waitForFunction(before => document.querySelector('.sheet-fixture-parent .anime-floating-body').scrollTop > before + 100, scrollBefore)
+    await page.waitForFunction(before => document.querySelector('.sheet-fixture-parent .floating-dialog-body').scrollTop > before + 100, scrollBefore)
     await expanded(false)
     assert.equal(await page.evaluate(() => window.scrollY), 0, '列表原生触摸滚动不滚动底层页面')
     passed.push('可信触摸取消、拖动中resize恢复，以及正文原生滚动不触发展开或关闭')

@@ -170,7 +170,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    assert.ok(layout.touchTargets.every(target => target.height >= 44 && target.width >= 44), `${reason}：所有切换和工具按钮至少44px点击区，${JSON.stringify(layout.touchTargets)}`)
   }
   await open()
-  assert.equal(await dialog.locator('.anime-floating-footer').count(), 0, 'TG弹窗完全移除固定footer，把说明收进头部帮助')
+  assert.equal(await dialog.locator('.floating-dialog-footer').count(), 0, 'TG弹窗完全移除固定footer，把说明收进头部帮助')
   const help = dialog.getByRole('button', { name: '搜索说明', exact: true })
   await help.click()
   await dialog.locator('.tg-help').getByText('ED2K 按文件去重；点击文件信息可查看完整文件名与来源。', { exact: true }).waitFor()
@@ -326,7 +326,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.locator('.ed-batch-actions').count(), 0, '未选择文件时不占用批量操作空间')
   assert.equal(await dialog.locator('.ed-notice').count(), 0)
   for (const close of await page.locator('[data-sonner-toast] [data-close-button]').all()) await close.click()
-  await dialog.locator('.anime-floating-body').evaluate(element => { element.scrollTop = 0 })
+  await dialog.locator('.floating-dialog-body').evaluate(element => { element.scrollTop = 0 })
   for (const width of [1440, 390, 320]) for (const dark of [false, true]) {
    await page.setViewportSize({ width, height: width === 1440 ? 1000 : 860 })
    await page.evaluate(value => document.documentElement.classList.toggle('dark', value), dark)
@@ -336,9 +336,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    if (width !== 1440) await assertMobileToolbar(`${width}px ${dark ? '深色' : '浅色'}无筛选计数`)
    const layout = await dialog.evaluate(element => {
     const box = element.getBoundingClientRect()
-    const children = [...element.querySelectorAll('.anime-floating-body, .ed-file, .ed-workspace, .ed-filterbar, .ed-output, .ed-selection')]
-    const body = element.querySelector('.anime-floating-body').getBoundingClientRect(), rowRects = [...element.querySelectorAll('.ed-file')].map(row => row.getBoundingClientRect())
-    return { fits: box.left >= 0 && box.right <= innerWidth + 1 && element.scrollWidth <= element.clientWidth + 1 && children.every(child => child.scrollWidth <= child.clientWidth + 1), fullRows: rowRects.filter(row => row.top >= body.top - 1 && row.bottom <= body.bottom + 1).length, maxRowHeight: Math.max(...rowRects.map(row => row.height)), bodyHeight: body.height, contentWidth: element.querySelector('.ed-workspace').getBoundingClientRect().width, headerHeight: element.querySelector('.anime-floating-toolbar').getBoundingClientRect().height + element.querySelector('.anime-floating-header').getBoundingClientRect().height, footerCount: element.querySelectorAll('.anime-floating-footer').length, transform: getComputedStyle(element).transform, dialog: { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: element.clientWidth, renderedWidth: box.width, height: box.height, scrollWidth: element.scrollWidth }, overflow: children.filter(child => child.scrollWidth > child.clientWidth + 1).map(child => ({ class: child.className, width: child.clientWidth, scrollWidth: child.scrollWidth, children: [...child.children].map(entry => ({ class: entry.className, width: entry.getBoundingClientRect().width, text: entry.textContent.slice(0, 100) })) })) }
+    const children = [...element.querySelectorAll('.floating-dialog-body, .ed-file, .ed-workspace, .ed-filterbar, .ed-output, .ed-selection')]
+    const body = element.querySelector('.floating-dialog-body').getBoundingClientRect(), rowRects = [...element.querySelectorAll('.ed-file')].map(row => row.getBoundingClientRect())
+    return { fits: box.left >= 0 && box.right <= innerWidth + 1 && element.scrollWidth <= element.clientWidth + 1 && children.every(child => child.scrollWidth <= child.clientWidth + 1), fullRows: rowRects.filter(row => row.top >= body.top - 1 && row.bottom <= body.bottom + 1).length, maxRowHeight: Math.max(...rowRects.map(row => row.height)), bodyHeight: body.height, contentWidth: element.querySelector('.ed-workspace').getBoundingClientRect().width, headerHeight: element.querySelector('.floating-dialog-toolbar').getBoundingClientRect().height + element.querySelector('.floating-dialog-header').getBoundingClientRect().height, footerCount: element.querySelectorAll('.floating-dialog-footer').length, transform: getComputedStyle(element).transform, dialog: { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: element.clientWidth, renderedWidth: box.width, height: box.height, scrollWidth: element.scrollWidth }, overflow: children.filter(child => child.scrollWidth > child.clientWidth + 1).map(child => ({ class: child.className, width: child.clientWidth, scrollWidth: child.scrollWidth, children: [...child.children].map(entry => ({ class: entry.className, width: entry.getBoundingClientRect().width, text: entry.textContent.slice(0, 100) })) })) }
    })
    await page.screenshot({ path: path.join(screenshotDir, `telegram-files-${width}-${dark ? 'dark' : 'light'}.png`), animations: 'disabled' })
    assert.equal(layout.fits, true, `${width}px ${dark ? '深色' : '浅色'}无横向溢出：${JSON.stringify(layout)}`)
@@ -356,7 +356,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.ok((await help.boundingBox()).width >= 44 && (await help.boundingBox()).height >= 44)
     await dialog.getByRole('button', { name: '展开弹窗', exact: true }).click()
     await page.waitForFunction(() => { const element = document.querySelector('dialog.tg-channel-search[open]'); return element?.dataset.sheetExpanded === 'true' && getComputedStyle(element).transform === 'none' })
-    const full = await dialog.evaluate(element => { const box = element.getBoundingClientRect(), body = element.querySelector('.anime-floating-body').getBoundingClientRect(); return { top: box.top, bottom: box.bottom, bodyHeight: body.height } })
+    const full = await dialog.evaluate(element => { const box = element.getBoundingClientRect(), body = element.querySelector('.floating-dialog-body').getBoundingClientRect(); return { top: box.top, bottom: box.bottom, bodyHeight: body.height } })
     assert.ok(Math.abs(full.top) <= 1 && Math.abs(full.bottom - 860) <= 1, '展开态覆盖完整手机视口')
     assert.ok(full.bodyHeight > layout.bodyHeight, '展开态增加正文可滚动空间')
     await page.screenshot({ path: path.join(screenshotDir, `telegram-files-${width}-${dark ? 'dark' : 'light'}-expanded.png`), animations: 'disabled' })
