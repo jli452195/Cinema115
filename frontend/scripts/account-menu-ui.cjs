@@ -79,20 +79,13 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
     assert.notEqual(surface.shadow, 'none', '返回按钮用柔和外阴影和页面区分')
     return back
   }
-  const assertBodyTitle = async (title, noTopBar = false) => {
+  const assertBodyTitle = async title => {
     const heading = titleRow.getByRole('heading', { name: title, level: 1, exact: true })
     await heading.waitFor()
     const titleBox = await heading.boundingBox()
     assert(titleBox && titleBox.width > 1 && titleBox.height > 1, `${title}应在正文中显示`)
     const headerBox = await header.isVisible() ? await header.boundingBox() : null
-    if (noTopBar) {
-      assert(!headerBox || headerBox.height <= 1, '普通用户追更页不应显示空顶栏')
-      // 允许常规正文留白，但不能保留一整行顶栏的高度。
-      assert(titleBox.y >= 0 && titleBox.y <= 32, '普通用户追更页不应为顶栏保留空白')
-    } else {
-      assert(headerBox && titleBox.y >= headerBox.y + headerBox.height - 1, `${title}应在顶栏下方显示`)
-    }
-    return titleBox
+    assert(headerBox && titleBox.y >= headerBox.y + headerBox.height - 1, `${title}应在顶栏下方显示`)
   }
   const assertCenteredToolTitle = async (title, back) => {
     const visualTitle = header.getByText(title, { exact: true })
@@ -126,28 +119,121 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
     assert.equal(await followTabs(page).locator('a[aria-current="page"]').count(), 1)
   }
 
+  const followAction = name => header.getByRole('button', { name, exact: true })
   const assertFollowLayout = async (title, admin = true) => {
-    const titleBox = await assertBodyTitle(title, !admin)
+    const heading = titleRow.getByRole('heading', { name: title, level: 1, exact: true })
+    await heading.waitFor({ state: 'attached' })
+    const headingBox = await heading.boundingBox()
+    assert(headingBox && headingBox.width <= 1 && headingBox.height <= 1, `${title}的正文一级标题应对辅助技术保留且不占可见空间`)
+    await header.waitFor()
+    assert.equal(await header.evaluate(el => getComputedStyle(el).position), 'fixed')
     await assertNoOldToolControls()
     assert.equal(await page.locator('.mobile-nav-back:visible').count(), 0, `${title}不应显示返回按钮`)
     assert.equal(await header.getByRole('link', { name: /^返回/ }).count(), 0)
     assert.equal(await header.getByRole('button', { name: /^返回/ }).count(), 0)
-    const actions = [/说明/, /刷新/, ...(title === '追更管理' ? [/设置/] : [])]
-    for (const name of actions) {
-      assert.equal(await header.getByRole('button', { name }).count(), 0, `${title}的${name}不应出现在顶栏`)
-      const action = titleRow.getByRole('button', { name })
-      await action.waitFor()
-      const box = await action.boundingBox()
-      assert(box && box.y < titleBox.y + titleBox.height && box.y + box.height > titleBox.y,
-        `${title}的${name}应与正文标题同一行`)
-    }
+    const names = title === '追更管理'
+      ? ['追更通知与自动搜资源设置', '刷新订阅申请']
+      : ['我的追更说明', '刷新我的追更']
+    const actions = names.map(followAction)
+    assert.equal(await header.getByRole('button').count(), actions.length)
+    for (const action of actions) await action.waitFor()
+    for (const name of names) assert.equal(await titleRow.getByRole('button', { name, exact: true }).count(), 0)
+    let leading
     if (admin) {
-      await header.getByRole('navigation', { name: '追更导航', exact: true }).waitFor()
-      const mine = await tab('我的追更').boundingBox(), manage = await tab('追更管理').boundingBox()
-      assert(mine && manage && manage.x >= mine.x + mine.width - 1 &&
-        Math.abs(mine.y + mine.height / 2 - manage.y - manage.height / 2) <= 6,
-        '管理员两个追更标签应并排显示在同一行')
+      leading = [tab('我的追更'), tab('追更管理')]
+    } else {
+      assert.equal(await followTabs(page).count(), 0, '普通用户只有静态标题')
+      assert.equal(await header.getByRole('link', { name: title, exact: true }).count(), 0)
+      leading = [header.getByText(title, { exact: true })]
     }
+    const banner = await header.boundingBox()
+    const boxes = await Promise.all([...leading, ...actions].map(el => el.boundingBox()))
+    assert(banner && boxes.every(Boolean), '顶栏内的标题或标签及两个动作均可见')
+    for (const [index, box] of boxes.entries()) {
+      assert(box.x >= banner.x - 1 && box.x + box.width <= banner.x + banner.width + 1)
+      assert(Math.abs(box.y + box.height / 2 - boxes[0].y - boxes[0].height / 2) <= 2)
+      if (index > 0) assert(box.x >= boxes[index - 1].x + boxes[index - 1].width - 1, '顶栏控件不重叠')
+      if (index >= leading.length) assert(box.width >= 44 && box.height >= 44, '动作点击区域至少 44px')
+    }
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${title}不产生页面横向溢出`)
+  }
+  const assertFollowViewportSizes = async (title, admin = true) => {
+    for (const width of [375, 430, 320]) {
+      await page.setViewportSize({ width, height: 844 })
+      await assertFollowLayout(title, admin)
+      if (title === '追更管理') {
+        const kind = await page.getByRole('navigation', { name: '影视类型筛选', exact: true }).boundingBox()
+        const search = await page.getByRole('textbox', { name: '搜索追更申请', exact: true }).boundingBox()
+        assert(kind && search, '类型筛选与搜索可见')
+        if (width === 320) {
+          assert(kind.y + kind.height <= search.y + 1, '320px 管理页让搜索独占下一行')
+        } else {
+          assert(kind.x + kind.width <= search.x + 1 &&
+            Math.abs(kind.y + kind.height / 2 - search.y - search.height / 2) <= 2,
+            `${width}px 管理页的类型筛选和搜索应在同一行`)
+        }
+      }
+    }
+    const previous = await page.evaluate(() => {
+      const style = document.documentElement.style, previous = style.fontSize
+      style.fontSize = '125%'
+      return previous
+    })
+    try { await assertFollowLayout(title, admin) }
+    finally { await page.evaluate(value => { document.documentElement.style.fontSize = value }, previous) }
+  }
+  const assertFollowRefresh = async (name, endpoint) => {
+    await Promise.all([
+      page.waitForRequest(request => {
+        const url = new URL(request.url())
+        return request.method() === 'GET' && url.pathname === endpoint && !url.searchParams.has('countsOnly')
+      }),
+      followAction(name).click(),
+    ])
+  }
+  const assertPersonalFollowActions = async () => {
+    const info = followAction('我的追更说明')
+    await info.click()
+    const dialog = page.getByRole('dialog', { name: '我的追更', exact: true })
+    await dialog.getByText(/查看你申请的电影和剧集/).waitFor()
+    await dialog.getByRole('button', { name: '关闭我的追更', exact: true }).click()
+    await dialog.waitFor({ state: 'hidden' })
+    assert(await info.evaluate(el => el === document.activeElement), '关闭说明后焦点返回顶栏按钮')
+    await assertFollowRefresh('刷新我的追更', '/api/me/follows')
+  }
+  const assertManagementFollowActions = async () => {
+    const settings = followAction('追更通知与自动搜资源设置')
+    const panel = page.locator('#follow-notification-settings')
+    assert.equal(await settings.getAttribute('aria-controls'), 'follow-notification-settings')
+    assert.equal(await settings.getAttribute('aria-expanded'), 'false')
+    const main = page.getByRole('main')
+    const previous = await main.evaluate(el => {
+      const previous = el.style.minHeight
+      el.style.minHeight = '1600px'
+      window.scrollTo({ top: 400, behavior: 'instant' })
+      return previous
+    })
+    try {
+      await page.waitForFunction(() => scrollY >= 350 &&
+        getComputedStyle(document.querySelector('.workbench-header'), '::after').opacity === '1')
+      await settings.click()
+      await panel.getByText('按影视合并用户申请，搜索资源并跟进处理。', { exact: true }).waitFor()
+      assert.equal(await settings.getAttribute('aria-expanded'), 'true')
+      await page.waitForFunction(() => {
+        const panel = document.querySelector('#follow-notification-settings')?.getBoundingClientRect()
+        const header = document.querySelector('.workbench-header')?.getBoundingClientRect()
+        return panel && header && panel.height > 0 && panel.top >= header.bottom - 1 && panel.top < innerHeight / 2
+      })
+      await settings.click()
+      await panel.waitFor({ state: 'hidden' })
+      assert.equal(await settings.getAttribute('aria-expanded'), 'false')
+    } finally {
+      await main.evaluate((el, value) => {
+        el.style.minHeight = value
+        window.scrollTo({ top: 0, behavior: 'instant' })
+      }, previous)
+    }
+    await assertFollowRefresh('刷新订阅申请', '/api/admin/follows')
   }
 
   setRole('admin')
@@ -182,13 +268,15 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
 
   await enterFollows()
   await assertSelectedTab('我的追更')
-  await assertFollowLayout('我的追更')
+  await assertFollowViewportSizes('我的追更')
+  await assertPersonalFollowActions()
   assert.deepEqual(await followTabs(page).getByRole('link').evaluateAll(links => links.map(link => [link.textContent.trim(), new URL(link.href).pathname])), [
     ['我的追更', '/follows'], ['追更管理', '/follows/manage'],
   ])
   await clickTo(tab('追更管理'), '/follows/manage')
   await assertSelectedTab('追更管理')
-  await assertFollowLayout('追更管理')
+  await assertFollowViewportSizes('追更管理')
+  await assertManagementFollowActions()
   assert.equal(await follow.getAttribute('aria-current'), 'page')
   const manageURL = page.url()
   await follow.click()
@@ -300,7 +388,8 @@ async function checkMobileFollowNavigation(page, origin, standalone, setRole) {
   await home.waitFor()
   assert.equal(await launcher.count(), 0)
   await enterFollows()
-  await assertFollowLayout('我的追更', false)
+  await assertFollowViewportSizes('我的追更', false)
+  await assertPersonalFollowActions()
   assert.equal(await followTabs(page).count(), 0)
   assert.equal(await page.getByRole('link', { name: '追更管理', exact: true }).count(), 0)
   assert.equal(await launcher.count(), 0)

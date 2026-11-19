@@ -92,6 +92,10 @@ button.update-range:hover { background: color-mix(in srgb, var(--badge-accent) 5
   .update-card:hover .update-title { color: var(--badge-accent); }
 }
 .update-card-link:focus-visible .update-title { color: var(--badge-accent); }
+@media (max-width: 639px) {
+  .update-title { min-height: 0; margin-top: 8px; }
+  .update-meta { margin-top: 2px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .update-range svg, .update-poster, .update-range-row { transition: none; }
   .update-card:hover .update-poster, .update-card:hover .update-range-row { transform: none; }

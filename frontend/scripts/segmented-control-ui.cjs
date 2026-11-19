@@ -212,14 +212,24 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.waitForFunction(() => document.querySelector('.mo-status-filter [aria-pressed=true]')?.textContent.includes('12'))
     passed.push('整理记录重选复位分页、保留关键词、切换状态与实时数量')
     await fs.mkdir('test-results', { recursive: true })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
     for (const route of ['/follows/manage', '/media/organize/history']) {
       await page.goto(origin + route)
       await page.locator('.segmented-control button').first().waitFor()
       for (const width of [1100, 320]) {
         await page.setViewportSize({ width, height: 800 })
+        // 手机管理页状态栏底色透明，类型筛选的底色由玻璃外壳承载。
+        const mobileFollows = route === '/follows/manage' && width < 640
+        const track = mobileFollows ? page.locator('.subscription-kind.glass-floating-pill') : page.locator('.segmented-control').first()
         for (const dark of [false, true]) {
           await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
-          const background = await page.locator('.segmented-control').first().evaluate(el => getComputedStyle(el).backgroundColor)
+          if (mobileFollows) {
+            assert.equal(await statuses.evaluate(el => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)')
+            const targets = await track.locator('.segmented-control-pwa-pill button').evaluateAll(options => options.map(option => { const box = option.getBoundingClientRect(); return { width: box.width, height: box.height } }))
+            assert.equal(targets.length, 3)
+            assert.ok(targets.every(target => target.width >= 44 && target.height >= 44))
+          }
+          const background = await track.evaluate(el => getComputedStyle(el).backgroundColor)
           const channel = Number(background.match(/[\d.]+/)[0])
           assert(dark ? channel < 100 : channel > 200, JSON.stringify({ dark, background }))
           const overflow = await page.evaluate(() => ({ width: innerWidth, scroll: document.documentElement.scrollWidth, elements: [...document.querySelectorAll('body *')].filter(el => { const r = el.getBoundingClientRect(); return r.right > innerWidth + 1 && getComputedStyle(el).position !== 'fixed' }).slice(0, 12).map(el => ({ tag: el.tagName, class: el.className, width: el.getBoundingClientRect().width })) }))

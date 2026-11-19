@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { IconChevronDown, IconLoader2 } from '@tabler/icons-vue'
 import WorkbenchHeader from '../components/WorkbenchHeader.vue'
 import UpdateCard from '../components/UpdateCard.vue'
 import { catalogAPI } from '../composables/usePortalAuth'
@@ -39,12 +40,19 @@ const days = computed(() => Array.from({ length: 7 }, (_, index) => {
 }))
 const selectedDay = computed(() => days.value.find(day => day.date === route.query.date) || days.value[0]!)
 const selectedDate = computed(() => selectedDay.value.date)
+const compactDateHeading = computed(() => {
+  const { date, weekday } = selectedDay.value
+  return `${Number(date.slice(5, 7))}月${Number(date.slice(8))}日 · ${weekday}`
+})
 const hasSnapshot = computed(() => !!loadedDate.value)
 const staleResults = computed(() => hasSnapshot.value && loadedDate.value !== selectedDate.value)
+const dateError = computed(() => errorScope.value === 'date' ? error.value : '')
+const paginationError = computed(() => errorScope.value === 'more' ? error.value : '')
+const showEnd = computed(() => items.value.length > 0 && ready.value && !hasMore.value && !loading.value && !loadingMore.value && !staleResults.value && !error.value)
 const timelineMessage = computed(() => timelineStatus.value === 'building' ? '最近更新时间线正在后台构建。' : timelineStatus.value === 'failed' ? '最近更新时间线暂时构建失败。' : '最近更新时间线尚未建立。')
 const resultStatus = computed(() => {
   if (loading.value) return staleResults.value ? `正在加载 · 暂显 ${loadedDate.value}` : '正在加载…'
-  if (error.value && errorScope.value === 'date') return staleResults.value ? `${loadedDate.value} 结果 · 加载失败` : '加载失败'
+  if (dateError.value) return staleResults.value ? `${loadedDate.value} 结果 · 加载失败` : '加载失败'
   if (staleResults.value) return `${loadedDate.value} 暂存结果`
   if (!ready.value) return timelineStatus.value === 'failed' ? '时间线构建失败' : timelineStatus.value === 'waiting' ? '等待时间线' : '时间线准备中'
   return `${hasMore.value ? '已加载' : '更新'} ${items.value.length} 项`
@@ -180,10 +188,13 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
 
 <template>
   <div class="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader class="hidden sm:block" @logout="emit('logout')" />
+    <!-- 公共顶栏有多个根节点，手机端由页面自己的标题接管。 -->
+    <div class="hidden sm:block">
+      <WorkbenchHeader @logout="emit('logout')" />
+    </div>
     <main class="updates-content catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <header class="updates-heading">
-        <h1>每日更新</h1><span>最近 7 天</span>
+        <h1>更新日历</h1><span>最近 7 天</span>
       </header>
       <div ref="scrollContainer" class="updates-date-scroll">
         <div ref="dateStrip" role="group" aria-label="选择更新日期" class="catalog-segments updates-dates">
@@ -195,15 +206,18 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
         </div>
       </div>
       <div class="updates-summary">
-        <h2>{{ selectedDay.label }}</h2>
-        <p role="status">{{ selectedDate }} · {{ selectedDay.weekday }}<span> · {{ resultStatus }}</span></p>
+        <h2><span class="updates-desktop-date">{{ selectedDay.label }}</span><span class="updates-mobile-date">{{ compactDateHeading }}</span></h2>
+        <p role="status"><span class="updates-desktop-date">{{ selectedDate }} · {{ selectedDay.weekday }} · </span>{{ resultStatus }}</p>
       </div>
-      <div v-if="error" role="alert" class="updates-error"><p>{{ error }}</p><button type="button" class="catalog-chip" @click="errorScope === 'more' ? loadMore() : load(true)">{{ errorScope === 'more' ? '重试加载更多' : '重新加载' }}</button></div>
+      <div v-if="dateError" class="updates-error">
+        <p role="alert">{{ dateError }}</p>
+        <button type="button" class="catalog-chip" @click="load(true)">重新加载</button>
+      </div>
       <section class="updates-results" aria-label="更新列表" :aria-busy="loading || loadingMore">
         <p v-if="hasSnapshot && !ready && items.length" role="status" class="updates-pending">{{ timelineMessage }}暂时保留 {{ loadedDate }} 已加载结果，刷新页面后可重新加载。</p>
         <div v-if="loading && hasSnapshot" class="updates-progress" aria-hidden="true"></div>
-        <div v-if="loading && !hasSnapshot" aria-label="正在加载最近更新" class="catalog-card-grid">
-          <div v-for="index in 36" :key="index" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-2.5 h-10 w-4/5 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-1 h-[18px] w-12 rounded bg-slate-100 dark:bg-slate-800"></div></div>
+        <div v-if="loading && !hasSnapshot" aria-label="正在加载最近更新" class="catalog-card-grid updates-placeholder">
+          <div v-for="index in 36" :key="index" class="animate-pulse motion-reduce:animate-none"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="updates-placeholder-title w-4/5 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-1 h-[18px] w-12 rounded bg-slate-100 dark:bg-slate-800"></div></div>
         </div>
         <div v-else-if="hasSnapshot && !ready && !items.length" class="updates-empty"><p>{{ timelineMessage }}</p><p class="mt-2 text-xs">{{ timelineStatus === 'building' ? '通常只需片刻，完成后刷新页面即可查看。' : timelineStatus === 'failed' ? '后台将在稍后自动重试。' : '请由管理员在 Emby 媒体库同步页面执行一次全量同步。' }}</p></div>
         <div v-else-if="hasSnapshot && !items.length" class="updates-empty">{{ staleResults ? loadedDate + ' 暂无更新。' : '这一天暂无更新，试试其他日期。' }}</div>
@@ -211,10 +225,21 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
           <UpdateCard v-for="item in items" :key="itemKey(item)" :item="item" />
         </div>
       </section>
-      <div v-if="items.length && hasMore" class="updates-more">
-        <button type="button" :disabled="loadingMore || loading || staleResults || (!!error && errorScope === 'date')" class="catalog-chip" @click="loadMore">{{ loadingMore ? '正在加载…' : '加载更多' }}<svg v-if="!loadingMore" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 10 5 5 5-5" /></svg></button>
-      </div>
-      <footer class="mt-12 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-400"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500 dark:text-slate-400">TMDB</a> · 海报及评分数据由 TMDB 提供。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
+      <footer class="updates-footer">
+        <div v-if="items.length && hasMore" class="updates-more">
+          <p v-if="paginationError" class="updates-more-error" role="alert">{{ paginationError }}</p>
+          <button type="button" :disabled="loadingMore || loading || staleResults || !!dateError" class="catalog-chip" @click="loadMore">
+            {{ loadingMore ? '正在加载更多…' : paginationError ? '重试加载更多' : '加载更多' }}
+            <IconLoader2 v-if="loadingMore" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            <IconChevronDown v-else-if="!paginationError" aria-hidden="true" />
+          </button>
+        </div>
+        <p v-else-if="showEnd" class="updates-end">已显示当日全部更新</p>
+        <div class="updates-attribution">
+          <a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer">TMDB</a> · 海报及评分数据由 TMDB 提供。
+          <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+        </div>
+      </footer>
     </main>
   </div>
 </template>
@@ -235,31 +260,52 @@ onBeforeUnmount(() => { mounted = false; controller?.abort(); clearInterval(dayT
 .updates-summary { margin: 16px 0 20px; padding-bottom: 16px; border-bottom: 1px solid var(--filter-outline); text-align: center; }
 .updates-summary h2 { margin: 0; color: var(--filter-text); font-size: 20px; font-weight: 600; line-height: 28px; }
 .updates-summary p { margin: 6px 0 0; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
+.updates-mobile-date { display: none; }
 .updates-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding: 12px 16px; border-radius: 16px; background: color-mix(in srgb, #b34a4a 7%, var(--filter-surface)); color: var(--filter-text); font-size: 13px; }
 .updates-error p { margin: 0; overflow-wrap: anywhere; }
 .updates-results { position: relative; }
 .updates-pending { margin: 0 0 16px; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
 .updates-grid { transition: opacity 160ms ease; }
 .updates-grid.is-updating { opacity: 0.65; }
+.updates-placeholder-title { height: 40px; margin-top: 10px; }
 .updates-progress { position: absolute; top: -8px; left: 0; right: 0; height: 2px; overflow: hidden; border-radius: 2px; background: var(--filter-track); }
 .updates-progress::after { content: ''; position: absolute; height: 100%; width: 35%; background: var(--filter-focus); animation: updates-fetching 1.1s ease-in-out infinite; }
 .updates-empty { padding: 80px 16px; text-align: center; color: var(--filter-muted); font-size: 13px; line-height: 22px; }
-.updates-more { display: flex; justify-content: center; margin-top: 32px; }
+.updates-more { display: grid; justify-items: center; gap: 8px; margin-top: 32px; }
+.updates-more-error { max-width: 100%; margin: 0; font-size: 13px; line-height: 20px; color: rgb(var(--status-danger)); text-align: center; overflow-wrap: anywhere; }
 .updates-more .catalog-chip { min-height: 44px; padding: 0 24px; background: var(--filter-tone); color: var(--filter-on-tone); }
 .updates-more button:disabled { opacity: 0.45; cursor: default; }
+.updates-end { margin: 24px 0 0; text-align: center; color: var(--filter-muted); font-size: 12px; line-height: 20px; }
+.updates-attribution { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--filter-outline); color: var(--filter-muted); font-size: 12px; line-height: 24px; }
+.updates-attribution a { color: var(--filter-text); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.updates-end + .updates-attribution { margin-top: 20px; }
 @keyframes updates-fetching { from { transform: translateX(-110%); } to { transform: translateX(390%); } }
 @media (max-width: 639px) {
-  .updates-content { padding-top: calc(var(--app-safe-top) + 1rem); }
-  .updates-heading { margin-bottom: 12px; }
-  .updates-heading h1 { font-size: 18px; line-height: 26px; }
+  .updates-content { padding-top: calc(var(--app-safe-top) + 12px); }
+  .updates-heading { display: block; margin-bottom: 12px; text-align: center; }
+  .updates-heading h1 { font-size: 19px; line-height: 28px; }
+  .updates-heading > span { display: none; }
+  .updates-date-scroll { padding-bottom: 4px; }
   .updates-dates { width: 100%; }
   .updates-dates button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 4px 2px; }
+  .updates-dates button[aria-pressed="true"] { color: var(--filter-on-tone); }
+  .updates-dates .catalog-segment-indicator { background: var(--filter-tone); }
   .updates-date-number { font-size: 12px; line-height: 18px; }
-  .updates-date-label { font-size: 10px; line-height: 16px; }
-  .updates-summary { margin: 12px 0 16px; padding-bottom: 12px; }
-  .updates-summary p { height: 40px; }
-  .updates-summary p > span { display: block; }
+  .updates-date-label { font-size: 11px; line-height: 16px; }
+  .updates-summary { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 10px 0 12px; padding: 0; border: 0; text-align: left; }
+  .updates-summary h2 { flex-shrink: 0; font-size: 14px; line-height: 22px; }
+  .updates-summary p { margin: 0; text-align: right; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .updates-desktop-date { display: none; }
+  .updates-mobile-date { display: inline; }
   .updates-error { align-items: flex-start; padding: 12px; }
+  .updates-grid, .updates-placeholder { row-gap: 18px; }
+  .updates-placeholder-title { height: 20px; margin-top: 8px; }
+  .updates-more { margin-top: 18px; }
+  .updates-more .catalog-chip { width: 100%; max-width: 224px; border: 1px solid var(--filter-outline); background: transparent; color: var(--filter-on-tone); font-weight: 600; }
+  .updates-more .catalog-chip:active:not(:disabled) { background: var(--filter-tone); }
+  .updates-end { margin-top: 18px; }
+  .updates-attribution, .updates-end + .updates-attribution { margin-top: 16px; padding-top: 12px; text-align: center; line-height: 19px; }
+  .updates-attribution p { margin-top: 2px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .updates-grid, .updates-date-content { transition: none; }

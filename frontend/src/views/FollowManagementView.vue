@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { FOLLOW_PAGE_SIZE, FOLLOW_STATUS_LABELS } from '../types/follows'
 import FollowCard from '../components/FollowCard.vue'
@@ -23,7 +23,9 @@ const counts = ref<Record<string, number>>({})
 const offset = ref(0), hasMore = ref(false), loading = ref(false), busy = ref(false)
 const error = ref('')
 const toast = useToast()
+const description = '按影视合并用户申请，搜索资源并跟进处理。'
 const settingsOpen = ref(false), baseUrl = ref(''), notificationsConfigured = ref(false)
+const settingsPanel = ref<HTMLElement>()
 const autoEnabled = ref(false)
 const telegramEnabled = ref(false), botId = ref('')
 const editing = ref<AdminFollow>(), editStatus = ref('pending'), editNote = ref('')
@@ -60,6 +62,12 @@ function filter(nextOffset = 0) {
   return router.push({ path: '/follows/manage', query: { ...(kind.value ? { kind: kind.value } : {}), ...(status.value ? { status: status.value } : {}), ...(query.value.trim() ? { q: query.value.trim() } : {}), ...(nextOffset ? { offset: String(nextOffset) } : {}) } })
 }
 function refresh() { editing.value = undefined; error.value = ''; void load() }
+function toggleSettings(reveal = false) {
+  settingsOpen.value = !settingsOpen.value
+  if (reveal && settingsOpen.value) void nextTick(() => {
+    if (settingsOpen.value) settingsPanel.value?.scrollIntoView({ block: 'start', behavior: 'instant' })
+  })
+}
 function edit(item: AdminFollow) { editing.value = item; editStatus.value = ['processing', 'closed'].includes(item.status) ? item.status : 'pending'; editNote.value = item.note || ''; error.value = ''; editError.value = '' }
 async function save() {
   const item = editing.value
@@ -107,14 +115,14 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
 </script>
 
 <template>
-  <SubscriptionListLayout title="订阅管理" mobile-title="追更管理" description="按影视合并用户申请，搜索资源并跟进处理。" @logout="emit('logout')">
-    <template #actions>
-      <button type="button" class="subscription-toolbar-action text-sm text-blue-600" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" @click="settingsOpen = !settingsOpen">
-        <IconSettings :size="20" class="sm:hidden" aria-hidden="true" />
-        <span class="sr-only sm:not-sr-only"><span class="sm:hidden">追更通知与自动搜资源设置</span><span class="hidden sm:inline">通知设置</span></span>
+  <SubscriptionListLayout title="订阅管理" mobile-title="追更管理" :description="description" hide-mobile-info @logout="emit('logout')">
+    <template #mobile-actions>
+      <button type="button" class="subscription-toolbar-action" aria-label="追更通知与自动搜资源设置" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" @click="toggleSettings(true)">
+        <IconSettings :size="20" aria-hidden="true" />
       </button>
-      <button type="button" class="subscription-toolbar-action sm:hidden" :disabled="loading || busy" aria-label="刷新订阅申请" @click="refresh"><IconRefresh :size="20" aria-hidden="true" /></button>
+      <button type="button" class="subscription-toolbar-action" :disabled="loading || busy" aria-label="刷新订阅申请" @click="refresh"><IconRefresh :size="20" aria-hidden="true" /></button>
     </template>
+    <template #actions><button type="button" class="text-sm text-blue-600" :aria-expanded="settingsOpen" aria-controls="follow-notification-settings" @click="toggleSettings()">通知设置</button></template>
     <FollowDialog v-if="editing" title="处理追更申请" :busy="busy" @close="editing = undefined">
       <form class="space-y-4" @submit.prevent="save">
         <p class="break-words text-sm font-semibold text-slate-900 dark:text-slate-100">{{ editing.title }}</p>
@@ -129,7 +137,8 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
     </FollowDialog>
     <div class="subscription-list space-y-5">
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}</p>
-      <section v-if="settingsOpen" id="follow-notification-settings" class="space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+      <section id="follow-notification-settings" ref="settingsPanel" :hidden="!settingsOpen" class="subscription-settings space-y-4 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-5">
+        <p class="text-sm leading-6 text-slate-600 dark:text-slate-300 sm:hidden">{{ description }}</p>
         <p class="text-sm" :class="notificationsConfigured ? 'text-emerald-700' : 'text-amber-700'">{{ notificationsConfigured ? '追更通知 Bot 可用' : telegramEnabled ? '追更通知 Bot 未就绪' : '追更通知未启用' }}<RouterLink to="/telegram/bot" class="ml-3 text-blue-600">管理 Bot 功能</RouterLink></p>
         <p class="text-xs leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-500">使用 Bot 配置中的独立通知聊天 ID。同一影视在仍有人追更时仅发送一次申请通知；发送失败会自动重试。</p>
         <form class="space-y-5" @submit.prevent="saveSettings">
@@ -140,8 +149,10 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
         </form>
       </section>
       <div class="subscription-filters subscription-filters-admin flex flex-wrap gap-4 sm:gap-6">
-        <SegmentedControl v-model="status" label="处理状态筛选" class="subscription-status" appearance="mobile-line" :options="statusFilters" :disabled="busy" @change="filter()" />
-        <SegmentedControl v-model="kind" label="影视类型筛选" class="subscription-kind" appearance="mobile-pill" :options="kindOptions" :disabled="busy" @change="filter()" />
+        <SegmentedControl v-model="status" label="处理状态筛选" class="subscription-status" appearance="mobile-line" :options="statusFilters" :disabled="busy" fade-end @change="filter()" />
+        <div class="subscription-kind glass-floating-pill">
+          <SegmentedControl v-model="kind" label="影视类型筛选" appearance="pwa-pill" :options="kindOptions" :disabled="busy" @change="filter()" />
+        </div>
         <form class="subscription-search flex w-full gap-3" @submit.prevent="filter()">
           <div class="subscription-search-field flex min-w-0 flex-1">
             <input v-model="query" aria-label="搜索追更申请" maxlength="100" placeholder="片名或 TMDB ID" class="min-w-0 flex-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2.5 text-sm" />

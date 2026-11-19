@@ -35,7 +35,7 @@ const mobileCenteredTitle = computed(() => (mobilePage.value ? props.mobileCente
 </script>
 
 <template>
-  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-section-heading': mobileSectionHeading, 'has-follow-heading': isFollowSection, 'without-mobile-header': isFollowSection && !isPortalAdmin }">
+  <div class="management-layout flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950" :class="{ 'has-section-heading': mobileSectionHeading, 'has-follow-heading': isFollowSection }">
     <ManagementSidebar v-if="showSidebar && !mobileTool && !desktop" ref="sidebar" mobile-only :desktop="desktop" />
     <WorkbenchHeader :sidebar-layout="desktopSidebar" :tonal-surface="showSidebar" :managed-sidebar="showSidebar" :sidebar-open="sidebar?.opened" :sidebar-controls="sidebar?.drawerID" :mobile-back="mobileBack" :mobile-page="mobilePage" :mobile-section-heading="mobileSectionHeading" :mobile-centered-title="mobileCenteredTitle" @toggle-sidebar="sidebar?.toggleDrawer($event)" @logout="$emit('logout')">
       <template v-if="$slots['mobile-actions']" #mobile-actions><slot name="mobile-actions" /></template>
@@ -47,7 +47,7 @@ const mobileCenteredTitle = computed(() => (mobilePage.value ? props.mobileCente
           <PageBreadcrumb v-if="parent" :parent="parent" />
         </div>
         <header class="management-heading mb-4 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1">
-          <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100" :class="{ 'sr-only sm:not-sr-only': mobilePage || mobileCenteredTitle }">
+          <h1 class="min-w-0 text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100" :class="{ 'sr-only sm:not-sr-only': mobilePage || mobileCenteredTitle || isFollowSection }">
             <template v-if="mobileTitle">
               <span class="sm:hidden">{{ mobileTitle }}</span><span class="hidden sm:inline">{{ title }}</span>
             </template>
@@ -68,16 +68,17 @@ const mobileCenteredTitle = computed(() => (mobilePage.value ? props.mobileCente
 .management-breadcrumb-row { display: flex; min-width: 0; align-items: center; gap: 12px; margin-bottom: 4px; }
 .management-navigation-trigger { display: inline-flex; min-height: 44px; flex-shrink: 0; align-items: center; gap: 7px; padding: 0 10px; margin-left: -10px; border-radius: 10px; font-size: 12px; color: rgb(var(--color-slate-600)); cursor: pointer; }.management-navigation-trigger svg { width: 18px; height: 18px; }.management-navigation-trigger:focus-visible { outline: 2px solid #78a2db; outline-offset: -2px; }.dark .management-navigation-trigger { color: rgb(var(--color-slate-300)); }
 @media (max-width: 639px) {
+  .has-follow-heading {
+    --workbench-toolbar-height: max(52px, 3.25rem);
+    --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top));
+  }
   .has-follow-heading .management-shell { --management-content-top: calc(var(--workbench-header-height) + 4px); }
   :is(.has-follow-heading, .has-section-heading) .management-content { padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
-  .has-follow-heading .management-heading { align-items: center; column-gap: 4px; margin-bottom: 12px; }
-  .has-follow-heading .management-heading h1 { font-size: 21px; }
-  .has-follow-heading .management-heading-actions { gap: 0; }
-  .has-follow-heading .management-description { display: none; }
+  .has-follow-heading .management-heading { margin-bottom: 0; }
+  .has-follow-heading :is(.management-heading-actions, .management-description) { display: none; }
   .has-section-heading .management-shell { --management-content-top: calc(var(--workbench-header-height) + 1px); }
   .has-section-heading .management-heading { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
   .has-section-heading .management-heading :is(.management-heading-actions, .management-description) { display: none; }
-  .without-mobile-header .management-shell { --management-content-top: calc(var(--app-safe-top) + 12px); }
   .has-follow-heading .management-breadcrumb-row.navigation-only,
   .has-follow-heading .management-navigation-trigger { display: none; }
 }

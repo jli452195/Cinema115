@@ -55,6 +55,8 @@ const mobileSection = computed(() => compact.value && !mobilePageNavigation.valu
 const mobileBack = computed(() => compact.value && !mobileDetail.value ? props.mobileBack : undefined)
 const mobileWorkspace = computed(() => !!mobileSection.value || !!mobileBack.value)
 const mobileHome = computed(() => mobileSection.value === 'home')
+const mobileFollow = computed(() => mobileSection.value === 'follows')
+const mobileFlatHeader = computed(() => mobileHome.value || mobileFollow.value)
 const mobileSectionHeading = computed(() => props.mobileSectionHeading && !!mobileBack.value)
 const mobilePageFade = computed(() => mobileDetail.value && !props.detailNavigation && !!props.mobileCenteredTitle)
 const centeredPageControls = computed(() => mobileSectionHeading.value || mobilePageFade.value)
@@ -63,7 +65,7 @@ const mobileCenteredTitle = computed(() => mobileBack.value || mobilePageFade.va
 const showAccount = computed(() => !compact.value || mobileHome.value)
 const showMediaSearch = computed(() => !compact.value || mobileHome.value ||
   route.name === 'movie-detail' || route.name === 'tv-detail' || route.name === 'collection' || route.name === 'person')
-const showMobileActions = computed(() => (mobileSectionHeading.value || compact.value && !!props.mobilePage) && !!slots['mobile-actions'])
+const showMobileActions = computed(() => (mobileSectionHeading.value || mobileFollow.value || compact.value && !!props.mobilePage) && !!slots['mobile-actions'])
 const showHeaderActions = computed(() => showAccount.value || showMediaSearch.value || showMobileActions.value)
 const accountLabel = computed(() => {
   const label = compact.value ? '账户菜单' : '更多功能'
@@ -92,7 +94,7 @@ const mobileTabs = computed(() => {
     { key: 'movie', label: '电影', to: rememberedDashboardPaths.movie, selected: route.name === 'movie' },
     { key: 'tv', label: '剧集', to: rememberedDashboardPaths.tv, selected: route.name === 'tv' || route.name === 'home' },
   ]
-  if (mobileSection.value === 'follows' && isPortalAdmin.value) return mobileFollowTabs.map(tab => ({
+  if (mobileFollow.value && isPortalAdmin.value) return mobileFollowTabs.map(tab => ({
     ...tab, key: tab.name, selected: route.name === tab.name,
   }))
   return []
@@ -104,7 +106,7 @@ const { indicatorStyle: mobileIndicatorStyle } = useSlidingIndicator(mobileTabsR
 function smoothstep(value: number) { return value * value * (3 - 2 * value) }
 const mobileHeaderScrolled = ref(false)
 function updateHeaderScroll() {
-  if (mobileHome.value) {
+  if (mobileFlatHeader.value) {
     mobileHeaderScrolled.value = window.scrollY > 5
     return
   }
@@ -130,7 +132,7 @@ function updateHeaderScroll() {
   header.value?.style.setProperty('--header-active-opacity', (0.45 + progress * 0.55).toFixed(4))
 }
 function onScroll() {
-  if (mobileHome.value) {
+  if (mobileFlatHeader.value) {
     updateHeaderScroll()
     return
   }
@@ -389,7 +391,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
 </script>
 
 <template>
-  <header v-if="mobileSection !== 'follows' || isPortalAdmin" ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-follow-tabs': mobileSection === 'follows' && mobileTabs.length > 0, 'mobile-home-scrolled': mobileHome && mobileHeaderScrolled, 'mobile-fade-header': mobileCenteredTitle }" :style="tonalSurface || mobileHome || mobileCenteredTitle ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
+  <header ref="header" class="workbench-header fixed top-0 z-40 w-full shrink-0 border-b transition-[border-color] duration-200" :class="{ 'over-backdrop': highlightOverBackdrop, 'backdrop-at-top': highlightOverBackdrop && scrollY <= 0, 'tonal-surface': tonalSurface, 'immersive-surface': !isStandalone && tonalSurface && overBackdrop, 'with-management-sidebar': desktopSidebar, 'mobile-detail': mobileDetail, 'mobile-media-detail': mobileDetail && detailNavigation, 'mobile-workspace': mobileWorkspace, 'mobile-home': mobileHome, 'mobile-follow': mobileFollow, 'mobile-flat-header': mobileFlatHeader, 'mobile-flat-header-scrolled': mobileFlatHeader && mobileHeaderScrolled, 'mobile-fade-header': mobileCenteredTitle }" :style="tonalSurface || mobileFlatHeader || mobileCenteredTitle ? undefined : { borderColor: headerStyle.borderColor }" @focusout="onFocusOut">
     <span v-if="tonalSurface" class="header-surface pointer-events-none absolute inset-0" aria-hidden="true"></span>
     <span v-else class="header-background pointer-events-none absolute inset-0" :style="headerStyle" aria-hidden="true"></span>
     <div class="header-inner relative flex h-[var(--workbench-toolbar-height)] items-center gap-2 px-4 sm:gap-5 sm:px-6" :class="{ 'header-inner-centered-page': centeredPageControls }">
@@ -407,6 +409,7 @@ onBeforeUnmount(() => { document.removeEventListener('pointerdown', onPointerDow
         <CinemaLogo v-if="mobileHome" mobile-wordmark />
         <span v-else-if="mobileSection === 'updates'" class="workspace-brand-label">更新日历</span>
       </div>
+      <span v-if="mobileFollow && !isPortalAdmin" class="mobile-follow-title" aria-hidden="true">{{ mobileFollowTabs[0].label }}</span>
       <nav v-if="mobileTabs.length" ref="mobileTabsRef" :aria-label="mobileHome ? '电影与剧集' : '追更导航'" class="workspace-tabs">
         <span class="workspace-tab-indicator" :style="mobileIndicatorStyle" aria-hidden="true"></span>
         <RouterLink v-for="tab in mobileTabs" :key="tab.key" :to="tab.to" custom v-slot="{ href, navigate }">
@@ -682,17 +685,17 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
     display: block; height: var(--app-safe-top); background: rgb(var(--app-chrome-color)); opacity: 1; box-shadow: none;
   }
 }
-/* 首页保留实色底面，滚动后在下沿显示轻阴影。 */
-.workbench-header.mobile-home { pointer-events: auto; background: rgb(var(--app-chrome-color)); }
-.workbench-header.mobile-home::after {
+/* 首页和追更共用实色底面，滚动后在下沿显示轻阴影。 */
+.workbench-header.mobile-flat-header { pointer-events: auto; background: rgb(var(--app-chrome-color)); }
+.workbench-header.mobile-flat-header::after {
   content: ''; display: block; position: absolute; inset: 100% 0 auto; height: 8px;
   background: linear-gradient(to bottom, rgb(0 0 0 / .15), transparent);
   opacity: 0; pointer-events: none;
 }
-.dark .workbench-header.mobile-home::after { background: linear-gradient(to bottom, rgb(0 0 0 / .36), transparent); }
-.workbench-header.mobile-home-scrolled::after { opacity: 1; }
+.dark .workbench-header.mobile-flat-header::after { background: linear-gradient(to bottom, rgb(0 0 0 / .36), transparent); }
+.workbench-header.mobile-flat-header-scrolled::after { opacity: 1; }
 @media (prefers-reduced-motion: no-preference) {
-  .workbench-header.mobile-home::after { transition: opacity 150ms ease-out; }
+  .workbench-header.mobile-flat-header::after { transition: opacity 150ms ease-out; }
 }
 /* 管理页用独立背景渐隐，返回按钮、标题和操作留在交互层。 */
 .workbench-header.mobile-fade-header { pointer-events: auto; }
@@ -747,8 +750,14 @@ a:focus-visible, button:focus-visible { outline: 2px solid rgb(var(--color-accen
   .mobile-home .header-inner { gap: 4px; padding-inline-start: max(12px, var(--app-safe-left)); }
   .mobile-home .workspace-tabs > a { min-width: 44px; padding-inline: 5px; font-size: 14px; }
 }
-/* 正文滑过固定的追更标签时，不与标签文字叠在一起。 */
-.workbench-header.mobile-follow-tabs { background: rgb(var(--app-chrome-color)); }
+.mobile-follow .header-inner { gap: 6px; padding-inline: max(16px, var(--app-safe-left)) max(6px, var(--app-safe-right)); }
+.mobile-follow .workspace-tabs { overflow-x: auto; scrollbar-width: none; }
+.mobile-follow .workspace-tabs > a { padding-inline: clamp(10px, 3vw, 14px); font-size: .875rem; }
+.mobile-follow-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgb(var(--content-primary)); font-size: 1.125rem; font-weight: 700; }
+@media (max-width: 359px) {
+  .mobile-follow .header-inner { gap: 4px; padding-inline: max(12px, var(--app-safe-left)) max(4px, var(--app-safe-right)); }
+  .mobile-follow .workspace-tabs { gap: 2px; }
+}
 /* 目录和子页共用按钮位置；标题两侧按较宽的操作组对称留白。 */
 .workbench-header .header-inner-centered-page {
   --centered-header-actions-width: var(--mobile-workspace-control-size);

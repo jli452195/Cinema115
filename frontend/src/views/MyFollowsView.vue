@@ -68,16 +68,18 @@ onBeforeUnmount(() => { controller?.abort(); lifecycle.abort() })
 
 <template>
   <SubscriptionListLayout title="我的追更" description="查看你申请的电影和剧集。剧集默认追更所有正片季，不含特别篇。" @logout="emit('logout')">
-    <template #actions>
-      <button type="button" class="subscription-toolbar-action text-sm text-blue-600 disabled:opacity-50" :disabled="loading || !!busy" @click="load">
-        <IconRefresh :size="20" class="sm:hidden" aria-hidden="true" />
-        <span class="sr-only sm:not-sr-only">刷新<span class="sm:hidden">我的追更</span></span>
+    <template #mobile-actions>
+      <button type="button" class="subscription-toolbar-action" :disabled="loading || !!busy" aria-label="刷新我的追更" @click="load">
+        <IconRefresh :size="20" aria-hidden="true" />
       </button>
     </template>
+    <template #actions><button type="button" class="text-sm text-blue-600 disabled:opacity-50" :disabled="loading || !!busy" @click="load">刷新</button></template>
     <div class="subscription-list space-y-6">
       <div class="subscription-filters subscription-filters-personal flex flex-wrap gap-4 sm:gap-6">
         <SegmentedControl :model-value="status" :options="statusOptions" label="追更状态" appearance="mobile-line" :disabled="!!busy" @update:model-value="value => navigate(kind, 0, value)" />
-        <SegmentedControl :model-value="kind" :options="kindOptions" label="追更类型" class="subscription-kind" appearance="mobile-pill" :disabled="!!busy" @update:model-value="value => navigate(value)" />
+        <div class="subscription-kind glass-floating-pill">
+          <SegmentedControl :model-value="kind" :options="kindOptions" label="追更类型" appearance="pwa-pill" :disabled="!!busy" @update:model-value="value => navigate(value)" />
+        </div>
       </div>
       <p v-if="error" role="alert" class="rounded-xl bg-red-50 p-4 text-sm text-red-700">{{ error }}<button class="ml-3 underline" @click="load">重试</button></p>
       <p v-if="notice" role="status" class="text-sm text-emerald-700">{{ notice }}</p>

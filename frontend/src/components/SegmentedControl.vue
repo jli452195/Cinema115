@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 
 interface Option { value: T; label: string; count?: number | string; disabled?: boolean; title?: string }
-const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' | 'mobile-line' | 'mobile-pill' | 'pwa-pill' | 'filter-row'; fadeEnd?: boolean }>()
+const props = defineProps<{ modelValue: T; options: readonly Option[]; label: string; disabled?: boolean; density?: 'default' | 'compact'; appearance?: 'default' | 'neutral' | 'underline' | 'subtle' | 'mobile-line' | 'pwa-pill' | 'filter-row'; fadeEnd?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T]; change: [value: T] }>()
 const strip = ref<HTMLElement>(), countID = useId()
 const isFilterRow = computed(() => props.appearance === 'filter-row')
@@ -286,13 +286,6 @@ function moveFocus(event: KeyboardEvent) {
   .segmented-control-mobile-line .segmented-control-indicator::after {
     position: absolute; inset: auto 5px 4px; height: 2px; border-radius: 2px; background: rgb(var(--selection-content)); content: '';
   }
-  .segmented-control-mobile-pill, .dark .segmented-control-mobile-pill { gap: 0; padding: 0 3px; border-radius: 999px; background: transparent; }
-  .segmented-control-mobile-pill::before { position: absolute; inset: 7px 0; border-radius: inherit; background: rgb(var(--content-primary) / .075); content: ''; }
-  .segmented-control-mobile-pill .segmented-control-option { min-width: 40px; padding: 0 7px; border-radius: 999px; font-size: 12px; }
-  .segmented-control-mobile-pill .segmented-control-option[aria-pressed=true] { font-weight: 650; }
-  .segmented-control-mobile-pill .segmented-control-indicator, .dark .segmented-control-mobile-pill .segmented-control-indicator {
-    border-block: 9px solid transparent; border-radius: 999px; background: rgb(var(--selection-surface)); background-clip: padding-box; box-shadow: none;
-  }
 }
 /* 整条分类底槽承载外阴影，不描边；选中项只用底色区分。 */
 @media (max-width: 639px), (display-mode: standalone) {
@@ -324,7 +317,6 @@ function moveFocus(event: KeyboardEvent) {
 }
 @media (max-width: 359px) {
   .segmented-control-mobile-line .segmented-control-option { padding-inline: 3px; }
-  .segmented-control-mobile-pill .segmented-control-option { min-width: 37px; padding-inline: 5px; }
 }
 @media (prefers-reduced-motion: reduce) { .segmented-control-option { transition: none; } }
 </style>

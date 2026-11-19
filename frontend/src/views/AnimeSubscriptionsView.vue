@@ -48,7 +48,7 @@ function submitSearch() {
   if (value === keyword.value && page.value === 1) { void load(true); return }
   void router.push({ path: '/anime/subscriptions', query: query({ q: value || undefined, page: undefined }) })
 }
-function openDetail(id: string) { void router.push({ path: `/anime/subscriptions/${encodeURIComponent(id)}`, query: query() }) }
+function openDetail(id: string) { void router.push({ path: `/anime/subscriptions/${encodeURIComponent(id)}`, query: { returnTo: route.fullPath } }) }
 async function load(force = false, silent = false) {
   controller?.abort(); const active = new AbortController(); controller = active
   const key = dataKey.value, interactionBefore = interaction
