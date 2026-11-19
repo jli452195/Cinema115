@@ -1,0 +1,58 @@
+/* 视觉底色固定为 34px，透明按钮保留更大的触摸命中区域。 */
+.filter-chip {
+  --filter-chip-selected-surface: rgb(var(--action-primary) / .12);
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: rgb(var(--content-primary) / .82);
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: var(--filter-chip-cursor, pointer);
+  transition: color 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.filter-chip::before {
+  position: absolute;
+  z-index: -1;
+  inset: calc((100% - 34px) / 2) 0;
+  border: 1px solid transparent;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+  content: '';
+  transition: background-color 160ms ease;
+}
+.filter-chip:is([aria-pressed=true], .is-selected) { color: rgb(var(--selection-content)); font-weight: 600; }
+.filter-chip:is([aria-pressed=true], .is-selected)::before { background: var(--filter-chip-selected-surface); }
+.dark .filter-chip { --filter-chip-selected-surface: rgb(var(--selection-content) / .2); }
+.filter-chip:disabled { opacity: .5; }
+.filter-chip:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+.filter-chip:not(:disabled):active { opacity: .75; }
+@media (hover: hover) {
+  .filter-chip:not(:disabled):hover:not([aria-pressed=true]):not(.is-selected) { color: rgb(var(--content-primary)); }
+  .filter-chip:not(:disabled):hover:not([aria-pressed=true]):not(.is-selected)::before { background: rgb(var(--content-primary) / .05); }
+}
+@media (max-width: 639px), (pointer: coarse) {
+  .filter-chip { min-width: 44px; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .filter-chip, .filter-chip::before { transition: none; }
+}
+@media (forced-colors: active) {
+  .filter-chip:is([aria-pressed=true], .is-selected) { color: Highlight; }
+  .filter-chip:is([aria-pressed=true], .is-selected)::before { border-color: Highlight; }
+  .filter-chip:focus-visible { outline-color: Highlight; }
+}

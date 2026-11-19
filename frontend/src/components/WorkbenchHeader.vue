@@ -177,6 +177,7 @@ onBeforeUnmount(() => {
   stopHeaderUnread()
 })
 const header = ref<HTMLElement>()
+defineExpose({ element: header })
 // 未传正文标题时保持常显；传入 null 表示正文尚未渲染，继续隐藏。
 const mobileTitleElement = computed(() => mobilePageNavigation.value?.titleElement)
 const mobileTitlePassedBoundary = useScrollBoundary(mobileTitleElement, header, mobileDetail)

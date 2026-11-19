@@ -145,6 +145,39 @@ dialog[data-dialog-covered]:is(.floating-surface, .media-search-dialog)::backdro
   .glass-pill-surface.glass-pill-surface-soft::before { border: 1px solid ButtonText; background: Canvas; box-shadow: none; }
 }
 
+/* 移动端独立悬浮胶囊共用材质；父级吸顶行保持透明，阴影只画在外壳。 */
+@media (max-width: 639px) {
+  .glass-floating-pill {
+    --floating-pill-fill: rgb(var(--surface-card) / .78);
+    --floating-pill-shadow: inset 0 .55px 0 rgb(255 255 255 / .92), 0 2px 8px -2px rgb(15 23 42 / .08);
+    --floating-pill-stuck-shadow: inset 0 .55px 0 rgb(255 255 255 / .95), 0 6px 18px -4px rgb(15 23 42 / .16);
+    border: 1px solid var(--glass-edge);
+    background: var(--floating-pill-fill);
+    box-shadow: var(--floating-pill-shadow);
+    -webkit-backdrop-filter: blur(14px) saturate(2);
+    backdrop-filter: blur(14px) saturate(2);
+    transition: box-shadow 220ms ease, background-color 220ms ease;
+  }
+  .dark .glass-floating-pill {
+    --floating-pill-fill: rgb(var(--surface-card) / .72);
+    --floating-pill-shadow: inset 0 .55px 0 rgb(255 255 255 / .12), 0 2px 10px -2px rgb(0 0 0 / .32);
+    --floating-pill-stuck-shadow: inset 0 .55px 0 rgb(255 255 255 / .16), 0 8px 22px -4px rgb(0 0 0 / .58);
+  }
+  .glass-floating-pill[data-stuck='true'] { box-shadow: var(--floating-pill-stuck-shadow); }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); }
+  }
+}
+@media (max-width: 639px) and (prefers-reduced-motion: reduce) {
+  .glass-floating-pill { transition: none; }
+}
+@media (max-width: 639px) and (prefers-reduced-transparency: reduce), (max-width: 639px) and (prefers-contrast: more) {
+  .glass-floating-pill, .dark .glass-floating-pill { --floating-pill-fill: rgb(var(--surface-card)); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (max-width: 639px) and (forced-colors: active) {
+  .glass-floating-pill, .glass-floating-pill[data-stuck='true'] { border-color: ButtonText; background: Canvas; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
 @media (prefers-contrast: more) {
   :root { --glass-edge: #64748b; --glass-inset-border: #64748b; --glass-muted: #334155; }
   .dark { --glass-edge: #94a3b8; --glass-inset-border: #94a3b8; --glass-muted: #e2e8f0; }

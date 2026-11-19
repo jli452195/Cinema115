@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { IconFilter2 } from '@tabler/icons-vue'
 import { catalogAPI } from '../composables/usePortalAuth'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuard } from 'vue-router'
@@ -11,74 +10,81 @@ import MediaCard from '../components/MediaCard.vue'
 import PaginationControl from '../components/PaginationControl.vue'
 import type { MediaCardItem } from '../types/media'
 import { useEmbyLibrary } from '../composables/useEmbyLibrary'
-import { cacheGenres, cachedGenres, rememberDashboardPath, type DashboardGenre, type DashboardKind } from '../utils/dashboardPreferences'
+import { useScrollBoundary } from '../composables/useScrollBoundary'
+import { cacheGenres, cachedGenres, rememberDashboardPath, rememberedDashboardPaths, type DashboardKind } from '../utils/dashboardPreferences'
+import { dashboardCategoryOptions, dashboardRegions as regions, dashboardSorts as sorts, defaultDashboardRefinements, isDashboardGenreCompatible, readDashboardFilters, type DashboardFilters } from '../utils/dashboardFilters'
 import { cacheDashboard, cachedDashboard, dashboardBrowseScope, dashboardCacheLifetime, dashboardLayoutReady, isDashboardPath, rememberDashboardScroll } from '../utils/dashboardBrowseState'
 
 const props = defineProps<{ token: string; kind: 'tv' | 'movie' }>()
 const emit = defineEmits<{ logout: [] }>()
 const kind = computed(() => props.kind)
 const route = useRoute(), router = useRouter()
-const categories = computed(() => kind.value === 'tv'
-  ? [{ id: '', name: '全部' }, { id: 'series', name: '电视剧' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }, { id: 'variety', name: '综艺' }]
-  : [{ id: '', name: '全部' }, { id: 'film', name: '电影' }, { id: 'animation', name: '动漫' }, { id: 'documentary', name: '纪录' }])
-type FilterKey = 'category' | 'genre' | 'region' | 'year' | 'sort' | 'page'
-function setFilters(values: Partial<Record<FilterKey, string>>) {
-  const query = { ...route.query }
+const workbenchHeader = ref<InstanceType<typeof WorkbenchHeader>>()
+const categoryAnchor = ref<HTMLElement>()
+const categoriesStuck = useScrollBoundary(categoryAnchor, () => workbenchHeader.value?.element, true)
+type FilterKey = keyof DashboardFilters | 'page'
+function setFilters(values: Partial<Record<FilterKey, string>>, targetKind = kind.value) {
+  const query = targetKind === kind.value ? { ...route.query } : {}
   for (const [key, value] of Object.entries(values) as [FilterKey, string][]) {
-    if (!value || (key === 'page' && value === '1') || (key === 'sort' && value === 'popular')) delete query[key]
+    if (!value || (key === 'page' && value === '1') || (key === 'sort' && value === defaultDashboardRefinements.sort)) delete query[key]
     else query[key] = value
   }
   if (Object.keys(values).some(key => key !== 'page')) delete query.page
-  if ('category' in values) delete query.genre
-  const target = router.resolve({ path: route.path, query })
+  const target = router.resolve({ path: `/${targetKind}`, query })
   if (target.fullPath === route.fullPath) return
   rememberDashboardScroll(target.fullPath, { left: 0, top: 0 })
   void router.push(target.fullPath)
 }
-function setFilter(key: FilterKey, value: string) { setFilters({ [key]: value }) }
-function filter(key: FilterKey, fallback: string, valid: (value: string) => boolean) {
+const activeFilters = computed(() => readDashboardFilters(kind.value, route.query))
+function filterModel(key: keyof DashboardFilters) {
   return computed({
-    get: () => { const value = route.query[key]; return typeof value === 'string' && valid(value) ? value : fallback },
-    set: (value: string) => setFilter(key, value),
+    get: () => activeFilters.value[key],
+    // 保留首页分类快切的行为；Sheet 会提交整组已校验的筛选条件。
+    set: (value: string) => setFilters(key === 'category' ? { category: value, genre: '' } : { [key]: value }),
   })
 }
-const category = computed({ get: () => categories.value.some(item => item.id === route.query.category) ? String(route.query.category) : '', set: (value: string) => setFilter('category', value) })
-const genreFilter = filter('genre', '', value => /^[1-9]\d{0,4}$/.test(value))
-// 直接打开网址也排除与类别冲突或重复的类型。
-function hiddenGenre(id: number) {
-  if (category.value === 'film') return [16, 99].includes(id)
-  return category.value === 'series' ? [16, 99, 10764, 10767, 10763].includes(id) : category.value === 'animation' ? id === 16 : category.value === 'documentary' ? id === 99 : category.value === 'variety' ? [10764, 10767].includes(id) : false
-}
-const genre = computed({ get: () => hiddenGenre(Number(genreFilter.value)) ? '' : genreFilter.value, set: (value: string) => { genreFilter.value = value } })
-const region = filter('region', '', value => ['CN', 'HK', 'TW', 'JP', 'KR', 'TH', 'western'].includes(value))
-const year = filter('year', '', value => /^\d{4}$/.test(value) && Number(value) >= 1900 && Number(value) <= new Date().getFullYear())
-const sort = filter('sort', 'popular', value => ['popular', 'latest', 'rating'].includes(value))
-const pageFilter = filter('page', '1', value => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 500)
-const page = computed({ get: () => Number(pageFilter.value), set: (value: number) => { pageFilter.value = String(value) } })
-const categoryOptions = computed(() => categories.value.map(({ id, name }) => ({ value: id, label: name })))
+const category = filterModel('category')
+const genre = filterModel('genre')
+const region = filterModel('region')
+const year = filterModel('year')
+const sort = filterModel('sort')
+const page = computed({
+  get: () => {
+    const value = route.query.page
+    return typeof value === 'string' && /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= 500 ? Number(value) : 1
+  },
+  set: (value: number) => setFilters({ page: String(value) }),
+})
+const categoryOptions = computed(() => dashboardCategoryOptions[kind.value])
 const totalPages = ref(0)
 const pageCount = computed(() => Math.min(500, totalPages.value))
 function changePage(value: number) {
   if (!loading.value && !error.value && value >= 1 && value <= pageCount.value) page.value = value
 }
 const total = ref(0)
-const genres = ref<DashboardGenre[]>(cachedGenres(kind.value).genres)
-const visibleGenres = computed(() => genres.value.filter(item => !hiddenGenre(item.id)))
+const genresByKind = ref({ movie: cachedGenres('movie').genres, tv: cachedGenres('tv').genres })
+const genreErrors = ref({ movie: false, tv: false })
+const genres = computed(() => genresByKind.value[kind.value])
+const visibleGenres = computed(() => genres.value.filter(item => isDashboardGenreCompatible(category.value, item.id)))
 const items = ref<MediaCardItem[]>([])
 const libraryMatches = useEmbyLibrary(() => props.token, items)
 const loading = ref(true)
 const error = ref('')
-const genreError = ref('')
 const hasLoaded = ref(false)
 const loadedPage = ref(1)
 const loadedSummary = ref('')
-const regions = [{ id: '', name: '全部' }, { id: 'CN', name: '大陆' }, { id: 'HK', name: '香港' }, { id: 'TW', name: '台湾' }, { id: 'JP', name: '日本' }, { id: 'KR', name: '韩国' }, { id: 'TH', name: '泰国' }, { id: 'western', name: '欧美' }]
-const sorts = [{ id: 'popular', name: '热门' }, { id: 'latest', name: '最新' }, { id: 'rating', name: 'TMDB 评分' }]
 const sortOptions = sorts.map(({ id, name }) => ({ value: id, label: name }))
 const currentYear = new Date().getFullYear()
 const years = Array.from({ length: 8 }, (_, i) => String(currentYear - i))
 const mobileFiltersOpen = ref(false)
-const recentFilterYears = years.slice(0, 3)
+const sheetFilters = computed<Record<DashboardKind, DashboardFilters>>(() => {
+  const remembered = (target: DashboardKind) => readDashboardFilters(target, router.resolve(rememberedDashboardPaths[target]).query)
+  return {
+    movie: kind.value === 'movie' ? activeFilters.value : remembered('movie'),
+    tv: kind.value === 'tv' ? activeFilters.value : remembered('tv'),
+  }
+})
+const recentFilterYears = years.slice(0, 5)
 const activeMobileFilters = computed(() => {
   const values: string[] = []
   const genreName = visibleGenres.value.find(item => String(item.id) === genre.value)?.name
@@ -95,7 +101,7 @@ let mounted = true
 let displayedKind = kind.value
 const resultSummary = computed(() => {
   const labels = [...activeMobileFilters.value]
-  if (category.value) labels.unshift(categories.value.find(item => item.id === category.value)?.name || '')
+  if (category.value) labels.unshift(categoryOptions.value.find(item => item.value === category.value)?.label || '')
   return labels.filter(Boolean).join(' · ') || '全部条件 · 热门'
 })
 async function request(path: string, signal: AbortSignal) {
@@ -115,30 +121,26 @@ async function request(path: string, signal: AbortSignal) {
   }
 }
 async function refreshGenres(targetKind: DashboardKind, force = false) {
-  if (!force && cachedGenres(targetKind).fresh) return
+  if (!force && (genreControllers[targetKind] || cachedGenres(targetKind).fresh)) return
   genreControllers[targetKind]?.abort()
   const current = new AbortController(); genreControllers[targetKind] = current
+  genreErrors.value[targetKind] = false
   try {
     const data = await request(`genres?kind=${targetKind}`, current.signal)
     if (!Array.isArray(data.genres)) throw new Error('类型数据格式不正确')
-    const normalized = cacheGenres(targetKind, data.genres)
-    if (mounted && !current.signal.aborted && kind.value === targetKind) genres.value = normalized
-  } catch (e) {
-    if (mounted && !current.signal.aborted && kind.value === targetKind && !genres.value.length) genreError.value = e instanceof Error ? e.message : '类型加载失败'
+    if (mounted && !current.signal.aborted) genresByKind.value[targetKind] = cacheGenres(targetKind, data.genres)
+  } catch {
+    if (mounted && !current.signal.aborted) genreErrors.value[targetKind] = true
+  } finally {
+    if (genreControllers[targetKind] === current) delete genreControllers[targetKind]
   }
 }
-function loadGenres(force = false) {
-  const targetKind = kind.value
-  genres.value = cachedGenres(targetKind).genres
-  genreError.value = ''
-  void refreshGenres(targetKind, force)
-}
-function applyMobileFilters(value: { genre: string; region: string; year: string; sort: string }) {
+function applyMobileFilters({ kind: targetKind, ...filters }: DashboardFilters & { kind: DashboardKind }) {
   mobileFiltersOpen.value = false
-  setFilters(value)
+  setFilters(filters, targetKind)
 }
 function clearMobileFilters() {
-  setFilters({ genre: '', region: '', year: '', sort: 'popular' })
+  setFilters(defaultDashboardRefinements)
 }
 async function loadPage() {
   if (route.path !== `/${kind.value}`) return
@@ -147,7 +149,7 @@ async function loadPage() {
   if (displayedKind !== kind.value) {
     displayedKind = kind.value
     items.value = []; total.value = 0; totalPages.value = 0; hasLoaded.value = false
-    loadGenres()
+    void refreshGenres(kind.value)
   }
   const requestedPath = route.fullPath, requestedScope = dashboardBrowseScope()
   loading.value = true; error.value = ''
@@ -193,8 +195,8 @@ onBeforeRouteUpdate(beforeDashboardNavigation)
 function pageHidden() { saveScroll() }
 onMounted(() => {
   window.addEventListener('pagehide', pageHidden)
-  loadGenres()
-  void refreshGenres(kind.value === 'movie' ? 'tv' : 'movie')
+  void refreshGenres('movie')
+  void refreshGenres('tv')
 })
 onBeforeUnmount(() => {
   window.removeEventListener('pagehide', pageHidden)
@@ -206,18 +208,25 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="catalog-home flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950">
-    <WorkbenchHeader @logout="emit('logout')" />
+    <WorkbenchHeader ref="workbenchHeader" @logout="emit('logout')" />
     <main class="catalog-dashboard catalog-filter-theme workbench-content mx-auto w-full max-w-[1600px] min-w-0 flex-1 px-4 pb-6 sm:px-8 lg:px-10 lg:pb-8">
       <h1 class="sr-only">{{ kind === 'movie' ? '电影看板' : '剧集看板' }}</h1>
+      <div ref="categoryAnchor" class="catalog-sticky-anchor" aria-hidden="true"></div>
       <section aria-label="看板筛选" class="catalog-filters">
         <div class="catalog-primary-tools">
-          <SegmentedControl v-model="category" :options="categoryOptions" label="影视类别" class="catalog-categories" density="compact" appearance="pwa-pill" />
+          <div class="catalog-category-pill glass-floating-pill" :data-stuck="categoriesStuck || undefined">
+            <SegmentedControl v-model="category" :options="categoryOptions" label="影视类别" class="catalog-categories" density="compact" appearance="pwa-pill" />
+          </div>
+          <button type="button" class="catalog-filter-trigger glass-floating-pill" :class="{ 'has-filters': activeMobileFilters.length }" :data-stuck="categoriesStuck || undefined" aria-haspopup="dialog" :aria-label="activeMobileFilters.length ? `筛选，已选 ${activeMobileFilters.length} 项` : '筛选'" :aria-expanded="mobileFiltersOpen" @click="mobileFiltersOpen = true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5h17l-6.6 7.8v5.4l-3.8 1.5v-6.9L3.5 5z" /></svg>
+            <span v-if="activeMobileFilters.length" class="catalog-filter-dot" aria-hidden="true"></span>
+          </button>
         </div>
         <div class="catalog-desktop-filters">
           <div role="group" aria-label="影视题材" class="catalog-filter-row"><span class="catalog-row-label">题材</span><div class="catalog-options">
             <button type="button" class="catalog-chip" :aria-pressed="genre === ''" @click="genre = ''">全部</button><button v-for="item in visibleGenres" :key="item.id" type="button" class="catalog-chip" :aria-pressed="genre === String(item.id)" @click="genre = String(item.id)">{{ item.name }}</button>
           </div></div>
-          <p v-if="genreError" class="catalog-genre-error">题材加载失败。<button type="button" @click="loadGenres(true)">重试</button></p>
+          <p v-if="genreErrors[kind] && !genres.length" class="catalog-genre-error">题材加载失败。<button type="button" @click="refreshGenres(kind, true)">重试</button></p>
           <div role="group" aria-label="影视地区" class="catalog-filter-row"><span class="catalog-row-label">地区</span><div class="catalog-options"><button v-for="item in regions" :key="item.id" type="button" class="catalog-chip" :aria-pressed="region === item.id" @click="region = item.id">{{ item.name }}</button></div></div>
           <div role="group" aria-label="影视年份" class="catalog-filter-row"><span class="catalog-row-label">年份</span><div class="catalog-options">
             <button type="button" class="catalog-chip" :aria-pressed="year === ''" @click="year = ''">全部</button><button v-for="value in years" :key="value" type="button" class="catalog-chip" :aria-pressed="year === value" @click="year = value">{{ value }}</button><DashboardYearMenu v-model="year" :recent-years="years" />
@@ -230,11 +239,8 @@ onBeforeUnmount(() => {
           <template v-if="activeMobileFilters.length"><span class="catalog-filter-summary" :title="activeMobileFilters.join(' · ')">{{ activeMobileFilters.join(' · ') }}</span><button type="button" class="catalog-text-button catalog-filter-reset" @click="clearMobileFilters">清除筛选</button></template>
         </div>
         <div class="catalog-sort-tools"><SegmentedControl v-model="sort" :options="sortOptions" label="结果排序" class="catalog-sort" density="compact" /><p v-if="sort === 'rating'">评分排序至少需要 100 人评价</p></div>
-        <button type="button" class="catalog-chip catalog-filter-trigger glass-pill-surface glass-pill-surface-soft" :class="{ 'has-filters': activeMobileFilters.length }" aria-haspopup="dialog" :aria-label="activeMobileFilters.length ? `筛选，已选 ${activeMobileFilters.length} 项` : '筛选'" :aria-expanded="mobileFiltersOpen" @click="mobileFiltersOpen = true">
-          <IconFilter2 :size="16" aria-hidden="true" /><span>筛选</span><span v-if="activeMobileFilters.length" class="catalog-filter-count" aria-hidden="true">{{ activeMobileFilters.length }}</span>
-        </button>
       </div>
-      <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="loadGenres(); loadPage()">重新加载</button></div>
+      <div v-if="error" role="alert" class="catalog-load-error"><div><p>{{ error }}</p><p v-if="hasLoaded" class="catalog-error-context">当前保留上次结果：{{ loadedSummary }}，第 {{ loadedPage }} 页。</p></div><button type="button" class="catalog-chip" @click="refreshGenres(kind); loadPage()">重新加载</button></div>
       <section aria-label="影视列表" :aria-busy="loading" class="catalog-results">
         <div v-if="loading && hasLoaded" class="catalog-progress" aria-hidden="true"></div>
         <div v-if="loading && !hasLoaded" aria-label="正在加载影视" class="catalog-card-grid"><div v-for="i in 20" :key="i" class="animate-pulse"><div class="aspect-[2/3] rounded-xl bg-slate-200 dark:bg-slate-700"></div><div class="mt-2.5 h-10 w-3/4 rounded bg-slate-200 dark:bg-slate-700"></div><div class="mt-0.5 h-4 w-10 rounded bg-slate-100 dark:bg-slate-800"></div></div></div>
@@ -246,13 +252,18 @@ onBeforeUnmount(() => {
       <PaginationControl v-if="hasLoaded && pageCount > 1" class="mt-9" :page="loading || error ? loadedPage : page" :pages="pageCount" :disabled="loading || !!error" :label="kind === 'movie' ? '电影分页' : '剧集分页'" @change="changePage" />
       <footer class="mt-10 border-t border-slate-200 dark:border-slate-800 pt-5 text-xs leading-6 text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener noreferrer" class="font-semibold text-slate-500 dark:text-slate-400 dark:text-slate-500 dark:text-slate-400 dark:text-slate-500">TMDB</a> · 评分为 TMDB 用户评分，地区按出品地筛选。点击海报查看影视详情。<p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p></footer>
     </main>
-    <DashboardFilterDialog v-if="mobileFiltersOpen" :key="kind" :kind="kind" :recent-years="recentFilterYears" :genre-error="!!genreError" :genres="visibleGenres" :regions="regions" :sorts="sorts" :genre="genre" :region="region" :year="year" :sort="sort" @close="mobileFiltersOpen = false" @apply="applyMobileFilters" @retry-genres="loadGenres(true)" />
+    <DashboardFilterDialog v-if="mobileFiltersOpen"
+      :kind="kind" :initial-filters="sheetFilters" :recent-years="recentFilterYears"
+      :genre-errors="genreErrors" :genres-by-kind="genresByKind"
+      @close="mobileFiltersOpen = false" @apply="applyMobileFilters" @retry-genres="refreshGenres($event, true)" />
   </div>
 </template>
 
 <style scoped>
 .catalog-filters { padding: 2px 0 10px; border-bottom: 1px solid var(--filter-outline); }
+.catalog-sticky-anchor { height: 1px; margin-bottom: -1px; pointer-events: none; }
 .catalog-primary-tools { margin-bottom: 10px; }
+.catalog-category-pill { min-width: 0; }
 .catalog-categories { vertical-align: top; }
 .catalog-desktop-filters { display: flex; flex-direction: column; gap: 6px; }
 .catalog-filter-row { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
@@ -282,18 +293,21 @@ onBeforeUnmount(() => {
 @media (max-width: 639px) {
   .catalog-home { --workbench-toolbar-height: 56px; --workbench-header-height: calc(var(--workbench-toolbar-height) + var(--app-safe-top)); }
   .catalog-dashboard { padding-top: calc(var(--workbench-header-height) + 4px); padding-inline: max(16px, var(--app-safe-left)) max(16px, var(--app-safe-right)); }
-  .catalog-filters { padding: 0; border-bottom: 0; }
-  .catalog-primary-tools { margin-bottom: 0; }
+  /* 外层吸顶行完全透明，海报从两个独立玻璃控件之间经过。 */
+  .catalog-filters { position: sticky; top: var(--workbench-header-height); z-index: 30; padding: 6px 0; border-bottom: 0; background: transparent; pointer-events: none; }
+  .catalog-primary-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 0; }
+  .catalog-category-pill { flex: 1 1 auto; height: 44px; border-radius: 999px; pointer-events: auto; }
   .catalog-categories { display: flex; width: 100%; }
+  .catalog-category-pill :deep(.segmented-control-pwa-pill) { background: transparent; box-shadow: none; }
+  .catalog-category-pill :deep(.segmented-control-pwa-pill .segmented-control-option) { min-height: 42px; }
   .catalog-desktop-filters, .catalog-sort-tools, .catalog-filter-summary, .catalog-filter-reset { display: none; }
-  .catalog-result-toolbar { min-height: 48px; gap: 8px; padding: 0; }
+  .catalog-result-toolbar { min-height: 36px; gap: 8px; padding: 0 0 8px; }
   .catalog-result-heading { font-size: 13px; }
   .catalog-result-total { color: var(--filter-text); font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .catalog-filter-trigger { position: relative; display: inline-flex; isolation: isolate; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px; background: transparent; color: var(--filter-text); font-size: 13px; font-weight: 600; }
-  .catalog-filter-trigger::before { inset: 4px 0; }
-  .catalog-filter-trigger.has-filters { --soft-pill-fill: rgb(var(--selection-surface)); color: rgb(var(--selection-content)); }
+  .catalog-filter-trigger { position: relative; display: inline-flex; flex: 0 0 44px; width: 44px; height: 44px; align-items: center; justify-content: center; padding: 0; border-radius: 50%; color: var(--filter-text); pointer-events: auto; -webkit-tap-highlight-color: transparent; }
+  .catalog-filter-trigger.has-filters { color: rgb(var(--selection-content)); }
   .catalog-filter-trigger:active { opacity: .8; }
-  .catalog-filter-count { min-width: 18px; padding-inline: 4px; border-radius: 999px; background: rgb(var(--selection-content) / .12); font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+  .catalog-filter-dot { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: rgb(var(--selection-content)); }
   .catalog-load-error { align-items: flex-start; padding: 12px; }
 }
 @media (pointer: coarse) { .catalog-row-label { padding-top: 12px; } .catalog-sort :deep(.segmented-control-option) { min-height: 44px; } }
