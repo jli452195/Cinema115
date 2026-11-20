@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, toRef, useId, watch
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRouter, type RouteLocationNormalized } from 'vue-router'
 import { IconPlus, IconFolder, IconPhotoOff, IconSettings, IconChevronDown, IconTrash, IconX } from '@tabler/icons-vue'
 import BottomSheetDialog from './BottomSheetDialog.vue'
+import ConfirmCard from './ConfirmCard.vue'
 import FloatingDialog from './FloatingDialog.vue'
 import AnimeSourceForm from './AnimeSourceForm.vue'
 import AnimeSourceProgress from './AnimeSourceProgress.vue'
@@ -42,7 +43,7 @@ const reloadConfirm = ref(false)
 const totalID = 'anime-archive-total-' + useId()
 const previewRef = ref(''), previewButton = ref<HTMLButtonElement>()
 const previewActionBusy = ref(false)
-const deleteButton = ref<HTMLButtonElement>(), cancelDeleteButton = ref<HTMLButtonElement>()
+const deleteButton = ref<HTMLButtonElement>(), deleteConfirmCard = ref<InstanceType<typeof ConfirmCard>>()
 const previewStates = reactive<Record<string, { filter: string; left: number; top: number }>>({})
 function previewState(ref: string) { return previewStates[ref] ||= { filter: 'all', left: 0, top: 0 } }
 const previewSource = computed(() => sources.value.find(s => s.ref === previewRef.value) || active.value || sources.value[0])
@@ -210,7 +211,10 @@ watch(() => active.value?.ruleError, async error => {
   field?.focus({ preventScroll: true }); field?.scrollIntoView({ block: 'center' })
 })
 watch(() => subject.value?.coverUrl, () => { imageFailed.value = false })
-watch(confirmRemove, async value => { await nextTick(); (value ? cancelDeleteButton : deleteButton).value?.focus({ preventScroll: true }) })
+watch(confirmRemove, value => {
+  if (value) deleteConfirmCard.value?.focusCancel()
+  else deleteButton.value?.focus({ preventScroll: true })
+}, { flush: 'post' })
 function addBackup() { if (!locked.value && !previewBusy.value && !pendingBackup.value && sources.value.length < 5) pendingBackup.value = newAnimeSource('standby', subject.value?.title, main.value?.provider || 'mikan') }
 function confirmBackup(source: SourceForm) { editor.addSource(source); pendingBackup.value = undefined }
 function chooseBackup(id: string) { activeRef.value = activeRef.value === id ? '' : id }
@@ -288,7 +292,17 @@ onBeforeUnmount(stopProgress)
       </div>
     </template>
     <div class="anime-editor ac-editor">
-      <div v-if="discard" class="ac-confirm" role="alert"><p>{{ reloadConfirm ? '放弃未保存的修改，重新读取最新配置？' : '有尚未保存的修改，是否放弃？' }}</p><div><button type="button" class="ae-button" :disabled="exitPending" @click="cancelDiscard">继续编辑</button><button type="button" class="ae-button ae-danger" :disabled="exitPending" @click="discardChanges">放弃修改</button></div></div>
+      <ConfirmCard
+        v-if="discard"
+        class="ac-confirm"
+        role="alert"
+        :message="reloadConfirm ? '放弃未保存的修改，重新读取最新配置？' : '有尚未保存的修改，是否放弃？'"
+        confirm-label="放弃修改"
+        :cancel-disabled="exitPending"
+        :confirm-disabled="exitPending"
+        @cancel="cancelDiscard"
+        @confirm="discardChanges"
+      />
       <p v-if="loading" role="status" class="ae-loading">正在读取订阅配置…</p>
       <div v-else-if="loadError" class="ae-load-error" role="status"><p>{{ loadError }}</p><button type="button" class="ae-button" @click="editor.initialize">重新读取</button></div>
       <template v-else-if="subject">
@@ -298,7 +312,19 @@ onBeforeUnmount(stopProgress)
           <button v-if="allowed('archive') && local.status !== 'archived'" type="button" class="ae-button" :disabled="actionLocked || confirmRemove" @click="control('archive', '归档订阅')">归档</button>
           <button v-if="allowed('remove')" ref="deleteButton" type="button" class="ae-button ac-delete" :disabled="actionLocked || confirmRemove" @click="confirmRemove = true"><IconTrash :size="15" aria-hidden="true" />删除订阅</button>
         </div>
-        <div v-if="confirmRemove" class="ac-confirm" role="alert"><p>永久删除此订阅及相关下载、整理记录，保留 115 网盘文件。再次订阅可能重复下载。</p><div><button ref="cancelDeleteButton" type="button" class="ae-button" :disabled="actions.loading.value" @click="confirmRemove = false">取消删除</button><button type="button" class="ae-button ae-danger" :disabled="actionLocked" @click="control('remove', '删除订阅')">确认删除</button></div></div>
+        <ConfirmCard
+          v-if="confirmRemove"
+          ref="deleteConfirmCard"
+          class="ac-confirm"
+          role="alert"
+          message="永久删除此订阅及相关下载、整理记录，保留 115 网盘文件。再次订阅可能重复下载。"
+          cancel-label="取消删除"
+          confirm-label="确认删除"
+          :cancel-disabled="actions.loading.value"
+          :confirm-disabled="actionLocked"
+          @cancel="confirmRemove = false"
+          @confirm="control('remove', '删除订阅')"
+        />
         <fieldset class="ac-panels" :disabled="actions.locked.value || confirmRemove">
         <div v-show="tab === 'basic'" id="anime-panel-basic" role="tabpanel" aria-labelledby="anime-tab-basic">
           <p v-if="subject.bangumiUnavailable" class="ae-note ac-metadata-note">{{ subject.needsSource ? 'Bangumi 资料不可用，请选择来源站条目以继续订阅。' : 'Bangumi 资料不可用，已使用来源站信息。' }}</p>
@@ -428,10 +454,15 @@ onBeforeUnmount(stopProgress)
 .ac-empty { padding: 48px 16px; text-align: center; font-size: 12px; color: var(--floating-surface-muted); }
 .ac-footer > p { font-size: 11px; line-height: 1.6; color: var(--floating-surface-muted); max-width: 320px; }
 .ac-footer > div { display: flex; flex: none; gap: 8px; }
-.ac-confirm { position: sticky; top: 0; z-index: 2; padding: 16px; margin: 0 0 18px; border-radius: 12px; color: var(--ae-ink); background: var(--ae-surface); box-shadow: 0 4px 18px rgb(15 23 42 / .10); font-size: 13px; line-height: 1.7; }
-.ac-confirm .ae-danger { color: #b91c1c; background: #fef2f2; }
-.dark .ac-confirm .ae-danger { color: #fecaca; background: #4b2f38; }
-.ac-confirm > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.ac-confirm {
+  --confirm-card-surface: var(--ae-surface);
+  --confirm-card-ink: var(--ae-ink);
+  --confirm-card-neutral: var(--ae-inset);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0 0 18px;
+}
 .ac-feedback { font-size: 12px; color: var(--floating-surface-muted); margin-bottom: 12px; }
 .ac-feedback button { margin: 8px 6px 0 0; }
 .ac-preview { display: flex; flex: 1; min-height: 0; width: 100%; max-width: none; margin: 0; }

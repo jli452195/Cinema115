@@ -8,6 +8,7 @@ const props = withDefaults(defineProps<{
   closeDisabled?: boolean
   desktopBackdropDismiss?: boolean
   allowSwipeClose?: boolean
+  restoreUnexpectedClose?: boolean
   commitClose?: () => Promise<void>
   beforeClose?: (reason: DismissReason) => DismissDecision | Promise<DismissDecision>
 }>(), { mobileSheet: true, allowSwipeClose: true })
@@ -17,6 +18,7 @@ const lifecycle = createDialogLifecycle({ coverParent: true })
 let backdropPointer: number | undefined
 let backdropClick = false
 let unmounting = false
+let dismissAfterRestore = false
 
 const sheet = useMobileSheet(dialog, {
   enabled: () => props.mobileSheet,
@@ -66,11 +68,23 @@ function click(event: MouseEvent) {
   if (backdropClick && canDismissOnBackdrop() && isBackdrop(event)) void sheet.requestClose('backdrop')
   backdropClick = false
 }
+function cancelNativeDialog(event: Event) {
+  if (props.restoreUnexpectedClose && !event.cancelable) {
+    dismissAfterRestore = true
+    return
+  }
+  event.preventDefault()
+  void sheet.requestClose('escape')
+}
 function restoreNativeDialog() {
   const surface = dialog.value
-  if (!props.commitClose || unmounting || !surface?.isConnected || surface.open) return
-  // 连续系统返回可能强制关闭原生弹窗。路由还持有编辑页时恢复弹层，沿用已有滚动锁。
+  if ((!props.commitClose && !props.restoreUnexpectedClose) || unmounting || !surface?.isConnected || surface.open) return
+  // 先恢复宿主，再处理连续系统返回触发的不可取消关闭，避免在确认框上方重新打开宿主。
   surface.showModal()
+  if (dismissAfterRestore) {
+    dismissAfterRestore = false
+    void sheet.requestClose('escape')
+  }
 }
 
 onMounted(() => {
@@ -89,7 +103,7 @@ defineExpose({ dialog, close: sheet.close, closeDirect: sheet.closeDirect, reque
 </script>
 
 <template>
-  <dialog ref="dialog" class="bottom-sheet-dialog floating-surface" :class="{ 'bottom-sheet-dialog-mobile': mobileSheet }" @cancel.prevent="sheet.requestClose('escape')" @close="restoreNativeDialog" @pointerdown="pointerDown" @pointermove="sheet.onPointerMove" @pointerup="pointerUp" @pointercancel="pointerCancel" @lostpointercapture="sheet.onPointerCancel" @click="click">
+  <dialog ref="dialog" class="bottom-sheet-dialog floating-surface" :class="{ 'bottom-sheet-dialog-mobile': mobileSheet }" @cancel="cancelNativeDialog" @close="restoreNativeDialog" @pointerdown="pointerDown" @pointermove="sheet.onPointerMove" @pointerup="pointerUp" @pointercancel="pointerCancel" @lostpointercapture="sheet.onPointerCancel" @click="click">
     <div v-if="mobileSheet" class="bottom-sheet-grabber-zone" data-sheet-drag aria-hidden="true"><span></span></div>
     <slot :close="sheet.close" :expanded="sheet.expanded.value" :toggle-expanded="sheet.toggleExpanded" />
   </dialog>

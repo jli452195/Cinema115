@@ -7,6 +7,7 @@ import { normalize115Share } from '../utils/shareLink'
 import { requestErrorMessage } from '../utils/requestErrorMessage'
 import { useShareSTRMRun, type ShareSTRMResource } from './useShareSTRMRun'
 import { useCloudDownloadAction, type CloudDownloadActionStatus } from './useCloudDownloadAction'
+import type { ConfirmOrganizeAction } from './useOrganizeDraftGuard'
 
 interface MediaResourceActionOptions {
   source: 'gying' | 'woniu'
@@ -17,7 +18,12 @@ interface MediaResourceActionOptions {
 
 interface CloudDownloadStatus extends CloudDownloadActionStatus { organize?: boolean }
 
-export function useMediaResourceActions(options: MediaResourceActionOptions, signal: AbortSignal, searching: () => boolean) {
+export function useMediaResourceActions(
+  options: MediaResourceActionOptions,
+  signal: AbortSignal,
+  searching: () => boolean,
+  confirmOrganizeAction: ConfirmOrganizeAction,
+) {
   const shareRuns = useShareSTRMRun(options.token, signal, { scope: `${options.source}/${options.kind}/${options.tmdbId}` })
   const cloudStatuses = ref<Record<string, CloudDownloadStatus>>({})
   const downloads = useCloudDownloadAction(options.token, signal, cloudStatuses)
@@ -71,8 +77,11 @@ export function useMediaResourceActions(options: MediaResourceActionOptions, sig
     }
     if (downloadBlocked(item, link)) return
     const replacing = organizeEntries.value.length > 0
+    const draftKey = organizeResourceKey(item, link)
+    if (replacing && !await confirmOrganizeAction('replace')) return
+    if (downloadBlocked(item, link) || draftKey !== organizeResourceKey(item, link)) return
     discardOrganize()
-    const generation = organizeGeneration, draftKey = organizeResourceKey(item, link)
+    const generation = organizeGeneration
     const controller = new AbortController()
     organizeController = controller
     returnFocus.focus({ preventScroll: true })
@@ -123,6 +132,9 @@ export function useMediaResourceActions(options: MediaResourceActionOptions, sig
   async function cloudDownload(item: ResourceSearchItem, link: ResourceLink) {
     if (!canCloudDownload(link) || downloadBlocked(item, link)) return
     const id = cloudResourceID(item, link)
+    if (organizeEntries.value.some(entry => entry.resource.id === id)) {
+      if (!await confirmOrganizeAction('download') || downloadBlocked(item, link)) return
+    }
     delete organizeNotices.value[id]
     return await downloads.submit(link.url, id)
   }

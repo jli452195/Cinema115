@@ -14,13 +14,19 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
   const active = computed(() => states.value.filter(state => state.status !== 'removed'))
   const unresolved = computed(() => active.value.filter(state => state.status !== 'ready'))
   const readyCount = computed(() => active.value.length - unresolved.value.length)
+  const initiallySelected = (file: OrganizeFile) => multiple || !!file.titleOnly
+  // 逐行与解析结果比较，后续解析追加文件时不改变已有草稿的基线。
+  const hasFileChanges = computed(() => states.value.some(state => state.status === 'removed') || rows.value.some(row => {
+    const source = sources[row.id]
+    return row.selected !== initiallySelected(source) || row.season !== source.season || row.episode !== source.episode
+  }))
   function append(entry: typeof states.value[number], data: DownloadFiles) {
     const key = (id: string) => multiple ? `${entry.key}:${id}` : id
     for (const file of data.files) {
       const id = key(file.id)
       owners.set(id, { key: entry.key, id: file.id })
       sources[id] = file
-      rows.value.push(organizeFileRow({ ...file, id }, multiple || !!file.titleOnly))
+      rows.value.push(organizeFileRow({ ...file, id }, initiallySelected(file)))
     }
     subtitles.value.push(...(data.subtitles || []).map(sub => ({ ...sub, file: { ...sub.file, id: key(sub.file.id) }, videoId: sub.videoId ? key(sub.videoId) : undefined })))
     entry.files = data
@@ -70,5 +76,5 @@ export function useDownloadOrganizeFiles(token: string, entries: DownloadOrganiz
   }
   for (const entry of states.value) if (entry.files) append(entry, entry.files)
   onBeforeUnmount(pause)
-  return { states, rows, subtitles, sources, parsing, active, unresolved, readyCount, owners, remove, pause, parse, retry, resourceSelections }
+  return { states, rows, subtitles, sources, parsing, active, unresolved, readyCount, hasFileChanges, owners, remove, pause, parse, retry, resourceSelections }
 }

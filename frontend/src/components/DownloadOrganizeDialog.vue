@@ -13,6 +13,7 @@ import { trackDownloadPipeline } from '../composables/useDownloadPipelineToast'
 import { applyOrganizeMapping } from '../utils/organizeNaming'
 import { useMediaNamingPreview } from '../composables/useMediaNamingPreview'
 import { useStickySurface } from '../composables/useStickySurface'
+import type { DismissDecision, DismissReason } from '../composables/useMobileSheet'
 import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
 import { magnetKey } from '../lib/cloud-download-batch'
@@ -35,7 +36,6 @@ const lifecycle = new AbortController()
 const preparation = useDownloadOrganizeFiles(props.token, props.entries, !!props.batch, lifecycle.signal)
 const { rows, subtitles, sources, parsing, active, unresolved, readyCount, states } = preparation
 const busy = ref(false), loading = ref(true), error = ref(''), notice = ref('')
-defineExpose({ busy })
 const subtitleOpen = ref(false), externalSubtitles = ref<LibrarySubtitleSelection[]>([]), subtitleVersion = ref<SubtitleVersion>()
 const localSubtitles = ref<LocalSubtitleSelection[]>([])
 const subtitleScope = ref<number>()
@@ -64,8 +64,97 @@ const confirming = ref(false)
 const shareIssue = ref('正在读取分享设置…'), shareAction = ref(false)
 const errorElement = ref<HTMLElement>()
 watch(error, async value => { if (value) { await nextTick(); errorElement.value?.scrollIntoView({ block: 'nearest' }) } })
-const batchOpen = ref(window.matchMedia('(min-width: 640px)').matches)
+const batchOpen = ref(false)
 const mappingPanelID = useId()
+const batchToggleButton = ref<HTMLButtonElement>()
+const mappingPanel = ref<HTMLElement>()
+const mappingStyle = ref<Record<string, string>>({})
+const mappingError = ref('')
+
+function positionMappingPanel() {
+  const anchor = numberingBar.value || batchToggleButton.value
+  if (!anchor) return
+  const rect = anchor.getBoundingClientRect()
+  const viewport = window.visualViewport
+  const viewportWidth = viewport?.width ?? window.innerWidth
+  const viewportHeight = viewport?.height ?? window.innerHeight
+  const viewportLeft = viewport?.offsetLeft ?? 0
+  const viewportTop = viewport?.offsetTop ?? 0
+  const compact = viewportWidth < 640
+  const inset = compact ? 8 : 12
+  const gap = 4
+  const width = Math.min(compact ? viewportWidth : Math.max(rect.width - inset * 2, 460), viewportWidth - inset * 2)
+  const left = compact ? viewportLeft + inset : Math.max(viewportLeft + inset, Math.min(rect.left + inset, viewportLeft + viewportWidth - width - inset))
+  const below = viewportTop + viewportHeight - rect.bottom - gap - inset
+  const above = rect.top - viewportTop - gap - inset
+  const upward = below < 180 && above > below
+  const available = upward ? above : below
+  const fitsByAnchor = available >= 44
+  const maxHeight = Math.min(360, fitsByAnchor ? available : viewportHeight - inset * 2)
+  mappingStyle.value = {
+    width: `${width}px`,
+    maxHeight: `${maxHeight}px`,
+    left: `${left}px`,
+    top: fitsByAnchor && upward ? 'auto' : `${fitsByAnchor ? Math.max(viewportTop + inset, rect.bottom + gap) : viewportTop + inset}px`,
+    bottom: fitsByAnchor && upward ? `${window.innerHeight - rect.top + gap}px` : 'auto',
+  }
+}
+
+async function openBatch() {
+  if (batchOpen.value || editDisabled.value || !editing.value.length) return
+  mappingError.value = ''
+  positionMappingPanel()
+  batchOpen.value = true
+  await nextTick()
+  if (!batchOpen.value || !mappingPanel.value) return
+  mappingPanel.value.showPopover()
+  mappingPanel.value.focus({ preventScroll: true })
+}
+
+function closeBatch(restoreFocus = false) {
+  mappingError.value = ''
+  if (mappingPanel.value?.matches(':popover-open')) mappingPanel.value.hidePopover()
+  if (!batchOpen.value) return
+  batchOpen.value = false
+  if (restoreFocus) void nextTick(() => batchToggleButton.value?.focus({ preventScroll: true }))
+}
+
+function toggleBatch() {
+  if (batchOpen.value) closeBatch(true)
+  else void openBatch()
+}
+
+function onDocumentKeydown(event: KeyboardEvent) {
+  if (!batchOpen.value || event.key !== 'Escape' || event.defaultPrevented) return
+  if (!(event.target instanceof Node) || !scrollBody.value?.closest('dialog')?.contains(event.target)) return
+  event.preventDefault()
+  event.stopPropagation()
+  closeBatch(true)
+}
+
+function onDocumentPointerDown(event: PointerEvent) {
+  if (!batchOpen.value) return
+  const target = event.target
+  if (target instanceof Element && target.closest('dialog[role="alertdialog"]')) return
+  if (target instanceof Node && !mappingPanel.value?.contains(target) && !batchToggleButton.value?.contains(target)) closeBatch(false)
+}
+
+function onViewportScroll(event: Event) {
+  if (!batchOpen.value) return
+  const target = event.target
+  if (target instanceof Node && mappingPanel.value?.contains(target)) return
+  positionMappingPanel()
+}
+
+function onViewportResize() {
+  if (batchOpen.value) positionMappingPanel()
+}
+
+function beforeDialogDismiss(reason: DismissReason): DismissDecision {
+  if (reason !== 'escape' || !batchOpen.value) return 'dismiss'
+  closeBatch(true)
+  return 'handled'
+}
 const floatingDialog = ref<InstanceType<typeof FloatingDialog>>()
 const scrollBody = computed(() => floatingDialog.value?.body)
 const numberingAnchor = ref<HTMLElement>()
@@ -80,12 +169,16 @@ watch(numberingBar, (element, _, onCleanup) => {
   onCleanup(() => observer.disconnect())
 }, { flush: 'post' })
 const editDisabled = computed(() => busy.value || loading.value || confirming.value)
+watch(editDisabled, disabled => { if (disabled) closeBatch() })
 const directoryOpen = ref(false), accountId = ref(''), targetCID = ref(''), targetPath = ref(''), downloadPath = ref('')
+const defaultTarget = ref({ id: '', path: '' })
+const targetChanged = computed(() => targetCID.value !== defaultTarget.value.id)
 watch(() => props.active, active => {
   if (!active) {
     // 未确认的目录和字幕草稿随子页关闭；滚动位置由共享页面保存。
     directoryOpen.value = false
     subtitleOpen.value = false
+    closeBatch(false)
   }
 }, { flush: 'pre' })
 function selectDirectory(value: { id: string; path: string }) {
@@ -99,6 +192,8 @@ const stagedIDs = ref(new Set<string>())
 const staged = computed(() => rows.value.filter(row => stagedIDs.value.has(row.id)))
 const pendingRows = computed(() => rows.value.filter(row => !stagedIDs.value.has(row.id)))
 const editing = computed(() => pendingRows.value.filter(row => row.selected))
+watch(() => editing.value.length, count => { if (!count) closeBatch(false) })
+watch([season, sourceStart, targetStart], () => { mappingError.value = '' })
 const selected = computed(() => rows.value.filter(row => stagedIDs.value.has(row.id) || row.selected))
 const selectedKeys = computed(() => [...new Set(selected.value.map(row => preparation.owners.get(row.id)!.key))])
 const stagedGroups = computed(() => {
@@ -113,6 +208,10 @@ const seasonOptions = computed(() => props.seasons.map(s => {
 }))
 const selectedSeason = computed(() => props.seasons.find(s => String(s.number) === season.value))
 const fileSelection = ref<InstanceType<typeof OrganizeFileSelection>>()
+const hasUnsavedDraft = computed(() => confirming.value || preparation.hasFileChanges.value || staged.value.length > 0
+  || !!fileSelection.value?.hasExcludedDirectories || targetChanged.value
+  || allExternal.value.some(sub => rows.value.some(row => row.id === sub.videoId)))
+defineExpose({ busy, hasUnsavedDraft })
 const lastProblem = ref('')
 const namingNumber = (value: unknown) => Number.isInteger(Number(value)) ? Number(value) : -1
 const namingPreview = useMediaNamingPreview(props.token, () => rows.value.length && !parsing.value ? {
@@ -164,6 +263,7 @@ const displayedConflicts = computed(() => {
   const selectedIDs = selected.value.flatMap(row => [row.id, ...(subtitlesByVideo.value[row.id] || []).map(sub => sub.file.id)])
   return { ...conflicts.value, ...localConflicts.value, ...Object.fromEntries(selectedIDs.filter(id => namingPreview.errors.value[id]).map(id => [id, namingPreview.errors.value[id]!])) }
 })
+const shortConflicts = computed(() => Object.fromEntries(Object.keys(localConflicts.value).filter(id => displayedConflicts.value[id] === localConflicts.value[id]).map(id => [id, '目标重名'])))
 const rowProblems = computed(() => Object.fromEntries(selected.value.flatMap(row => {
   const issue = displayedConflicts.value[row.id] || ((subtitlesByVideo.value[row.id] || []).some(sub => displayedConflicts.value[sub.file.id]) ? '关联字幕存在命名问题，请展开查看' : '')
   return issue ? [[row.id, issue]] : []
@@ -219,12 +319,13 @@ let previewKey = ''
 let uploadedPreview = ''
 
 function mapFiles(sequential = false) {
-  error.value = ''; notice.value = ''; conflicts.value = {}
+  mappingError.value = ''; error.value = ''; notice.value = ''; conflicts.value = {}
   try {
     undo.value = applyOrganizeMapping(props.batch ? pendingRows.value : directoryFileRows(directoryGroups(pendingRows.value, '/')[0]!), sources, Number(season.value), sourceStart.value, targetStart.value, sequential)
     const skipped = editing.value.length - undo.value.length
     notice.value = `已更新 ${undo.value.length} 项${skipped ? `，跳过 ${skipped} 项无发布编号的文件，可在行内填写目标季集` : !sequential ? '，保留发布编号的缺号和连集跨度' : ''}`
-  } catch (e) { error.value = e instanceof Error ? e.message : '编号设置无效' }
+    closeBatch(true)
+  } catch (e) { mappingError.value = e instanceof Error ? e.message : '编号设置无效' }
 }
 function undoMapping() {
   for (const before of undo.value) { const row = rows.value.find(row => row.id === before.id); if (row) Object.assign(row, before) }
@@ -239,9 +340,17 @@ async function loadConfig() {
       p115Request<{ ready: boolean; reason: string }>(props.token, 'download-organize/share-config', { signal: signal() }).catch(() => ({ ready: false, reason: '读取分享设置失败，可重新读取配置' })),
     ])
     if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在 115 云下载中配置主账号的下载目录')
+    const sameAccount = accountId.value === cloud.accountId
+    const keepTarget = sameAccount && targetChanged.value
     accountId.value = cloud.accountId; downloadPath.value = cloud.targetPath
-    if (organize?.accountId === cloud.accountId) { targetCID.value = organize.targetCID; targetPath.value = organize.targetPath }
-    else { targetCID.value = ''; targetPath.value = '' }
+    // 同一主账号下，重读默认配置保留用户本次选择。换号后只采用新账号的配置。
+    if (organize || !sameAccount) {
+      defaultTarget.value = organize?.accountId === cloud.accountId ? { id: organize.targetCID, path: organize.targetPath } : { id: '', path: '' }
+      if (!keepTarget) {
+        targetCID.value = defaultTarget.value.id
+        targetPath.value = defaultTarget.value.path
+      }
+    }
     shareIssue.value = share.ready ? '' : share.reason || '请先完善分享 STRM 设置'
   } catch (e) { if (!lifecycle.signal.aborted) error.value = e instanceof Error ? e.message : '读取目录配置失败' }
   finally { if (!lifecycle.signal.aborted) loading.value = false }
@@ -314,12 +423,30 @@ async function start(sharing = false) {
   }
   finally { busy.value = false }
 }
-onMounted(() => { void loadConfig(); void preparation.parse() })
-onBeforeUnmount(() => lifecycle.abort())
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+  document.addEventListener('keydown', onDocumentKeydown)
+  document.addEventListener('scroll', onViewportScroll, true)
+  window.addEventListener('resize', onViewportResize)
+  window.visualViewport?.addEventListener('resize', onViewportResize)
+  window.visualViewport?.addEventListener('scroll', onViewportResize)
+  void loadConfig()
+  void preparation.parse()
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+  document.removeEventListener('keydown', onDocumentKeydown)
+  document.removeEventListener('scroll', onViewportScroll, true)
+  window.removeEventListener('resize', onViewportResize)
+  window.visualViewport?.removeEventListener('resize', onViewportResize)
+  window.visualViewport?.removeEventListener('scroll', onViewportResize)
+  if (mappingPanel.value?.matches(':popover-open')) mappingPanel.value.hidePopover()
+  lifecycle.abort()
+})
 </script>
 
 <template>
-  <FloatingDialog ref="floatingDialog" class="download-organize-dialog" :active="props.active" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :style="themeColors" @close="emit('close')">
+  <FloatingDialog ref="floatingDialog" class="download-organize-dialog" :active="props.active" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :before-dismiss="beforeDialogDismiss" :style="themeColors" @close="emit('close')">
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
     <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
       <div class="organize-config">
@@ -394,33 +521,35 @@ onBeforeUnmount(() => lifecycle.abort())
         <p v-if="selectedExternal.length" class="confirmation-subtitles">外部字幕 {{ selectedExternal.length }} 个<span v-if="localSubtitleCount"> · 本地 {{ localSubtitleCount }} 个</span><span v-if="assrtSubtitleCount"> · 射手网 {{ assrtSubtitleCount }} 个</span></p>
       </section>
       <p v-if="externalIssue" role="alert" class="error">{{ externalIssue }}</p>
-      <div ref="numberingAnchor" aria-hidden="true" class="pointer-events-none h-px !-mb-px"></div>
+      <div ref="numberingAnchor" aria-hidden="true" class="numbering-anchor pointer-events-none h-px !-mb-px"></div>
       <div v-if="editing.length" ref="numberingBar" class="numbering-bar" :class="{ 'is-stuck': numberingStuck }">
-        <button v-if="kind === 'tv'" type="button" class="batch-toggle" :aria-controls="mappingPanelID" :aria-expanded="batchOpen" @click="batchOpen = !batchOpen">调整季集 <IconChevronDown :size="15" aria-hidden="true" class="transition-transform" :class="{ 'rotate-180': batchOpen }" /></button>
+        <button v-if="kind === 'tv'" ref="batchToggleButton" type="button" class="batch-toggle" aria-haspopup="dialog" :aria-controls="batchOpen ? mappingPanelID : undefined" :aria-expanded="batchOpen" :disabled="editDisabled" @click="toggleBatch">调整季集 <IconChevronDown :size="15" aria-hidden="true" class="transition-transform" :class="{ 'rotate-180': batchOpen }" /></button>
         <span class="editing-count">已勾选 {{ editing.length }} 项</span>
+        <button v-if="undo.length" type="button" class="secondary tool-action" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
         <button type="button" class="secondary stage-action" :disabled="editDisabled || parsing || !namingPreview.ready.value" title="可选：暂存当前映射后，继续处理其他季；无需暂存也可直接提交" @click="stageFiles">暂存这 {{ editing.length }} 项</button>
       </div>
-      <div v-if="kind === 'tv' && editing.length" v-show="batchOpen" :id="mappingPanelID" class="mapping-bar">
-        <label class="mapping-season">目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" density="compact" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
-        <div class="mapping-range">
-          <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
-          <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
+      <section v-if="kind === 'tv' && editing.length && batchOpen" :id="mappingPanelID" ref="mappingPanel" popover="manual" role="dialog" aria-label="调整季集" tabindex="-1" class="mapping-popover floating-surface" :style="mappingStyle">
+        <div class="mapping-bar">
+          <label class="mapping-season">目标季 <SelectMenu v-if="seasonOptions.length" v-model="season" :options="seasonOptions" label="目标季" variant="anime" density="compact" :menu-min-width="300" :disabled="editDisabled" class="season-select"><template #trigger><span class="truncate">{{ selectedSeason?.number === 0 ? '特别篇' : `第 ${season} 季` }}<template v-if="selectedSeason"> · {{ selectedSeason.episodeCount }} 集</template></span></template></SelectMenu><input v-else v-model="season" type="number" min="0" max="1000" aria-label="目标季" :disabled="editDisabled" /></label>
+          <div class="mapping-range">
+            <label>发布集 <input v-model.number="sourceStart" type="number" min="1" max="10000" aria-label="发布起始集" :disabled="editDisabled" /></label><span>对应</span>
+            <label>目标集 <input v-model.number="targetStart" type="number" min="1" max="10000" aria-label="目标起始集" :disabled="editDisabled" /></label>
+          </div>
+          <div class="mapping-actions">
+            <button type="button" class="secondary mapping-apply" :aria-label="`应用偏移（${editing.length} 项）`" :disabled="editDisabled || !editing.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ editing.length }} 项）</span></span></button>
+            <button type="button" class="secondary" title="从目标集开始，按所选顺序连续编号；连集文件保留跨度" :disabled="editDisabled || !editing.length" @click="mapFiles(true)">连续编号</button>
+          </div>
         </div>
-        <div class="mapping-actions">
-          <button type="button" class="secondary mapping-apply" :aria-label="`应用偏移（${editing.length} 项）`" :disabled="editDisabled || !editing.length" @click="mapFiles()"><span>应用偏移<span class="hidden sm:inline">（{{ editing.length }} 项）</span></span></button>
-          <button type="button" class="secondary" title="从目标集开始，按所选顺序连续编号；连集文件保留跨度" :disabled="editDisabled || !editing.length" @click="mapFiles(true)">连续编号</button>
-          <button v-if="undo.length" type="button" class="secondary" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销</button>
-        </div>
-      </div>
+        <p v-if="mappingError" role="alert" class="mapping-error">{{ mappingError }}</p>
+      </section>
       <p v-if="notice" role="status" class="notice">{{ notice }}</p>
       <p v-if="Object.keys(localConflicts).length" role="alert" class="error">有 {{ Object.keys(localConflicts).length }} 个文件目标重名，请核对季集编号、命名模板或取消重复文件。</p>
-      <OrganizeFileSelection ref="fileSelection" :rows="pendingRows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" :empty-text="staged.length ? '文件已全部暂存，可继续核对整理清单。' : undefined" compact>
+      <OrganizeFileSelection ref="fileSelection" :rows="pendingRows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" :short-conflicts="shortConflicts" :empty-text="staged.length ? '文件已全部暂存，可继续核对整理清单。' : undefined" compact>
         <template v-if="!editing.length && pendingRows.length" #header>
           <p class="selection-prompt"><span>{{ kind === 'tv' ? '勾选文件，可批量调整季集或暂存。' : '勾选文件，可暂存或直接提交整理。' }}</span><button v-if="undo.length" type="button" class="secondary tool-action" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销编号</button></p>
         </template>
         <template #row-details="{ row }">
           <details v-if="allExternal.some(sub => sub.videoId === row.id)" class="subtitle-details" @click.stop @mousedown.stop><summary><IconChevronDown :size="13" aria-hidden="true" />外部字幕（{{ allExternal.filter(sub => sub.videoId === row.id).length }}）<span v-if="!row.selected">未选择</span></summary><div v-for="sub in allExternal.filter(sub => sub.videoId === row.id)" :key="'localId' in sub ? sub.localId : sub.path" class="subtitle-file"><p>{{ sub.file.name }}</p><p class="subtitle-target">{{ row.selected ? `整理后：${externalName(sub)}` : '随视频选择，当前不上传' }}</p></div></details>
-          <p v-if="results[row.id]?.directory && results[row.id]!.directory !== sharedDirectory" class="scope-note break-all">目录：{{ results[row.id]!.directory }}</p>
           <details v-if="subtitlesByVideo[row.id]?.length" class="subtitle-details" :open="row.selected && subtitlesByVideo[row.id]!.some(sub => displayedConflicts[sub.file.id])" @click.stop @mousedown.stop>
             <summary><IconChevronDown :size="13" aria-hidden="true" />关联字幕（{{ subtitlesByVideo[row.id]!.length }}）<span v-if="!row.selected">未选择</span></summary>
             <div v-for="sub in subtitlesByVideo[row.id]" :key="sub.file.id" class="subtitle-file">
@@ -489,12 +618,12 @@ onBeforeUnmount(() => lifecycle.abort())
   --organize-footer-bg: rgb(10 15 24 / 38%);
 }
 :global(.download-organize-dialog .floating-dialog-footer) { background: var(--organize-footer-bg); border-top-color: var(--organize-border); }
-:global(.download-organize-dialog .floating-dialog-body) { scroll-padding-top: 60px; }
+:global(.download-organize-dialog .floating-dialog-body) { padding-top: 0; scroll-padding-top: 60px; }
 .download-organize { @apply min-w-0 space-y-3 pt-1.5 text-content-primary; }
 .download-organize :is(button, summary, a, input):focus-visible, .submit-bar button:focus-visible, .share-config-note :is(a, button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
 .resource-title { @apply truncate text-xs leading-5 text-content-secondary; }
 .organize-config { @apply flex min-w-0 flex-col gap-1 rounded-xl border border-line-default bg-surface-card px-3.5 py-2; }
-.organize-config, .confirmation-zone, .mapping-bar { background: var(--organize-card-bg); border-color: var(--organize-border); }
+.organize-config, .confirmation-zone { background: var(--organize-card-bg); border-color: var(--organize-border); }
 .directory-bar { @apply flex min-w-0 items-center justify-between gap-2; }
 .directory-info { @apply min-w-0 flex-1 text-xs; }
 .directory-info p:first-child { @apply flex min-w-0 items-center gap-x-1.5; }
@@ -561,12 +690,16 @@ onBeforeUnmount(() => lifecycle.abort())
 .subtitle-details[open] > summary > svg { transform: rotate(180deg); }
 .subtitle-file { @apply mb-2 min-w-0 break-all pl-2; }
 .subtitle-target { @apply text-content-primary; }
+.organize-workbench > .numbering-anchor, .organize-workbench > .numbering-bar { margin-top: 0; }
 .numbering-bar { @apply sticky top-0 z-10 flex items-center gap-2 py-2; margin-inline: calc(-1 * var(--dialog-content-inset)); padding-inline: var(--dialog-content-inset); background: transparent; }
 .numbering-bar.is-stuck { background: var(--floating-surface-container); box-shadow: 0 1px 0 rgb(var(--line-default)); }
 .editing-count { @apply text-xs text-content-secondary; font-variant-numeric: tabular-nums; }
-.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line-default bg-surface-card px-3 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-surface-hover; min-height: var(--dialog-control-height); }
+.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line-default bg-surface-card px-3 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-surface-hover disabled:opacity-40; min-height: var(--dialog-control-height); }
 .batch-toggle[aria-expanded='true'] { @apply border-action-primary/40 bg-selection-surface text-selection-content; }
-.mapping-bar { @apply flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border p-3 text-xs; scroll-margin-top: 60px; }
+.mapping-popover[popover] { position: fixed; inset: auto; z-index: 20; margin: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; padding: 12px; color: var(--floating-surface-text); outline: none; }
+.mapping-popover:popover-open { display: flex; flex-direction: column; gap: 8px; }
+.mapping-bar { @apply flex flex-wrap items-center gap-x-3 gap-y-2 text-xs; }
+.mapping-error { @apply text-xs leading-5 text-status-danger; }
 .mapping-bar label { @apply flex items-center gap-1.5 whitespace-nowrap text-content-secondary; }
 .mapping-range { @apply flex items-center gap-2; }
 .mapping-range > span { @apply text-content-secondary; }
@@ -636,9 +769,12 @@ onBeforeUnmount(() => lifecycle.abort())
   .subtitle-action { font-size: var(--sheet-font-body); }
   .confirmed-summary-main { flex-basis: 100%; }
   .confirmed-actions { margin-left: 18px; }
-  .numbering-bar { gap: 6px; }
+  :global(.download-organize-dialog .floating-dialog-footer) { padding-block: 8px 10px; }
+  .download-organize { @apply space-y-2; }
+  .numbering-bar { gap: 6px; padding-block: 6px; }
   .editing-count { display: none; }
-  .mapping-bar { align-items: stretch; gap: 10px; padding: 10px; scroll-margin-top: 68px; }
+  .mapping-popover[popover] { padding: 10px; }
+  .mapping-bar { align-items: stretch; gap: 10px; }
   .mapping-season { width: 100%; }
   .mapping-bar .season-select, .mapping-season input { width: auto; min-width: 0; flex: 1; }
   .mapping-range { width: 100%; gap: 6px; }
@@ -647,6 +783,8 @@ onBeforeUnmount(() => lifecycle.abort())
   .mapping-range > span { flex-shrink: 0; }
   .mapping-actions { width: 100%; margin-left: 0; }
   .mapping-actions > button { flex: 1 1 max-content; min-width: 0; }
+  .submit-bar { gap: 6px 12px; }
+  .share-config-note { margin-top: 4px; }
   .submit-summary { flex-basis: 100%; }
   .submit-composition { width: auto; }
   .submit-actions { width: 100%; }

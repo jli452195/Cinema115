@@ -3,7 +3,9 @@ import { IconFolder, IconLoader2, IconMagnet } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
 import { copyText } from '../utils/clipboard'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink } from 'vue-router'
+import { RouterLink } from 'vue-router'
+import AlertDialog from './AlertDialog.vue'
+import { useOrganizeDraftGuard } from '../composables/useOrganizeDraftGuard'
 import MikanFilterSelect from './MikanFilterSelect.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
 import { useStickySurface } from '../composables/useStickySurface'
@@ -48,7 +50,9 @@ const searchState = useAnimeResourceSearch(props, lifecycle.signal, {
   appendedResults: focusAppendedResults,
 })
 const { isGarden, isDmhy, pagedSearch, providerName, categoryScope, categoryOptions, interactionBusy, query, group, groups, result, busy, loadingMessage, error, filter, resolution, specOptions, specActive, resetSpecFilters, visible, selectedBangumi, bangumis, expansions, groupOptions, resolutionOptions, filtered, siteURL, specChecked, toggleSpecOption, search, searchGarden, selectGroup, useTitle, backToSearch, loadBangumi, selectBangumi } = searchState
-const actions = useAnimeResourceActions({ ...props, searching: () => busy.value, filtered: () => filtered.value, groups: () => groups.value, updateMagnet: searchState.updateMagnet }, lifecycle.signal, batch)
+const hasUnsavedOrganizeDraft = () => !!organizeDialog.value?.hasUnsavedDraft
+const { prompt: draftPrompt, settleDiscard, beforeClose, confirmDiscard } = useOrganizeDraftGuard(hasUnsavedOrganizeDraft, () => rootBlocked.value)
+const actions = useAnimeResourceActions({ ...props, searching: () => busy.value, filtered: () => filtered.value, groups: () => groups.value, updateMagnet: searchState.updateMagnet, confirmOrganizeAction: confirmDiscard }, lifecycle.signal, batch)
 const { preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizeVisible, organizingBatch, organizeHiddenCount, prepareNotices, hasOrganizeDraft, batchDraftMatchesSelection, openBatchOrganize, resumeBatchOrganizeDraft, openOrganize, closeOrganize, organizeUncertain, organized, submit } = actions
 const rootBlocked = computed(() => batchRunning.value || singleSubmitting.value || !!organizeDialog.value?.busy)
 const flow = provideSheetFlow({
@@ -57,13 +61,12 @@ const flow = provideSheetFlow({
   getRootBody: () => scrollBody.value,
   getRootContainer: () => rootContainer.value,
   isRootBlocked: () => rootBlocked.value,
+  beforeDismissRoot: beforeClose,
+  beforeCloseAll: beforeClose,
   getExpanded: () => sheetDialog.value?.expanded ?? false,
   toggleExpanded: () => sheetDialog.value?.toggleExpanded(),
   onCloseHost: () => { sheetDialog.value?.closeDirect() },
 })
-function canLeave() { return !rootBlocked.value }
-onBeforeRouteLeave(canLeave)
-onBeforeRouteUpdate(canLeave)
 
 const batchOrganizeLabel = computed(() => {
   if (!batchDraftMatchesSelection.value) return `批量整理（${batchCount.value}）`
@@ -87,6 +90,7 @@ function selectCard(item: Item, event: MouseEvent) {
 }
 async function startBatch() {
   if (interactionBusy.value || singleSubmitting.value) return
+  if (!await actions.confirmCloudDownload([...batchSelected.value.values()].filter(batch.eligible)) || lifecycle.signal.aborted || interactionBusy.value || singleSubmitting.value) return
   const task = batch.submit()
   await nextTick()
   dialog.value?.querySelector<HTMLElement>('.mikan-batch-actions button')?.focus({ preventScroll: true })
@@ -151,7 +155,8 @@ onBeforeUnmount(() => lifecycle.abort())
       class="mikan-dialog media-search-dialog sheet-flow-host"
       :class="{ 'mikan-short-viewport': shortViewport }"
       :close-disabled="flow.blocked.value"
-      :allow-swipe-close="flow.depth.value === 1"
+      :allow-swipe-close="flow.depth.value === 1 && !hasUnsavedOrganizeDraft()"
+      restore-unexpected-close
       :before-close="flow.requestDismiss"
       @closing="batch.stop"
       @close="emit('close')"
@@ -256,7 +261,7 @@ onBeforeUnmount(() => lifecycle.abort())
                       <button v-if="canReadMagnet(item)" type="button" class="mikan-button mikan-outlined-button dmhy-read-magnet" aria-label="读取磁力" :aria-busy="readingMagnet === item.id" :disabled="interactionBusy || singleSubmitting" @click="readMagnet(item, $event)"><component :is="readingMagnet === item.id ? IconLoader2 : IconMagnet" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': readingMagnet === item.id }" /><span>{{ readingMagnet === item.id ? '读取中…' : '读取磁力' }}</span></button>
                       <a :href="item.url" target="_blank" rel="noopener noreferrer" class="mikan-button mikan-outlined-button" :aria-label="isGarden ? '查看Garden详情' : `查看${providerName}原帖`"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6m0-6L10 14M10 4H4v16h16v-6" /></svg><span class="mikan-action-label-desktop">{{ isGarden ? '查看详情' : '查看原帖' }}</span><span class="mikan-action-label-mobile">{{ isGarden ? '详情' : '原帖' }}</span></a>
                       <button v-if="hasOrganizeDraft(item) || (tmdbId && !batchMode && (pagedSearch || item.torrentUrl))" type="button" class="mikan-button mikan-outlined-button" :aria-label="organizeLabel(item)" :aria-busy="preparingItem === item.id" :disabled="organizeBlocked(item)" @click="openOrganize(item, $event)"><component :is="preparingItem === item.id ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'mikan-loading-spinner': preparingItem === item.id }" /><span class="mikan-action-label-desktop">{{ organizeLabel(item) }}</span><span class="mikan-action-label-mobile">{{ organizeLabel(item, true) }}</span></button>
-                      <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务" @click="close()"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
+                      <RouterLink v-if="submission(item)?.success && submissions[magnetKey(item.magnet)]?.organize" to="/115/download-organize" class="mikan-button mikan-primary-button" aria-label="已提交，查看下载整理任务" title="查看下载整理任务"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg><span>已提交</span></RouterLink>
                       <button v-else type="button" :disabled="!magnetKey(item.magnet) || interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" class="mikan-button mikan-primary-button" aria-label="115 云下载" @click="submit(item)"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><template v-if="submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain"><span>{{ submission(item)?.busy ? '提交中' : submission(item)?.success ? '已提交' : '待核对' }}</span></template><template v-else><span class="mikan-action-label-desktop">115 云下载</span><span class="mikan-action-label-mobile">云下载</span></template></button>
                     </div>
                   </div>
@@ -264,7 +269,7 @@ onBeforeUnmount(() => lifecycle.abort())
                   <p v-if="preparingItem === item.id || readingMagnet === item.id" role="status" class="mikan-notice garden-prepare-notice">{{ readingMagnet === item.id ? '正在读取原帖磁力…' : isGarden ? '读取 Garden 文件清单…' : `正在解析${providerName}种子清单…` }}</p>
                   <p v-if="prepareNotices[item.id]" role="status" class="mikan-notice garden-prepare-notice">{{ prepareNotices[item.id] }} <button v-if="magnetKey(item.magnet)" type="button" class="mikan-tool-button" :disabled="interactionBusy || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain" @click="submit(item)">普通离线</button></p>
                   <p v-if="copied === item.id" role="status" class="sr-only">磁力已复制</p>
-                  <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
+                  <p v-if="submission(item)?.message" role="status" class="mikan-notice" :class="submission(item)?.success ? 'mikan-success' : submission(item)?.uncertain ? 'mikan-warning' : 'mikan-error'">{{ submission(item)?.message }}<RouterLink v-if="submission(item)?.needsConfig || submission(item)?.uncertain" :to="submission(item)?.uncertain && submissions[magnetKey(item.magnet)]?.organize ? '/115/download-organize' : '/115/cloud-download'">{{ submission(item)?.uncertain ? '核对任务' : '前往配置' }}</RouterLink></p>
                 </li>
               </ul>
               <div v-if="filtered.length > visible" class="mikan-list-end"><button type="button" class="mikan-button mikan-outlined-button" @click="showMore">显示更多资源</button><span>还有 {{ filtered.length - visible }} 条，筛选包含已获取的全部结果</span></div>
@@ -281,15 +286,16 @@ onBeforeUnmount(() => lifecycle.abort())
             <div class="mikan-batch-count" tabindex="-1" aria-live="polite" aria-atomic="true"><strong>{{ batchRunning ? `已处理 ${batch.processed.value} / ${batch.total.value}` : `已选 ${batchCount} 项` }}</strong><span v-if="!batchRunning && hiddenSelectionCount">含 {{ hiddenSelectionCount }} 项不在当前筛选</span><span v-else-if="!batchRunning">保存至 115 已配置目录</span><span v-else>逐条提交到 115</span></div>
             <div class="mikan-batch-actions"><button v-if="batchRunning" type="button" class="mikan-button mikan-outlined-button" @click="batch.stop">停止提交</button><template v-else><button v-if="tmdbId || batchDraftMatchesSelection" type="button" class="mikan-button mikan-outlined-button" :disabled="interactionBusy || rootBlocked || (!batchDraftMatchesSelection && !batchCount)" @click="batchDraftMatchesSelection ? resumeBatchOrganizeDraft($event) : openBatchOrganize($event)"><IconFolder :size="16" aria-hidden="true" />{{ batchOrganizeLabel }}</button><button type="button" class="mikan-button mikan-primary-button" :aria-label="`提交到 115（${batchCount}）`" :disabled="interactionBusy || singleSubmitting || !batchCount" @click="startBatch"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17a4 4 0 0 1-1-7.8A6 6 0 0 1 17 8a4.5 4.5 0 0 1 1 9M12 10v11m-4-4 4 4 4-4" /></svg><span class="mikan-action-label-desktop">提交到 115（{{ batchCount }}）</span><span class="mikan-action-label-mobile">云下载（{{ batchCount }}）</span></button></template></div>
             <div v-if="batchRunning" class="mikan-batch-progress" role="progressbar" :aria-valuenow="batch.processed.value" :aria-valuemax="batch.total.value" aria-valuemin="0" aria-label="云下载提交进度"><span :style="{ width: `${batch.total.value ? batch.processed.value / batch.total.value * 100 : 0}%` }"></span></div>
-            <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download" @click="close()">前往配置</RouterLink></p>
+            <p v-if="batchNotice" role="status" class="mikan-batch-notice">{{ batchNotice }}<RouterLink v-if="batch.needsConfig.value" to="/115/cloud-download">前往配置</RouterLink></p>
             <div v-if="!batchRunning && batch.uncheckedCount.value" class="mikan-batch-check"><RouterLink to="/115/cloud-download" target="_blank" rel="noopener noreferrer">核对 {{ batch.uncheckedCount.value }} 项任务</RouterLink><button type="button" class="mikan-tool-button" @click="allowReselectAfterCheck">已核对，允许重选</button></div>
           </footer>
-          <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
+          <footer v-else class="search-log-footer"><span>115 云下载保存至已配置的下载目录。</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }">查看日志</RouterLink></footer>
         </div>
       </div>
     </BottomSheetDialog>
   </Teleport>
   <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :active="organizeVisible" :token="token" :entries="organizeEntries" :batch="organizingBatch" :hidden-count="organizeHiddenCount" :tmdb-id="tmdbId!" :kind="kind || 'tv'" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="organizeUncertain" />
+  <AlertDialog v-if="draftPrompt" v-bind="draftPrompt" :cancel-label="organizeVisible ? '继续编辑' : '保留草稿'" @cancel="settleDiscard(false)" @confirm="settleDiscard(true)" />
 </template>
 
 <style scoped>

@@ -4,7 +4,9 @@ import ShareTransferDirectory from './ShareTransferDirectory.vue'
 import ShareTransferButton from './ShareTransferButton.vue'
 import { useShareTransfer } from '../composables/useShareTransfer'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { onBeforeRouteLeave, onBeforeRouteUpdate, RouterLink, useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
+import AlertDialog from './AlertDialog.vue'
+import { useOrganizeDraftGuard } from '../composables/useOrganizeDraftGuard'
 import { IconFolder, IconLoader2 } from '@tabler/icons-vue'
 import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
 import BottomSheetDialog from './BottomSheetDialog.vue'
@@ -44,7 +46,9 @@ const router = useRouter()
 const toast = useToast()
 const searchState = useMediaResourceSearch(props, lifecycle.signal)
 const { config, result, searchEnabled, phase, elapsedSeconds, error, errorCode, moreError, moreErrorCode } = searchState
-const resourceActions = useMediaResourceActions(props, lifecycle.signal, () => phase.value !== '')
+const hasUnsavedOrganizeDraft = () => !!organizeDialog.value?.hasUnsavedDraft
+const { prompt: draftPrompt, settleDiscard, beforeClose, confirmDiscard } = useOrganizeDraftGuard(hasUnsavedOrganizeDraft, () => rootBlocked.value)
+const resourceActions = useMediaResourceActions(props, lifecycle.signal, () => phase.value !== '', confirmDiscard)
 const {
   shareRuns, cloudBusy, cloudSubmitting, cloudStatuses, organizeEntries, organizeVisible, preparingOrganize, organizeNotices,
   shareResourceID, canShareSTRM, restoreShareRuns, shareSTRM, stopShareRun,
@@ -58,6 +62,8 @@ const flow = provideSheetFlow({
   getRootBody: () => scrollBody.value,
   getRootContainer: () => rootContainer.value,
   isRootBlocked: () => rootBlocked.value,
+  beforeDismissRoot: beforeClose,
+  beforeCloseAll: beforeClose,
   getExpanded: () => sheetDialog.value?.expanded ?? false,
   toggleExpanded: () => sheetDialog.value?.toggleExpanded(),
   onCloseHost: () => { sheetDialog.value?.closeDirect() },
@@ -92,12 +98,9 @@ function resourceRank(type: string) {
 function sortResourceLinks(links: GyingResourceLink[]) {
   return links.map((link, index) => ({ link, index })).sort((a, b) => resourceRank(a.link.type) - resourceRank(b.link.type) || a.index - b.index).map(item => item.link)
 }
-function canLeave() { return !rootBlocked.value }
-onBeforeRouteLeave(canLeave)
-onBeforeRouteUpdate(canLeave)
 
 function openTask(path: string, event: MouseEvent) {
-  if (!canLeave()) { event.preventDefault(); return }
+  if (rootBlocked.value) { event.preventDefault(); return }
   void router.push(path)
 }
 
@@ -293,7 +296,8 @@ onBeforeUnmount(() => lifecycle.abort())
       class="gy-dialog media-search-dialog sheet-flow-host"
       :class="{ 'gy-short-viewport': shortViewport }"
       :close-disabled="flow.blocked.value"
-      :allow-swipe-close="flow.depth.value === 1"
+      :allow-swipe-close="flow.depth.value === 1 && !hasUnsavedOrganizeDraft()"
+      restore-unexpected-close
       :before-close="flow.requestDismiss"
       @close="emit('close')"
       @viewport-change="shortViewport = $event"
@@ -328,7 +332,7 @@ onBeforeUnmount(() => lifecycle.abort())
                 {{ phase === 'search' ? '搜索中 ' + elapsedSeconds + ' 秒' : '重搜' }}
               </button>
               <button v-else-if="!config && error" type="button" :disabled="busy" class="gy-tool-button" @click="initialize">重试</button>
-              <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'" @click="close()">
+              <RouterLink :to="settingsPath" class="gy-tool-button" :aria-label="sourceLabel + '配置'">
                 <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="3" fill="var(--gy-container)" /><circle cx="15" cy="17" r="3" fill="var(--gy-container)" /></svg>
                 配置
               </RouterLink>
@@ -337,7 +341,7 @@ onBeforeUnmount(() => lifecycle.abort())
           <div ref="scrollBody" class="gy-body" data-auto-scrollbar>
             <div v-if="config && !searchEnabled" class="gy-setup">
               <h3>登录{{ sourceLabel }}后搜索资源</h3><p>请先在资源配置中保存{{ sourceLabel }}账号并登录。</p>
-              <RouterLink :to="settingsPath" class="gy-button gy-primary-button" @click="close()">配置{{ sourceLabel }}搜索</RouterLink>
+              <RouterLink :to="settingsPath" class="gy-button gy-primary-button">配置{{ sourceLabel }}搜索</RouterLink>
             </div>
             <p v-if="phase === 'config'" role="status" class="gy-notice gy-info">正在读取{{ sourceLabel }}搜索配置…<span v-if="elapsedSeconds >= 10">已等待 {{ elapsedSeconds }} 秒，请检查后端连接状态。</span></p>
             <p v-else-if="phase === 'search'" role="status" class="gy-notice gy-info">{{ source === 'woniu' ? '正在搜索影片名称并读取网盘资源…' : '正在搜索影视原名并读取资源详情…' }}
@@ -345,7 +349,7 @@ onBeforeUnmount(() => lifecycle.abort())
               <span v-else>已等待 {{ elapsedSeconds }} 秒，最多等待约 2 分钟。</span>
               <span v-if="result">下方保留上次搜索结果，搜索完成后更新。</span>
             </p>
-            <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath" @click="close()">前往配置</RouterLink></p>
+            <p v-if="error" role="alert" class="gy-notice gy-error">{{ error }}<span v-if="result">本次更新未成功，当前展示上次搜索结果。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(errorCode)" :to="settingsPath">前往配置</RouterLink></p>
             <template v-if="result">
               <section v-if="!resultItems.length" class="gy-search-process" aria-label="搜索过程">
                 <div class="gy-process-heading"><span>搜索过程</span><span v-if="result.cached && phase !== 'search' && !error" class="gy-cache">已复用缓存</span></div>
@@ -441,7 +445,7 @@ onBeforeUnmount(() => lifecycle.abort())
                             <component :is="preparingOrganize === cloudResourceID(item, link) ? IconLoader2 : IconFolder" :size="16" aria-hidden="true" :class="{ 'gy-spinning': preparingOrganize === cloudResourceID(item, link) }" />
                             {{ organizeLabel(item, link) }}
                           </button>
-                          <RouterLink v-if="canCloudDownload(link) && cloudStatuses[cloudResourceID(item, link)]?.success" :to="cloudTask(item, link).path" data-gy-action="cloud-task" class="gy-button gy-primary-button" :aria-label="'已提交，' + cloudTask(item, link).label" @click="close()">
+                          <RouterLink v-if="canCloudDownload(link) && cloudStatuses[cloudResourceID(item, link)]?.success" :to="cloudTask(item, link).path" data-gy-action="cloud-task" class="gy-button gy-primary-button" :aria-label="'已提交，' + cloudTask(item, link).label">
                             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg>
                             已提交
                           </RouterLink>
@@ -461,7 +465,7 @@ onBeforeUnmount(() => lifecycle.abort())
                       </div>
                       <p v-if="copied === link.url" role="status" class="sr-only">链接{{ link.password ? '及提取码' : '' }}已复制</p>
                       <p v-if="organizeNotices[cloudResourceID(item, link)]" role="status" class="gy-notice gy-task-status gy-warning">{{ organizeNotices[cloudResourceID(item, link)] }}</p>
-                      <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'" @click="close()">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
+                      <p v-if="cloudStatuses[cloudResourceID(item, link)]?.message && (cloudStatuses[cloudResourceID(item, link)]?.uncertain || cloudStatuses[cloudResourceID(item, link)]?.needsConfig)" role="status" class="gy-notice gy-task-status" :class="cloudStatuses[cloudResourceID(item, link)]?.uncertain ? 'gy-warning' : 'gy-error'">{{ cloudStatuses[cloudResourceID(item, link)]?.message }}<RouterLink :to="cloudStatuses[cloudResourceID(item, link)]?.organize ? '/115/download-organize' : '/115/cloud-download'">{{ cloudStatuses[cloudResourceID(item, link)]?.organize ? '查看任务' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '查看云下载' : '前往配置' }}</RouterLink></p>
                     </li>
                   </ul>
                 </article>
@@ -475,15 +479,16 @@ onBeforeUnmount(() => lifecycle.abort())
                 <button type="button" class="gy-button gy-outlined-button" :disabled="busy" @click="loadNextPage">{{ phase === 'more' ? '读取下一页…' : moreError ? '重试加载更多' : '加载更多条目' }}</button>
                 <span role="status">已加载 {{ result.page || 1 }} 页，{{ resultItems.length }} 个条目</span>
               </div>
-              <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath" @click="close()">前往配置</RouterLink></p>
+              <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath">前往配置</RouterLink></p>
             </template>
           </div>
-          <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }" @click="close()">查看日志</RouterLink></footer>
+          <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }">查看日志</RouterLink></footer>
         </div>
       </div>
     </BottomSheetDialog>
   </Teleport>
   <DownloadOrganizeDialog ref="organizeDialog" :animation-library="animationLibrary" :original-title="originalTitle" v-if="organizeEntries.length" :active="organizeVisible" :token="token" :entries="organizeEntries" :tmdb-id="Number(tmdbId)" :kind="kind" :title="title" :date="date || ''" :seasons="seasons || []" :theme-colors="themeColors" @close="closeOrganize" @submitted="organized" @uncertain="keys => recordOrganized(keys, true)" />
+  <AlertDialog v-if="draftPrompt" v-bind="draftPrompt" :cancel-label="organizeVisible ? '继续编辑' : '保留草稿'" @cancel="settleDiscard(false)" @confirm="settleDiscard(true)" />
 </template>
 
 <style scoped>

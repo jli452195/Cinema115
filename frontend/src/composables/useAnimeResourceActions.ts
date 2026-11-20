@@ -4,6 +4,7 @@ import { magnetKey } from '../lib/cloud-download-batch'
 import { loadAnimeOrganizeFiles } from '../lib/anime-resource-api'
 import { readDmhyMagnet } from '../lib/dmhy-search'
 import { useCloudDownloadAction } from './useCloudDownloadAction'
+import type { ConfirmOrganizeAction } from './useOrganizeDraftGuard'
 import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/organize'
 import type { AnimeResourceItem as Item, AnimeResourceGroup as Group, AnimeResourceProvider } from '../types/animeResourceSearch'
 
@@ -16,6 +17,7 @@ interface AnimeResourceActionOptions {
   filtered: () => Item[]
   groups: () => Group[]
   updateMagnet?: (id: string, magnet: string) => void
+  confirmOrganizeAction: ConfirmOrganizeAction
 }
 
 export function useAnimeResourceActions(options: AnimeResourceActionOptions, signal: AbortSignal, batch: ReturnType<typeof useCloudDownloadBatch>) {
@@ -67,6 +69,11 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
   }
   function resumeBatchOrganizeDraft(event: MouseEvent) { return organizingBatch.value && resumeOrganizeDraft(event) }
   function closeOrganize() { organizeVisible.value = false }
+  function confirmCloudDownload(items: readonly Pick<Item, 'magnet'>[]) {
+    const draftKeys = new Set(organizeEntries.value.map(entry => magnetKey(entry.resource.magnet)))
+    if (!items.some(item => draftKeys.has(magnetKey(item.magnet)))) return true
+    return options.confirmOrganizeAction('download')
+  }
   function discardOrganize() {
     organizeGeneration++
     organizeController?.abort(); organizeController = undefined
@@ -117,9 +124,12 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     const entries = selected.filter(canSelect).map(item => organizeEntry(item))
     if (!entries.length) return
     const replacing = organizeEntries.value.length > 0, hiddenCount = hiddenSelectionCount.value
+    const returnFocus = event.currentTarget as HTMLElement
+    if (replacing && !await options.confirmOrganizeAction('replace')) return
+    if (signal.aborted || interactionBusy.value || singleSubmitting.value || draftScope !== organizeScope() || draftKey !== organizeSelectionKey([...batchSelected.value.values()])) return
     discardOrganize()
     const generation = organizeGeneration
-    ;(event.currentTarget as HTMLElement).focus({ preventScroll: true })
+    returnFocus.focus({ preventScroll: true })
     preparing.value = { id: entries[0]!.resource.id, kind: 'files' }
     try {
       if (replacing) await nextTick()
@@ -135,11 +145,13 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     if (submission(item)?.uncertain) return
     const replacing = organizeEntries.value.length > 0
     const draftScope = organizeScope(), draftKey = organizeSelectionKey([item]), entry = organizeEntry(item)
+    const returnFocus = event.currentTarget as HTMLElement
+    if (replacing && !await options.confirmOrganizeAction('replace')) return
+    if (signal.aborted || interactionBusy.value || singleSubmitting.value || draftScope !== organizeScope() || submission(item)?.success || submission(item)?.uncertain) return
     discardOrganize()
     const generation = organizeGeneration
     const controller = new AbortController()
     organizeController = controller
-    const returnFocus = event.currentTarget as HTMLElement
     returnFocus.focus({ preventScroll: true })
     preparing.value = { id: item.id, kind: 'files' }
     delete prepareNotices.value[item.id]
@@ -178,6 +190,7 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
   }
   async function submit(item: Item) {
     if (signal.aborted || interactionBusy.value || !magnetKey(item.magnet) || submission(item)?.busy || submission(item)?.success || submission(item)?.uncertain) return
+    if (!await confirmCloudDownload([item]) || signal.aborted || interactionBusy.value) return
     const key = magnetKey(item.magnet)
     delete batch.statuses.value[key]
     const status = await cloudDownload.submit(item.magnet, key)
@@ -186,5 +199,5 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     if (status.success || status.uncertain) batchSelected.value.delete(key)
   }
 
-  return { busy, preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizeVisible, organizingBatch, organizeHiddenCount, prepareNotices, hasOrganizeDraft, batchDraftMatchesSelection, openBatchOrganize, resumeBatchOrganizeDraft, openOrganize, closeOrganize, discardOrganize, organizeUncertain, organized, submit }
+  return { busy, preparingItem, readingMagnet, canReadMagnet, readMagnet, singleSubmitting, submissions, submission, canSelect, availableSelection, allFilteredSelected, hiddenSelectionCount, toggleResource, allowReselectAfterCheck, organizeEntries, organizeVisible, organizingBatch, organizeHiddenCount, prepareNotices, hasOrganizeDraft, batchDraftMatchesSelection, openBatchOrganize, resumeBatchOrganizeDraft, openOrganize, closeOrganize, organizeUncertain, organized, confirmCloudDownload, submit }
 }
