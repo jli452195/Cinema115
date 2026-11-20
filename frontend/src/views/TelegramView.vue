@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconHandMove, IconInfoCircle, IconPlus, IconPuzzle, IconRefresh } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
 import TelegramBotEditor from '../components/TelegramBotEditor.vue'
 import TelegramBotCard from '../components/TelegramBotCard.vue'
 import TelegramModuleCard from '../components/TelegramModuleCard.vue'
@@ -14,7 +13,6 @@ import { portalUser } from '../composables/usePortalAuth'
 import type { TelegramBotConfig, TelegramBotIdentity, TelegramBotModule } from '../types/telegramBots'
 
 const props = defineProps<{ token: string }>()
-const emit = defineEmits<{ logout: [] }>()
 const toast = useToast()
 const bots = ref<TelegramBotConfig[]>([]), modules = ref<TelegramBotModule[]>([])
 const loading = ref(true), refreshing = ref(false), adding = ref(false), deleting = ref(false)
@@ -190,46 +188,44 @@ onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer)
 </script>
 
 <template>
-  <ManagementLayout title="Telegram Bot" description="管理 Bot 连接，并将项目中的独立功能分配给唯一 Bot。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="emit('logout')">
-    <section class="mb-5 flex flex-wrap items-center gap-3" aria-label="Bot 配置概览">
-      <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-100/70 p-1.5 dark:border-slate-800 dark:bg-slate-900/70">
-        <span class="flex items-center gap-2 rounded-xl bg-white px-3 py-1.5 text-xs text-slate-500 shadow-sm dark:bg-slate-800 dark:text-slate-400">Bot 总数<strong class="font-semibold tabular-nums text-slate-800 dark:text-slate-100">{{ bots.length }}</strong></span>
-        <span class="flex items-center gap-2 rounded-xl border border-emerald-200/70 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">已连接<strong class="tabular-nums">{{ onlineCount }}</strong></span>
-        <span class="flex items-center gap-2 rounded-xl border border-blue-200/70 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300">功能已分配<strong class="tabular-nums">{{ assignedCount }} / {{ modules.length }}</strong></span>
-      </div>
-      <div class="ml-auto flex items-center gap-2">
-        <button type="button" :disabled="loading || refreshing || assignmentBusy || !!draggingModuleId" class="bot-action grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="刷新 Bot 与功能" title="刷新" @click="refresh(true)"><IconRefresh :size="16" :class="{ 'motion-safe:animate-spin': refreshing }" aria-hidden="true" /></button>
-        <button type="button" :disabled="loading || adding || assignmentBusy || !!draggingModuleId || bots.length >= 20" class="bot-action inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-medium text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-40" @click="add"><IconPlus :size="16" aria-hidden="true" />{{ adding ? '添加中' : '新增 Bot' }}</button>
-      </div>
-    </section>
-    <p role="note" aria-label="Bot 链接接收规则" class="mb-5 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" /><span>私聊直接发送链接。115 分享可选网盘转存或分享 STRM，纯 ED2K 按分配的用途和目录处理；仅一个适用目标且可用时自动处理，多个目标一次选择用途和目录。磁力及与 ED2K 的混合消息整批走云下载；115 分享请与磁力、ED2K 分开发送。</span></p>
-    <p v-if="loading" role="status" class="py-8 text-sm text-slate-500 dark:text-slate-400">正在读取 Bot 和功能配置…</p>
-    <div v-else class="bot-workspace grid items-start gap-5">
-      <section aria-labelledby="bot-list-title" class="bot-primary min-w-0">
-        <header class="mb-3 flex items-center justify-between gap-3"><div><h2 id="bot-list-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Bot 配置</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot；Bot 启用后运行已分配功能。</p></div><span class="rounded-full bg-slate-100 px-2 py-1 text-xs tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">{{ bots.length }} / 20</span></header>
-        <TransitionGroup v-if="bots.length" name="bot-list" tag="div" class="bot-grid relative grid min-w-0 items-start gap-4">
-          <TelegramBotCard v-for="bot in bots" :key="bot.id" :bot="bot" :modules="moduleByBot(bot.id)" :busy-module-ids="busyModules" :testing="testingBots.has(bot.id)" :disabled="assignmentBusy" @edit="editingBot = $event" @remove="deletingBot = $event" @test="testBot" @unassign-module="unassignModule" @start="startDrag" @end="endDrag" @update-modules="stageList(bot.id, $event)" @move="moveModule" />
-        </TransitionGroup>
-        <div v-else class="rounded-2xl border border-dashed border-slate-300 px-4 py-12 text-center dark:border-slate-700"><p class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ readError ? '暂时无法读取 Bot 配置' : '还没有 Bot 配置' }}</p><p class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ readError || '新增 Bot 后填写 Token，再分配实际功能。' }}</p><button v-if="readError" type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white" :disabled="refreshing" @click="refresh(true)">重新读取</button><button v-else type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-40" :disabled="adding" @click="add">新增 Bot</button></div>
-      </section>
-      <aside aria-labelledby="pending-modules-title" class="module-pool-panel min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <header class="flex items-center gap-3 px-4 pb-3 pt-4"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconPuzzle :size="19" aria-hidden="true" /></span><div class="min-w-0 flex-1"><h2 id="pending-modules-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">待分配功能</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot</p></div><span class="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs tabular-nums text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300">{{ unassigned.length }} 项</span></header>
-        <p class="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:bg-slate-950/50"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />拖动卡片排序或移入 Bot，也可直接选择 Bot 分配。</p>
-        <div role="region" aria-label="待分配功能列表" tabindex="0" class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 dark:border-slate-800 dark:bg-zinc-900">
-          <SortableList class="bot-module-list" :model-value="unassigned" :item-key="item => item.id" group="telegram-modules" :pull="true" :put="true" direction="vertical" item-class="w-full" handle=".telegram-module-card" filter="button:not([data-drag-handle]), a, input, select, textarea, label, [role=combobox]" :disabled="assignmentBusy" @update:model-value="stageList('', $event)" @start="startDrag" @end="endDrag">
-            <template #item="{ item }"><TelegramModuleCard :module="item" :bots="bots" placement="pool" :busy="assignmentBusy || adding" @assign="assign" @create-bot="add" @move="moveModule" /></template>
-            <template #empty><div class="grid w-full justify-items-center gap-2 px-3 py-6 text-center"><IconPuzzle :size="24" class="text-slate-300 dark:text-slate-600" aria-hidden="true" /><p class="text-xs leading-5 text-slate-500 dark:text-slate-400">所有功能均已分配<br />拖回此处可解除分配</p></div></template>
-          </SortableList>
-        </div>
-        <footer class="flex items-center gap-2 px-4 py-3 text-[11px] text-slate-500 dark:text-slate-400"><IconHandMove :size="14" aria-hidden="true" /><span>排序仅保存在当前浏览器</span><span class="ml-auto tabular-nums">共 {{ modules.length }} 项功能</span></footer>
-      </aside>
+  <section class="mb-5 flex flex-wrap items-center gap-3" aria-label="Bot 配置概览">
+    <div class="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-slate-100/70 p-1.5 dark:border-slate-800 dark:bg-slate-900/70">
+      <span class="flex items-center gap-2 rounded-xl bg-white px-3 py-1.5 text-xs text-slate-500 shadow-sm dark:bg-slate-800 dark:text-slate-400">Bot 总数<strong class="font-semibold tabular-nums text-slate-800 dark:text-slate-100">{{ bots.length }}</strong></span>
+      <span class="flex items-center gap-2 rounded-xl border border-emerald-200/70 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-700 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-300">已连接<strong class="tabular-nums">{{ onlineCount }}</strong></span>
+      <span class="flex items-center gap-2 rounded-xl border border-blue-200/70 bg-blue-50 px-3 py-1.5 text-xs text-blue-700 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-300">功能已分配<strong class="tabular-nums">{{ assignedCount }} / {{ modules.length }}</strong></span>
     </div>
-    <FloatingDialog v-if="editingBot" title="编辑 Bot 配置" close-label="关闭 Bot 配置" size="config" @close="editingBot = undefined"><TelegramBotEditor :key="editingBot.id" :bot="editingBot" :token="token" embedded @changed="edited" /></FloatingDialog>
-    <P115ActionDialog v-if="deletingBot" title="删除 Bot 配置？" :busy="deleting" @close="deletingBot = undefined">
-      <p>确定删除“{{ deletingBot.name }}”？</p><p v-if="deletingModules.length" class="mt-2">它当前分配了 {{ deletingModules.length }} 项功能。这些功能会解除分配并返回待分配区域，不会自动改派到其他 Bot。</p><p v-else class="mt-2">该 Bot 没有已分配的功能。</p>
-      <template #footer><button type="button" class="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700" :disabled="deleting" @click="deletingBot = undefined">取消</button><button type="button" class="rounded-xl bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40" :disabled="deleting || busyModules.size > 0" @click="removeBot">{{ deleting ? '删除中' : '确认删除' }}</button></template>
-    </P115ActionDialog>
-  </ManagementLayout>
+    <div class="ml-auto flex items-center gap-2">
+      <button type="button" :disabled="loading || refreshing || assignmentBusy || !!draggingModuleId" class="bot-action grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800" aria-label="刷新 Bot 与功能" title="刷新" @click="refresh(true)"><IconRefresh :size="16" :class="{ 'motion-safe:animate-spin': refreshing }" aria-hidden="true" /></button>
+      <button type="button" :disabled="loading || adding || assignmentBusy || !!draggingModuleId || bots.length >= 20" class="bot-action inline-flex h-9 items-center gap-1.5 rounded-xl bg-blue-600 px-3 text-sm font-medium text-white shadow-sm shadow-blue-600/20 hover:bg-blue-700 disabled:opacity-40" @click="add"><IconPlus :size="16" aria-hidden="true" />{{ adding ? '添加中' : '新增 Bot' }}</button>
+    </div>
+  </section>
+  <p role="note" aria-label="Bot 链接接收规则" class="mb-5 flex items-start gap-2 text-xs leading-5 text-slate-500 dark:text-slate-400"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" /><span>私聊直接发送链接。115 分享可选网盘转存或分享 STRM，纯 ED2K 按分配的用途和目录处理；仅一个适用目标且可用时自动处理，多个目标一次选择用途和目录。磁力及与 ED2K 的混合消息整批走云下载；115 分享请与磁力、ED2K 分开发送。</span></p>
+  <p v-if="loading" role="status" class="py-8 text-sm text-slate-500 dark:text-slate-400">正在读取 Bot 和功能配置…</p>
+  <div v-else class="bot-workspace grid items-start gap-5">
+    <section aria-labelledby="bot-list-title" class="bot-primary min-w-0">
+      <header class="mb-3 flex items-center justify-between gap-3"><div><h2 id="bot-list-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">Bot 配置</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot；Bot 启用后运行已分配功能。</p></div><span class="rounded-full bg-slate-100 px-2 py-1 text-xs tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">{{ bots.length }} / 20</span></header>
+      <TransitionGroup v-if="bots.length" name="bot-list" tag="div" class="bot-grid relative grid min-w-0 items-start gap-4">
+        <TelegramBotCard v-for="bot in bots" :key="bot.id" :bot="bot" :modules="moduleByBot(bot.id)" :busy-module-ids="busyModules" :testing="testingBots.has(bot.id)" :disabled="assignmentBusy" @edit="editingBot = $event" @remove="deletingBot = $event" @test="testBot" @unassign-module="unassignModule" @start="startDrag" @end="endDrag" @update-modules="stageList(bot.id, $event)" @move="moveModule" />
+      </TransitionGroup>
+      <div v-else class="rounded-2xl border border-dashed border-slate-300 px-4 py-12 text-center dark:border-slate-700"><p class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ readError ? '暂时无法读取 Bot 配置' : '还没有 Bot 配置' }}</p><p class="mt-2 text-xs text-slate-500 dark:text-slate-400">{{ readError || '新增 Bot 后填写 Token，再分配实际功能。' }}</p><button v-if="readError" type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white" :disabled="refreshing" @click="refresh(true)">重新读取</button><button v-else type="button" class="mt-4 rounded-xl bg-blue-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-40" :disabled="adding" @click="add">新增 Bot</button></div>
+    </section>
+    <aside aria-labelledby="pending-modules-title" class="module-pool-panel min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <header class="flex items-center gap-3 px-4 pb-3 pt-4"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconPuzzle :size="19" aria-hidden="true" /></span><div class="min-w-0 flex-1"><h2 id="pending-modules-title" class="text-sm font-semibold text-slate-800 dark:text-slate-100">待分配功能</h2><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">每项功能只归属一个 Bot</p></div><span class="rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs tabular-nums text-blue-700 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300">{{ unassigned.length }} 项</span></header>
+      <p class="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-500 dark:text-slate-400 dark:bg-slate-950/50"><IconInfoCircle :size="15" class="mt-0.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />拖动卡片排序或移入 Bot，也可直接选择 Bot 分配。</p>
+      <div role="region" aria-label="待分配功能列表" tabindex="0" class="module-pool-content min-h-32 border-y border-slate-100 bg-white p-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500 dark:border-slate-800 dark:bg-zinc-900">
+        <SortableList class="bot-module-list" :model-value="unassigned" :item-key="item => item.id" group="telegram-modules" :pull="true" :put="true" direction="vertical" item-class="w-full" handle=".telegram-module-card" filter="button:not([data-drag-handle]), a, input, select, textarea, label, [role=combobox]" :disabled="assignmentBusy" @update:model-value="stageList('', $event)" @start="startDrag" @end="endDrag">
+          <template #item="{ item }"><TelegramModuleCard :module="item" :bots="bots" placement="pool" :busy="assignmentBusy || adding" @assign="assign" @create-bot="add" @move="moveModule" /></template>
+          <template #empty><div class="grid w-full justify-items-center gap-2 px-3 py-6 text-center"><IconPuzzle :size="24" class="text-slate-300 dark:text-slate-600" aria-hidden="true" /><p class="text-xs leading-5 text-slate-500 dark:text-slate-400">所有功能均已分配<br />拖回此处可解除分配</p></div></template>
+        </SortableList>
+      </div>
+      <footer class="flex items-center gap-2 px-4 py-3 text-[11px] text-slate-500 dark:text-slate-400"><IconHandMove :size="14" aria-hidden="true" /><span>排序仅保存在当前浏览器</span><span class="ml-auto tabular-nums">共 {{ modules.length }} 项功能</span></footer>
+    </aside>
+  </div>
+  <FloatingDialog v-if="editingBot" title="编辑 Bot 配置" close-label="关闭 Bot 配置" size="config" @close="editingBot = undefined"><TelegramBotEditor :key="editingBot.id" :bot="editingBot" :token="token" embedded @changed="edited" /></FloatingDialog>
+  <P115ActionDialog v-if="deletingBot" title="删除 Bot 配置？" :busy="deleting" @close="deletingBot = undefined">
+    <p>确定删除“{{ deletingBot.name }}”？</p><p v-if="deletingModules.length" class="mt-2">它当前分配了 {{ deletingModules.length }} 项功能。这些功能会解除分配并返回待分配区域，不会自动改派到其他 Bot。</p><p v-else class="mt-2">该 Bot 没有已分配的功能。</p>
+    <template #footer><button type="button" class="rounded-xl border border-slate-200 px-3 py-2 text-sm dark:border-slate-700" :disabled="deleting" @click="deletingBot = undefined">取消</button><button type="button" class="rounded-xl bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40" :disabled="deleting || busyModules.size > 0" @click="removeBot">{{ deleting ? '删除中' : '确认删除' }}</button></template>
+  </P115ActionDialog>
 </template>
 
 <style scoped>

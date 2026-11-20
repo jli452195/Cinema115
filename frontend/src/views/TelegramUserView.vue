@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconArrowRight, IconBrandTelegram, IconCheck, IconExternalLink, IconLogout, IconRefresh, IconShieldLock } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
 import FloatingDialog from '../components/FloatingDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import TelegramAvatar from '../components/TelegramAvatar.vue'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
 const status = ref<TelegramUserStatus>(), apiId = ref<number>(), apiHash = ref('')
 const busy = ref('load'), error = ref(''), notice = ref(''), confirmDisconnect = ref(false), disconnectError = ref('')
 const loginOpen = ref(false), loginReady = ref(false), loginBusy = ref(''), loginError = ref(''), loginNotice = ref('')
@@ -126,49 +124,47 @@ onBeforeUnmount(() => { lifecycle.abort(); closeLogin(); apiHash.value = '' })
 </script>
 
 <template>
-  <ManagementLayout title="Telegram 用户账号" description="配置 API 凭据并连接 Telegram，供资源搜索与频道转发共用。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="$emit('logout')">
-    <div class="tg-account-page">
-      <p v-if="error" role="alert" class="tg-message tg-error">{{ error }}<button v-if="!status" type="button" class="tg-text-button" :disabled="!!busy" @click="load">重新读取</button></p>
-      <p v-if="notice" role="status" class="tg-message tg-notice">{{ notice }}</p>
-      <section class="tg-card tg-identity-card" aria-label="用户登录状态" :aria-busy="busy === 'load' || busy === 'check'">
-        <div class="tg-identity">
-          <TelegramAvatar :token="token" peer-id="self" :avatar-id="status?.avatarId" :size="40" class="tg-avatar"><IconBrandTelegram :size="23" aria-hidden="true" /></TelegramAvatar>
-          <div class="tg-identity-text"><div class="tg-name-row"><h2>{{ status?.name || (status?.username ? `@${status.username}` : 'Telegram 账号') }}</h2><span v-if="status" class="tg-state" :class="{ 'is-connected': status.authorized }">{{ stateText }}</span></div><p>{{ busy === 'load' ? '正在读取账号状态' : status?.username ? `@${status.username}` : status?.hasSession ? '已有保存的会话，可检查连接并恢复。' : '使用自己的 Telegram 用户账号登录' }}</p></div>
-        </div>
-        <div class="tg-account-actions">
-          <button v-if="status?.hasSession || status?.authorized" type="button" class="tg-button" :disabled="locked || !status.configured" @click="act('check')"><IconRefresh :size="16" aria-hidden="true" :class="{ 'tg-spinning': busy === 'check' }" />{{ busy === 'check' ? '检查中' : '检查连接' }}</button>
-          <button v-if="status?.authorized || status?.hasSession" type="button" class="tg-button tg-exit" :disabled="locked" @click="confirmDisconnect = true; disconnectError = ''"><IconLogout :size="16" aria-hidden="true" />退出账号</button>
-          <button v-if="status && !status.authorized" type="button" class="tg-button tg-primary" :disabled="locked || !status.configured" @click="openLogin">{{ status.stage !== 'idle' ? '继续登录' : '登录账号' }}<IconArrowRight :size="16" aria-hidden="true" /></button>
-        </div>
-        <p v-if="status && !status.configured" class="tg-setup-hint">先保存下方 API 凭据，再登录用户账号。</p>
-      </section>
-      <form class="tg-card tg-api-card" :aria-busy="busy === 'config'" @submit.prevent="canSave && act('config')">
-        <div class="tg-card-heading"><div><h2>API 凭据</h2><p>使用在 Telegram 申请的应用凭据。</p></div><span v-if="status?.configured" class="tg-saved"><IconCheck :size="14" aria-hidden="true" />已配置</span></div>
-        <fieldset :disabled="locked || !status" class="tg-api-fields"><legend class="sr-only">Telegram API 凭据</legend><label>API ID<input ref="apiIDInput" v-model.number="apiId" type="number" min="1" step="1" required inputmode="numeric" autocomplete="off" placeholder="填写 API ID" /></label><label>API Hash<input v-model="apiHash" type="password" autocomplete="new-password" spellcheck="false" :required="!status?.configured" pattern="[a-fA-F0-9]{32}" :placeholder="status?.configured ? '已保存，留空保留' : '填写 API Hash'" /></label></fieldset>
-        <div class="tg-api-footer"><a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer">申请 API 凭据<IconExternalLink :size="13" aria-hidden="true" /></a><button type="submit" class="tg-button tg-primary" :disabled="!canSave">{{ busy === 'config' ? '保存中' : '保存 API' }}</button></div>
-        <p class="tg-help">凭据与登录会话加密保存。更换 API 凭据前，需先退出当前账号。</p>
-      </form>
-      <p class="tg-page-help"><IconShieldLock :size="16" aria-hidden="true" /><span>验证码与二步验证密码仅用于本次登录，不会保存。资源 Bot 与频道在<RouterLink to="/resources/telegram" class="text-blue-600 dark:text-blue-300">搜索配置</RouterLink>中管理。</span></p>
-    </div>
-    <FloatingDialog v-if="loginOpen" title="登录 Telegram" close-label="关闭 Telegram 登录" class="tg-login-dialog" @close="closeLogin">
-      <div class="tg-login-content">
-        <ol class="tg-login-steps" aria-label="登录步骤"><li v-for="(label, index) in ['手机号', '验证码', '二步验证']" :key="label" :class="{ 'is-current': stepNumber === index + 1, 'is-complete': stepNumber > index + 1 }" :aria-current="stepNumber === index + 1 ? 'step' : undefined"><span><IconCheck v-if="stepNumber > index + 1" :size="13" aria-hidden="true" /><template v-else>{{ index + 1 }}</template></span>{{ label }}</li></ol>
-        <div v-if="!loginReady" class="tg-login-loading" :aria-busy="!!loginBusy"><template v-if="loginBusy"><IconRefresh :size="21" class="tg-spinning" aria-hidden="true" /><p>正在读取登录进度</p></template><template v-else><p v-if="loginError" role="alert" class="tg-message tg-error">{{ loginError }}</p><button type="button" class="tg-button" @click="loginAction('config')"><IconRefresh :size="15" aria-hidden="true" />重新读取</button></template></div>
-        <form v-else id="tg-login-form" class="tg-login-form" :aria-busy="!!loginBusy" @submit.prevent="submitLogin">
-          <div class="tg-login-heading"><h3>{{ step === 'phone' ? '输入手机号' : step === 'code' ? '输入登录验证码' : '输入二步验证密码' }}</h3><p id="tg-login-description">{{ step === 'phone' ? '包含国家或地区代码，例如 +8613800000000。' : step === 'code' ? (sentPhone ? `请查看 ${sentPhone} 的 Telegram 官方客户端或短信。` : '请查看上次登录手机号的 Telegram 官方客户端或短信。') : '此账号已启用二步验证，请输入 Telegram 密码。' }}</p></div>
-          <label v-if="step === 'phone'" class="tg-login-field">手机号<input aria-describedby="tg-login-description" ref="phoneInput" v-model="phone" type="tel" autocomplete="tel" inputmode="tel" required pattern="\+[1-9][0-9]{6,14}" placeholder="+8613800000000" :disabled="!!loginBusy" /></label>
-          <label v-else-if="step === 'code'" class="tg-login-field">验证码<input aria-describedby="tg-login-description" ref="codeInput" v-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" required class="tg-code-input" placeholder="输入或粘贴验证码" :disabled="!!loginBusy" /></label>
-          <label v-else class="tg-login-field">二步验证密码<input aria-describedby="tg-login-description" ref="passwordInput" v-model="password" type="password" autocomplete="off" required placeholder="输入密码" :disabled="!!loginBusy" /></label>
-          <p v-if="loginError" role="alert" class="tg-message tg-error">{{ loginError }}</p><p v-if="loginNotice" role="status" class="tg-message tg-notice">{{ loginNotice }}</p>
-          <div v-if="step === 'phone' && status?.hasSession" class="tg-existing-session"><span>已有保存的会话，可先尝试恢复。</span><button type="button" class="tg-text-button" :disabled="!!loginBusy" @click="loginAction('check')">{{ loginBusy === 'check' ? '检查中' : '检查并恢复' }}</button></div>
-          <div class="tg-login-links"><button v-if="step !== 'phone'" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="changePhone">修改手机号</button><button v-if="step === 'code' && sentPhone" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="resendCode">{{ loginBusy === 'send-code' ? '发送中' : '重新发送验证码' }}</button><button v-if="step === 'phone' && pendingStep !== 'phone'" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="continueStep">继续上次验证</button><span v-if="step === 'code' && !sentPhone" class="tg-help">需要重发时，请先确认手机号。</span></div>
-        </form>
-        <p class="tg-login-close-note">关闭后可重新打开，继续尚未完成的验证。</p>
+  <div class="tg-account-page">
+    <p v-if="error" role="alert" class="tg-message tg-error">{{ error }}<button v-if="!status" type="button" class="tg-text-button" :disabled="!!busy" @click="load">重新读取</button></p>
+    <p v-if="notice" role="status" class="tg-message tg-notice">{{ notice }}</p>
+    <section class="tg-card tg-identity-card" aria-label="用户登录状态" :aria-busy="busy === 'load' || busy === 'check'">
+      <div class="tg-identity">
+        <TelegramAvatar :token="token" peer-id="self" :avatar-id="status?.avatarId" :size="40" class="tg-avatar"><IconBrandTelegram :size="23" aria-hidden="true" /></TelegramAvatar>
+        <div class="tg-identity-text"><div class="tg-name-row"><h2>{{ status?.name || (status?.username ? `@${status.username}` : 'Telegram 账号') }}</h2><span v-if="status" class="tg-state" :class="{ 'is-connected': status.authorized }">{{ stateText }}</span></div><p>{{ busy === 'load' ? '正在读取账号状态' : status?.username ? `@${status.username}` : status?.hasSession ? '已有保存的会话，可检查连接并恢复。' : '使用自己的 Telegram 用户账号登录' }}</p></div>
       </div>
-      <template #footer><div class="tg-login-footer"><button type="button" class="tg-button" @click="closeLogin">关闭</button><button v-if="loginReady" type="submit" form="tg-login-form" class="tg-button tg-primary" :disabled="!canSubmit">{{ loginBusy === 'send-code' ? '发送中' : loginBusy === 'sign-in' ? '验证中' : step === 'phone' ? '发送验证码' : step === 'code' ? '验证并继续' : '完成登录' }}<IconArrowRight :size="16" aria-hidden="true" /></button></div></template>
-    </FloatingDialog>
-    <P115ActionDialog v-if="confirmDisconnect" title="退出 Telegram 用户账号？" :busy="busy === 'disconnect'" @close="confirmDisconnect = false"><p>将结束本项目保存的用户登录会话。频道搜索与转发需要重新登录后使用，API 凭据和资源 Bot 配置会保留。</p><p v-if="disconnectError" role="alert" class="tg-message tg-error">{{ disconnectError }}</p><template #footer><button type="button" class="tg-button" :disabled="!!busy" @click="confirmDisconnect = false">保留登录</button><button type="button" class="tg-button tg-danger" :disabled="!!busy" @click="act('disconnect')">{{ busy === 'disconnect' ? '退出中' : '确认退出' }}</button></template></P115ActionDialog>
-  </ManagementLayout>
+      <div class="tg-account-actions">
+        <button v-if="status?.hasSession || status?.authorized" type="button" class="tg-button" :disabled="locked || !status.configured" @click="act('check')"><IconRefresh :size="16" aria-hidden="true" :class="{ 'tg-spinning': busy === 'check' }" />{{ busy === 'check' ? '检查中' : '检查连接' }}</button>
+        <button v-if="status?.authorized || status?.hasSession" type="button" class="tg-button tg-exit" :disabled="locked" @click="confirmDisconnect = true; disconnectError = ''"><IconLogout :size="16" aria-hidden="true" />退出账号</button>
+        <button v-if="status && !status.authorized" type="button" class="tg-button tg-primary" :disabled="locked || !status.configured" @click="openLogin">{{ status.stage !== 'idle' ? '继续登录' : '登录账号' }}<IconArrowRight :size="16" aria-hidden="true" /></button>
+      </div>
+      <p v-if="status && !status.configured" class="tg-setup-hint">先保存下方 API 凭据，再登录用户账号。</p>
+    </section>
+    <form class="tg-card tg-api-card" :aria-busy="busy === 'config'" @submit.prevent="canSave && act('config')">
+      <div class="tg-card-heading"><div><h2>API 凭据</h2><p>使用在 Telegram 申请的应用凭据。</p></div><span v-if="status?.configured" class="tg-saved"><IconCheck :size="14" aria-hidden="true" />已配置</span></div>
+      <fieldset :disabled="locked || !status" class="tg-api-fields"><legend class="sr-only">Telegram API 凭据</legend><label>API ID<input ref="apiIDInput" v-model.number="apiId" type="number" min="1" step="1" required inputmode="numeric" autocomplete="off" placeholder="填写 API ID" /></label><label>API Hash<input v-model="apiHash" type="password" autocomplete="new-password" spellcheck="false" :required="!status?.configured" pattern="[a-fA-F0-9]{32}" :placeholder="status?.configured ? '已保存，留空保留' : '填写 API Hash'" /></label></fieldset>
+      <div class="tg-api-footer"><a href="https://my.telegram.org/apps" target="_blank" rel="noopener noreferrer">申请 API 凭据<IconExternalLink :size="13" aria-hidden="true" /></a><button type="submit" class="tg-button tg-primary" :disabled="!canSave">{{ busy === 'config' ? '保存中' : '保存 API' }}</button></div>
+      <p class="tg-help">凭据与登录会话加密保存。更换 API 凭据前，需先退出当前账号。</p>
+    </form>
+    <p class="tg-page-help"><IconShieldLock :size="16" aria-hidden="true" /><span>验证码与二步验证密码仅用于本次登录，不会保存。资源 Bot 与频道在<RouterLink to="/resources/telegram" class="text-blue-600 dark:text-blue-300">搜索配置</RouterLink>中管理。</span></p>
+  </div>
+  <FloatingDialog v-if="loginOpen" title="登录 Telegram" close-label="关闭 Telegram 登录" class="tg-login-dialog" @close="closeLogin">
+    <div class="tg-login-content">
+      <ol class="tg-login-steps" aria-label="登录步骤"><li v-for="(label, index) in ['手机号', '验证码', '二步验证']" :key="label" :class="{ 'is-current': stepNumber === index + 1, 'is-complete': stepNumber > index + 1 }" :aria-current="stepNumber === index + 1 ? 'step' : undefined"><span><IconCheck v-if="stepNumber > index + 1" :size="13" aria-hidden="true" /><template v-else>{{ index + 1 }}</template></span>{{ label }}</li></ol>
+      <div v-if="!loginReady" class="tg-login-loading" :aria-busy="!!loginBusy"><template v-if="loginBusy"><IconRefresh :size="21" class="tg-spinning" aria-hidden="true" /><p>正在读取登录进度</p></template><template v-else><p v-if="loginError" role="alert" class="tg-message tg-error">{{ loginError }}</p><button type="button" class="tg-button" @click="loginAction('config')"><IconRefresh :size="15" aria-hidden="true" />重新读取</button></template></div>
+      <form v-else id="tg-login-form" class="tg-login-form" :aria-busy="!!loginBusy" @submit.prevent="submitLogin">
+        <div class="tg-login-heading"><h3>{{ step === 'phone' ? '输入手机号' : step === 'code' ? '输入登录验证码' : '输入二步验证密码' }}</h3><p id="tg-login-description">{{ step === 'phone' ? '包含国家或地区代码，例如 +8613800000000。' : step === 'code' ? (sentPhone ? `请查看 ${sentPhone} 的 Telegram 官方客户端或短信。` : '请查看上次登录手机号的 Telegram 官方客户端或短信。') : '此账号已启用二步验证，请输入 Telegram 密码。' }}</p></div>
+        <label v-if="step === 'phone'" class="tg-login-field">手机号<input aria-describedby="tg-login-description" ref="phoneInput" v-model="phone" type="tel" autocomplete="tel" inputmode="tel" required pattern="\+[1-9][0-9]{6,14}" placeholder="+8613800000000" :disabled="!!loginBusy" /></label>
+        <label v-else-if="step === 'code'" class="tg-login-field">验证码<input aria-describedby="tg-login-description" ref="codeInput" v-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" required class="tg-code-input" placeholder="输入或粘贴验证码" :disabled="!!loginBusy" /></label>
+        <label v-else class="tg-login-field">二步验证密码<input aria-describedby="tg-login-description" ref="passwordInput" v-model="password" type="password" autocomplete="off" required placeholder="输入密码" :disabled="!!loginBusy" /></label>
+        <p v-if="loginError" role="alert" class="tg-message tg-error">{{ loginError }}</p><p v-if="loginNotice" role="status" class="tg-message tg-notice">{{ loginNotice }}</p>
+        <div v-if="step === 'phone' && status?.hasSession" class="tg-existing-session"><span>已有保存的会话，可先尝试恢复。</span><button type="button" class="tg-text-button" :disabled="!!loginBusy" @click="loginAction('check')">{{ loginBusy === 'check' ? '检查中' : '检查并恢复' }}</button></div>
+        <div class="tg-login-links"><button v-if="step !== 'phone'" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="changePhone">修改手机号</button><button v-if="step === 'code' && sentPhone" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="resendCode">{{ loginBusy === 'send-code' ? '发送中' : '重新发送验证码' }}</button><button v-if="step === 'phone' && pendingStep !== 'phone'" type="button" class="tg-text-button" :disabled="!!loginBusy" @click="continueStep">继续上次验证</button><span v-if="step === 'code' && !sentPhone" class="tg-help">需要重发时，请先确认手机号。</span></div>
+      </form>
+      <p class="tg-login-close-note">关闭后可重新打开，继续尚未完成的验证。</p>
+    </div>
+    <template #footer><div class="tg-login-footer"><button type="button" class="tg-button" @click="closeLogin">关闭</button><button v-if="loginReady" type="submit" form="tg-login-form" class="tg-button tg-primary" :disabled="!canSubmit">{{ loginBusy === 'send-code' ? '发送中' : loginBusy === 'sign-in' ? '验证中' : step === 'phone' ? '发送验证码' : step === 'code' ? '验证并继续' : '完成登录' }}<IconArrowRight :size="16" aria-hidden="true" /></button></div></template>
+  </FloatingDialog>
+  <P115ActionDialog v-if="confirmDisconnect" title="退出 Telegram 用户账号？" :busy="busy === 'disconnect'" @close="confirmDisconnect = false"><p>将结束本项目保存的用户登录会话。频道搜索与转发需要重新登录后使用，API 凭据和资源 Bot 配置会保留。</p><p v-if="disconnectError" role="alert" class="tg-message tg-error">{{ disconnectError }}</p><template #footer><button type="button" class="tg-button" :disabled="!!busy" @click="confirmDisconnect = false">保留登录</button><button type="button" class="tg-button tg-danger" :disabled="!!busy" @click="act('disconnect')">{{ busy === 'disconnect' ? '退出中' : '确认退出' }}</button></template></P115ActionDialog>
 </template>
 
 <style scoped>

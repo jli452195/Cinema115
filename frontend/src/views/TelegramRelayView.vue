@@ -1,7 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { IconArrowRight, IconBroadcast, IconEdit, IconPlus, IconRefresh, IconRobot, IconTrash, IconUsers } from '@tabler/icons-vue'
-import ManagementLayout from '../components/ManagementLayout.vue'
 import TelegramRelayRuleEditor from '../components/telegram/TelegramRelayRuleEditor.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
@@ -10,7 +9,6 @@ import { telegramRelayRequest } from '../lib/telegram-relay-api'
 import type { TelegramRelayInput, TelegramRelayPeer, TelegramRelayRule, TelegramRelaySettings } from '../types/telegramRelay'
 
 const props = defineProps<{ token: string }>()
-defineEmits<{ logout: [] }>()
 const settings = ref<TelegramRelaySettings>(), loading = ref(true), error = ref(''), notice = ref(''), busy = ref('')
 const editing = ref<TelegramRelayInput>(), editError = ref(''), deleting = ref<TelegramRelayRule>()
 const peerAvatars = ref(new Map<string, TelegramRelayPeer>())
@@ -69,30 +67,28 @@ onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
-  <ManagementLayout title="TG 频道转发" description="一个来源频道对应一个目标，独立筛选和启停。" :parent="{ label: 'Telegram 配置', to: '/telegram' }" @logout="$emit('logout')">
-    <div class="relay-page">
-      <header class="relay-toolbar"><div class="relay-account"><TelegramAvatar :token="token" peer-id="self" :avatar-id="settings?.account.avatarId" :size="40" class="relay-symbol"><IconBroadcast :size="21" aria-hidden="true" /></TelegramAvatar><div><strong>{{ settings?.account.name || 'Telegram 用户账号' }}</strong><p><span class="relay-state" :class="{ connected: settings?.status.connected }">{{ loading ? '读取中…' : statusText }}</span><RouterLink to="/telegram/user">管理登录</RouterLink></p></div></div><div class="relay-actions"><button type="button" class="relay-button" :disabled="loading || !!busy" @click="load"><IconRefresh :size="16" aria-hidden="true" />刷新</button><button type="button" class="relay-button relay-primary" :disabled="loading || !!busy || !settings?.account.hasSession" @click="edit()"><IconPlus :size="16" aria-hidden="true" />添加转发</button></div></header>
-      <p v-if="error" role="alert" class="relay-error">{{ error }}</p><p v-if="notice" role="status" class="relay-notice">{{ notice }}</p><p v-if="settings?.status.error" class="relay-warning">{{ settings.status.error }}</p><p v-if="settings?.status.warning" class="relay-warning">{{ settings.status.warning }}</p>
-      <p class="relay-description">保留消息正文，将按钮中的 115 / ed2k 地址展开到卡片内。首次启用从当前消息位置开始；暂停不投递，恢复后继续处理可用的新消息。</p>
-      <div v-if="loading && !settings" role="status" class="relay-empty">正在读取转发规则…</div><div v-else-if="!settings?.rules.length" class="relay-empty"><IconBroadcast :size="28" aria-hidden="true" /><strong>还没有转发规则</strong><p>选择一个来源频道和一个转发目标后保存。</p></div>
-      <div v-else class="relay-grid">
-        <article v-for="rule in settings.rules" :key="rule.id" class="relay-card" :class="{ 'is-disabled': !rule.enabled }">
-          <div class="relay-card-heading"><h2>{{ rule.name || rule.sourceTitle }}</h2><SettingSwitch :model-value="rule.enabled" :label="`启用${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" class="relay-switch" @update:model-value="value => toggle(rule, value)" /></div>
-          <div class="relay-route">
-            <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.sourceId" :avatar-id="peerAvatars.get(rule.sourceId)?.avatarId" :size="32" class="relay-peer-avatar"><IconBroadcast :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>来源频道</span><strong>{{ rule.sourceTitle }}</strong></div></div>
-            <IconArrowRight :size="17" aria-hidden="true" />
-            <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.targetId" :avatar-id="peerAvatars.get(rule.targetId)?.avatarId" :size="32" class="relay-peer-avatar"><IconRobot v-if="rule.targetId.startsWith('user:')" :size="18" aria-hidden="true" /><IconUsers v-else-if="rule.targetId.startsWith('chat:')" :size="18" aria-hidden="true" /><IconBroadcast v-else :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>转发目标</span><strong>{{ rule.targetTitle }}</strong></div></div>
-          </div>
-          <footer class="relay-card-footer">
-            <div class="relay-tags"><span v-for="kind in rule.linkTypes" :key="kind">{{ kind === '115' ? '115 分享' : 'ed2k' }}</span></div>
-            <div class="relay-card-actions"><button type="button" class="relay-icon" :aria-label="`编辑${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="edit(rule)"><IconEdit :size="17" aria-hidden="true" /></button><button type="button" class="relay-icon relay-danger" :aria-label="`删除${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="deleting = rule; error = ''"><IconTrash :size="17" aria-hidden="true" /></button></div>
-          </footer>
-        </article>
-      </div>
+  <div class="relay-page">
+    <header class="relay-toolbar"><div class="relay-account"><TelegramAvatar :token="token" peer-id="self" :avatar-id="settings?.account.avatarId" :size="40" class="relay-symbol"><IconBroadcast :size="21" aria-hidden="true" /></TelegramAvatar><div><strong>{{ settings?.account.name || 'Telegram 用户账号' }}</strong><p><span class="relay-state" :class="{ connected: settings?.status.connected }">{{ loading ? '读取中…' : statusText }}</span><RouterLink to="/telegram/user">管理登录</RouterLink></p></div></div><div class="relay-actions"><button type="button" class="relay-button" :disabled="loading || !!busy" @click="load"><IconRefresh :size="16" aria-hidden="true" />刷新</button><button type="button" class="relay-button relay-primary" :disabled="loading || !!busy || !settings?.account.hasSession" @click="edit()"><IconPlus :size="16" aria-hidden="true" />添加转发</button></div></header>
+    <p v-if="error" role="alert" class="relay-error">{{ error }}</p><p v-if="notice" role="status" class="relay-notice">{{ notice }}</p><p v-if="settings?.status.error" class="relay-warning">{{ settings.status.error }}</p><p v-if="settings?.status.warning" class="relay-warning">{{ settings.status.warning }}</p>
+    <p class="relay-description">保留消息正文，将按钮中的 115 / ed2k 地址展开到卡片内。首次启用从当前消息位置开始；暂停不投递，恢复后继续处理可用的新消息。</p>
+    <div v-if="loading && !settings" role="status" class="relay-empty">正在读取转发规则…</div><div v-else-if="!settings?.rules.length" class="relay-empty"><IconBroadcast :size="28" aria-hidden="true" /><strong>还没有转发规则</strong><p>选择一个来源频道和一个转发目标后保存。</p></div>
+    <div v-else class="relay-grid">
+      <article v-for="rule in settings.rules" :key="rule.id" class="relay-card" :class="{ 'is-disabled': !rule.enabled }">
+        <div class="relay-card-heading"><h2>{{ rule.name || rule.sourceTitle }}</h2><SettingSwitch :model-value="rule.enabled" :label="`启用${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" class="relay-switch" @update:model-value="value => toggle(rule, value)" /></div>
+        <div class="relay-route">
+          <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.sourceId" :avatar-id="peerAvatars.get(rule.sourceId)?.avatarId" :size="32" class="relay-peer-avatar"><IconBroadcast :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>来源频道</span><strong>{{ rule.sourceTitle }}</strong></div></div>
+          <IconArrowRight :size="17" aria-hidden="true" />
+          <div class="relay-peer"><TelegramAvatar :token="token" :peer-id="rule.targetId" :avatar-id="peerAvatars.get(rule.targetId)?.avatarId" :size="32" class="relay-peer-avatar"><IconRobot v-if="rule.targetId.startsWith('user:')" :size="18" aria-hidden="true" /><IconUsers v-else-if="rule.targetId.startsWith('chat:')" :size="18" aria-hidden="true" /><IconBroadcast v-else :size="18" aria-hidden="true" /></TelegramAvatar><div class="relay-peer-copy"><span>转发目标</span><strong>{{ rule.targetTitle }}</strong></div></div>
+        </div>
+        <footer class="relay-card-footer">
+          <div class="relay-tags"><span v-for="kind in rule.linkTypes" :key="kind">{{ kind === '115' ? '115 分享' : 'ed2k' }}</span></div>
+          <div class="relay-card-actions"><button type="button" class="relay-icon" :aria-label="`编辑${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="edit(rule)"><IconEdit :size="17" aria-hidden="true" /></button><button type="button" class="relay-icon relay-danger" :aria-label="`删除${rule.name || rule.sourceTitle}`" :disabled="loading || !!busy" @click="deleting = rule; error = ''"><IconTrash :size="17" aria-hidden="true" /></button></div>
+        </footer>
+      </article>
     </div>
-    <TelegramRelayRuleEditor v-if="editing" :token="token" :input="editing" :peers="peerAvatars" :loading="loading" :busy="!!busy" :error="editError" @close="editing = undefined" @save="save($event, true)" @select="peer => peerAvatars.set(peer.id, peer)" @change="editError = ''" />
-    <P115ActionDialog v-if="deleting" title="删除转发规则？" :busy="!!busy" @close="deleting = undefined"><p>删除“{{ deleting.name || deleting.sourceTitle }}”规则及未发送消息。</p><p v-if="error" role="alert" class="relay-error">{{ error }}</p><template #footer><button class="relay-button" :disabled="loading || !!busy" @click="deleting = undefined">取消</button><button class="relay-button relay-delete" :disabled="loading || !!busy" @click="remove">删除规则</button></template></P115ActionDialog>
-  </ManagementLayout>
+  </div>
+  <TelegramRelayRuleEditor v-if="editing" :token="token" :input="editing" :peers="peerAvatars" :loading="loading" :busy="!!busy" :error="editError" @close="editing = undefined" @save="save($event, true)" @select="peer => peerAvatars.set(peer.id, peer)" @change="editError = ''" />
+  <P115ActionDialog v-if="deleting" title="删除转发规则？" :busy="!!busy" @close="deleting = undefined"><p>删除“{{ deleting.name || deleting.sourceTitle }}”规则及未发送消息。</p><p v-if="error" role="alert" class="relay-error">{{ error }}</p><template #footer><button class="relay-button" :disabled="loading || !!busy" @click="deleting = undefined">取消</button><button class="relay-button relay-delete" :disabled="loading || !!busy" @click="remove">删除规则</button></template></P115ActionDialog>
 </template>
 
 <style scoped src="../components/telegram/relayControls.css" />

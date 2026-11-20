@@ -11,7 +11,7 @@ import { mobileToolNavigationKey } from '../composables/useMobileToolNavigation'
 import { adminAccountGroups, isAccountLinkActive } from '../utils/accountNavigation'
 import { mobileWorkspaceSection } from '../utils/mobileWorkspace'
 
-const props = defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string; mobileSectionHeading?: boolean; mobileCenteredHeader?: boolean; mobileBackFallback?: string; mobileBackTarget?: string; mobileTitle?: string }>()
+const props = defineProps<{ title: string; description: string; parent?: { label: string; to: string }; contentClass?: string; mobileSectionHeading?: boolean; mobileCenteredHeader?: boolean; mobileBackFallback?: string; mobileBackTarget?: string; mobileTitle?: string; mobileBackToOrigin?: boolean }>()
 defineEmits<{ logout: [] }>()
 const mobilePage = computed(() => {
   const fallback = props.mobileBackTarget || props.mobileBackFallback
@@ -27,6 +27,7 @@ const mobileTool = computed(() => toolNavigation?.tool.value)
 const mobileBack = computed(() => {
   const tool = mobileTool.value
   if (!tool || !toolNavigation) return
+  if (props.mobileBackToOrigin) return toolNavigation.toolBack.value
   return props.parent || (route.path.toLowerCase().replace(/\/$/, '') === tool.to ? toolNavigation.toolBack.value : tool)
 })
 const mobileCenteredTitle = computed(() => (mobilePage.value ? props.mobileCenteredHeader : mobileBack.value)

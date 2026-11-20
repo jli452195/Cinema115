@@ -2,11 +2,18 @@
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { RouterLink, type RouteLocationRaw } from 'vue-router'
 
+export interface RouteTab {
+  name: string
+  label: string
+  to: RouteLocationRaw
+}
+
 const props = defineProps<{
   label: string
   active: string | symbol | null | undefined
-  tabs: readonly { name: string; label: string; to: RouteLocationRaw }[]
+  tabs: readonly RouteTab[]
   compact?: boolean
+  fillOnMobile?: boolean
 }>()
 
 const navigation = ref<HTMLElement>()
@@ -45,6 +52,7 @@ function alignCurrent(animate: boolean) {
 
 watch(() => props.active, () => alignCurrent(true), { flush: 'post' })
 watch(() => props.compact, () => alignCurrent(false), { flush: 'post' })
+watch(() => props.fillOnMobile, () => alignCurrent(false), { flush: 'post' })
 onMounted(() => {
   alignCurrent(false)
   observer = new ResizeObserver(() => alignCurrent(false))
@@ -55,7 +63,7 @@ onBeforeUnmount(() => observer?.disconnect())
 </script>
 
 <template>
-  <nav ref="navigation" class="route-tabs" :class="{ 'route-tabs-compact': compact }" :aria-label="label">
+  <nav ref="navigation" class="route-tabs" :class="{ 'route-tabs-compact': compact, 'route-tabs-fill-mobile': fillOnMobile }" :aria-label="label">
     <div ref="track" class="route-tab-track">
       <RouterLink
         v-for="tab in tabs"
@@ -112,6 +120,10 @@ onBeforeUnmount(() => observer?.disconnect())
   font-size: 14px;
   white-space: nowrap;
   transition: color var(--route-tab-duration) var(--route-tab-ease);
+}
+@media (max-width: 639px) {
+  .route-tabs-fill-mobile .route-tab-track { min-width: 100%; }
+  .route-tabs-fill-mobile .route-tab { flex: 1 0 var(--route-tab-slot-width); }
 }
 .route-tab[aria-current="page"] {
   color: rgb(var(--selection-content));

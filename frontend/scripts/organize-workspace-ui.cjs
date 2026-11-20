@@ -57,11 +57,11 @@ const hash = text => createHash('sha256').update(text).digest('hex')
   const shell = () => page.evaluate(() => document.querySelector('.management-shell') === window.organizeShell)
   const expectSlide = async (direction, navigate) => {
     await page.evaluate(direction => {
-      const panels = document.querySelector('.organize-panels')
+      const panels = document.querySelector('.workspace-panels')
       window.organizeSlideObserved = false
       // 在点击前开始观察，避免 Playwright 等待页面稳定时错过过渡。
       const observer = new MutationObserver(() => {
-        if (panels.querySelector(`.organize-slide-${direction}-enter-active`) && panels.querySelector('.organize-panel[inert]')) {
+        if (panels.querySelector(`.workspace-slide-${direction}-enter-active`) && panels.querySelector('.workspace-panel[inert]')) {
           window.organizeSlideObserved = true
           observer.disconnect()
         }
@@ -94,7 +94,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await page.getByRole('region', { name: '整理记录', exact: true }).waitFor(); await historyResponse
     await nav.locator('.route-tab-indicator-animated').waitFor()
     assert.deepEqual(await slots(), desktopSlots)
-    assert.equal(await page.locator('.organize-panel[inert], .organize-slide-next-enter-active').count(), 0)
+    assert.equal(await page.locator('.workspace-panel[inert], .workspace-slide-next-enter-active').count(), 0)
     assert.equal(await shell(), true); assert.equal(await page.locator('.mo-rule-card').count(), 0)
     assert.equal(count('/api/admin/media-organize/history'), 1)
     await tab('命名模板').click(); await settledNaming()
@@ -195,24 +195,24 @@ const hash = text => createHash('sha256').update(text).digest('hex')
       }
     }
     await page.evaluate(() => window.setStandalone(true))
-    await page.locator('.organize-pwa .route-tabs').waitFor()
+    await page.locator('.tabbed-workspace-compact .route-tabs').waitFor()
     const pwaSlots = await slots()
     assert.deepEqual(pwaSlots.map(slot => slot.width), [106, 106, 106, 106, 106])
     assert.deepEqual(pwaSlots.map(slot => slot.left), [0, 106, 212, 318, 424])
     assert.equal(await nav.locator('svg').count(), 5)
     const shellBounds = await page.locator('.management-shell').boundingBox()
-    for (const selector of ['.organize-panels', '.route-tabs']) {
+    for (const selector of ['.workspace-panels', '.route-tabs']) {
       const bounds = await page.locator(selector).boundingBox()
       assert.ok(Math.abs(bounds.x - shellBounds.x) < 1 && Math.abs(bounds.width - shellBounds.width) < 1)
     }
-    const panelPadding = await page.locator('.organize-panel:not([inert])').evaluate(panel => {
+    const panelPadding = await page.locator('.workspace-panel:not([inert])').evaluate(panel => {
       const { paddingInlineStart, paddingInlineEnd } = getComputedStyle(panel)
       return [paddingInlineStart, paddingInlineEnd]
     })
     assert.deepEqual(panelPadding, ['16px', '16px'])
 
     await expectSlide('previous', () => page.evaluate(() => {
-      const surface = document.querySelector('.organize-panels')
+      const surface = document.querySelector('.workspace-panels')
       for (const [type, clientX] of [['touchstart', 95], ['touchmove', 180], ['touchend', 275]]) {
         const touch = new Touch({ identifier: 1, target: surface, clientX, clientY: 300 })
         const touches = type === 'touchend' ? [] : [touch]
@@ -224,7 +224,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     assert.deepEqual(await slots(), pwaSlots)
     await expectSlide('next', () => tab('分类规则').click())
     await page.locator('.cr-rule').first().waitFor()
-    await page.locator('.organize-panel[inert]').waitFor({ state: 'detached' })
+    await page.locator('.workspace-panel[inert]').waitFor({ state: 'detached' })
     assert.deepEqual(await slots(), pwaSlots)
     passed.push('桌面网页与 390px PWA 均使用固定槽位；桌面即时换页，PWA 全宽滑动并保留页内边距')
     await page.evaluate(() => window.setStandalone(false))
