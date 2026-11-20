@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import SettingSwitch from './SettingSwitch.vue'
 import { telegramRequest } from '../lib/telegram-api'
+import { telegramBotCache } from '../composables/useTelegramSettingsCache'
 import type { TelegramBotConfig, TelegramBotIdentity } from '../types/telegramBots'
 
 const props = defineProps<{ bot: TelegramBotConfig; token: string; embedded?: boolean }>()
@@ -32,7 +33,8 @@ async function save() {
   if (busy.value) return
   busy.value = 'save'; error.value = ''; notice.value = ''
   try {
-    await telegramRequest(props.token, `bots/${props.bot.id}`, { method: 'PUT', body: JSON.stringify({ name: name.value, token: botToken.value.trim(), allowedChatIDs: allowedChatIDs.value, notificationChatID: notificationChatID.value, enabled: enabled.value, revision: props.bot.revision }) })
+    const token = props.token
+    await telegramBotCache.mutate(token, () => telegramRequest(token, `bots/${props.bot.id}`, { method: 'PUT', body: JSON.stringify({ name: name.value, token: botToken.value.trim(), allowedChatIDs: allowedChatIDs.value, notificationChatID: notificationChatID.value, enabled: enabled.value, revision: props.bot.revision }) }))
     botToken.value = ''; showToken.value = false; tested.value = undefined; emit('changed')
   } catch (e) { error.value = e instanceof Error ? e.message : '保存失败' }
   finally { busy.value = '' }
@@ -41,7 +43,11 @@ async function save() {
 async function clearToken() {
   if (busy.value || !window.confirm(`清空“${props.bot.name}”的 Token？引用它的功能不会改用其他 Bot。`)) return
   busy.value = 'clear'; error.value = ''
-  try { await telegramRequest(props.token, `bots/${props.bot.id}/token`, { method: 'DELETE', body: JSON.stringify({ revision: props.bot.revision }) }); emit('changed') }
+  try {
+    const token = props.token
+    await telegramBotCache.mutate(token, () => telegramRequest(token, `bots/${props.bot.id}/token`, { method: 'DELETE', body: JSON.stringify({ revision: props.bot.revision }) }))
+    emit('changed')
+  }
   catch (e) { error.value = e instanceof Error ? e.message : '清空失败' }
   finally { busy.value = '' }
 }

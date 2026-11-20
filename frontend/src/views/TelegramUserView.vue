@@ -4,11 +4,13 @@ import { IconArrowRight, IconBrandTelegram, IconCheck, IconExternalLink, IconLog
 import FloatingDialog from '../components/FloatingDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import TelegramAvatar from '../components/TelegramAvatar.vue'
+import { telegramAccountCache, updateTelegramAccount } from '../composables/useTelegramSettingsCache'
 import { telegramUserRequest, type TelegramUserStatus } from '../types/telegramUser'
 
 const props = defineProps<{ token: string }>()
-const status = ref<TelegramUserStatus>(), apiId = ref<number>(), apiHash = ref('')
-const busy = ref('load'), error = ref(''), notice = ref(''), confirmDisconnect = ref(false), disconnectError = ref('')
+const cached = telegramAccountCache.get(props.token)
+const status = ref(cached?.data), apiId = ref(cached?.data.apiId || undefined), apiHash = ref('')
+const busy = ref(cached?.fresh ? '' : 'load'), error = ref(''), notice = ref(''), confirmDisconnect = ref(false), disconnectError = ref('')
 const loginOpen = ref(false), loginReady = ref(false), loginBusy = ref(''), loginError = ref(''), loginNotice = ref('')
 const step = ref<'phone' | 'code' | 'password'>('phone'), phone = ref(''), sentPhone = ref(''), code = ref(''), password = ref('')
 const apiIDInput = ref<HTMLInputElement>(), phoneInput = ref<HTMLInputElement>(), codeInput = ref<HTMLInputElement>(), passwordInput = ref<HTMLInputElement>()
@@ -22,24 +24,27 @@ const stepNumber = computed(() => step.value === 'phone' ? 1 : step.value === 'c
 const canSave = computed(() => !locked.value && !!status.value && Number.isSafeInteger(apiId.value) && (apiId.value || 0) > 0 && (status.value.configured || !!apiHash.value.trim()))
 const canSubmit = computed(() => loginReady.value && !loginBusy.value && (step.value === 'phone' ? /^\+[1-9][0-9]{6,14}$/.test(phone.value.trim()) : step.value === 'code' ? !!code.value.trim() : !!password.value))
 const message = (reason: unknown) => reason instanceof Error ? reason.message : '操作失败，请稍后重试'
-const request = <T,>(path: string, body?: object, signal = lifecycle.signal) => telegramUserRequest<T>(props.token, path, signal, body)
-
 async function load() {
   if (busy.value && busy.value !== 'load') return
   busy.value = 'load'; error.value = ''
   try {
-    const value = await request<TelegramUserStatus>('config')
-    if (!lifecycle.signal.aborted) { status.value = value; apiId.value = value.apiId || undefined }
+    const value = await telegramAccountCache.read(props.token)
+    if (value && !lifecycle.signal.aborted) { status.value = value; apiId.value = value.apiId || undefined }
   } catch (reason) { if (!lifecycle.signal.aborted) error.value = message(reason) }
   finally { if (!lifecycle.signal.aborted) busy.value = '' }
 }
 async function act(action: 'config' | 'check' | 'disconnect') {
   if (locked.value || !status.value) return
   busy.value = action; error.value = ''; notice.value = ''; disconnectError.value = ''
-  // Config is shared with the search page; keep its Bot value when only API fields change.
-  const body = action === 'config' ? { apiId: apiId.value, apiHash: apiHash.value.trim(), bot: status.value.bot } : {}
+  const token = props.token, signal = lifecycle.signal
+  const credentials = { apiId: apiId.value, apiHash: apiHash.value.trim() }
+  // 保存时读取服务端的资源 Bot，保留其他页面刚提交的配置。
+  const body = action === 'config' ? async () => {
+    const current = await telegramUserRequest<TelegramUserStatus>(token, 'config', signal)
+    return { ...credentials, bot: current.bot }
+  } : {}
   try {
-    const value = await request<TelegramUserStatus>(action, body)
+    const value = await updateTelegramAccount(token, action, signal, body)
     if (lifecycle.signal.aborted) return
     status.value = value
     if (action === 'config') { apiId.value = value.apiId; apiHash.value = ''; notice.value = 'Telegram API 凭据已保存。' }
@@ -94,7 +99,10 @@ async function loginAction(action: 'config' | 'send-code' | 'sign-in' | 'check')
   const submittedPhone = phone.value.trim()
   const body = action === 'config' ? undefined : action === 'send-code' ? { phone: submittedPhone } : action === 'sign-in' ? { code: step.value === 'code' ? code.value.trim() : '', password: step.value === 'password' ? password.value : '' } : {}
   try {
-    const value = await request<TelegramUserStatus>(action, body, AbortSignal.any([lifecycle.signal, controller.signal]))
+    const signal = AbortSignal.any([lifecycle.signal, controller.signal])
+    const value = body === undefined
+      ? await telegramUserRequest<TelegramUserStatus>(props.token, 'config', signal)
+      : await updateTelegramAccount(props.token, action, signal, body)
     if (!current()) return
     status.value = value; loginReady.value = true
     if (value.authorized) {
@@ -119,7 +127,7 @@ async function loginAction(action: 'config' | 'send-code' | 'sign-in' | 'check')
 function submitLogin() {
   if (canSubmit.value) void loginAction(step.value === 'phone' ? 'send-code' : 'sign-in')
 }
-onMounted(load)
+onMounted(() => { if (!cached?.fresh) void load() })
 onBeforeUnmount(() => { lifecycle.abort(); closeLogin(); apiHash.value = '' })
 </script>
 
@@ -130,7 +138,7 @@ onBeforeUnmount(() => { lifecycle.abort(); closeLogin(); apiHash.value = '' })
     <section class="tg-card tg-identity-card" aria-label="用户登录状态" :aria-busy="busy === 'load' || busy === 'check'">
       <div class="tg-identity">
         <TelegramAvatar :token="token" peer-id="self" :avatar-id="status?.avatarId" :size="40" class="tg-avatar"><IconBrandTelegram :size="23" aria-hidden="true" /></TelegramAvatar>
-        <div class="tg-identity-text"><div class="tg-name-row"><h2>{{ status?.name || (status?.username ? `@${status.username}` : 'Telegram 账号') }}</h2><span v-if="status" class="tg-state" :class="{ 'is-connected': status.authorized }">{{ stateText }}</span></div><p>{{ busy === 'load' ? '正在读取账号状态' : status?.username ? `@${status.username}` : status?.hasSession ? '已有保存的会话，可检查连接并恢复。' : '使用自己的 Telegram 用户账号登录' }}</p></div>
+        <div class="tg-identity-text"><div class="tg-name-row"><h2>{{ status?.name || (status?.username ? `@${status.username}` : 'Telegram 账号') }}</h2><span v-if="status" class="tg-state" :class="{ 'is-connected': status.authorized }">{{ stateText }}</span></div><p>{{ busy === 'load' && !status ? '正在读取账号状态' : status?.username ? `@${status.username}` : status?.hasSession ? '已有保存的会话，可检查连接并恢复。' : '使用自己的 Telegram 用户账号登录' }}</p></div>
       </div>
       <div class="tg-account-actions">
         <button v-if="status?.hasSession || status?.authorized" type="button" class="tg-button" :disabled="locked || !status.configured" @click="act('check')"><IconRefresh :size="16" aria-hidden="true" :class="{ 'tg-spinning': busy === 'check' }" />{{ busy === 'check' ? '检查中' : '检查连接' }}</button>

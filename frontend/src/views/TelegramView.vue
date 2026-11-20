@@ -10,12 +10,14 @@ import P115ActionDialog from '../components/P115ActionDialog.vue'
 import { telegramRequest } from '../lib/telegram-api'
 import { useToast } from '../composables/useToast'
 import { portalUser } from '../composables/usePortalAuth'
+import { TELEGRAM_BOT_POLL_MS, telegramBotCache } from '../composables/useTelegramSettingsCache'
 import type { TelegramBotConfig, TelegramBotIdentity, TelegramBotModule } from '../types/telegramBots'
 
 const props = defineProps<{ token: string }>()
 const toast = useToast()
-const bots = ref<TelegramBotConfig[]>([]), modules = ref<TelegramBotModule[]>([])
-const loading = ref(true), refreshing = ref(false), adding = ref(false), deleting = ref(false)
+const cached = telegramBotCache.get(props.token)
+const bots = ref(cached?.data.bots ?? []), modules = ref(cached?.data.modules ?? [])
+const loading = ref(!cached), refreshing = ref(false), adding = ref(false), deleting = ref(false)
 const editingBot = ref<TelegramBotConfig>(), deletingBot = ref<TelegramBotConfig>()
 const busyModules = ref(new Set<string>()), testingBots = ref(new Set<string>())
 const draggingModuleId = ref(''), readError = ref('')
@@ -81,12 +83,9 @@ async function refresh(notify = false) {
   const current = ++sequence
   refreshing.value = true
   try {
-    const [botData, moduleData] = await Promise.all([
-      telegramRequest<{ bots: TelegramBotConfig[] }>(props.token, 'bots', { signal: signal() }),
-      telegramRequest<{ modules: TelegramBotModule[] }>(props.token, 'modules', { signal: signal() }),
-    ])
-    if (current !== sequence || lifecycle.signal.aborted || draggingModuleId.value) return
-    bots.value = botData.bots; modules.value = moduleData.modules; readError.value = ''
+    const data = await telegramBotCache.read(props.token)
+    if (!data || current !== sequence || lifecycle.signal.aborted || draggingModuleId.value) return
+    bots.value = data.bots; modules.value = data.modules; readError.value = ''
     saveOrder()
     if (notify) toast.success('Bot 状态与功能分配已刷新')
   } catch (reason) {
@@ -114,7 +113,8 @@ async function updateModule(module: TelegramBotModule, botId: string, previousOr
   // 仅显示分配结果，服务端仍通过 expectedBotId 校验原归属；失败恢复已知状态。
   modules.value = modules.value.map(item => item.id === module.id ? { ...item, assignedBotId: botId } : item)
   try {
-    const result = await telegramRequest<{ modules: TelegramBotModule[] }>(props.token, 'modules/' + encodeURIComponent(module.id), { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() })
+    const token = props.token
+    const result = await telegramBotCache.mutate(token, () => telegramRequest<{ modules: TelegramBotModule[] }>(token, 'modules/' + encodeURIComponent(module.id), { method: 'PUT', body: JSON.stringify({ botId, expectedBotId: previousBotId }), signal: signal() }))
     if (lifecycle.signal.aborted) return
     modules.value = result.modules
     saveOrder()
@@ -153,7 +153,8 @@ async function add() {
   if (adding.value || assignmentBusy.value || draggingModuleId.value || bots.value.length >= 20) return
   adding.value = true
   try {
-    const result = await telegramRequest<{ id: string }>(props.token, 'bots', { method: 'POST', body: JSON.stringify({ name: 'Bot ' + (bots.value.length + 1) }), signal: signal() })
+    const token = props.token
+    const result = await telegramBotCache.mutate(token, () => telegramRequest<{ id: string }>(token, 'bots', { method: 'POST', body: JSON.stringify({ name: 'Bot ' + (bots.value.length + 1) }), signal: signal() }))
     if (lifecycle.signal.aborted) return
     await refresh()
     editingBot.value = bots.value.find(bot => bot.id === result.id)
@@ -166,7 +167,8 @@ async function removeBot() {
   const releasedCount = deletingModules.value.length
   deleting.value = true
   try {
-    await telegramRequest(props.token, 'bots/' + bot.id, { method: 'DELETE', body: JSON.stringify({ revision: bot.revision, releaseModules: true }), signal: signal() })
+    const token = props.token
+    await telegramBotCache.mutate(token, () => telegramRequest(token, 'bots/' + bot.id, { method: 'DELETE', body: JSON.stringify({ revision: bot.revision, releaseModules: true }), signal: signal() }))
     if (lifecycle.signal.aborted) return
     deletingBot.value = undefined
     await refresh()
@@ -177,12 +179,13 @@ async function removeBot() {
 async function edited() { editingBot.value = undefined; await refresh() }
 
 onMounted(async () => {
-  await refresh()
+  if (!cached?.fresh) await refresh()
   const poll = async () => {
-    if (!lifecycle.signal.aborted && !document.hidden && !editingBot.value && !deletingBot.value && !busyModules.value.size && !draggingModuleId.value && !refreshing.value) await refresh()
-    if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 8000)
+    if (!lifecycle.signal.aborted && !document.hidden && !editingBot.value && !assignmentBusy.value && !draggingModuleId.value && !refreshing.value) await refresh()
+    if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, TELEGRAM_BOT_POLL_MS)
   }
-  if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, 8000)
+  const nextPoll = cached?.fresh ? Math.max(0, cached.expiresAt - Date.now()) : TELEGRAM_BOT_POLL_MS
+  if (!lifecycle.signal.aborted) timer = window.setTimeout(poll, nextPoll)
 })
 onBeforeUnmount(() => { lifecycle.abort(); if (timer) window.clearTimeout(timer) })
 </script>

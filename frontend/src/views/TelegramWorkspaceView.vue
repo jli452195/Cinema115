@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import TabbedWorkspace from '../components/TabbedWorkspace.vue'
+import { portalUser } from '../composables/usePortalAuth'
 import { managementCategories } from '../utils/managementFeatures'
 
 defineProps<{ token: string }>()
@@ -37,6 +38,6 @@ const tabs = features.map(feature => ({ name: routeNames[feature.to], label: fea
         </template>
       </svg>
     </template>
-    <template #default="{ component }"><component :is="component" :token="token" /></template>
+    <template #default="{ component }"><component :is="component" :key="portalUser?.id" :token="token" /></template>
   </TabbedWorkspace>
 </template>

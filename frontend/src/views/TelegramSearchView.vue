@@ -5,7 +5,8 @@ import ManagementLayout from '../components/ManagementLayout.vue'
 import FloatingDialog from '../components/FloatingDialog.vue'
 import TelegramAvatar from '../components/TelegramAvatar.vue'
 import telegramIcon from '../assets/telegram/telegram.svg'
-import { telegramUserRequest, TelegramSearchError, type TelegramChannel, type TelegramChannelConfig, type TelegramChannelPage, type TelegramUserStatus } from '../types/telegramUser'
+import { updateTelegramAccount } from '../composables/useTelegramSettingsCache'
+import { telegramUserRequest, TelegramSearchError, type TelegramChannel, type TelegramChannelConfig, type TelegramChannelPage } from '../types/telegramUser'
 
 const props = defineProps<{ token: string }>()
 defineEmits<{ logout: [] }>()
@@ -30,7 +31,7 @@ async function saveBot() {
   if (botBusy.value || !config.value?.account.configured) return
   botBusy.value = true; botError.value = ''; notice.value = ''
   try {
-    const value = await request<TelegramUserStatus>('config', { apiId: config.value.account.apiId, apiHash: '', bot: bot.value.trim() })
+    const value = await updateTelegramAccount(props.token, 'config', lifecycle.signal, { apiId: config.value.account.apiId, apiHash: '', bot: bot.value.trim() })
     if (lifecycle.signal.aborted) return
     config.value.account = value; bot.value = value.bot
     notice.value = '资源 Bot 已保存。'

@@ -5,13 +5,15 @@ import TelegramRelayRuleEditor from '../components/telegram/TelegramRelayRuleEdi
 import P115ActionDialog from '../components/P115ActionDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import TelegramAvatar from '../components/TelegramAvatar.vue'
+import { telegramRelayCache } from '../composables/useTelegramSettingsCache'
 import { telegramRelayRequest } from '../lib/telegram-relay-api'
 import type { TelegramRelayInput, TelegramRelayPeer, TelegramRelayRule, TelegramRelaySettings } from '../types/telegramRelay'
 
 const props = defineProps<{ token: string }>()
-const settings = ref<TelegramRelaySettings>(), loading = ref(true), error = ref(''), notice = ref(''), busy = ref('')
+const cached = telegramRelayCache.get(props.token)
+const settings = ref(cached?.data), loading = ref(!cached?.fresh), error = ref(''), notice = ref(''), busy = ref('')
 const editing = ref<TelegramRelayInput>(), editError = ref(''), deleting = ref<TelegramRelayRule>()
-const peerAvatars = ref(new Map<string, TelegramRelayPeer>())
+const peerAvatars = ref(new Map((cached?.data.peers || []).map(peer => [peer.id, peer])))
 const lifecycle = new AbortController()
 const request = <T,>(path = '', body?: object, method?: string) => telegramRelayRequest<T>(props.token, path, lifecycle.signal, body, method)
 const statusText = computed(() => settings.value?.status.connected ? '监听已连接' : settings.value?.account.hasSession ? '监听未连接' : '尚未登录')
@@ -19,7 +21,10 @@ function message(reason: unknown) { return reason instanceof Error ? reason.mess
 async function load() {
   if (busy.value) return
   loading.value = true; error.value = ''
-  try { const value = await request<TelegramRelaySettings>(); if (!lifecycle.signal.aborted) { settings.value = value; peerAvatars.value = new Map((value.peers || []).map(peer => [peer.id, peer])) } }
+  try {
+    const value = await telegramRelayCache.read(props.token)
+    if (value && !lifecycle.signal.aborted) { settings.value = value; peerAvatars.value = new Map((value.peers || []).map(peer => [peer.id, peer])) }
+  }
   catch (reason) { if (!lifecycle.signal.aborted) error.value = message(reason) }
   finally { if (!lifecycle.signal.aborted) loading.value = false }
 }
@@ -31,17 +36,17 @@ function edit(rule?: TelegramRelayRule) {
 function keep(rule: TelegramRelayRule) {
   if (!settings.value) return
   const exists = settings.value.rules.some(item => item.id === rule.id)
-  settings.value.rules = exists ? settings.value.rules.map(item => item.id === rule.id ? rule : item) : [...settings.value.rules, rule]
+  settings.value = { ...settings.value, rules: exists ? settings.value.rules.map(item => item.id === rule.id ? rule : item) : [...settings.value.rules, rule] }
 }
 async function save(input: TelegramRelayInput, close = false) {
   if (busy.value || loading.value) return false
   busy.value = input.id || 'new'; error.value = ''; editError.value = ''; notice.value = ''
   try {
-    const { rule } = await request<{ rule: TelegramRelayRule }>('/rules', {
+    const { rule } = await telegramRelayCache.mutate(props.token, () => request<{ rule: TelegramRelayRule }>('/rules', {
       id: input.id, name: input.name, sourceId: input.sourceId, targetId: input.targetId,
       enabled: input.enabled, linkTypes: input.linkTypes, includePattern: input.includePattern, excludePattern: input.excludePattern,
       sourceSelectionToken: input.sourceSelectionToken, targetSelectionToken: input.targetSelectionToken,
-    })
+    }))
     if (lifecycle.signal.aborted) return false
     keep(rule); if (close) editing.value = undefined
     notice.value = rule.enabled ? '转发规则已保存并启用。' : '转发规则已保存并停用。'
@@ -50,25 +55,30 @@ async function save(input: TelegramRelayInput, close = false) {
   finally { if (!lifecycle.signal.aborted) busy.value = '' }
 }
 async function toggle(rule: TelegramRelayRule, enabled: boolean) {
-  const previous = rule.enabled
-  rule.enabled = enabled
-  if (!await save(rule)) rule.enabled = previous
+  keep({ ...rule, enabled })
+  if (!await save({ ...rule, enabled })) keep(rule)
 }
 async function remove() {
   const rule = deleting.value
   if (!rule || busy.value) return
   busy.value = rule.id; error.value = ''; notice.value = ''
-  try { await request(`/rules/${encodeURIComponent(rule.id)}`, undefined, 'DELETE'); if (!lifecycle.signal.aborted && settings.value) { settings.value.rules = settings.value.rules.filter(item => item.id !== rule.id); deleting.value = undefined; notice.value = '转发规则及未发送消息已删除。' } }
+  try {
+    await telegramRelayCache.mutate(props.token, () => request(`/rules/${encodeURIComponent(rule.id)}`, undefined, 'DELETE'))
+    if (!lifecycle.signal.aborted && settings.value) {
+      settings.value = { ...settings.value, rules: settings.value.rules.filter(item => item.id !== rule.id) }
+      deleting.value = undefined; notice.value = '转发规则及未发送消息已删除。'
+    }
+  }
   catch (reason) { if (!lifecycle.signal.aborted) error.value = message(reason) }
   finally { if (!lifecycle.signal.aborted) busy.value = '' }
 }
-onMounted(load)
+onMounted(() => { if (!cached?.fresh) void load() })
 onBeforeUnmount(() => lifecycle.abort())
 </script>
 
 <template>
   <div class="relay-page">
-    <header class="relay-toolbar"><div class="relay-account"><TelegramAvatar :token="token" peer-id="self" :avatar-id="settings?.account.avatarId" :size="40" class="relay-symbol"><IconBroadcast :size="21" aria-hidden="true" /></TelegramAvatar><div><strong>{{ settings?.account.name || 'Telegram 用户账号' }}</strong><p><span class="relay-state" :class="{ connected: settings?.status.connected }">{{ loading ? '读取中…' : statusText }}</span><RouterLink to="/telegram/user">管理登录</RouterLink></p></div></div><div class="relay-actions"><button type="button" class="relay-button" :disabled="loading || !!busy" @click="load"><IconRefresh :size="16" aria-hidden="true" />刷新</button><button type="button" class="relay-button relay-primary" :disabled="loading || !!busy || !settings?.account.hasSession" @click="edit()"><IconPlus :size="16" aria-hidden="true" />添加转发</button></div></header>
+    <header class="relay-toolbar"><div class="relay-account"><TelegramAvatar :token="token" peer-id="self" :avatar-id="settings?.account.avatarId" :size="40" class="relay-symbol"><IconBroadcast :size="21" aria-hidden="true" /></TelegramAvatar><div><strong>{{ settings?.account.name || 'Telegram 用户账号' }}</strong><p><span class="relay-state" :class="{ connected: settings?.status.connected }">{{ loading && !settings ? '读取中…' : statusText }}</span><RouterLink to="/telegram/user">管理登录</RouterLink></p></div></div><div class="relay-actions"><button type="button" class="relay-button" :disabled="loading || !!busy" @click="load"><IconRefresh :size="16" aria-hidden="true" />刷新</button><button type="button" class="relay-button relay-primary" :disabled="loading || !!busy || !settings?.account.hasSession" @click="edit()"><IconPlus :size="16" aria-hidden="true" />添加转发</button></div></header>
     <p v-if="error" role="alert" class="relay-error">{{ error }}</p><p v-if="notice" role="status" class="relay-notice">{{ notice }}</p><p v-if="settings?.status.error" class="relay-warning">{{ settings.status.error }}</p><p v-if="settings?.status.warning" class="relay-warning">{{ settings.status.warning }}</p>
     <p class="relay-description">保留消息正文，将按钮中的 115 / ed2k 地址展开到卡片内。首次启用从当前消息位置开始；暂停不投递，恢复后继续处理可用的新消息。</p>
     <div v-if="loading && !settings" role="status" class="relay-empty">正在读取转发规则…</div><div v-else-if="!settings?.rules.length" class="relay-empty"><IconBroadcast :size="28" aria-hidden="true" /><strong>还没有转发规则</strong><p>选择一个来源频道和一个转发目标后保存。</p></div>
