@@ -6,7 +6,21 @@ const hash = text => createHash('sha256').update(text).digest('hex')
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
-  await context.addInitScript(() => { localStorage.setItem('admin_token', 'mock-token'); localStorage.setItem('cinema115-theme', 'light') })
+  await context.addInitScript(() => {
+    localStorage.setItem('admin_token', 'mock-token')
+    localStorage.setItem('cinema115-theme', 'light')
+
+    // 只替换独立窗口状态，其他媒体查询继续由浏览器处理。
+    let standalone = false
+    const standaloneQuery = new EventTarget()
+    Object.defineProperty(standaloneQuery, 'matches', { get: () => standalone })
+    const matchMedia = window.matchMedia.bind(window)
+    window.matchMedia = query => query === '(display-mode: standalone)' ? standaloneQuery : matchMedia(query)
+    window.setStandalone = value => {
+      standalone = value
+      standaloneQuery.dispatchEvent(new Event('change'))
+    }
+  })
   const defaults = await fs.readFile('../backend/internal/mediacategory/default.yaml', 'utf8')
   let classification = { yaml: defaults, revision: hash(defaults), activeRevision: hash(defaults) }, loseSave = false
   const templates = Object.fromEntries(['movie', 'tv'].map(kind => [kind, { kind, directories: [[{ field: 'title' }]], filename: [{ field: 'title' }, ...(kind === 'tv' ? [{ field: 'seasonEpisode', separator: '.' }] : [])] }]))
@@ -36,15 +50,36 @@ const hash = text => createHash('sha256').update(text).digest('hex')
   const page = await context.newPage(); page.setDefaultTimeout(10000); page.on('pageerror', error => errors.push(error.message))
   const nav = page.getByRole('navigation', { name: '整理功能', exact: true })
   const tab = label => nav.getByRole('link', { name: label, exact: true })
+  const slots = () => nav.getByRole('link').evaluateAll(links => links.map(link => ({ left: link.offsetLeft, width: link.offsetWidth })))
   const count = endpoint => calls.filter(call => call.endpoint === endpoint).length
   const push = url => page.evaluate(url => { void document.querySelector('#app').__vue_app__.config.globalProperties.$router.push(url) }, url)
   const settledNaming = () => page.waitForFunction(() => document.querySelector('.ns-preview')?.getAttribute('aria-busy') === 'false')
   const shell = () => page.evaluate(() => document.querySelector('.management-shell') === window.organizeShell)
+  const expectSlide = async (direction, navigate) => {
+    await page.evaluate(direction => {
+      const panels = document.querySelector('.organize-panels')
+      window.organizeSlideObserved = false
+      // 在点击前开始观察，避免 Playwright 等待页面稳定时错过过渡。
+      const observer = new MutationObserver(() => {
+        if (panels.querySelector(`.organize-slide-${direction}-enter-active`) && panels.querySelector('.organize-panel[inert]')) {
+          window.organizeSlideObserved = true
+          observer.disconnect()
+        }
+      })
+      observer.observe(panels, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'inert'] })
+    }, direction)
+    await navigate()
+    await page.waitForFunction(() => window.organizeSlideObserved)
+  }
   try {
     await fs.mkdir('test-results', { recursive: true })
     await page.goto(origin + '/media/organize'); await page.locator('.mo-rule-card').waitFor()
     assert.equal(await page.getByRole('heading', { level: 1 }).innerText(), '自动整理')
     assert.deepEqual(await nav.getByRole('link').allTextContents(), ['整理规则', '整理记录', '命名模板', '分类规则', '识别词表'])
+    assert.equal(await nav.locator('svg').count(), 5)
+    const desktopSlots = await slots()
+    assert.deepEqual(desktopSlots.map(slot => slot.width), [120, 120, 120, 120, 120])
+    await nav.locator('.route-tab-indicator').waitFor()
     assert.equal(count('/api/admin/naming'), 0); assert.equal(count('/api/admin/classification'), 0)
     assert.equal(await page.locator('.management-navigation a[href="/settings/naming"], .management-navigation a[href="/settings/classification"]').count(), 0)
     assert.equal(await page.locator('.mo-section a').count(), 0)
@@ -55,11 +90,15 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     const mediaReads = count('/api/admin/media-organize')
     assert.equal(count('/api/admin/media-organize/history'), 0)
     const historyResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/admin/media-organize/history')
-    await tab('整理记录').click(); await page.getByRole('region', { name: '整理记录', exact: true }).waitFor(); await historyResponse
+    await tab('整理记录').click()
+    await page.getByRole('region', { name: '整理记录', exact: true }).waitFor(); await historyResponse
+    await nav.locator('.route-tab-indicator-animated').waitFor()
+    assert.deepEqual(await slots(), desktopSlots)
+    assert.equal(await page.locator('.organize-panel[inert], .organize-slide-next-enter-active').count(), 0)
     assert.equal(await shell(), true); assert.equal(await page.locator('.mo-rule-card').count(), 0)
     assert.equal(count('/api/admin/media-organize/history'), 1)
     await tab('命名模板').click(); await settledNaming()
-    assert.equal(await shell(), true); assert.equal(await page.locator('.mo-page').count(), 0)
+    assert.equal(await shell(), true); await page.locator('.mo-page').waitFor({ state: 'detached' })
     assert.equal(count('/api/admin/classification'), 0)
     await page.waitForTimeout(2800); assert.equal(count('/api/admin/media-organize'), mediaReads)
     await page.locator('.ns-kind button').nth(1).click(); await settledNaming()
@@ -98,7 +137,8 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await page.getByText('电影和剧集分类规则已保存并生效', { exact: true }).waitFor()
     passed.push('标签切换复用命名/分类未保存确认；取消保留当前页及表单，未知保存回执保持原请求')
 
-    await tab('整理规则').click(); await page.locator('.mo-rule-card').waitFor()
+    await tab('整理规则').click()
+    await page.locator('.mo-rule-card').waitFor()
     await page.goBack(); await page.locator('.cr-rule').first().waitFor()
     await page.goForward(); await page.locator('.mo-rule-card').waitFor()
     assert.equal(await shell(), true); assert.equal(await page.getByRole('heading', { level: 1 }).count(), 1)
@@ -137,7 +177,7 @@ const hash = text => createHash('sha256').update(text).digest('hex')
     await tab('命名模板').click(); await previewReady
     await tab('分类规则').click(); await page.locator('.cr-rule').first().waitFor()
     releasePreview(); holdPreview = undefined
-    assert.equal(await page.locator('.naming-settings').count(), 0)
+    await page.locator('.naming-settings').waitFor({ state: 'detached' })
     assert.equal(await shell(), true)
     passed.push('离开模板页取消未完成预览，过期响应不覆盖新标签')
 
@@ -154,6 +194,40 @@ const hash = text => createHash('sha256').update(text).digest('hex')
         await page.screenshot({ path: `test-results/organize-workspace-${width}-${dark ? 'dark' : 'light'}.png`, fullPage: true })
       }
     }
+    await page.evaluate(() => window.setStandalone(true))
+    await page.locator('.organize-pwa .route-tabs').waitFor()
+    const pwaSlots = await slots()
+    assert.deepEqual(pwaSlots.map(slot => slot.width), [106, 106, 106, 106, 106])
+    assert.deepEqual(pwaSlots.map(slot => slot.left), [0, 106, 212, 318, 424])
+    assert.equal(await nav.locator('svg').count(), 5)
+    const shellBounds = await page.locator('.management-shell').boundingBox()
+    for (const selector of ['.organize-panels', '.route-tabs']) {
+      const bounds = await page.locator(selector).boundingBox()
+      assert.ok(Math.abs(bounds.x - shellBounds.x) < 1 && Math.abs(bounds.width - shellBounds.width) < 1)
+    }
+    const panelPadding = await page.locator('.organize-panel:not([inert])').evaluate(panel => {
+      const { paddingInlineStart, paddingInlineEnd } = getComputedStyle(panel)
+      return [paddingInlineStart, paddingInlineEnd]
+    })
+    assert.deepEqual(panelPadding, ['16px', '16px'])
+
+    await expectSlide('previous', () => page.evaluate(() => {
+      const surface = document.querySelector('.organize-panels')
+      for (const [type, clientX] of [['touchstart', 95], ['touchmove', 180], ['touchend', 275]]) {
+        const touch = new Touch({ identifier: 1, target: surface, clientX, clientY: 300 })
+        const touches = type === 'touchend' ? [] : [touch]
+        surface.dispatchEvent(new TouchEvent(type, { bubbles: true, touches, targetTouches: touches, changedTouches: [touch] }))
+      }
+    }))
+    await settledNaming()
+    assert.equal(await tab('命名模板').getAttribute('aria-current'), 'page')
+    assert.deepEqual(await slots(), pwaSlots)
+    await expectSlide('next', () => tab('分类规则').click())
+    await page.locator('.cr-rule').first().waitFor()
+    await page.locator('.organize-panel[inert]').waitFor({ state: 'detached' })
+    assert.deepEqual(await slots(), pwaSlots)
+    passed.push('桌面网页与 390px PWA 均使用固定槽位；桌面即时换页，PWA 全宽滑动并保留页内边距')
+    await page.evaluate(() => window.setStandalone(false))
     await page.goto(origin + '/settings/naming?kind=tv'); await settledNaming()
     assert.equal(new URL(page.url()).pathname, '/media/organize/naming'); assert.equal(new URL(page.url()).searchParams.get('kind'), 'tv')
     await page.goto(origin + '/settings/classification'); await page.locator('.cr-rule').first().waitFor()

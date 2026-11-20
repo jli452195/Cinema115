@@ -37,7 +37,16 @@ const local = (videoId, version, overrides = {}) => ({ localId: 'c'.repeat(32), 
 async function harness(t, { batch = false, seasons = [1], rename = false } = {}) {
   const originalFetch = globalThis.fetch, originalWindow = globalThis.window, originalDocument = globalThis.document
   const requests = [], jobs = new Map()
-  let state, sequence = 0
+  let app, state, sequence = 0
+  t.after(() => {
+    try {
+      app?.unmount()
+    } finally {
+      globalThis.fetch = originalFetch
+      globalThis.window = originalWindow
+      globalThis.document = originalDocument
+    }
+  })
   globalThis.window = Object.assign(new EventTarget(), { matchMedia: () => ({ matches: true }) })
   globalThis.document = new EventTarget()
   globalThis.fetch = async (url, init = {}) => {
@@ -85,10 +94,9 @@ async function harness(t, { batch = false, seasons = [1], rename = false } = {})
     const magnet = `magnet:?xt=urn:btih:${hash(index)}`
     return { resource: { id: String(index), title: 'Show', magnet }, source: { source: 'mikan', providerId: String(index), magnet }, files: { manifestId: `manifest-${index}`, files: seasons.map(season => ({ id: `video-${season}`, name: `Raw.S0${season}E01.mkv`, titleOnly: true, directory: false, size: 100, parentId: 'root', sourcePath: `/Raw/season-${season}/01.mkv`, mediaType: 'video', season, episode: index + 1 })) } }
   })
-  const app = renderer.createApp(Dialog, { token: 'test-token', entries, batch, tmdbId: 1, kind: 'tv', title: 'Show', date: '2026', seasons: seasons.map(number => ({ number, name: '', episodeCount: 1 })) })
+  app = renderer.createApp(Dialog, { token: 'test-token', entries, batch, tmdbId: 1, kind: 'tv', title: 'Show', date: '2026', seasons: seasons.map(number => ({ number, name: '', episodeCount: 1 })) })
   const vm = app.mount({})
   state = vm.$.setupState
-  t.after(() => { app.unmount(); globalThis.fetch = originalFetch; globalThis.window = originalWindow; globalThis.document = originalDocument })
   for (let i = 0; i < 30 && state.loading; i++) await tick()
   assert.equal(state.loading, false)
   assert.equal(state.accountId, 'main')

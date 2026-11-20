@@ -68,7 +68,7 @@ export const router = createRouter({
     { path: '/users/invites', name: 'user-invites', component: PortalSettingsView, meta: { defaultSidebarCollapsed: false } },
     { path: '/settings/naming', redirect: to => ({ name: 'naming-settings', query: to.query, hash: to.hash }) },
     { path: '/settings/classification', redirect: to => ({ name: 'classification-settings', query: to.query, hash: to.hash }) },
-    { path: '/media/organize', component: () => import('./views/OrganizeWorkspaceView.vue'), meta: { managementSection: '/media/organize', defaultSidebarCollapsed: false }, children: [
+    { path: '/media/organize', component: () => import('./views/OrganizeWorkspaceView.vue'), meta: { managementSection: '/media/organize', defaultSidebarCollapsed: false, workspacePanelMotion: true }, children: [
       { path: '', name: 'media-organize', component: () => import('./views/MediaOrganizeView.vue') },
       { path: 'history', name: 'media-organize-history', component: () => import('./views/MediaOrganizeHistoryView.vue') },
       { path: 'naming', name: 'naming-settings', component: () => import('./views/NamingSettingsView.vue') },

@@ -4,5 +4,6 @@ declare module 'vue-router' {
   interface RouteMeta {
     defaultSidebarCollapsed?: boolean
     mobileOverlay?: true | ((route: RouteLocationNormalized) => boolean)
+    workspacePanelMotion?: true
   }
 }

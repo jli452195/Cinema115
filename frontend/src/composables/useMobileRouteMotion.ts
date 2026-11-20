@@ -18,6 +18,8 @@ function routeMotion(to: RouteLocationNormalized, from: RouteLocationNormalized,
 
   const nextTool = toolGroup(to)
   const previousTool = toolGroup(from)
+  // 工作区自行切换标签，避免正文外层再做一次位移。
+  if (nextTool && nextTool === previousTool && to.meta.workspacePanelMotion) return
   if (!nextTool && !previousTool) return
   if (!nextTool && !mobileWorkspaceSection(to.name)) return
   if (!previousTool && !mobileWorkspaceSection(from.name)) return
