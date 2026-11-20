@@ -13,7 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 73
+const schemaVersion = 74
 
 // Store 由主进程持有，后台任务和 HTTP 请求退出后统一关闭。
 type Store struct {
@@ -598,6 +598,11 @@ FROM ed2k_strm_settings WHERE json_extract(record,'$.outputDir') IS NOT NULL AND
 UPDATE ed2k_strm_settings SET record=json_remove(record,'$.outputDir');
 UPDATE ed2k_strm_resources SET record=json_remove(record,'$.settings','$.resource.strmPath');`); err != nil {
 			return fmt.Errorf("拆分 ED2K 输出目录: %w", err)
+		}
+	}
+	if version < 74 {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS emby_proxy_config(id INTEGER PRIMARY KEY CHECK(id=1),record TEXT NOT NULL)`); err != nil {
+			return fmt.Errorf("创建 Emby 反代配置存储: %w", err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion)); err != nil {

@@ -443,10 +443,6 @@ func main() {
 		log.Fatal(err)
 	}
 	defer listener.Close()
-	proxyStore, err := service.NewSessionStore(filepath.Join(dataDir, "emby-proxy.enc"), secret)
-	if err != nil {
-		log.Fatal(err)
-	}
 	embyProxyLogs := service.NewEmbyProxyLogs(generationLogs)
 	playbackStore, err := service.NewSessionStore(filepath.Join(dataDir, "playback-cache.enc"), secret)
 	if err != nil {
@@ -479,7 +475,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	embyProxy, err := service.NewEmbyProxy(ctx, proxyStore, accounts, func(config service.EmbyProxyConfig) http.Handler {
+	loadLegacyProxy := func() (string, error) {
+		store, err := service.NewSessionStore(filepath.Join(dataDir, "emby-proxy.enc"), secret)
+		if err != nil {
+			return "", err
+		}
+		return store.Value(), nil
+	}
+	embyProxy, err := service.NewEmbyProxy(ctx, database, loadLegacyProxy, accounts, func(config service.EmbyProxyConfig) http.Handler {
 		return httpapi.NewEmbyCachedProxyHandler(config, accounts, shareAPI, playbackCache, embyProxyLogs, playbackIdentities)
 	}, embyProxyLogs)
 	if err != nil {

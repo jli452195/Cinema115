@@ -7,57 +7,79 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
   const errors = [], writes = []
   page.on('pageerror', e => errors.push(e.message))
-  const settings = { enabled: true, libraryIds: [], allowDownload: false, publicUrl: '' }
-  const proxy = { listening: true, config: { enabled: true, url: 'http://emby:8096', port: 8097 } }
-  const members = [{ userId: 'reader', embyId: 'a'.repeat(32), embyName: 'reader', source: 'primary', playbackAllowed: true, checkedAt: "2026-10-02T00:00:00Z", stage: 'ready', checkError: 'Emby 播放限制应用失败，请检查 Emby 连接后重试' }]
+  const publicUrl = 'https://emby.example.com'
+  const settings = { enabled: true, libraryIds: [], allowDownload: false, publicUrl }
+  const proxy = { listening: true, error: '', config: { enabled: true, debug: false, directLinkCacheMinutes: 9, url: 'http://emby:8096', port: 8097, accountId: 'main' } }
+  const members = [{ userId: 'reader', embyId: 'a'.repeat(32), embyName: 'reader', embyState: 'active', source: 'primary', stage: 'ready', driveStatus: { state: 'error', message: '模拟网盘检查失败' } }]
   await page.route('**/api/**', async route => {
    const req = route.request(), p = new URL(req.url()).pathname
    let data = {}
    if (p === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
    else if (p === '/api/admin/member-playback/accounts') data = { accounts: [] }
-   else if (p === '/api/admin/member-playback/libraries') data = { libraries: [{ ItemId: 'movies', Name: '电影' }] }
+   else if (p === '/api/admin/member-playback/libraries') data = { libraries: [{ ItemId: 'movies', Name: '电影', CollectionType: 'movies' }] }
    else if (p.startsWith('/api/admin/member-playback')) {
     if (req.method() === 'POST') {
      const body = req.postDataJSON(); writes.push({ path: p, body })
      if (p.endsWith('/registration-settings')) settings.libraryIds = body.libraryIds
-     else if (p.endsWith('/reader/sync')) members[0].checkError = ''
+     else if (p.endsWith('/reader/sync')) members[0].driveStatus = { state: 'ready', message: '网盘检查通过' }
      else Object.assign(settings, body)
     }
     data = { settings, members, proxy }
-   } else if (p.endsWith('/proxy')) data = proxy
+   } else if (p === '/api/admin/emby/proxy') {
+    if (req.method() === 'POST') {
+     const body = req.postDataJSON(); writes.push({ path: p, body })
+     const { allowDownload, ...config } = body
+     proxy.config = config
+     if (typeof allowDownload === 'boolean') settings.allowDownload = allowDownload
+    }
+    data = { ...proxy, allowDownload: settings.allowDownload }
+   }
    else if (p.endsWith('/invites')) data = { invites: [], hasMore: false }
    else if (p.endsWith('/logs')) data = { entries: [] }
    else data = { accounts: [], config: {}, settings: {}, items: [], records: [], stats: {} }
    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
   })
   const base = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
-  await page.goto(base + '/emby/users')
-  await page.getByRole('button', { name: '管理用户' }).click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByText(members[0].checkError, { exact: true }).waitFor()
+  await page.goto(base + '/users/list')
+  await page.getByRole('button', { name: '管理用户 reader', exact: true }).click()
+  const userDialog = page.getByRole('dialog', { name: '管理用户', exact: true })
+  await userDialog.getByText(members[0].driveStatus.message, { exact: true }).waitFor()
   assert.equal(await page.getByLabel('媒体库同步分组').count(), 0)
-  assert.equal(await dialog.getByLabel('媒体库权限', { exact: true }).count(), 0)
-  await dialog.getByText('更多操作', { exact: true }).click()
-  await dialog.getByRole('button', { name: '检查网盘' }).click()
-  await dialog.getByText('操作已完成。').waitFor()
-  await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+  assert.equal(await userDialog.getByLabel('媒体库权限', { exact: true }).count(), 0)
+  await userDialog.getByRole('button', { name: '检查网盘', exact: true }).click()
+  await userDialog.getByText('已更新网盘检查结果。', { exact: true }).waitFor()
+  await userDialog.getByRole('button', { name: '关闭用户管理', exact: true }).click()
   await page.goto(base + '/users/invites')
-  await page.getByRole('heading', { name: '新注册用户的默认媒体库' }).waitFor()
-  await page.getByRole('checkbox', { name: '电影', exact: true }).check()
-  await page.getByRole('button', { name: '保存注册媒体库' }).click()
-  await page.getByText('已保存，仅用于之后创建的新账号。已有用户权限保持不变。').waitFor()
+  const librarySummary = page.getByRole('region', { name: '默认媒体库', exact: true })
+  const libraryDialog = page.getByRole('dialog', { name: '新账号的默认媒体库', exact: true })
+  await librarySummary.getByRole('button', { name: '编辑', exact: true }).click()
+  await libraryDialog.locator('.invite-library-option').filter({ hasText: '电影' }).click()
+  await libraryDialog.getByRole('button', { name: '保存更改', exact: true }).click()
+  await librarySummary.getByText('已保存，仅用于之后创建的新账号。', { exact: true }).waitFor()
   assert.deepEqual(writes.at(-1), { path: '/api/admin/member-playback/registration-settings', body: { libraryIds: ['movies'] } })
-  await page.getByRole('button', { name: '清空选择' }).click()
-  await page.getByRole('button', { name: '保存注册媒体库' }).click()
-  await page.waitForFunction(() => document.querySelector('[role="status"]')?.textContent?.includes('已保存'))
+  await librarySummary.getByRole('button', { name: '编辑', exact: true }).click()
+  await libraryDialog.getByRole('button', { name: '清空', exact: true }).click()
+  await libraryDialog.getByRole('button', { name: '保存并暂停注册', exact: true }).click()
+  await librarySummary.getByText('已保存，仅用于之后创建的新账号。', { exact: true }).waitFor()
+  assert.deepEqual(writes.at(-1), { path: '/api/admin/member-playback/registration-settings', body: { libraryIds: [] } })
+  const writesBeforeProxySave = writes.length
   await page.goto(base + '/emby/proxy')
-  await page.getByRole('heading', { name: '播放与原文件下载' }).waitFor()
+  const proxySettings = page.getByRole('region', { name: '反代设置', exact: true })
+  const downloadSwitch = proxySettings.getByRole('switch', { name: '允许下载原文件', exact: true })
+  const saveProxy = proxySettings.getByRole('button', { name: '保存反代配置', exact: true })
+  await saveProxy.and(page.locator(':enabled')).waitFor()
+  assert.equal(await downloadSwitch.isChecked(), false)
+  assert.equal(await page.getByRole('heading', { name: '访问设置', exact: true }).count(), 0)
   assert.equal(await page.getByRole('heading', { name: '媒体库权限同步' }).count(), 0)
   assert.equal(await page.getByRole('button', { name: '刷新媒体库' }).count(), 0)
-  await page.getByRole('button', { name: '保存播放设置', exact: true }).click()
-  await page.getByText('播放设置已保存。', { exact: true }).waitFor()
-  assert.deepEqual(writes.at(-1), { path: '/api/admin/member-playback', body: { allowDownload: false, publicUrl: '' } })
+  const savedProxyConfig = { ...proxy.config }
+  await downloadSwitch.press('Space')
+  await saveProxy.click()
+  await proxySettings.getByText('反代配置已保存。', { exact: true }).waitFor()
+  assert.deepEqual(writes.slice(writesBeforeProxySave), [{ path: '/api/admin/emby/proxy', body: { ...savedProxyConfig, allowDownload: true } }])
+  assert.equal(settings.allowDownload, true)
   assert.deepEqual(settings.libraryIds, [])
+  assert.equal(settings.publicUrl, publicUrl)
   await page.setViewportSize({ width: 390, height: 844 })
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false)
   assert.deepEqual(errors, [])

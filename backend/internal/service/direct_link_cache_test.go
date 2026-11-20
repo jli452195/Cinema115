@@ -73,6 +73,7 @@ func TestDisabledDirectCacheStillMergesFlights(t *testing.T) {
 }
 
 func TestDirectLinkCacheDefaultMigrationAndValidation(t *testing.T) {
+	store := openProxyTestStore(t, filepath.Join(t.TempDir(), "proxy.db"))
 	for _, tc := range []struct {
 		raw  string
 		want int
@@ -82,14 +83,9 @@ func TestDirectLinkCacheDefaultMigrationAndValidation(t *testing.T) {
 		{`{"enabled":false,"port":8097,"directLinkCacheMinutes":0}`, 0},
 		{`{"enabled":false,"port":8097,"directLinkCacheMinutes":12}`, 12},
 	} {
-		store, err := NewSessionStore(filepath.Join(t.TempDir(), "proxy.enc"), "secret")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.Save(tc.raw); err != nil {
-			t.Fatal(err)
-		}
-		proxy, err := NewEmbyProxy(context.Background(), store, nil, nil)
+		proxy, err := NewEmbyProxy(context.Background(), store, func() (string, error) {
+			return tc.raw, nil
+		}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

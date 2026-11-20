@@ -8,8 +8,7 @@ import (
 	"strm115/backend/internal/strm"
 )
 
-// Only recognized share URL formats with a definite syntax error fail early.
-// Missing local files, unknown formats and dynamic media still negotiate.
+// 仅已识别的分享链接格式出现明确语法错误时提前失败，未知格式继续走播放协商。
 func isMalformedShareURL(raw string) bool {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
@@ -47,10 +46,7 @@ func (h *embyProxyHandler) itemPlaybackSource(sources []map[string]json.RawMessa
 	if supported, exists := selected["SupportsDirectPlay"]; exists && !jsonTrue(supported) {
 		return nil, nil, nil
 	}
-	raw, readErr := h.sourceURL(selected)
-	if readErr != nil {
-		return nil, nil, nil
-	}
+	raw := jsonString(selected["Path"])
 	claim, err := h.playbackURLClaim(raw)
 	if err != nil {
 		if isMalformedShareURL(raw) {

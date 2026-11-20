@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -306,26 +305,19 @@ func TestEmbyProxyLogEndpointAndErrorRedaction(t *testing.T) {
 	}
 }
 
-func TestEmbyProxySTRMMappingAndTokenHeaders(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://cinema:8115/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	share := NewShareAPI(func() string { return "" })
-	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}, share: share}
+func TestEmbyProxySTRMLinksAndTokenHeaders(t *testing.T) {
+	h := &embyProxyHandler{share: NewShareAPI(func() string { return "" })}
 	for _, tc := range []struct {
 		path  string
 		valid bool
 	}{
-		{"/media/movie.strm", true},
-		{"/media/../outside.strm", false},
-		{"/media2/movie.strm", false},
+		{"/media/movie.strm", false},
 		{"http://other-tool/api/share115/abc/0123456789ABCDEF0123456789ABCDEF01234567/pass/123", true},
+		{"http://legacy/api/?share_code=abc&id=123&receive_code=pass&filename=movie.mp4", true},
 		{"http://cinema:8115/api/?share_code=abc&id=123&id=456&receive_code=pass", false},
 	} {
 		path, _ := json.Marshal(tc.path)
-		claim, err := h.sourceClaim(map[string]json.RawMessage{"Path": path})
+		claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": path})
 		if (err == nil) != tc.valid {
 			t.Fatal("路径限制错误", tc.path, err)
 		}

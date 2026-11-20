@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
 	"strm115/backend/internal/model"
 )
 
@@ -54,11 +55,17 @@ func (s *Store) MemberPlaybackSettings(ctx context.Context) (model.MemberPlaybac
 	return settings, err
 }
 func (s *Store) SaveMemberPlaybackSettings(ctx context.Context, settings model.MemberPlaybackSettings) error {
+	return saveMemberPlaybackSettings(ctx, s.db, settings)
+}
+
+func saveMemberPlaybackSettings(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, settings model.MemberPlaybackSettings) error {
 	raw, err := json.Marshal(settings)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO member_playback_settings(id,record) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record`, string(raw))
+	_, err = db.ExecContext(ctx, `INSERT INTO member_playback_settings(id,record) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record`, string(raw))
 	return err
 }
 

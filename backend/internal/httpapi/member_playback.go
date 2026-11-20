@@ -368,12 +368,15 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 		c.JSON(200, gin.H{"settings": s.Settings()})
 	})
 	manage.POST("", func(c *gin.Context) {
-		var settings model.MemberPlaybackSettings
-		if c.ShouldBindJSON(&settings) != nil {
-			c.JSON(400, gin.H{"error": "配置格式无效"})
+		var input struct {
+			AllowDownload *bool   `json:"allowDownload"`
+			PublicURL     *string `json:"publicUrl"`
+		}
+		if c.ShouldBindJSON(&input) != nil || input.AllowDownload == nil {
+			c.JSON(400, gin.H{"error": "下载设置格式无效"})
 			return
 		}
-		if err := s.SetPlaybackSettings(c.Request.Context(), settings.AllowDownload, settings.PublicURL); err != nil {
+		if err := s.SetPlaybackSettings(c.Request.Context(), *input.AllowDownload, input.PublicURL); err != nil {
 			fail(c, err)
 			return
 		}

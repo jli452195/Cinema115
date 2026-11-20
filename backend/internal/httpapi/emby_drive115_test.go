@@ -2,29 +2,21 @@ package httpapi
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
-	"strm115/backend/internal/service"
 	"strm115/backend/internal/strm"
 )
 
-func TestDrive115LocalMappingAndStrictURL(t *testing.T) {
+func TestDrive115MediaSourceAndStrictURL(t *testing.T) {
 	value := strm.Drive{PickCode: "abc123", FileID: "123", SHA1: strings.Repeat("a", 40), Size: 42, Name: "电影 #1+%?.mkv"}
 	raw, err := strm.DriveURL("http://retired.invalid", value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte(raw+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	share := NewShareAPI(func() string { return "" })
-	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}, share: share}
-	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": json.RawMessage(`"/media/movie.strm"`)})
+	path, _ := json.Marshal(raw)
+	h := &embyProxyHandler{share: NewShareAPI(func() string { return "" })}
+	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": path})
 	if err != nil || claim.FileID != value.FileID || claim.PickCode != value.PickCode || claim.SHA1 != strings.ToUpper(value.SHA1) || claim.Size != value.Size || claim.Name != value.Name || claim.Code != "" || claim.Password != "" {
 		t.Fatalf("native declaration changed: %+v %v", claim, err)
 	}

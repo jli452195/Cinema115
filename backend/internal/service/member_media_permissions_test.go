@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -82,11 +82,7 @@ func Test302TakeoverLifecycle(t *testing.T) {
 	if err := s.accounts.Update(primary, 1, "main", &cookie); err != nil {
 		t.Fatal(err)
 	}
-	store, err := NewSessionStore(filepath.Join(t.TempDir(), "proxy.enc"), "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxy, err := NewEmbyProxy(ctx, store, s.accounts, func(EmbyProxyConfig) http.Handler { return http.NotFoundHandler() })
+	proxy, err := NewEmbyProxy(ctx, s.db, nil, s.accounts, func(EmbyProxyConfig) http.Handler { return http.NotFoundHandler() })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +103,33 @@ func Test302TakeoverLifecycle(t *testing.T) {
 		t.Fatal("offline proxy authorized")
 	}
 	config := EmbyProxyConfig{Enabled: true, URL: "http://emby", Port: proxyFreePort(t)}
-	if err := s.ApplyProxy(ctx, proxy, config); err != nil {
+	unbound := s.Settings()
+	unbound.EmbyURL, unbound.ServerID = "", ""
+	if err := s.db.SaveMemberPlaybackSettings(ctx, unbound); err != nil {
 		t.Fatal(err)
+	}
+	s.publishSettings(unbound)
+	download := true
+	occupied, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	failed := config
+	failed.Port = occupied.Addr().(*net.TCPAddr).Port
+	if err := s.ApplyProxy(ctx, proxy, failed, &download); err == nil {
+		t.Fatal("占用的端口未阻止提交")
+	}
+	stored, err := s.db.MemberPlaybackSettings(ctx)
+	if err != nil || stored.ServerID != "" || stored.AllowDownload || proxy.Status().Listening {
+		t.Fatalf("监听失败后设置已改变：%+v，%v", stored, err)
+	}
+	if err := s.ApplyProxy(ctx, proxy, config, &download); err != nil {
+		t.Fatal(err)
+	}
+	stored, err = s.db.MemberPlaybackSettings(ctx)
+	if err != nil || stored.ServerID != "server" || stored.EmbyURL != config.URL || !stored.AllowDownload {
+		t.Fatalf("首次启动未一起保存服务身份和下载设置：%+v，%v", stored, err)
 	}
 	if !s.Settings().Enabled {
 		t.Fatal("302 did not activate takeover")
@@ -123,7 +144,7 @@ func Test302TakeoverLifecycle(t *testing.T) {
 		t.Fatal("valid account not automatically playable", err)
 	}
 	config.Enabled = false
-	if err := s.ApplyProxy(ctx, proxy, config); err != nil {
+	if err := s.ApplyProxy(ctx, proxy, config, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SyncUser(ctx, id); err != nil {
@@ -138,7 +159,7 @@ func Test302TakeoverLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	config.Enabled = true
-	if err := s.ApplyProxy(ctx, proxy, config); err != nil {
+	if err := s.ApplyProxy(ctx, proxy, config, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.SyncUser(ctx, id); err != nil {

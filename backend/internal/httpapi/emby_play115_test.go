@@ -3,27 +3,18 @@ package httpapi
 import (
 	"encoding/json"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-
-	"strm115/backend/internal/service"
 )
 
 const play115TestPath = "/play115/d129obvw5ewzwx29g/3432417343848548293/FE01D1140784BC8568312793F65C35DD172D3B1F/589916580/"
 
-func TestPlay115LocalSTRMMapping(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte("http://retired.invalid"+play115TestPath+"movie.mkv\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	share := NewShareAPI(func() string { return "" })
-	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}, share: share}
-	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": json.RawMessage(`"/media/movie.strm"`)})
+func TestPlay115MediaSource(t *testing.T) {
+	path, _ := json.Marshal("http://retired.invalid" + play115TestPath + "movie.mkv")
+	h := &embyProxyHandler{share: NewShareAPI(func() string { return "" })}
+	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": path})
 	if err != nil || claim.FileID != "3432417343848548293" || claim.PickCode != "d129obvw5ewzwx29g" || claim.Size != 589916580 || claim.Name != "movie.mkv" {
-		t.Fatalf("mapped STRM failed: %+v, %v", claim, err)
+		t.Fatalf("STRM 媒体源解析失败：%+v, %v", claim, err)
 	}
 }
 

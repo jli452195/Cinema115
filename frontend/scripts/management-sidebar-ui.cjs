@@ -29,7 +29,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    else if (p === '/api/admin/member-playback/libraries') data = { libraries: [] }
    else if (p === '/api/admin/gying/config') data = { configured: false, baseUrl: 'https://example.com', resourceOrder: [], resourceTypes: [] }
    else if (p === '/api/admin/emby/missing') data = { configured: true, ready: true, total: 0, items: [], notices: [], offset: 0, nextOffset: 0, hasMore: false, summary: { series: 0, seasons: 0, episodes: 0 }, excludedCount: 0 }
-   else if (p === '/api/admin/emby/proxy') data = { listening: false, config: { enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' } }
+   else if (p === '/api/admin/emby/proxy') data = { listening: false, config: { enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '' } }
    await route.fulfill({ json: data })
   })
   const page = await context.newPage(); page.setDefaultTimeout(10000)

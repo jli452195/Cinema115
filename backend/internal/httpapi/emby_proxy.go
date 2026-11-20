@@ -12,8 +12,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -74,22 +72,28 @@ func RegisterEmbyProxy(admin *gin.RouterGroup, s *service.EmbyProxy, members *se
 		c.Header("Cache-Control", "no-store")
 		c.JSON(200, s.DirectLinkStatus())
 	})
-	admin.GET("/emby/proxy", func(c *gin.Context) { c.Header("Cache-Control", "no-store"); c.JSON(200, s.Status()) })
+	admin.GET("/emby/proxy", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store")
+		c.JSON(200, members.ProxySettings(s))
+	})
 	admin.POST("/emby/proxy", func(c *gin.Context) {
 		c.Header("Cache-Control", "no-store")
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
-		input := service.EmbyProxyConfig{DirectLinkCacheMinutes: 9}
+		input := struct {
+			service.EmbyProxyConfig
+			AllowDownload *bool `json:"allowDownload"`
+		}{EmbyProxyConfig: service.EmbyProxyConfig{DirectLinkCacheMinutes: 9}}
 		if c.ShouldBindJSON(&input) != nil {
 			c.JSON(400, gin.H{"error": "反代配置格式无效"})
 			return
 		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 90*time.Second)
 		defer cancel()
-		if err := members.ApplyProxy(ctx, s, input); err != nil {
+		if err := members.ApplyProxy(ctx, s, input.EmbyProxyConfig, input.AllowDownload); err != nil {
 			c.JSON(400, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(200, s.Status())
+		c.JSON(200, members.ProxySettings(s))
 	})
 }
 
@@ -710,19 +714,19 @@ func (h *embyProxyHandler) redirectAttempt(w http.ResponseWriter, r *http.Reques
 		fail("无法确定播放版本，请重新选择媒体源", 409)
 		return false
 	}
-	timing.next("STRM 读取解析")
-	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始读取并解析 STRM，媒体源="+proxyLogID(jsonString(source["Id"])))
+	timing.next("STRM 地址解析")
+	h.logs.Add(ctx, "DEBUG", "媒体源已确定，开始解析 STRM 地址，媒体源="+proxyLogID(jsonString(source["Id"])))
 	if claim == nil {
 		claim, err = h.playbackClaim(source)
 	}
 	if errors.Is(err, errNotShareSTRM) && fallback {
 		outcome = "转交 Emby"
-		h.logs.Add(ctx, "WARNING", "媒体源不符合支持的分享链接格式或本地路径映射，转交 Emby 原"+kind+"链路")
+		h.logs.Add(ctx, "WARNING", "媒体源地址格式不受支持，转交 Emby 原"+kind+"链路")
 		h.proxy.ServeHTTP(w, r)
 		return false
 	}
 	if err != nil {
-		fail("STRM 读取解析失败："+err.Error()+"；请检查链接格式、必要分享参数及本地媒体路径映射", 422)
+		fail("STRM 地址解析失败："+err.Error()+"；请检查链接格式和必要参数", 422)
 		return false
 	}
 	timing.next("播放授权及账号准备")
@@ -970,11 +974,7 @@ func jsonTrue(raw json.RawMessage) bool {
 }
 
 func (h *embyProxyHandler) playbackClaim(source map[string]json.RawMessage) (*sharePlaybackParams, error) {
-	raw, err := h.sourceURL(source)
-	if err != nil {
-		return nil, err
-	}
-	return h.playbackURLClaim(raw)
+	return h.playbackURLClaim(jsonString(source["Path"]))
 }
 
 func (h *embyProxyHandler) playbackURLClaim(raw string) (*sharePlaybackParams, error) {
@@ -982,56 +982,6 @@ func (h *embyProxyHandler) playbackURLClaim(raw string) (*sharePlaybackParams, e
 		return claim, nil
 	}
 	return h.share.parseSTRMURL(raw)
-}
-
-func (h *embyProxyHandler) sourceClaim(source map[string]json.RawMessage) (*sharePlaybackParams, error) {
-	raw, err := h.sourceURL(source)
-	if err != nil {
-		return nil, err
-	}
-	return h.share.parseSTRMURL(raw)
-}
-
-func (h *embyProxyHandler) sourceURL(source map[string]json.RawMessage) (string, error) {
-	raw := jsonString(source["Path"])
-	if strings.EqualFold(filepath.Ext(raw), ".strm") {
-		prefix := h.config.EmbyPathPrefix
-		remote := strings.ReplaceAll(raw, "\\", "/")
-		if prefix == "" || !strings.HasPrefix(remote, prefix+"/") {
-			return "", errNotShareSTRM
-		}
-		relative := strings.TrimPrefix(remote, prefix+"/")
-		if !filepath.IsLocal(filepath.FromSlash(relative)) {
-			return "", fmt.Errorf("STRM 路径越界")
-		}
-		root, err := filepath.EvalSymlinks(h.share.OutputRoot)
-		if err != nil {
-			return "", fmt.Errorf("无法读取 STRM 根目录")
-		}
-		file, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			return "", fmt.Errorf("无法找到 STRM 文件")
-		}
-		rel, err := filepath.Rel(root, file)
-		if err != nil || !filepath.IsLocal(rel) {
-			return "", fmt.Errorf("STRM 路径越界")
-		}
-		f, err := os.Open(file)
-		if err != nil {
-			return "", fmt.Errorf("无法读取 STRM 文件")
-		}
-		defer f.Close()
-		stat, err := f.Stat()
-		if err != nil || !stat.Mode().IsRegular() {
-			return "", fmt.Errorf("STRM 不是普通文件")
-		}
-		data, err := io.ReadAll(io.LimitReader(f, 16385))
-		if err != nil || len(data) > 16384 {
-			return "", fmt.Errorf("STRM 内容无效")
-		}
-		raw = strings.TrimSpace(strings.TrimPrefix(string(data), "\ufeff"))
-	}
-	return raw, nil
 }
 
 func (h *embyProxyHandler) rewritePlayback(resp *http.Response) error {

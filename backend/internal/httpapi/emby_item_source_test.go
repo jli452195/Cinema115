@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -136,18 +134,9 @@ func TestStaticShareFailureCanaryPreservesFallbackAndVersions(t *testing.T) {
 		{"unknown", "https://other.invalid/movie", "", "src", 302, 1},
 		{"dynamic", bad, `,"RequiresOpening":true`, "src", 302, 1},
 		{"missing-metadata", "", "", "src", 302, 1},
-		{"local-missing", "missing.strm", "", "src", 302, 1},
-		{"local-malformed", "bad.strm", "", "src", 422, 0},
+		{"local-path", "/media/movie.strm", "", "src", 302, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, "bad.strm"), []byte(bad), 0600); err != nil {
-				t.Fatal(err)
-			}
-			path := tc.path
-			if strings.HasSuffix(path, ".strm") {
-				path = "/media/" + path
-			}
 			infoCalls, links := 0, 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
@@ -156,7 +145,7 @@ func TestStaticShareFailureCanaryPreservesFallbackAndVersions(t *testing.T) {
 				case "/emby/Users/user":
 					fmt.Fprint(w, `{"Id":"user","Policy":{"EnableMediaPlayback":true}}`)
 				case "/emby/Users/user/Items/movie":
-					fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","MediaSources":[{"Id":"src","Path":%q%s},{"Id":"other","Path":%q}]}`, path, tc.extra, bad)
+					fmt.Fprintf(w, `{"Id":"movie","PlayAccess":"Full","MediaSources":[{"Id":"src","Path":%q%s},{"Id":"other","Path":%q}]}`, tc.path, tc.extra, bad)
 				case "/emby/Items/movie/PlaybackInfo", "/Items/movie/PlaybackInfo":
 					infoCalls++
 					fmt.Fprintf(w, `{"PlaySessionId":"session","MediaSources":[{"Id":"src","Path":%q,"SupportsDirectPlay":true,"MediaStreams":[{"Index":1,"Type":"Audio"}]},{"Id":"other","Path":%q,"SupportsDirectPlay":true,"MediaStreams":[{"Index":2,"Type":"Audio"}]}]}`, good, good)
@@ -167,8 +156,7 @@ func TestStaticShareFailureCanaryPreservesFallbackAndVersions(t *testing.T) {
 			defer upstream.Close()
 			accounts, id := proxyTestAccounts(t)
 			share := NewShareAPI(func() string { return "" })
-			share.OutputRoot = root
-			h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id, EmbyPathPrefix: "/media"}, accounts, share).(*embyProxyHandler)
+			h := NewEmbyProxyHandler(service.EmbyProxyConfig{URL: upstream.URL, AccountID: id}, accounts, share).(*embyProxyHandler)
 			defer h.Close()
 			h.download = func(context.Context, *p115.ShareInfo, string, string, string) (string, error) {
 				links++

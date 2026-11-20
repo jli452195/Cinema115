@@ -23,7 +23,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    else if (p === '/api/admin/media-organize/history') data = { items: [], page: 1, pages: 1, total: 0, counts: { all: 0, running: 0, done: 0, attention: 0 }, active: false, activity: [], cleanup: [] }
    else if (p === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
    else if (p === '/api/auth/me') data = { user: { id: 'admin', username: 'sidebar-defaults-fixture', role: 'admin' } }
-   else if (p === '/api/admin/emby/proxy') data = { listening: false, config: { enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '', embyPathPrefix: '' } }
+   else if (p === '/api/admin/emby/proxy') data = { listening: false, config: { enabled: false, debug: false, directLinkCacheMinutes: 9, port: 8097, url: '', accountId: '' } }
    else if (/\/tmdb\/detail\/movie\/\d+$/.test(p)) {
     const id = Number(p.split('/').at(-1))
     data = { id, kind: 'movie', title: '侧栏默认状态测试 ' + id, originalTitle: 'Sidebar Default Fixture', overview: '', date: '2026-01-01', rating: 7, votes: 1, status: 'Released', runtime: 90, countries: [], genres: [], cast: [], seasons: [], collection: null }

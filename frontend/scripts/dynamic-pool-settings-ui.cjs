@@ -1,4 +1,4 @@
-const { selectOption, inputValue, selectOptions } = require('./select-menu-helpers.cjs')
+const { selectOption, inputValue } = require('./select-menu-helpers.cjs')
 const path = require('node:path'), os = require('node:os'), assert = require('node:assert/strict')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 ;(async () => {
@@ -12,12 +12,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const pool = [{id:'pool',name:'小号 A',uid:'501',primary:false,configured:true,revision:1,playbackParentCid:'123',pool:{state:'ready',mode:'enabled',sessions:3,active:2,preparing:0,residual:1,retryAt:0,checkedAt:Date.now()}}, {id:'duplicate',name:'同 UID 配置',uid:'501',primary:false,configured:true,revision:1,playbackParentCid:'456',pool:{state:'ready',mode:'enabled',sessions:3,active:2,preparing:0,residual:1,retryAt:0,checkedAt:Date.now()}}]
   let settings={maxSessions:3,maxAttempts:3,budgetSeconds:90,leaseMinutes:5,cooldownSeconds:30,uidIntervalMs:250,globalIntervalMs:50,notificationBotId:''}
   let reads=0, failRead=false, failSave=false, failMode=false, zeroSamples=false, checkState='invalid_directory'
-  let config={userId:'',sourceAccountId:'main',accountId:'',targetCid:'',targetPath:''}
   await page.route('**/api/**', async route => {
    const req=route.request(), p=new URL(req.url()).pathname; let data={},status=200
    if (p==='/api/auth/me') data={user:{id:'admin',username:'admin',role:'admin'}}
    else if(p==='/api/admin/p115/accounts') data={accounts:[{id:'main',name:'主账号',primary:true,configured:true,revision:1},...pool]}
-   else if(p.endsWith('/device-policy')) data={mode:'parallel',silenceSeconds:60}
    else if(p==='/api/admin/member-playback/accounts') data={accounts:pool}
    else if(p==='/api/admin/member-playback/pool') {
     if(req.method()==='POST'){writes.push(req.postDataJSON());if(failSave){status=422;data={error:'保存失败，设置未修改'}}else {settings=req.postDataJSON();data={settings}}}
@@ -26,11 +24,6 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    else if(p==='/api/admin/telegram/bots') data={bots:[{id:'bot',name:'测试通知',configured:true,enabled:true,notificationChatID:'42'}]}
    else if(p==='/api/admin/member-playback/pool/pool'){modeWrites.push(req.postDataJSON());if(failMode){status=500;data={error:'模式保存失败'}}else {pool[0].pool.mode=req.postDataJSON().mode;data={accounts:pool}}}
    else if(p==='/api/admin/member-playback/pool/pool/check'){checkWrites.push(p);pool[0].pool.state=checkState;data={accounts:pool}}
-   else if(p==='/api/admin/member-playback/settings') data={settings:{allowDownload:false,publicUrl:''}}
-   else if(p==='/api/admin/emby/proxy') data={config:{enabled:false,debug:false,port:8097,url:'http://emby',accountId:'main',directLinkCacheMinutes:9},listening:false,error:''}
-   else if(p==='/api/admin/emby/playback-cache/users') data={embyUrl:'http://emby',users:[{Id:'reader',Policy:{IsDisabled:false}},{Id:'personal',Policy:{IsDisabled:false}}],members:[{embyId:'reader',embyName:'读者',source:'assigned'},{embyId:'personal',embyName:'个人用户',source:'personal',personalDrive:{connected:true}}]}
-   else if(p==='/api/admin/emby/instant-upload') {if(req.method()==='POST'){writes.push(req.postDataJSON());config={...config,userId:req.postDataJSON().userId}}data={config,records:[],running:false}}
-   else if(p==='/api/admin/emby/instant-upload/run') {writes.push(req.postDataJSON());data={id:req.postDataJSON().id,accountId:'pool',targetCid:'123',status:'success',message:'模拟秒传成功',startedAt:new Date().toISOString(),durationMs:10}}
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
   })
   await page.goto('http://127.0.0.1:5173/helper115')
@@ -130,20 +123,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await page.getByText('共享池还没有小号',{exact:true}).waitFor()
   assert(await page.getByRole('button',{name:'添加第一个小号',exact:true}).isEnabled())
   assert.equal(checkWrites.length,1,'passive refresh must not probe 115')
-  await page.goto('http://127.0.0.1:5173/emby/proxy')
-  await page.getByRole('button',{name:'秒传验证',exact:true}).click()
-  await selectOption(page.getByLabel('目标用户'), 'reader')
-  assert.equal((await selectOptions(page.getByLabel('目标用户'))).filter(option => option.value === 'personal').length,0)
-  await page.getByRole('button',{name:'保存秒传配置',exact:true}).click()
-  await page.getByText('秒传配置已保存。',{exact:true}).waitFor()
-  assert.deepEqual(writes.at(-1),{userId:'reader'})
-  await page.locator('#instant-strm').fill('http://nas/api/?share_code=abc&id=123')
-  await page.getByRole('button',{name:'开始单文件秒传',exact:true}).click()
-  await page.getByText('秒传成功',{exact:true}).waitFor()
-  assert.equal(writes.at(-1).strm,'http://nas/api/?share_code=abc&id=123')
-  assert.equal('accountId' in writes.at(-1),false)
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false)
   assert.deepEqual(errors,[])
-  console.log('Dynamic pool UI passed: UID deduplication, draft polling, save failures, interval validation, nested discard, mode confirmation and failures, check health result, unknown health, zero samples, stale-data recovery, light/dark 320/390/1440 layouts, focus restore, empty pool, source-only manual task')
+  console.log('Dynamic pool UI passed: UID deduplication, draft polling, save failures, interval validation, nested discard, mode confirmation and failures, check health result, unknown health, zero samples, stale-data recovery, light/dark 320/390/1440 layouts, focus restore, empty pool')
  } finally {await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1})

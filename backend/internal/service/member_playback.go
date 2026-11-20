@@ -166,9 +166,9 @@ func (s *MemberPlaybackService) save(ctx context.Context, r model.MemberPlayback
 }
 func (s *MemberPlaybackService) Settings() model.MemberPlaybackSettings {
 	s.mu.RLock()
+	defer s.mu.RUnlock()
 	settings := s.settings
 	settings.LibraryIDs = append([]string{}, settings.LibraryIDs...)
-	s.mu.RUnlock()
 	// Read-only runtime projection: the proxy is the only playback switch.
 	settings.Enabled = false
 	if s.ProxyStatus != nil {
@@ -176,6 +176,17 @@ func (s *MemberPlaybackService) Settings() model.MemberPlaybackSettings {
 		settings.Enabled = proxy.Config.Enabled && proxy.Listening
 	}
 	return settings
+}
+
+type MemberProxySettings struct {
+	EmbyProxyStatus
+	AllowDownload bool `json:"allowDownload"`
+}
+
+func (s *MemberPlaybackService) ProxySettings(proxy *EmbyProxy) MemberProxySettings {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return MemberProxySettings{EmbyProxyStatus: proxy.Status(), AllowDownload: s.settings.AllowDownload}
 }
 func (s *MemberPlaybackService) Records() []model.MemberPlayback {
 	s.mu.RLock()
@@ -213,39 +224,63 @@ func (s *MemberPlaybackService) SetRegistrationLibraries(ctx context.Context, id
 	return s.setSettings(ctx, settings)
 }
 
-func (s *MemberPlaybackService) SetPlaybackSettings(ctx context.Context, download bool, publicURL string) error {
+func (s *MemberPlaybackService) SetPlaybackSettings(ctx context.Context, download bool, publicURL *string) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
 	defer s.unlock()
 	settings := s.Settings()
-	settings.AllowDownload, settings.PublicURL = download, publicURL
+	settings.AllowDownload = download
+	if publicURL != nil {
+		settings.PublicURL = *publicURL
+	}
 	return s.setSettings(ctx, settings)
 }
 
 func (s *MemberPlaybackService) setSettings(ctx context.Context, settings model.MemberPlaybackSettings) error {
 	c := s.emby.snapshot()
 	previous := s.Settings()
-	settings.Enabled = false // runtime projection only; never accept an independent playback toggle
+	settings, err := s.prepareSettings(ctx, c, previous, settings)
+	if err != nil {
+		return err
+	}
+	if err := s.db.SaveMemberPlaybackSettings(ctx, settings); err != nil {
+		return err
+	}
+	s.publishSettings(settings)
+	if settings.AllowDownload != previous.AllowDownload || settings.EmbyURL != previous.EmbyURL || settings.ServerID != previous.ServerID {
+		s.RequestSync()
+	}
+	return nil
+}
+
+func (s *MemberPlaybackService) publishSettings(settings model.MemberPlaybackSettings) {
+	s.mu.Lock()
+	s.settings = settings
+	s.mu.Unlock()
+}
+
+func (s *MemberPlaybackService) prepareSettings(ctx context.Context, c EmbyConfig, previous, settings model.MemberPlaybackSettings) (model.MemberPlaybackSettings, error) {
+	settings.Enabled = false // 播放状态由 302 监听状态决定。
 	settings.PublicURL = strings.TrimSpace(settings.PublicURL)
 	if settings.PublicURL != "" {
 		u, err := url.Parse(settings.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return memberError("请填写有效的 Emby 连接地址，或留空")
+			return settings, memberError("请填写有效的 Emby 连接地址，或留空")
 		}
 		if c.APIKey == "" || c.ServerID == "" {
-			return memberError("请先配置并验证 Emby 服务")
+			return settings, memberError("请先配置并验证 Emby 服务")
 		}
 		settings.PublicURL = strings.TrimRight(settings.PublicURL, "/")
 	}
 	if len(settings.LibraryIDs) > 100 {
-		return memberError("媒体库数量超过限制")
+		return settings, memberError("媒体库数量超过限制")
 	}
 	ids := make([]string, 0, len(settings.LibraryIDs))
 	if len(settings.LibraryIDs) > 0 && (!slices.Equal(settings.LibraryIDs, previous.LibraryIDs) || previous.ServerID != c.ServerID || previous.EmbyURL != c.URL) {
-		libraries, err := s.Libraries(ctx)
+		libraries, err := s.libraries(ctx, c)
 		if err != nil {
-			return err
+			return settings, err
 		}
 		available := make(map[string]bool, len(libraries))
 		for _, library := range libraries {
@@ -254,7 +289,7 @@ func (s *MemberPlaybackService) setSettings(ctx context.Context, settings model.
 		seen := make(map[string]bool)
 		for _, id := range settings.LibraryIDs {
 			if !available[id] {
-				return memberError("所选媒体库已不存在，请刷新媒体库后重新选择")
+				return settings, memberError("所选媒体库已不存在，请刷新媒体库后重新选择")
 			}
 			if !seen[id] {
 				ids = append(ids, id)
@@ -266,29 +301,18 @@ func (s *MemberPlaybackService) setSettings(ctx context.Context, settings model.
 	}
 	for _, r := range s.Records() {
 		if r.EmbyURL != c.URL || r.ServerID != c.ServerID {
-			return memberError("已有个人账号属于另一 Emby 服务，不能直接更换服务")
+			return settings, memberError("已有个人账号属于另一 Emby 服务，不能直接更换服务")
 		}
 	}
 	settings.LibraryIDs = ids
 	slices.Sort(settings.LibraryIDs)
 	settings.LibraryIDs = slices.Compact(settings.LibraryIDs)
-	policyChanged := settings.AllowDownload != previous.AllowDownload || previous.EmbyURL != c.URL || previous.ServerID != c.ServerID
 	settings.EmbyURL, settings.ServerID = c.URL, c.ServerID
-	if err := s.db.SaveMemberPlaybackSettings(ctx, settings); err != nil {
-		return err
-	}
-	s.mu.Lock()
-	s.settings = settings
-	s.mu.Unlock()
-	if policyChanged {
-		s.RequestSync()
-	}
-	return nil
+	return settings, nil
 }
 
-// ApplyProxy serializes the takeover boundary with all policy writes. On activation,
-// stale permissions are invalidated before opening the listener; failed starts stay denied.
-func (s *MemberPlaybackService) ApplyProxy(ctx context.Context, proxy *EmbyProxy, input EmbyProxyConfig) error {
+// ApplyProxy 同时提交反代配置和下载设置，成功后才对外启用新配置。
+func (s *MemberPlaybackService) ApplyProxy(ctx context.Context, proxy *EmbyProxy, input EmbyProxyConfig, allowDownload *bool) error {
 	if err := s.lock(ctx); err != nil {
 		return err
 	}
@@ -297,30 +321,58 @@ func (s *MemberPlaybackService) ApplyProxy(ctx context.Context, proxy *EmbyProxy
 	if err != nil {
 		return err
 	}
-	previous := proxy.Status()
+	previous := s.Settings()
+	settings := previous
+	settings.Enabled = false
+	if allowDownload != nil {
+		settings.AllowDownload = *allowDownload
+	}
+	var verified EmbyConfig
 	if config.Enabled {
-		c, _, err := s.config()
-		if err != nil {
-			return err
+		verified = s.emby.snapshot()
+		if verified.APIKey == "" || verified.ServerID == "" {
+			return memberError("请先配置并验证 Emby 服务")
 		}
-		settings := s.Settings()
-		if c.URL != config.URL || settings.EmbyURL != c.URL || settings.ServerID != c.ServerID {
-			return memberError("请先保存同一 Emby 服务的媒体访问设置")
+		if verified.URL != config.URL {
+			return memberError("反代原服务器地址须与已验证的 Emby 服务一致")
 		}
-		if !previous.Config.Enabled || !previous.Listening {
-			settings.Enabled = false
-			if err := s.db.SaveMemberPlaybackSettings(ctx, settings); err != nil {
+		if settings.EmbyURL != verified.URL || settings.ServerID != verified.ServerID {
+			settings, err = s.prepareSettings(ctx, verified, previous, settings)
+			if err != nil {
 				return err
 			}
-			s.mu.Lock()
-			s.settings = settings
-			s.mu.Unlock()
 		}
 	}
-	if err := proxy.Apply(ctx, config); err != nil {
+	downloadChanged := settings.AllowDownload != previous.AllowDownload
+	identityChanged := settings.EmbyURL != previous.EmbyURL || settings.ServerID != previous.ServerID
+	var updatedSettings *model.MemberPlaybackSettings
+	if downloadChanged || identityChanged || (config.Enabled && !previous.Enabled) {
+		updatedSettings = &settings
+	}
+	// 与读取设置使用相同锁顺序，避免读到新下载权限和旧监听状态。
+	s.mu.Lock()
+	err = proxy.apply(ctx, config, func(ctx context.Context, raw string) error {
+		if config.Enabled {
+			s.emby.mu.RLock()
+			defer s.emby.mu.RUnlock()
+			current := s.emby.config
+			if current.URL != verified.URL || current.ServerID != verified.ServerID || current.APIKey != verified.APIKey {
+				return memberError("Emby 服务配置已变化，请刷新后重试")
+			}
+		}
+		if err := proxy.store.SaveEmbyProxyConfig(ctx, raw, updatedSettings); err != nil {
+			return err
+		}
+		if updatedSettings != nil {
+			s.settings = settings
+		}
+		return nil
+	})
+	s.mu.Unlock()
+	if err != nil {
 		return err
 	}
-	if config.Enabled {
+	if config.Enabled || downloadChanged {
 		s.RequestSync()
 	}
 	return nil
@@ -328,7 +380,10 @@ func (s *MemberPlaybackService) ApplyProxy(ctx context.Context, proxy *EmbyProxy
 
 // Libraries reads the configured server, not a client-supplied URL or token.
 func (s *MemberPlaybackService) Libraries(ctx context.Context) ([]emby.Library, error) {
-	c := s.emby.snapshot()
+	return s.libraries(ctx, s.emby.snapshot())
+}
+
+func (s *MemberPlaybackService) libraries(ctx context.Context, c EmbyConfig) ([]emby.Library, error) {
 	if c.URL == "" || c.APIKey == "" || c.ServerID == "" {
 		return nil, memberError("请先配置并验证 Emby 服务")
 	}

@@ -3,20 +3,18 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestLegacyStrictOriginSettingsAreIgnored(t *testing.T) {
-	store, err := NewSessionStore(filepath.Join(t.TempDir(), "proxy.enc"), "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save(`{"enabled":false,"port":8097,"strictStrmOrigin":true,"strmBaseUrl":"not a valid origin"}`); err != nil {
-		t.Fatal(err)
-	}
-	proxy, err := NewEmbyProxy(context.Background(), store, nil, nil)
+	ctx := context.Background()
+	store := openProxyTestStore(t, filepath.Join(t.TempDir(), "proxy.db"))
+	proxy, err := NewEmbyProxy(ctx, store, func() (string, error) {
+		return `{"enabled":false,"port":8097,"embyPathPrefix":"path\ninvalid","strictStrmOrigin":true,"strmBaseUrl":"not a valid origin"}`, nil
+	}, nil, func(EmbyProxyConfig) http.Handler { return http.NotFoundHandler() })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,11 +23,20 @@ func TestLegacyStrictOriginSettingsAreIgnored(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "strictStrmOrigin") || strings.Contains(string(raw), "strmBaseUrl") {
-		t.Fatal("obsolete proxy fields still exposed")
+	if err := proxy.Apply(ctx, proxy.Status().Config); err != nil {
+		t.Fatal("legacy fields prevented configuration", err)
 	}
-	if _, err := normalizeEmbyProxy(proxy.Status().Config); err != nil {
-		t.Fatal("legacy origin prevented configuration", err)
+	saved, err := store.EmbyProxyConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved == "" {
+		t.Fatal("proxy configuration was not saved")
+	}
+	for _, key := range []string{"embyPathPrefix", "strictStrmOrigin", "strmBaseUrl"} {
+		if strings.Contains(string(raw), key) || strings.Contains(saved, key) {
+			t.Fatal("obsolete proxy field retained", key)
+		}
 	}
 
 	s, _, config, instantStore := setupInstantService(t)

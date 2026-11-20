@@ -54,15 +54,23 @@ func TestExistingUserPermissionsRemainOwnedByEmby(t *testing.T) {
 	if err := s.SetRegistrationLibraries(ctx, []string{"library2"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SetPlaybackSettings(ctx, true, ""); err != nil {
+	if err := s.SetPlaybackSettings(ctx, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	remote.failLibraries = true
-	if err := s.SetPlaybackSettings(ctx, true, "https://play.example.com"); err != nil {
+	publicURL := "https://play.example.com"
+	if err := s.SetPlaybackSettings(ctx, false, &publicURL); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPlaybackSettings(ctx, true, nil); err != nil {
 		t.Fatal("playback form depended on registration libraries", err)
 	}
-	if !reflect.DeepEqual(s.Settings().LibraryIDs, []string{"library2"}) {
-		t.Fatal("playback form replaced registration template")
+	settings, err := s.db.MemberPlaybackSettings(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !settings.AllowDownload || settings.PublicURL != publicURL || !reflect.DeepEqual(settings.LibraryIDs, []string{"library2"}) {
+		t.Fatal("download settings did not preserve the public URL and registration template")
 	}
 	for i := 0; i < 2; i++ {
 		if err := s.SyncUser(ctx, id); err != nil {

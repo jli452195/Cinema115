@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,20 +15,15 @@ import (
 	"strm115/backend/internal/strm"
 )
 
-func TestED2KSTRMLocalMappingIsSelfContained(t *testing.T) {
+func TestED2KSTRMMediaSourceIsSelfContained(t *testing.T) {
 	value := strm.ED2K{Hash: strings.Repeat("a", 32), SHA1: strings.Repeat("B", 40), Size: 123456789, Name: "影片 #1+%.mkv"}
 	raw, err := strm.ED2KURL("https://retired.invalid", value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "movie.strm"), []byte(raw+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	share := NewShareAPI(func() string { return "" })
-	share.OutputRoot = root
-	h := &embyProxyHandler{config: service.EmbyProxyConfig{EmbyPathPrefix: "/media"}, share: share}
-	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": json.RawMessage(`"/media/movie.strm"`)})
+	path, _ := json.Marshal(raw)
+	h := &embyProxyHandler{share: NewShareAPI(func() string { return "" })}
+	claim, err := h.playbackClaim(map[string]json.RawMessage{"Path": path})
 	if err != nil || ed2kClaim(claim) != value || claim.PickCode != "" || claim.FileID != "" || claim.Code != "" {
 		t.Fatalf("资源声明没有独立解析：%+v %v", claim, err)
 	}

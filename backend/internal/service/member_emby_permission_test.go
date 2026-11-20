@@ -87,7 +87,7 @@ func TestExternalEmbyPlaybackPreservesOtherPermissionsAndHasNoLocalGate(t *testi
 	if !reflect.DeepEqual(r, s.record(id)) {
 		t.Fatal("playback switch persisted as local authorization")
 	}
-	if err := s.SetPlaybackSettings(ctx, true, ""); err != nil {
+	if err := s.SetPlaybackSettings(ctx, true, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Authorize(ctx, r.EmbyURL, r.EmbyID); err == nil {

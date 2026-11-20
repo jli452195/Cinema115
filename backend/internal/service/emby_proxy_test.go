@@ -2,16 +2,41 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"strm115/backend/internal/model"
+	"strm115/backend/internal/storage"
 )
+
+type proxyTestStore struct {
+	*storage.Store
+	saveErr error
+}
+
+func (s *proxyTestStore) SaveEmbyProxyConfig(ctx context.Context, raw string, settings *model.MemberPlaybackSettings) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	return s.Store.SaveEmbyProxyConfig(ctx, raw, settings)
+}
+
+func openProxyTestStore(t *testing.T, path string) *storage.Store {
+	t.Helper()
+	store, err := storage.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return store
+}
 
 func proxyFreePort(t *testing.T) int {
 	t.Helper()
@@ -37,15 +62,12 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	if err := accounts.Update(id, 1, "独立账号", &cookie); err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	store, err := NewSessionStore(filepath.Join(dir, "proxy.enc"), "secret")
-	if err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), "proxy.db")
+	store := &proxyTestStore{Store: openProxyTestStore(t, path)}
 	factory := func(c EmbyProxyConfig) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, c.AccountID) })
 	}
-	s, err := NewEmbyProxy(context.Background(), store, accounts, factory)
+	s, err := NewEmbyProxy(context.Background(), store, nil, accounts, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +94,7 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 		}
 	}
 	check(c.Port)
-	// Same-port debug changes apply immediately and persist with the rest of the config.
+	// 在同一端口切换调试开关时立即生效，并与其他配置一起保存。
 	c.Debug = true
 	if err := s.Apply(context.Background(), c); err != nil {
 		t.Fatal(err)
@@ -95,18 +117,13 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 		t.Fatal("端口冲突破坏原配置")
 	}
 	check(c.Port)
-	// A persistence failure must not displace the old listener or change its configuration.
-	goodPath := store.path
-	blocker := filepath.Join(dir, "not-a-directory")
-	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	store.path = filepath.Join(blocker, "proxy.enc")
+	// 保存失败时保留原监听和配置，释放新绑定的端口。
+	store.saveErr = errors.New("模拟反代配置保存失败")
 	changed.Port = proxyFreePort(t)
-	if err := s.Apply(context.Background(), changed); err == nil {
-		t.Fatal("未报告保存失败")
+	if err := s.Apply(context.Background(), changed); !errors.Is(err, store.saveErr) {
+		t.Fatal("未报告保存失败", err)
 	}
-	store.path = goodPath
+	store.saveErr = nil
 	if s.Status().Config != c {
 		t.Fatal("保存失败改变了配置")
 	}
@@ -119,11 +136,13 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	if _, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(changed.Port), 100*time.Millisecond); err == nil {
 		t.Fatal("关闭后端口未释放")
 	}
-	restoredStore, err := NewSessionStore(goodPath, "secret")
-	if err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := NewEmbyProxy(context.Background(), restoredStore, accounts, factory)
+	restoredStore := &proxyTestStore{Store: openProxyTestStore(t, path), saveErr: errors.New("启动恢复不应保存配置")}
+	restarted, err := NewEmbyProxy(context.Background(), restoredStore, func() (string, error) {
+		return "", errors.New("已有 SQLite 配置时不应读取旧文件")
+	}, accounts, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,8 +150,9 @@ func TestEmbyProxyListenerTransactionsAndRestart(t *testing.T) {
 	if !restarted.Status().Listening || restarted.Status().Config != changed {
 		t.Fatal("重启没有恢复监听")
 	}
+	restoredStore.saveErr = nil
 	check(changed.Port)
-	// Re-enabling must not wait for the previous server's request cancellation.
+	// 旧监听正在退出时仍能重新启用同一端口。
 	resumeShutdown := make(chan struct{})
 	defer close(resumeShutdown)
 	restarted.mu.Lock()

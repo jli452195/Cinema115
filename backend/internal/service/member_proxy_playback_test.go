@@ -11,7 +11,8 @@ func TestProxyPlaybackOnlyBlocksSelectedUsersPlayback(t *testing.T) {
 	ctx := context.Background()
 	s, remote, id := memberFixture(t)
 	memberScan(t, s, id)
-	if err := s.SetPlaybackSettings(ctx, true, "https://play.example.com"); err != nil {
+	publicURL := "https://play.example.com"
+	if err := s.SetPlaybackSettings(ctx, true, &publicURL); err != nil {
 		t.Fatal(err)
 	}
 	r := s.record(id)

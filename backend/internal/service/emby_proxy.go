@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"strm115/backend/internal/client/emby"
+	"strm115/backend/internal/model"
 )
 
 type EmbyProxyConfig struct {
@@ -23,7 +23,6 @@ type EmbyProxyConfig struct {
 	Port                   int    `json:"port"`
 	URL                    string `json:"url"`
 	AccountID              string `json:"accountId"`
-	EmbyPathPrefix         string `json:"embyPathPrefix"`
 }
 
 type EmbyProxyStatus struct {
@@ -55,17 +54,22 @@ func (s *EmbyProxy) ClearDirectLinks(id string) {
 
 type embyProxyLifecycleKey struct{}
 
-// EmbyProxyStopping distinguishes listener shutdown from cancellation of an individual HTTP request.
+// EmbyProxyStopping 区分监听关闭与单个 HTTP 请求取消。
 func EmbyProxyStopping(ctx context.Context) bool {
 	lifecycle, ok := ctx.Value(embyProxyLifecycleKey{}).(context.Context)
 	return ok && lifecycle.Err() != nil
 }
 
-// EmbyProxy owns the independent listener. A failed bind/save leaves the active listener intact.
+type embyProxyConfigStore interface {
+	EmbyProxyConfig(context.Context) (string, error)
+	SaveEmbyProxyConfig(context.Context, string, *model.MemberPlaybackSettings) error
+}
+
+// EmbyProxy 管理独立监听，绑定或保存失败时保留正在运行的监听。
 type EmbyProxy struct {
 	Logs         *EmbyProxyLogs
 	mu           sync.Mutex
-	store        *SessionStore
+	store        embyProxyConfigStore
 	accounts     *P115Accounts
 	factory      func(EmbyProxyConfig) http.Handler
 	config       EmbyProxyConfig
@@ -79,19 +83,29 @@ type EmbyProxy struct {
 	wg           sync.WaitGroup
 }
 
-func NewEmbyProxy(ctx context.Context, store *SessionStore, accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler, logs ...*EmbyProxyLogs) (*EmbyProxy, error) {
+func NewEmbyProxy(ctx context.Context, store embyProxyConfigStore, legacy func() (string, error), accounts *P115Accounts, factory func(EmbyProxyConfig) http.Handler, logs ...*EmbyProxyLogs) (*EmbyProxy, error) {
 	s := &EmbyProxy{store: store, accounts: accounts, factory: factory, ctx: ctx, config: EmbyProxyConfig{Port: 8097, DirectLinkCacheMinutes: 9}}
 	if len(logs) > 0 {
 		s.Logs = logs[0]
 	}
-	if raw := store.Value(); raw != "" {
+	raw, err := store.EmbyProxyConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("读取 Emby 302 配置: %w", err)
+	}
+	if raw == "" && legacy != nil {
+		raw, err = legacy()
+		if err != nil {
+			return nil, fmt.Errorf("读取旧 Emby 302 配置: %w", err)
+		}
+	}
+	if raw != "" {
 		if err := json.Unmarshal([]byte(raw), &s.config); err != nil {
 			return nil, fmt.Errorf("读取 Emby 302 配置: %w", err)
 		}
 	}
-	// Startup listener failures remain repairable from the management page.
+	// 启动只恢复监听，绑定失败时可在管理页修复。
 	if s.config.Enabled {
-		if err := s.Apply(ctx, s.config); err != nil {
+		if err := s.apply(ctx, s.config, nil); err != nil {
 			s.lastError = err.Error()
 		}
 	}
@@ -121,19 +135,21 @@ func normalizeEmbyProxy(c EmbyProxyConfig) (EmbyProxyConfig, error) {
 			return c, err
 		}
 		u, _ := url.Parse(c.URL)
-		// Conservatively reject all targets using our listener port, including NAS aliases.
+		// 禁止使用与监听相同的上游端口，避免通过 NAS 别名绕过循环检查。
 		if u.Port() == strconv.Itoa(c.Port) {
 			return c, fmt.Errorf("Emby 上游端口不能与反代监听端口相同")
 		}
 	}
-	c.EmbyPathPrefix = strings.TrimRight(strings.ReplaceAll(strings.TrimSpace(c.EmbyPathPrefix), "\\", "/"), "/")
-	if strings.ContainsAny(c.EmbyPathPrefix, "\r\n\x00") {
-		return c, fmt.Errorf("Emby 媒体路径无效")
-	}
 	return c, nil
 }
 
-func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr error) {
+func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) error {
+	return s.apply(ctx, input, func(ctx context.Context, raw string) error {
+		return s.store.SaveEmbyProxyConfig(ctx, raw, nil)
+	})
+}
+
+func (s *EmbyProxy) apply(ctx context.Context, input EmbyProxyConfig, persist func(context.Context, string) error) (resultErr error) {
 	ctx = s.Logs.Trace(ctx)
 	defer func() {
 		if resultErr != nil {
@@ -144,7 +160,7 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 	if err != nil {
 		return err
 	}
-	// Disabling must work even after the configured account has been deleted.
+	// 主账号已删除时仍可停用反代。
 	if c.Enabled {
 		if err := s.accounts.ValidatePrimary(c.AccountID); err != nil {
 			return err
@@ -172,15 +188,17 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 			return fmt.Errorf("无法监听端口 %d，请检查占用或权限: %w", c.Port, err)
 		}
 	}
-	data, err := json.Marshal(c)
-	if err == nil {
-		err = s.store.Save(string(data))
-	}
-	if err != nil {
-		if listener != nil {
-			_ = listener.Close()
+	if persist != nil {
+		data, err := json.Marshal(c)
+		if err == nil {
+			err = persist(ctx, string(data))
 		}
-		return fmt.Errorf("保存反代配置: %w", err)
+		if err != nil {
+			if listener != nil {
+				_ = listener.Close()
+			}
+			return fmt.Errorf("保存反代配置: %w", err)
+		}
 	}
 	old, oldListener, oldCancel := s.server, s.listener, s.serverCancel
 	s.config, s.lastError = c, ""
@@ -218,7 +236,7 @@ func (s *EmbyProxy) Apply(ctx context.Context, input EmbyProxyConfig) (resultErr
 		}()
 	}
 	if old != nil && old != s.server {
-		// Release the port before returning; request shutdown can drain separately.
+		// 返回前释放端口，旧请求可继续异步退出。
 		if oldListener != nil {
 			_ = oldListener.Close()
 		}
@@ -245,7 +263,7 @@ func (s *EmbyProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func stopEmbyProxy(server *http.Server, cancelRequests context.CancelFunc) {
-	// Also terminate hijacked WebSocket connections through the request context.
+	// 通过请求上下文同时终止 WebSocket 升级后的连接。
 	if cancelRequests != nil {
 		cancelRequests()
 	}
