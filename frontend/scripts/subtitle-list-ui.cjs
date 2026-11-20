@@ -28,16 +28,14 @@ const origin = new URL(process.env.CINEMA_URL || 'http://127.0.0.1:5173').origin
       assert.equal(await page.locator('.match-editor').count(),1,'列表同时只展开一行编辑器')
     }
     const waitMatched = (matched, total = matched) => page.locator('.picker-stats > span').filter({hasText:new RegExp(`已匹配\\s*${matched}\\s*/\\s*${total}$`)}).waitFor()
-    const waitSelected = count => page.locator('.picker-selection > span').filter({hasText:new RegExp(`已选\\s*${count}\\s*个`)}).waitFor()
-    async function openBatch() {
-      await button('批量处理').click()
-      await page.getByRole('region', {name:'字幕批量操作', exact:true}).waitFor()
-      assert.equal(await page.locator('.match-files').count(),0,'批量处理替换列表')
-      assert.equal(await button('应用设置').count(),1,'完整选择器只保留底部应用设置入口')
-      assert.equal(await page.getByRole('region', {name:'字幕批量操作', exact:true}).getByRole('button', {name:'应用设置', exact:true}).count(),0,'外部底栏模式不渲染面板内部应用按钮')
+    async function waitSelected(count) {
+      const selection = page.locator('.picker-selection > span').filter({hasText:new RegExp(`已选\\s*${count}\\s*个`)})
+      try { await selection.waitFor() }
+      catch (error) {
+        const pickerState = await page.locator('.picker-stats, .picker-footer, .picker-error, .picker-note').allTextContents()
+        throw new Error(`未确认已选 ${count} 个字幕：${JSON.stringify({pickerState, errors, consoleErrors, blockedRequests})}`, {cause:error})
+      }
     }
-    const applyBatch = () => page.locator('.picker-footer').getByRole('button', {name:'应用设置', exact:true}).click()
-    const task = name => page.getByRole('navigation', {name:'字幕批量任务', exact:true}).getByRole('button', {name, exact:true}).click()
     await page.route('**/__subtitle-list-test', route => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="zh-CN"><head><link rel="stylesheet" href="/src/style.css"></head><body><div id="app"></div><script type="module">
       import { createApp, h, reactive, nextTick } from '/node_modules/.vite/deps/vue.js';
       import SubtitleMatchList from '/src/components/SubtitleMatchList.vue';
@@ -162,65 +160,22 @@ const origin = new URL(process.env.CINEMA_URL || 'http://127.0.0.1:5173').origin
     await button('使用字幕').click()
     assert.deepEqual(await page.evaluate(()=>window.applied.local),archive(1000).expected,'超限导入须完整保留此前选择')
     console.log('PASS 1001 个字幕拒绝导入并保留原有 1000 个字幕')
-    // 复现截图中的真实 ZIP 导入，再在完整选择器中批量设置语言并确认最终输出。
+    // 复现截图中的真实 ZIP 导入，检查裸集号匹配及提交的字幕。
     await page.evaluate(()=>window.mountPicker(24))
     await page.getByText('没有找到匹配字幕',{exact:true}).waitFor()
     const screenshotFiles = {}
     for (let episode=1;episode<=24;episode++) screenshotFiles['Shangri-La 1-24 DVDRip Sub/[ReinForce] Shangri-La '+String(episode).padStart(2,'0')+' (DVDRip 852x480 x264 FLAC).ass'] = strToU8('[Script Info]\nTitle: Shangri-La\n')
     await page.getByLabel('选择本地字幕或压缩包',{exact:true}).setInputFiles({name:'Shangri-La.zip',mimeType:'application/zip',buffer:Buffer.from(zipSync(screenshotFiles))})
     await waitMatched(24)
-    await openBatch()
-    await task('设置语言')
-    await selectOption(page.getByRole('combobox',{name:'批量设置字幕语言',exact:true}),'zh-CN')
-    assert.equal(await button('使用字幕').count(),0,'批处理时最终提交入口应被替换')
-    await page.locator('.picker-footer').getByRole('button',{name:'取消',exact:true}).click()
-    await waitMatched(24)
     await button('使用字幕').click()
-    assert((await page.evaluate(()=>window.applied.local)).every(item=>item.language===''),'取消语言预览不能提前修改字幕')
-    await openBatch()
-    await task('设置语言')
-    await selectOption(page.getByRole('combobox',{name:'批量设置字幕语言',exact:true}),'zh-CN')
-    await applyBatch()
-    await button('使用字幕').click()
-    const screenshotApplied = await page.evaluate(()=>window.applied.local)
+    const screenshotApplied = (await page.evaluate(()=>window.applied.local)).sort((a, b) => Number(a.videoId) - Number(b.videoId))
     assert.equal(screenshotApplied.length,24)
-    assert(screenshotApplied.every((item,i)=>item.videoId===String(i+1) && item.language==='zh-CN'),'截图格式 24 集须自动识别并批量设置语言')
-    console.log('PASS 截图格式 24 集自动匹配、语言任务和唯一底部应用入口')
-
-    // 在真实选择器中应用千文件顺序匹配，验证手动映射监听不会逐字段重算整组预览。
-    await page.evaluate(()=>window.mountPicker(1000))
-    await page.getByText('没有找到匹配字幕',{exact:true}).waitFor()
-    const unknownFiles = {}
-    for(let i=1;i<=1000;i++) unknownFiles['opaqueasset'+i+'tail.ass']=strToU8('[Script Info]\n')
-    await page.getByLabel('选择本地字幕或压缩包',{exact:true}).setInputFiles({name:'unknown-1000.zip',mimeType:'application/zip',buffer:Buffer.from(zipSync(unknownFiles))})
-    await waitMatched(0,1000)
-    await page.getByText('1000 个待指定',{exact:true}).waitFor()
-    await openBatch()
-    await task('匹配视频')
-    await page.getByRole('button',{name:'按顺序匹配',exact:true}).click()
-    await selectOption(page.getByRole('combobox',{name:'批量匹配起始视频',exact:true}),'1')
-    await page.getByRole('checkbox',{name:'我已核对对应关系，确认按当前预览应用',exact:true}).check()
-    const batchStart=Date.now()
-    await applyBatch()
-    await waitMatched(1000)
-    timings.push({batchSubtitleCount:1000,applyBatchMs:Date.now()-batchStart})
-    await button('撤销').click()
-    await waitMatched(0,1000)
-    await openBatch()
-    await task('匹配视频')
-    await page.getByRole('button',{name:'按顺序匹配',exact:true}).click()
-    await selectOption(page.getByRole('combobox',{name:'批量匹配起始视频',exact:true}),'1')
-    await page.getByRole('checkbox',{name:'我已核对对应关系，确认按当前预览应用',exact:true}).check()
-    await applyBatch()
-    await waitMatched(1000)
-    await button('使用字幕').click()
-    const batchApplied=await page.evaluate(()=>window.applied.local)
-    assert.equal(batchApplied.length,1000)
-    assert(batchApplied.every(item=>item.videoId===item.name.match(/opaqueasset(\d+)tail/)[1]),'千文件批量匹配须自然排序并完整传出')
-    assert.equal(requests.length,10,'仅有五次挂载时的两个只读搜索请求')
+    assert(screenshotApplied.every((item,i)=>item.videoId===String(i+1) && item.language===''),'截图格式 24 集须自动识别，语言保持未指定')
+    console.log('PASS 截图格式 24 集经 ZIP 导入、自动匹配和完整传出')
+    assert.equal(requests.length,8,'每次挂载仅发出两个只读搜索请求')
     assert.deepEqual(errors, [])
     assert.deepEqual(consoleErrors, [],'浏览器控制台不能有错误')
     assert.deepEqual(blockedRequests, [],'组件不能尝试业务写请求或外部网络请求')
-    console.log(JSON.stringify({passed:['224/1000 字幕有界渲染','跨页全选与清空','编辑保留','语言筛选跨页选择','IDX/SUB 跨页联动','列表缩减页码修正','112/224/1000 真实 ZIP 经 Worker 导入匹配并逐项确认','1001 个 ZIP 拒绝且保留此前列表','截图格式 24 集真实导入自动匹配并统一语言','完整选择器 1000 个未知字幕批量顺序匹配、撤销重配和最终传出'], timings}, null, 2))
+    console.log(JSON.stringify({passed:['224/1000 字幕有界渲染','跨页全选与清空','编辑保留','语言筛选跨页选择','IDX/SUB 跨页联动','列表缩减页码修正','112/224/1000 真实 ZIP 经 Worker 导入匹配并逐项确认','1001 个 ZIP 拒绝且保留此前列表','截图格式 24 集真实导入自动匹配'], timings}, null, 2))
   } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

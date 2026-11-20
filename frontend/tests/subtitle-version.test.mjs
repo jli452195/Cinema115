@@ -35,10 +35,11 @@ const library = (videoId, version, overrides = {}) => ({ versionId: `library-${v
 const local = (videoId, version, overrides = {}) => ({ localId: 'c'.repeat(32), videoId, language: 'en', version, file: { name: 'local/01.vtt', data: new Uint8Array([1, 2, 3]), sha256: 'd'.repeat(64) }, ...overrides })
 
 async function harness(t, { batch = false, seasons = [1], rename = false } = {}) {
-  const originalFetch = globalThis.fetch, originalWindow = globalThis.window
+  const originalFetch = globalThis.fetch, originalWindow = globalThis.window, originalDocument = globalThis.document
   const requests = [], jobs = new Map()
   let state, sequence = 0
-  globalThis.window = { matchMedia: () => ({ matches: true }) }
+  globalThis.window = Object.assign(new EventTarget(), { matchMedia: () => ({ matches: true }) })
+  globalThis.document = new EventTarget()
   globalThis.fetch = async (url, init = {}) => {
     const endpoint = String(url).split('/p115/')[1]
     const body = init.body instanceof FormData ? init.body : init.body ? JSON.parse(init.body) : undefined
@@ -87,7 +88,7 @@ async function harness(t, { batch = false, seasons = [1], rename = false } = {})
   const app = renderer.createApp(Dialog, { token: 'test-token', entries, batch, tmdbId: 1, kind: 'tv', title: 'Show', date: '2026', seasons: seasons.map(number => ({ number, name: '', episodeCount: 1 })) })
   const vm = app.mount({})
   state = vm.$.setupState
-  t.after(() => { app.unmount(); globalThis.fetch = originalFetch; globalThis.window = originalWindow })
+  t.after(() => { app.unmount(); globalThis.fetch = originalFetch; globalThis.window = originalWindow; globalThis.document = originalDocument })
   for (let i = 0; i < 30 && state.loading; i++) await tick()
   assert.equal(state.loading, false)
   assert.equal(state.accountId, 'main')

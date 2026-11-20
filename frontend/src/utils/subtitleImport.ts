@@ -72,9 +72,6 @@ function ambiguousEpisode(title: string) {
     || /(?:^|[ ._\[【-])(?:SP|OVA|OAD|NCOP|NCED|OP|ED|PV)(?:\d|\b)|特典|特别篇|特別篇|总集篇|總集篇/i.test(title)
 }
 
-// 批量顺序匹配复用同一歧义边界，不能把多集范围或小数集号降级成普通未知文件。
-export function hasAmbiguousSubtitleEpisode(name: string) { return ambiguousEpisode(episodeTitle(name)) }
-
 export interface SubtitleMatch {
   videoId: string
   confidence: 'high' | 'medium' | 'low' | 'none'
@@ -142,7 +139,7 @@ export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], seas
   if (videos.length === 1 && !episodeNumber(videos[0].name) && !ambiguousEpisode(episodeTitle(videos[0].name)) && !/S\d+[ ._-]*E\d/i.test(videos[0].name)) {
     return { videoId: '', confidence: 'low', reason: '仅有一个视频，但未识别到集号，请确认', candidates: [{ id: videos[0].id, score: 0, reason: '当前唯一视频' }] }
   }
-  return no('未识别到明确集号，请按顺序匹配或手动选择')
+  return no('未识别到明确集号，请手动选择对应视频')
 }
 
 export function subtitlePairKey(name: string): string {
