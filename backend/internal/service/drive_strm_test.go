@@ -285,12 +285,16 @@ func TestDriveSTRMMappingRootsResetOwnershipAndRejectOverlap(t *testing.T) {
 	}
 	client.files["300"] = []p115.ShareFile{driveSTRMTestVideo("5", "movie.mkv")}
 	stats, err := driveSTRMTestAttempt(t, s)
-	if err == nil || stats.Failed != 1 {
-		t.Fatalf("foreign output stats=%+v err=%v", stats, err)
+	if err != nil || stats.Written != 1 || stats.Failed != 0 {
+		t.Fatalf("replacement stats=%+v err=%v", stats, err)
 	}
-	data, _ := os.ReadFile(filepath.Join(root, "strm", "movie.strm"))
-	if !strings.Contains(string(data), "/1/") {
-		t.Fatalf("old root output overwritten: %q", data)
+	data, err := os.ReadFile(filepath.Join(root, "strm", "movie.strm"))
+	if err != nil || !strings.Contains(string(data), "/ecjq9ichcb40lzlvx/5/") {
+		t.Fatalf("updated output=%q err=%v", data, err)
+	}
+	index, err = db.ListDriveSTRMFiles(ctx, value.ID)
+	if err != nil || len(index) != 1 || index[0].FileID != "5" || index[0].ParentCID != "300" || index[0].Digest != driveSTRMDigest(data) {
+		t.Fatalf("updated index=%+v err=%v", index, err)
 	}
 }
 
