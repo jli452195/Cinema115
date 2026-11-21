@@ -19,31 +19,41 @@ const (
 type Field string
 
 const (
-	Title         Field = "title"
-	OriginalTitle Field = "originalTitle"
-	EnglishTitle  Field = "englishTitle"
-	OriginalName  Field = "originalName"
-	Year          Field = "year"
-	TMDBID        Field = "tmdbId"
-	Season        Field = "season"
-	Episode       Field = "episode"
-	SeasonEpisode Field = "seasonEpisode"
-	EpisodeTitle  Field = "episodeTitle"
-	Resolution    Field = "resolution"
-	Source        Field = "source"
-	Platform      Field = "platform"
-	VideoCodec    Field = "videoCodec"
-	BitDepth      Field = "bitDepth"
-	DynamicRange  Field = "dynamicRange"
-	FrameRate     Field = "frameRate"
-	AudioCodec    Field = "audioCodec"
-	Channels      Field = "channels"
-	AudioEffect   Field = "audioEffect"
-	Languages     Field = "languages"
-	SubtitleMode  Field = "subtitleMode"
-	ReleaseGroup  Field = "releaseGroup"
-	Edition       Field = "edition"
-	Custom        Field = "custom"
+	Title          Field = "title"
+	OriginalTitle  Field = "originalTitle"
+	EnglishTitle   Field = "englishTitle"
+	OriginalName   Field = "originalName"
+	Year           Field = "year"
+	TMDBID         Field = "tmdbId"
+	Season         Field = "season"
+	Episode        Field = "episode"
+	SeasonEpisode  Field = "seasonEpisode"
+	EpisodeTitle   Field = "episodeTitle"
+	Resolution     Field = "resolution"
+	Source         Field = "source"
+	SourceMedium   Field = "sourceMedium"
+	SourceModifier Field = "sourceModifier"
+	Platform       Field = "platform"
+	VideoCodec     Field = "videoCodec"
+	Encoder        Field = "encoder"
+	BitDepth       Field = "bitDepth"
+	DynamicRange   Field = "dynamicRange"
+	DVProfile      Field = "dvProfile"
+	DVLayer        Field = "dvLayer"
+	HDRBaseLayer   Field = "hdrBaseLayer"
+	DVMetadata     Field = "dvMetadata"
+	FrameRate      Field = "frameRate"
+	ScanType       Field = "scanType"
+	FrameRateMode  Field = "frameRateMode"
+	Container      Field = "container"
+	AudioCodec     Field = "audioCodec"
+	Channels       Field = "channels"
+	AudioEffect    Field = "audioEffect"
+	Languages      Field = "languages"
+	SubtitleMode   Field = "subtitleMode"
+	ReleaseGroup   Field = "releaseGroup"
+	Edition        Field = "edition"
+	Custom         Field = "custom"
 )
 
 // FieldDefinition is also the field library for the visual editor. A supported
@@ -69,11 +79,21 @@ var fields = [...]FieldDefinition{
 	{EpisodeTitle, "集名", "episode", true, false},
 	{Resolution, "分辨率", "video", false, false},
 	{Source, "资源来源", "video", false, false},
+	{SourceMedium, "来源介质", "video", false, false},
+	{SourceModifier, "来源修饰", "video", false, false},
 	{Platform, "发布平台", "video", false, false},
 	{VideoCodec, "视频编码", "video", false, false},
+	{Encoder, "编码器", "video", false, false},
 	{BitDepth, "位深", "video", false, false},
 	{DynamicRange, "动态范围", "video", false, false},
+	{DVProfile, "DV Profile", "video", false, false},
+	{DVLayer, "DV 层", "video", false, false},
+	{HDRBaseLayer, "HDR 基础层", "video", false, false},
+	{DVMetadata, "DV 元数据", "video", false, false},
 	{FrameRate, "帧率", "video", false, false},
+	{ScanType, "扫描方式", "video", false, false},
+	{FrameRateMode, "帧率模式", "video", false, false},
+	{Container, "容器格式", "video", false, false},
 	{AudioCodec, "音频编码", "audio", false, false},
 	{Channels, "声道", "audio", false, false},
 	{AudioEffect, "音频制式", "audio", false, false},
@@ -219,7 +239,7 @@ func Default(kind Kind) (Template, error) {
 	} else {
 		template.Filename = append(template.Filename, year)
 	}
-	for _, field := range []Field{Resolution, Source, Platform, VideoCodec, BitDepth, DynamicRange, FrameRate, AudioCodec, Channels, AudioEffect, Languages, SubtitleMode, Edition} {
+	for _, field := range []Field{Resolution, SourceMedium, SourceModifier, Platform, VideoCodec, Encoder, BitDepth, DynamicRange, HDRBaseLayer, DVProfile, DVLayer, DVMetadata, FrameRate, ScanType, FrameRateMode, AudioCodec, Channels, AudioEffect, Languages, SubtitleMode, Edition} {
 		block := Block{Field: field, Separator: "."}
 		if field == Languages {
 			block.Prefix, block.Suffix = "[", "]"

@@ -1,3 +1,5 @@
+.subscription-grid { @apply grid grid-cols-1 items-stretch gap-2.5 sm:gap-4 md:grid-cols-2 xl:grid-cols-3; }
+
 @media (max-width: 639px) {
   .subscription-toolbar-action {
     display: grid; flex: none; width: 44px; height: 44px; place-items: center; border-radius: 50%; color: var(--glass-text);
@@ -7,7 +9,6 @@
   .subscription-toolbar-action:disabled { opacity: .45; }
   .subscription-list > :not([hidden]) ~ :not([hidden]) { margin-block-start: 12px; }
   .subscription-settings { scroll-margin-block-start: calc(var(--workbench-header-height) + 4px); }
-  .subscription-grid { gap: 12px; }
   .subscription-filters { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   .subscription-filters-personal { justify-content: space-between; row-gap: 4px; }
   .subscription-filters-admin .subscription-status { flex: 1 0 100%; }

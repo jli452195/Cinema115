@@ -78,6 +78,25 @@ func TestDefaultNames(t *testing.T) {
 	}
 }
 
+func TestDefaultNamePreservesDVBaseLayerWithoutDuplicatingDynamicRange(t *testing.T) {
+	renderer := compile(t, defaultTemplate(t, naming.Movie))
+	data := naming.Data{Values: map[naming.Field]string{
+		naming.Title:        "电影",
+		naming.DynamicRange: "DV",
+		naming.HDRBaseLayer: "SDR",
+	}, OriginalName: "source.mkv"}
+	got, err := renderer.Render(data)
+	if err != nil || !strings.Contains(got.Name, ".DV.SDR.mkv") {
+		t.Fatalf("DV base layer missing: %+v, %v", got, err)
+	}
+	data.Values[naming.DynamicRange] = "DV HDR10"
+	data.Values[naming.HDRBaseLayer] = "HDR10"
+	got, err = renderer.Render(data)
+	if err != nil || strings.Contains(got.Name, ".HDR10.HDR10") {
+		t.Fatalf("DV base layer duplicated: %+v, %v", got, err)
+	}
+}
+
 func TestOptionalDecorationsAndOrdering(t *testing.T) {
 	template := naming.Template{Kind: naming.Movie, Directories: [][]naming.Block{
 		{{Field: naming.Platform, Prefix: "[", Suffix: "]"}},

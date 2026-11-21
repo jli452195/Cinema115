@@ -50,6 +50,7 @@ async function historyEventModels(browser) {
     const url = new URL(route.request().url())
     let data = {}
     if (url.pathname === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (url.pathname === '/api/admin/follows' && url.searchParams.get('countsOnly') === '1') data = { counts: { pending: 0 } }
     else if (url.pathname.includes('/notifications')) data = { items: [], unread: 0 }
     else if (url.pathname === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
     else if (url.pathname.endsWith('/media-organize/history')) {
@@ -129,6 +130,7 @@ async function activityProgressModel(browser) {
     const endpoint = new URL(route.request().url()).pathname
     let data = {}
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint === '/api/admin/follows') data = { counts: { pending: 0 } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
     else if (endpoint === '/api/admin/media-organize') { stateReads++; data = { rules: [], active, activeRules: [], activity } }
     else if (endpoint === '/api/admin/media-organize/history') {
@@ -181,6 +183,7 @@ async function batchRetryModel(browser) {
     const request = route.request(), url = new URL(request.url()), endpoint = url.pathname, method = request.method()
     let data = {}
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint === '/api/admin/follows') data = { counts: { pending: 0 } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
     else if (endpoint === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
     else if (endpoint === '/api/admin/media-organize/history') data = { items: records, page: Number(url.searchParams.get('page') || 1), pages: 2, total: 24, counts: { all: 24, running: 1, done: 1, failed: 22 }, active: true, activity: [], cleanup: [], retryBatch: batch }
@@ -246,6 +249,7 @@ async function loadingModels(browser) {
       const endpoint = new URL(route.request().url()).pathname
       let data = {}
       if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+      else if (endpoint === '/api/admin/follows') data = { counts: { pending: 0 } }
       else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
       else if (endpoint === '/api/admin/media-organize') data = { rules: [], active: false, activeRules: [] }
       else if (endpoint === '/api/admin/media-organize/history') { requests++; data = { ...fixture, active: kind === 'events' }; if (kind !== 'events' || requests > 1) await held.wait() }
@@ -313,6 +317,7 @@ async function loadingModels(browser) {
     calls.push({ endpoint, method, body, query: url.searchParams.toString() })
     let data = {}, status = 200
     if (endpoint === '/api/auth/me') data = { user: { id: 'admin', username: 'admin', role: 'admin' } }
+    else if (endpoint === '/api/admin/follows') data = { counts: { pending: 0 } }
     else if (endpoint.includes('/notifications')) data = { items: [], unread: 0 }
     else if (endpoint === '/api/admin/media-organize') data = { rules: [rule], active: true, activeRules: [] }
     else if (endpoint === '/api/admin/media-organize/history' && method === 'GET') {

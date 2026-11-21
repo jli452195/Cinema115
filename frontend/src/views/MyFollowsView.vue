@@ -85,8 +85,8 @@ onBeforeUnmount(() => { controller?.abort(); lifecycle.abort() })
       <p v-if="notice" role="status" class="text-sm text-emerald-700">{{ notice }}</p>
       <p v-if="loading" role="status" class="py-10 text-center text-sm text-slate-400 dark:text-slate-500">正在加载追更…</p>
       <div v-else-if="!items.length && !error" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 py-14 text-center"><p class="text-slate-500 dark:text-slate-400 dark:text-slate-500">暂无{{ status === 'completed' ? '已完成的' : status === 'closed' ? '已关闭的' : '进行中的' }}{{ kind === 'movie' ? '电影' : kind === 'tv' ? '剧集' : '' }}追更</p><RouterLink to="/" class="mt-4 inline-block text-sm text-blue-600">去发现影视</RouterLink></div>
-      <div v-else class="subscription-grid grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
-        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" compact-mobile :busy="!!busy" :cancelling="busy === `${item.kind}:${item.tmdbId}`" @cancel="cancel(item)" />
+      <div v-else class="subscription-grid" data-follow-grid>
+        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" :busy="!!busy" :cancelling="busy === `${item.kind}:${item.tmdbId}`" @cancel="cancel(item)" />
       </div>
       <div v-if="offset || hasMore" class="flex justify-center gap-6 text-sm"><button :disabled="!offset || loading || !!busy" class="disabled:opacity-30" @click="navigate(kind, Math.max(0, offset - FOLLOW_PAGE_SIZE))">上一页</button><span class="text-slate-400 dark:text-slate-500">第 {{ Math.floor(offset / FOLLOW_PAGE_SIZE) + 1 }} 页</span><button :disabled="!hasMore || loading || !!busy" class="disabled:opacity-30" @click="navigate(kind, offset + FOLLOW_PAGE_SIZE)">下一页</button></div>
     </div>

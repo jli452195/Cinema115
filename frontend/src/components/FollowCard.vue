@@ -6,10 +6,12 @@ import { FOLLOW_STATUS_LABELS, isFollowCaughtUp } from '../types/follows'
 import FollowDialog from './FollowDialog.vue'
 import { tmdbImageURL } from '../utils/tmdbImage'
 
-const props = defineProps<{ item: Follow; admin?: boolean; subscriberCount?: number; busy?: boolean; cancelling?: boolean; compactMobile?: boolean }>()
+const props = defineProps<{ item: Follow; admin?: boolean; subscriberCount?: number; busy?: boolean; cancelling?: boolean }>()
 const emit = defineEmits<{ edit: []; cancel: [] }>()
-const failedImage = ref(false), noteOpen = ref(false)
-watch(() => props.item.posterUrl, () => { failedImage.value = false })
+const failedImage = ref(false)
+const noteOpen = ref(false)
+const posterSrc = computed(() => tmdbImageURL(props.item.posterUrl))
+watch(posterSrc, () => { failedImage.value = false })
 const path = computed(() => `/${props.item.kind}/${props.item.tmdbId}`)
 const label = computed(() => {
   const p = props.item.progress
@@ -23,7 +25,6 @@ const label = computed(() => {
   return props.item.status === 'processing' ? '处理中' : '待处理'
 })
 const positive = computed(() => ['已完成', '已追平'].includes(label.value))
-const statusClass = computed(() => label.value === '已关闭' ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400' : positive.value ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300' : 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-500')
 const progress = computed(() => {
   const p = props.item.progress
   if (props.item.status === 'closed') return '已停止资源搜索，仍会确认 Emby 入库'
@@ -40,70 +41,86 @@ const dateLabel = computed(() => {
 </script>
 
 <template>
-  <article :class="{ 'follow-card-compact': compactMobile, 'follow-card-personal': !admin }" class="group relative min-w-0 overflow-hidden rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-amber-300/60 hover:shadow-xl hover:shadow-slate-900/10 dark:hover:border-amber-500/40 dark:hover:shadow-black/40" data-follow-card>
-    <div v-if="item.posterUrl && !failedImage" class="follow-card-ambient pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-      <!-- 动态环境光背景：利用 CSS 高斯模糊实现纯前端的 MD3 动态取色 -->
-      <img :src="tmdbImageURL(item.posterUrl)" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute -left-1/4 -top-1/4 h-[150%] w-[150%] object-cover blur-3xl opacity-50 saturate-150 transition-opacity duration-500 ease-out group-hover:opacity-70 dark:opacity-40 dark:group-hover:opacity-60 transform-gpu backface-hidden" @error="failedImage = true" />
-      <!-- 混合层与底部渐变，保证按钮和文字的可读性 -->
-      <div class="absolute inset-0 bg-white/40 transition-colors duration-500 ease-out group-hover:bg-white/20 dark:bg-slate-900/50 dark:group-hover:bg-slate-900/30"></div>
-      <div class="absolute inset-0 bg-gradient-to-t from-white via-white/80 to-white/10 dark:from-slate-900 dark:via-slate-900/80 dark:to-slate-900/10"></div>
+  <article class="follow-card relative isolate min-w-0 overflow-hidden rounded-2xl border px-3 pb-1.5 pt-2.5 sm:p-4" data-follow-card>
+    <div v-if="posterSrc && !failedImage" class="follow-card-ambient pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      <img :src="posterSrc" alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute -left-1/4 -top-1/4 h-[150%] w-[150%] object-cover blur-3xl saturate-150" @error="failedImage = true" />
     </div>
-    <div class="follow-card-content relative z-10 flex h-full min-w-0 flex-col">
-      <div class="follow-card-overview flex min-w-0 items-start gap-3">
-        <RouterLink :to="path" :aria-label="`查看${item.title}`" class="follow-card-poster h-28 w-[74px] shrink-0 overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 shadow-sm"><img v-if="item.posterUrl && !failedImage" :src="tmdbImageURL(item.posterUrl)" :alt="item.title" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-110" @error="failedImage = true" /><span v-else class="flex h-full items-center justify-center text-[10px] text-slate-400 dark:text-slate-500">暂无海报</span></RouterLink>
-        <div class="follow-card-summary min-w-0 flex-1 space-y-2">
-          <RouterLink :to="path" :title="item.title" class="follow-card-title block min-w-0 text-sm font-semibold leading-5 text-slate-900 dark:text-slate-100 hover:text-amber-600"><span class="line-clamp-2 break-words">{{ item.title }}</span></RouterLink>
-          <p class="text-[11px] leading-4 text-slate-500 dark:text-slate-400 dark:text-slate-500">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>
-          <div class="follow-card-status flex flex-wrap gap-1.5 text-[11px]"><span class="rounded px-2 py-0.5" :class="statusClass">{{ label }}</span><span v-if="admin" class="rounded bg-white dark:bg-slate-900/80 px-2 py-0.5 text-slate-600 dark:text-slate-400 dark:text-slate-500 ring-1 ring-slate-200 dark:ring-slate-700/70">{{ subscriberCount || 0 }} 人追更</span></div>
-          <p class="text-[11px] leading-4" :class="positive ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-600 dark:text-slate-400 dark:text-slate-500'">{{ progress }}</p>
+    <div class="relative flex h-full min-w-0 flex-col">
+      <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] grid-rows-[auto_1fr] items-start gap-x-2.5 gap-y-1 sm:grid-rows-none sm:gap-3">
+        <RouterLink :to="path" :aria-label="`查看${item.title}`" class="follow-card-poster row-span-2 aspect-[2/3] w-[60px] overflow-hidden rounded-lg bg-slate-100 shadow-sm dark:bg-slate-800 max-[359px]:w-14 sm:row-span-1 sm:h-28 sm:w-[74px]">
+          <img v-if="posterSrc && !failedImage" :src="posterSrc" alt="" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover" @error="failedImage = true" />
+          <span v-else class="flex h-full items-center justify-center text-[10px]">暂无海报</span>
+        </RouterLink>
+        <div class="min-w-0 space-y-1 sm:space-y-2">
+          <RouterLink :to="path" :title="item.title" class="follow-card-title line-clamp-2 text-sm font-semibold leading-5 [overflow-wrap:anywhere]">{{ item.title }}</RouterLink>
+          <p class="text-[11px] leading-4">{{ item.kind === 'movie' ? '电影' : '剧集' }} · {{ item.date?.slice(0, 4) || '年份待定' }}<span v-if="admin"> · TMDB {{ item.tmdbId }}</span></p>
+          <div class="follow-card-status flex flex-wrap gap-1.5 text-[11px]">
+            <span class="follow-status rounded px-2 py-0.5" :class="{ 'is-closed': label === '已关闭', 'is-positive': positive }">{{ label }}</span>
+            <span v-if="admin" class="rounded bg-[rgb(var(--surface-card))] px-2 py-0.5 ring-1 ring-[rgb(var(--line-default))]">{{ subscriberCount ?? 0 }} 人追更</span>
+          </div>
+          <p class="text-[11px] leading-4" :class="{ 'text-[rgb(var(--status-success))]': positive }">{{ progress }}</p>
         </div>
+        <p class="follow-card-date col-start-2 text-[11px] sm:col-span-full">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
       </div>
-      <p class="follow-card-date mt-3 text-[11px] text-slate-400 dark:text-slate-500">{{ admin ? '最近申请' : '申请于' }} {{ dateLabel }}</p>
-      <button v-if="item.note" type="button" aria-label="查看处理说明" class="follow-note mt-3 rounded-lg px-3 py-2 text-left text-xs leading-5 text-slate-600 dark:text-slate-400" @click="noteOpen = true"><span class="line-clamp-2 whitespace-pre-wrap break-words">处理说明：{{ item.note }}</span></button>
-      <div class="follow-card-actions mt-auto flex flex-wrap items-center gap-x-4 gap-y-2 pt-4 text-xs">
-        <template v-if="admin"><button type="button" :disabled="busy" class="text-blue-600 disabled:opacity-40" @click="emit('edit')">处理申请</button><RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="text-blue-600">搜索资源</RouterLink></template>
-        <RouterLink :to="path" class="follow-card-details text-slate-500 dark:text-slate-400 dark:text-slate-500 hover:text-blue-600">查看详情</RouterLink>
-        <button v-if="!admin" type="button" :disabled="busy" class="text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-40" @click="emit('cancel')">{{ cancelling ? '取消中…' : '取消追更' }}</button>
+      <button v-if="item.note" type="button" aria-label="查看处理说明" aria-haspopup="dialog" class="follow-note mt-2 min-h-11 rounded-lg px-2.5 py-1.5 text-left text-xs leading-5 sm:mt-3 sm:min-h-0 sm:px-3 sm:py-2" @click="noteOpen = true">
+        <span class="line-clamp-2 whitespace-pre-wrap [overflow-wrap:anywhere]">处理说明：{{ item.note }}</span>
+      </button>
+      <div class="follow-card-actions mt-auto flex flex-wrap items-center gap-x-4 gap-y-1 pt-0.5 text-xs sm:gap-y-2 sm:pt-4">
+        <template v-if="admin">
+          <button type="button" :disabled="busy" class="follow-card-primary disabled:opacity-40" @click="emit('edit')">处理申请</button>
+          <RouterLink v-if="item.status !== 'closed'" :to="{ path, query: { botSearch: '1' } }" class="follow-card-primary">搜索资源</RouterLink>
+        </template>
+        <RouterLink :to="path" class="follow-card-details">查看详情</RouterLink>
+        <button v-if="!admin" type="button" :disabled="busy" class="follow-card-cancel disabled:opacity-40" @click="emit('cancel')">{{ cancelling ? '取消中…' : '取消追更' }}</button>
       </div>
-      <FollowDialog v-if="noteOpen" title="处理说明" @close="noteOpen = false"><p class="mb-3 text-sm font-semibold text-slate-900 dark:text-slate-100">{{ item.title }}</p><p class="whitespace-pre-wrap break-words text-sm leading-7 text-slate-600 dark:text-slate-400 dark:text-slate-500">{{ item.note }}</p></FollowDialog>
+      <FollowDialog v-if="noteOpen" title="处理说明" @close="noteOpen = false">
+        <p class="mb-3 text-sm font-semibold text-[rgb(var(--content-primary))] [overflow-wrap:anywhere]">{{ item.title }}</p>
+        <p class="whitespace-pre-wrap text-sm leading-7 text-[rgb(var(--content-secondary))] [overflow-wrap:anywhere]">{{ item.note }}</p>
+      </FollowDialog>
     </div>
   </article>
 </template>
 
 <style scoped>
+.follow-card {
+  border-color: rgb(var(--line-default));
+  background: rgb(var(--surface-card));
+  color: rgb(var(--content-secondary));
+}
+.follow-card-ambient { border-radius: inherit; }
+.follow-card-ambient img { opacity: .5; }
+.follow-card-ambient::after {
+  /* 渐变覆盖海报颜色，日期和操作区使用卡片底色。 */
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgb(var(--surface-card)), rgb(var(--surface-card) / .88) 50%, rgb(var(--surface-card) / .46));
+  content: '';
+}
+.follow-card-title { color: rgb(var(--content-primary)); }
+.follow-card-primary { color: rgb(var(--action-link)); }
+.follow-status { background: rgb(var(--status-warning-surface)); color: rgb(var(--status-warning)); }
+.follow-status.is-positive { background: rgb(var(--status-success-surface)); color: rgb(var(--status-success)); }
+.follow-status.is-closed { background: rgb(var(--surface-hover)); color: rgb(var(--content-secondary)); }
+.follow-card :is(a, button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
 /* 列表里的说明只复用材质色与边缘，避免随卡片数量增加背景采样。 */
 .follow-note { background: var(--glass-inset-surface); box-shadow: inset 0 0 0 1px var(--glass-inset-border); }
-.follow-note:hover { background: var(--glass-pill-hover); }
-@media (max-width: 639px) {
-  .follow-card-compact { padding: 12px; border-color: var(--glass-edge); background: rgb(var(--surface-card)); }
-  .follow-card-compact .follow-card-ambient { display: none; }
-  .follow-card-compact .follow-card-summary { display: flex; flex-direction: column; gap: 4px; }
-  .follow-card-compact .follow-card-summary > * { margin: 0; }
-  .follow-card-compact .follow-card-poster { width: 68px; height: 102px; }
-  .follow-card-compact .follow-card-date { color: rgb(var(--content-secondary)); }
-  .follow-card-compact .follow-card-actions { padding-top: 8px; }
-  .follow-card-personal.follow-card-compact .follow-card-content { display: grid; grid-template-columns: 68px minmax(0, 1fr) auto; column-gap: 10px; align-items: start; }
-  .follow-card-personal.follow-card-compact .follow-card-overview { display: contents; }
-  .follow-card-personal.follow-card-compact .follow-card-poster { grid-area: 1 / 1 / span 2 / 2; }
-  .follow-card-personal.follow-card-compact .follow-card-summary {
-    display: grid; grid-area: 1 / 2 / 2 / 4; grid-template-columns: minmax(0, 1fr) auto; align-items: start; column-gap: 8px;
-  }
-  .follow-card-personal.follow-card-compact .follow-card-summary > p { grid-column: 1 / -1; }
-  .follow-card-personal.follow-card-compact .follow-card-status { grid-area: 1 / 2; white-space: nowrap; }
-  .follow-card-personal.follow-card-compact .follow-card-content::before {
-    grid-area: 2 / 2 / 3 / 4; align-self: start; height: 1px; margin-top: 5px; background: var(--glass-edge); pointer-events: none; content: '';
-  }
-  .follow-card-personal.follow-card-compact .follow-card-date { grid-area: 2 / 2; min-height: 36px; margin-top: 6px; padding-top: 9px; }
-  .follow-card-personal.follow-card-compact .follow-note { grid-column: 2 / -1; grid-row: 3; margin-top: 4px; }
-  .follow-card-personal.follow-card-compact .follow-card-actions { grid-area: 2 / 3; position: relative; z-index: 1; min-height: 36px; margin: 6px 0 0; padding: 0; }
-  .follow-card-personal.follow-card-compact .follow-card-actions button { min-height: 36px; white-space: nowrap; }
-  .follow-card-personal.follow-card-compact .follow-card-details { display: none; }
-  .follow-card-personal.follow-card-compact .follow-card-title::after { position: absolute; inset: -12px; content: ''; }
-  .follow-card-personal.follow-card-compact .follow-card-title:focus-visible::after { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; border-radius: 15px; }
-  .follow-card-personal.follow-card-compact :is(.follow-note, .follow-card-poster) { position: relative; z-index: 1; }
+
+@media (max-width: 639px), (pointer: coarse) {
+  .follow-card-actions > :is(a, button) { display: inline-flex; min-height: 44px; align-items: center; }
 }
-@media (max-width: 639px) and (hover: hover) {
-  .follow-card-compact:hover { transform: none; box-shadow: none; }
-  .follow-card-compact:hover .follow-card-poster img { transform: none; }
+@media (hover: hover) {
+  .follow-card :is(.follow-card-title, .follow-card-details):hover { color: rgb(var(--action-link)); }
+  .follow-card-primary:hover { text-decoration: underline; }
+  .follow-card-cancel:not(:disabled):hover { color: rgb(var(--status-danger)); }
+  .follow-note:hover { background: var(--glass-pill-hover); }
+}
+@media (min-width: 640px) and (hover: hover) and (pointer: fine) {
+  .follow-card:hover { border-color: rgb(var(--focus) / .4); box-shadow: 0 12px 24px -12px rgb(0 0 0 / .28); }
+  @media (prefers-reduced-motion: no-preference) {
+    .follow-card { transition: transform .3s ease-out, border-color .3s ease-out, box-shadow .3s ease-out; }
+    .follow-card-poster img { transition: transform .5s ease-out; }
+    .follow-card:hover { transform: translateY(-4px); }
+    .follow-card:hover .follow-card-poster img { transform: scale(1.1); }
+  }
 }
 </style>

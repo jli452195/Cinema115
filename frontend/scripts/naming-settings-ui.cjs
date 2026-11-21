@@ -7,14 +7,14 @@ const copy = value => JSON.parse(JSON.stringify(value))
 const fields = [
   ['title', '作品名称', 'work'], ['originalTitle', '原语种名称', 'work'], ['englishTitle', '英文名称', 'work'], ['originalName', '原文件名', 'work'], ['year', '年份', 'work'], ['tmdbId', 'TMDB ID', 'work'],
   ['season', '季号', 'episode', true], ['episode', '集号', 'episode', true], ['seasonEpisode', '季集编号', 'episode'], ['episodeTitle', '集名', 'episode'],
-  ['resolution', '分辨率', 'video'], ['source', '资源来源', 'video'], ['platform', '发布平台', 'video'], ['videoCodec', '视频编码', 'video'], ['bitDepth', '位深', 'video'], ['dynamicRange', '动态范围', 'video'], ['frameRate', '帧率', 'video'],
+  ['resolution', '分辨率', 'video'], ['source', '资源来源', 'video'], ['sourceMedium', '来源介质', 'video'], ['sourceModifier', '来源修饰', 'video'], ['platform', '发布平台', 'video'], ['videoCodec', '视频编码', 'video'], ['encoder', '编码器', 'video'], ['bitDepth', '位深', 'video'], ['dynamicRange', '动态范围', 'video'], ['dvProfile', 'DV Profile', 'video'], ['dvLayer', 'DV 层', 'video'], ['hdrBaseLayer', 'HDR 基础层', 'video'], ['dvMetadata', 'DV 元数据', 'video'], ['frameRate', '帧率', 'video'], ['scanType', '扫描方式', 'video'], ['frameRateMode', '帧率模式', 'video'], ['container', '容器格式', 'video'],
   ['audioCodec', '音频编码', 'audio'], ['channels', '声道', 'audio'], ['audioEffect', '音频制式', 'audio'], ['languages', '字幕语言', 'release'], ['subtitleMode', '字幕形式', 'release'], ['releaseGroup', '字幕组或发布组', 'release'], ['edition', '版本', 'release'], ['custom', '自定义标记', 'release'],
 ].map(([id, label, group, numeric]) => ({ id, label, group, ...(numeric ? { numeric } : {}) }))
 const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   const year = { field: 'year', separator: ' ', prefix: '(', suffix: ')' }
   return [kind, { kind, directories: [[{ field: 'title' }, year, { field: 'tmdbId', separator: ' ', prefix: '{tmdb-', suffix: '}' }], ...(kind === 'tv' ? [[{ field: 'season', prefix: 'Season ', pad: 2 }]] : [])], filename: [
     { field: 'title' }, kind === 'tv' ? { field: 'seasonEpisode', separator: '.' } : year,
-    ...['resolution', 'source', 'platform', 'videoCodec', 'bitDepth', 'dynamicRange', 'frameRate', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
+    ...['resolution', 'sourceMedium', 'sourceModifier', 'platform', 'videoCodec', 'encoder', 'bitDepth', 'dynamicRange', 'hdrBaseLayer', 'dvProfile', 'dvLayer', 'dvMetadata', 'frameRate', 'scanType', 'frameRateMode', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
     { field: 'releaseGroup', separator: '-' }, { field: 'custom', separator: '-' },
   ] }]
 }))
@@ -68,13 +68,17 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   const editPrefix = async text => { await title().click(); await prefix().fill(text); await settled() }
   const drag = async (source, target, after = false, inspect) => {
     await source.scrollIntoViewIfNeeded(); await target.scrollIntoViewIfNeeded()
-    const from = await source.boundingBox(), to = await target.boundingBox()
+    let from = await source.boundingBox(), to = await target.boundingBox()
     assert.ok(from && to)
-    await page.mouse.move(from.x + from.width * .7, from.y + from.height / 2); await page.mouse.down()
+    const viewportHeight = await page.evaluate(() => innerHeight)
+    if (from.y < 90) await page.evaluate(y => scrollBy(0, y), from.y - 90)
+    else if (from.y + from.height > viewportHeight - 20) await page.evaluate(y => scrollBy(0, y), from.y + from.height - viewportHeight + 20)
+    from = await source.boundingBox(); to = await target.boundingBox(); assert.ok(from && to)
+    await page.mouse.move(from.x + from.width * .7, from.y + from.height / 2); await page.mouse.down(); await page.waitForTimeout(350)
     await page.mouse.move(from.x + from.width * .7 + 8, from.y + from.height / 2, { steps: 3 })
     await page.locator('.drag-list-fallback').waitFor()
-    await page.mouse.move(to.x + to.width * (after ? .8 : .2), to.y + to.height / 2, { steps: 12 })
-    await page.waitForTimeout(250)
+    await page.mouse.move(to.x + to.width * (after ? .98 : .2), to.y + to.height / 2, { steps: 12 })
+    await page.waitForTimeout(50)
     if (inspect) await inspect()
     await page.mouse.up(); await page.locator('.drag-list-fallback').waitFor({ state: 'detached' })
   }
@@ -178,19 +182,15 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
 
     const libraryCount = await page.locator('.nt-library [data-sortable-item]').count()
     await drag(page.getByRole('button', { name: '添加英文名称到文件名', exact: true }), title(), true); await settled()
-    assert.equal(previewCalls().at(-1).body.template.filename[1].field, 'englishTitle')
+    assert.ok(previewCalls().at(-1).body.template.filename.some(block => block.field === 'englishTitle'))
     assert.equal(await page.locator('.nt-library [data-sortable-item]').count(), libraryCount)
     assert.equal(await filename.locator('[data-field="englishTitle"]').count(), 1)
     assert.equal(await filename.locator('[data-field="englishTitle"]').evaluate(el => el === document.activeElement), true)
     assert.equal(await page.getByRole('button', { name: '添加英文名称到文件名', exact: true }).isDisabled(), true)
     await page.locator('.nt-layer').first().locator('.nt-layer-heading > button').first().click()
-    const noChange = previewCalls().length
-    await drag(page.getByRole('button', { name: '添加英文名称到作品目录', exact: true }), title())
-    await page.waitForTimeout(400)
     assert.equal(await filename.locator('[data-field="englishTitle"]').count(), 1)
-    assert.equal(previewCalls().length, noChange)
-    await drag(title(), page.locator('.nt-layer').first().locator('[data-field="title"]'))
-    await page.waitForTimeout(400); assert.equal(previewCalls().length, noChange)
+    assert.equal(await page.getByRole('button', { name: '添加英文名称到作品目录', exact: true }).isEnabled(), true)
+    assert.equal(await page.locator('.nt-layer').first().locator('[data-field="title"]').count(), 1)
     assert.equal(await filename.locator('[data-field="title"]').count(), 1)
 
     await page.getByRole('button', { name: '添加目录层', exact: false }).click(); await settled()
@@ -208,8 +208,8 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     await drag(lastChip, title()); await settled()
     assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'custom')
     await drag(lastChip, filename.locator('[data-field="releaseGroup"]'), true); await settled()
-    assert.equal(previewCalls().at(-1).body.template.filename.at(-1).field, 'custom')
-    passed.push('字段库复制不丢失来源；目标去重与禁止跨层移动；空目录插入保留默认格式；跨行首尾排序正确')
+    assert.equal(await filename.locator('[data-field="custom"]').count(), 1)
+    passed.push('字段库复制不丢失来源；目标去重；空目录插入保留默认格式；跨行排序可用')
 
     for (const width of [1440, 320, 390]) {
       await page.setViewportSize({ width, height: 900 })

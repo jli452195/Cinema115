@@ -177,7 +177,7 @@ func TestOrganizeNamingSubtitlePreviewMatchesExecution(t *testing.T) {
 	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil {
 		t.Fatal("naming preview", preview, err)
 	}
-	want := "测试作品 (2024).2160p.BluRay.HEVC.10bit.DV HDR.TRUEHD.7.1.Atmos.[简繁英].mkv"
+	want := "测试作品 (2024).2160p.BluRay.HEVC.x265.10bit.DV HDR.TRUEHD.7.1.Atmos.[简繁英].mkv"
 	plan, err := s.buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{selection}})
 	if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != want || preview.Items[0].Result.Name != want {
 		t.Fatal("subtitle naming differs between preview and plan", preview, plan, err)

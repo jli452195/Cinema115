@@ -3,6 +3,7 @@ package mediafacts
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -39,8 +40,8 @@ func ValuesWithRecognizedRelease(name string, hint releaseparse.Spec, recognized
 	return values
 }
 
-var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ .-]?26[45]|x26[45]|hevc|avc|av1|vp9|(?:8|10|12)[ .-]?bit|hdr10\+|hdr10|dovi|dv|hdr|hlg|sdr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ .-]?ac[ .-]?3|ac[ .-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|[0-9]{2,3}(?:\.[0-9]+)?fps)`)
-var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "")
+var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ ._-]?(?:bit|b)|profile[ ._-]?[578](?:[ ._-]?1)?|p(?:5|7|8(?:[ ._-]?1)?)|fel|mel|el|rpu|hdr10\+|hdr10plus|hdr10|dolby[ ._-]?vision|dovi|dv|hdr|hlg|sdr|progressive|interlaced|cfr|vfr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ ._-]?ac[ ._-]?3|ac[ ._-]?3|aac|flac|opus|atmos|mkv|mp4|m2ts|ts|webm|mov|iso|[12567]\.1|2\.0|(?:[0-9]{1,2}(?:\.[0-9]+)?(?:fps|[pi])|[0-9]{2,3}(?:\.[0-9]+)?fps))`)
+var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "", "_", "")
 var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aac|flac|opus)([12567]\.1|2\.0)`)
 
 // Only explicit filename/source tags are used. Unknown and conflicting scalar
@@ -63,7 +64,27 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 	values := map[naming.Field]string{naming.Resolution: hint.Resolution, naming.ReleaseGroup: group}
 	values[naming.Languages] = subtitleLanguages(hint.Languages)
 	values[naming.SubtitleMode] = map[string]string{"hard": "内嵌", "soft": "内封", "external": "外挂"}[hint.SubtitleMode]
-	tags := make(map[naming.Field][]string, 10)
+	tags := make(map[naming.Field][]string, 16)
+	// 下载资源的标题规格属于已解析的输入事实。与文件名标签一起参与冲突检查，
+	// 只有唯一值才会进入命名模板，避免把不确定的规格写进目标名称。
+	switch strings.ToLower(hint.Codec) {
+	case "h264":
+		tags[naming.VideoCodec] = appendUnique(tags[naming.VideoCodec], "H264")
+	case "h265":
+		tags[naming.VideoCodec] = appendUnique(tags[naming.VideoCodec], "HEVC")
+	case "av1", "vp9":
+		tags[naming.VideoCodec] = appendUnique(tags[naming.VideoCodec], strings.ToUpper(hint.Codec))
+	}
+	if hint.BitDepth != "" {
+		tags[naming.BitDepth] = appendUnique(tags[naming.BitDepth], strings.TrimSuffix(strings.ToLower(hint.BitDepth), "bit")+"bit")
+	}
+	if hint.Container != "" {
+		tags[naming.Container] = appendUnique(tags[naming.Container], strings.ToUpper(hint.Container))
+	}
+	switch strings.ToLower(path.Ext(name)) {
+	case ".strm", ".mkv", ".mp4", ".m2ts", ".ts", ".webm", ".mov", ".iso":
+		name = strings.TrimSuffix(name, path.Ext(name))
+	}
 	name = mediaJoinedChannels.ReplaceAllString(name, "$1 $2")
 	for _, index := range mediaFactTokens.FindAllStringSubmatchIndex(name, -1) {
 		if end := index[1]; end < len(name) && (name[end] >= 'a' && name[end] <= 'z' || name[end] >= 'A' && name[end] <= 'Z' || name[end] >= '0' && name[end] <= '9') {
@@ -77,6 +98,11 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 		case "webdl", "webrip", "bluray", "bdrip", "remux", "hdtv", "dvdrip":
 			field = naming.Source
 			value = map[string]string{"webdl": "WEB-DL", "webrip": "WEBRip", "bluray": "BluRay", "bdrip": "BDRip", "remux": "REMUX", "hdtv": "HDTV", "dvdrip": "DVDRip"}[key]
+			if key == "remux" {
+				tags[naming.SourceModifier] = appendUnique(tags[naming.SourceModifier], value)
+			} else {
+				tags[naming.SourceMedium] = appendUnique(tags[naming.SourceMedium], value)
+			}
 		case "nf", "netflix", "amzn", "dsnp", "atvp", "hmax", "bilibili":
 			if !includePlatform {
 				continue
@@ -88,16 +114,39 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 			}
 		case "h264", "x264", "avc":
 			field, value = naming.VideoCodec, "H264"
+			if key == "x264" {
+				tags[naming.Encoder] = appendUnique(tags[naming.Encoder], "x264")
+			}
 		case "h265", "x265", "hevc":
 			field, value = naming.VideoCodec, "HEVC"
+			if key == "x265" {
+				tags[naming.Encoder] = appendUnique(tags[naming.Encoder], "x265")
+			}
 		case "av1", "vp9":
 			field, value = naming.VideoCodec, strings.ToUpper(key)
-		case "8bit", "10bit", "12bit":
-			field, value = naming.BitDepth, key
-		case "dv", "dovi":
+		case "8bit", "10bit", "12bit", "8b", "10b", "12b":
+			field, value = naming.BitDepth, map[string]string{"8bit": "8bit", "10bit": "10bit", "12bit": "12bit", "8b": "8bit", "10b": "10bit", "12b": "12bit"}[key]
+		case "profile5", "profile7", "profile8", "profile81", "p5", "p7", "p8", "p81":
+			field, value = naming.DVProfile, map[string]string{"profile5": "P5", "profile7": "P7", "profile8": "P8", "profile81": "P8.1", "p5": "P5", "p7": "P7", "p8": "P8", "p81": "P8.1"}[key]
+			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
+		case "fel", "mel":
+			field, value = naming.DVLayer, strings.ToUpper(key)
+			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
+		case "el":
+			field, value = naming.DVLayer, "EL"
+		case "rpu":
+			field, value = naming.DVMetadata, "RPU"
+			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
+		case "dv", "dovi", "dolbyvision":
 			field, value = naming.DynamicRange, "DV"
-		case "hdr10+", "hdr10", "hdr", "hlg", "sdr":
+		case "hdr10+", "hdr10plus", "hdr10", "hdr", "hlg", "sdr":
 			field, value = naming.DynamicRange, strings.ToUpper(key)
+			if key == "hdr10plus" {
+				value = "HDR10+"
+			}
+			if key == "hdr10" || key == "sdr" {
+				tags[naming.HDRBaseLayer] = appendUnique(tags[naming.HDRBaseLayer], strings.ToUpper(key))
+			}
 		case "aac", "flac", "opus", "dts", "dtshdma", "truehd", "ddp", "eac3", "dd", "ac3":
 			field = naming.AudioCodec
 			value = strings.ToUpper(key)
@@ -111,28 +160,68 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 			field, value = naming.AudioEffect, map[string]string{"atmos": "Atmos", "dtsx": "DTS-X"}[key]
 		case "20", "11", "21", "51", "61", "71":
 			field, value = naming.Channels, raw
+		case "progressive", "interlaced":
+			field, value = naming.ScanType, map[string]string{"progressive": "Progressive", "interlaced": "Interlaced"}[key]
+		case "cfr", "vfr":
+			field, value = naming.FrameRateMode, strings.ToUpper(key)
+		case "mkv", "mp4", "m2ts", "ts", "webm", "mov", "iso":
+			field, value = naming.Container, strings.ToUpper(key)
 		default:
 			if strings.HasSuffix(key, "fps") {
 				field, value = naming.FrameRate, raw
+			} else if last := key[len(key)-1:]; last == "p" || last == "i" {
+				field, value = naming.FrameRate, strings.TrimSuffix(raw, last)+"fps"
+				if last == "p" {
+					tags[naming.ScanType] = appendUnique(tags[naming.ScanType], "Progressive")
+				} else {
+					tags[naming.ScanType] = appendUnique(tags[naming.ScanType], "Interlaced")
+				}
 			}
 		}
 		if field == "" {
 			continue
 		}
-		found := false
-		for _, old := range tags[field] {
-			found = found || old == value
-		}
-		if !found {
-			tags[field] = append(tags[field], value)
-		}
+		tags[field] = appendUnique(tags[field], value)
 	}
+	hasDV := contains(tags[naming.DynamicRange], "DV")
 	for field, list := range tags {
-		if len(list) == 1 || field == naming.DynamicRange && !strings.Contains(strings.Join(list, " "), "SDR") {
+		if field == naming.DVProfile || field == naming.DVLayer || field == naming.DVMetadata {
+			if !hasDV {
+				continue
+			}
+		}
+		if field == naming.HDRBaseLayer && !hasDV {
+			continue
+		}
+		if field == naming.DynamicRange && hasDV && contains(list, "SDR") {
+			values[field] = "DV"
+			continue
+		}
+		if field == naming.Source {
+			values[field] = strings.Join(list, " ")
+			continue
+		}
+		if len(list) == 1 || field == naming.DynamicRange && !contains(list, "SDR") {
 			values[field] = strings.Join(list, " ")
 		}
 	}
 	return values
+}
+
+func appendUnique(values []string, value string) []string {
+	if value == "" || contains(values, value) {
+		return values
+	}
+	return append(values, value)
+}
+
+func contains(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 func subtitleLanguages(languages []string) string {

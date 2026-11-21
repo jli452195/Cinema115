@@ -183,6 +183,15 @@ func renderLayer(layer []Block, data Data) string {
 }
 
 func fieldValue(block Block, data Data) string {
+	if data.TitleOnly && block.Field == Container {
+		return ""
+	}
+	value := data.Values[block.Field]
+	// 新字段加入默认模板后，旧任务快照仍可能只保存 source。保留来源回退，
+	// 让旧整理记录在新模板下继续得到原来的来源标记。
+	if value == "" && block.Field == SourceMedium {
+		value = data.Values[Source]
+	}
 	switch block.Field {
 	case Season:
 		return number(*data.Season, block.Pad)
@@ -204,8 +213,14 @@ func fieldValue(block Block, data Data) string {
 			return value
 		}
 		return data.Values[Title]
+	case HDRBaseLayer:
+		value = strings.TrimSpace(value)
+		if value != "" && slices.Contains(strings.Fields(data.Values[DynamicRange]), value) {
+			return ""
+		}
+		return value
 	default:
-		return data.Values[block.Field]
+		return value
 	}
 }
 

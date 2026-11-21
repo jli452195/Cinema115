@@ -11,7 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     let proxy = { enabled: true, debug: false, port: 8097, url: 'http://emby:8096', accountId: 'main', directLinkCacheMinutes: 9 }
     const savedPublicUrl = 'https://emby.example.com', savedLibraryIds = ['movies']
     const playbackSettings = { allowDownload: false, publicUrl: savedPublicUrl, libraryIds: [...savedLibraryIds] }
-    let policy = { mode: 'parallel', silenceSeconds: 60 }
+    let policy = { mode: 'heartbeat_takeover', silenceSeconds: 60 }
     let failProxyRead = false, failAccountRead = false, failProxyWrite = false
     await page.route('**/api/**', async route => {
       const req = route.request(), p = new URL(req.url()).pathname; let data = {}, status = 200
@@ -42,6 +42,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     })
     const base = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.goto(base + '/emby/proxy')
+    const proxyStatus = page.getByRole('region', { name: '反代服务', exact: true })
     const proxySettings = page.getByRole('region', { name: '反代设置', exact: true })
     const saveProxy = proxySettings.getByRole('button', { name: '保存反代配置', exact: true }), port = page.getByLabel('反代监听端口', { exact: false })
     const downloadSwitch = proxySettings.getByRole('switch', { name: '允许下载原文件', exact: true })
@@ -62,6 +63,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '刷新状态', exact: true }).and(page.locator(':enabled')).waitFor()
     assert.equal(await port.inputValue(), '8098')
     assert.equal(await downloadSwitch.isChecked(), true)
+    await proxyStatus.getByText('监听端口 8097', { exact: true }).waitFor()
     failProxyWrite = true
     await saveProxy.click()
     await proxySettings.getByRole('alert').filter({ hasText: '模拟反代配置保存失败' }).waitFor()
@@ -89,16 +91,30 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await upstream.fill(''); await saveProxy.click()
     assert.equal(await upstream.evaluate(el => el.validity.valid), false); assert.equal(writes.length, before)
     await upstream.fill('http://emby:8096')
-    await page.locator('.proxy-advanced > summary').click()
+    await port.fill('8100')
+    await downloadSwitch.press('Space')
+    await proxySettings.getByRole('button', { name: '还原修改', exact: true }).click()
+    assert.equal(await port.inputValue(), '8098')
+    assert.equal(await downloadSwitch.isChecked(), true)
+    assert.equal(await proxySettings.getByRole('button', { name: '还原修改', exact: true }).count(), 0)
+    assert.equal(writes.length, before)
+    const advancedSummary = page.locator('.proxy-advanced > summary')
+    await advancedSummary.hover()
+    assert.equal(await advancedSummary.evaluate(el => {
+      const summary = getComputedStyle(el), details = getComputedStyle(el.parentElement)
+      return Number.parseFloat(summary.borderTopLeftRadius) > 0 && summary.borderRadius === details.borderRadius
+    }), true, 'advanced hover surface must match the disclosure radius')
+    await advancedSummary.click()
     const cacheMinutes = page.getByLabel('直链缓存时间（分钟）', { exact: false })
     assert.equal(await page.getByLabel('Emby 中对应 STRM 根目录的路径', { exact: false }).count(), 0)
     await cacheMinutes.fill('31')
-    await page.locator('.proxy-advanced > summary').click()
+    await advancedSummary.click()
     await saveProxy.click()
     assert.equal(await page.locator('.proxy-advanced').evaluate(el => el.open), true, 'invalid advanced fields must be revealed')
     assert.equal(writes.length, before)
     await cacheMinutes.fill('9')
-    await page.locator('.proxy-advanced > summary').click()
+    await advancedSummary.click()
+    await page.mouse.move(0, 0)
     // 检查不同尺寸和主题下的标题和横向溢出。
     fs.mkdirSync(path.join(__dirname, '../test-results'), { recursive: true })
     for (const theme of ['light', 'dark']) {
@@ -110,6 +126,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         const title = page.locator(width < 640 ? '.workbench-header .mobile-centered-title' : '.management-heading h1')
         assert.equal(await title.innerText(), 'Emby 302 与媒体访问')
         assert.ok(await title.evaluate(el => el.getBoundingClientRect().width) > 1)
+        const proxyCards = await page.locator('.proxy-page > .proxy-card').evaluateAll(cards => cards.map(card => {
+          const { left, top, width } = card.getBoundingClientRect()
+          return { left, top, width }
+        }))
+        assert.equal(proxyCards.length, 3)
+        assert.ok(proxyCards.every(({ left, width }) => left === proxyCards[0].left && width === proxyCards[0].width && width <= 920))
+        assert.ok(proxyCards[0].top < proxyCards[1].top && proxyCards[1].top < proxyCards[2].top)
         await page.screenshot({ path: path.join(__dirname, '../test-results/proxy-page-' + theme + '-' + width + '.png'), fullPage: true })
       }
     }
@@ -119,7 +142,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     failProxyRead = true; failAccountRead = false
     await page.reload(); await page.getByText('模拟反代读取失败', { exact: false }).waitFor()
     assert.equal(await saveProxy.isDisabled(), true)
-    failProxyRead = false; await proxySettings.getByRole('button', { name: '重试读取', exact: true }).click()
+    failProxyRead = false; await proxyStatus.getByRole('button', { name: '重试读取', exact: true }).click()
     await page.getByText('反代正在监听', { exact: true }).and(runtimeStatus).waitFor()
     assert.equal(await saveProxy.isDisabled(), false)
     assert.equal(await downloadSwitch.isChecked(), true)

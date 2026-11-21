@@ -2,13 +2,13 @@
 import { useId } from 'vue'
 
 const value = defineModel<boolean>({ required: true })
-defineProps<{ label: string; description?: string; disabled?: boolean }>()
+defineProps<{ label: string; description?: string; disabled?: boolean; trailing?: boolean }>()
 const descriptionID = useId()
 </script>
 
 <template>
   <div>
-    <label class="setting-switch">
+    <label class="setting-switch" :class="{ 'is-trailing': trailing }">
       <input v-model="value" :disabled="disabled" type="checkbox" role="switch" :aria-label="label" :aria-describedby="description ? descriptionID : undefined" class="peer sr-only" />
       <span class="setting-switch-track" aria-hidden="true"></span>
       <span class="min-w-0"><span class="setting-switch-label">{{ label }}</span><span v-if="description" :id="descriptionID" class="setting-switch-description">{{ description }}</span></span>
@@ -19,6 +19,8 @@ const descriptionID = useId()
 
 <style scoped>
 .setting-switch { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.setting-switch.is-trailing { align-items: center; justify-content: space-between; }
+.setting-switch.is-trailing .setting-switch-track { order: 1; margin-top: 0; }
 .setting-switch-track { position: relative; flex-shrink: 0; width: 36px; height: 20px; margin-top: 2px; border-radius: 9999px; background: rgb(var(--line-control)); transition: background-color 160ms; }
 .setting-switch-track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: inherit; background: rgb(var(--action-on-primary)); box-shadow: 0 1px 2px rgb(0 0 0 / .15); transition: transform 160ms; }
 .setting-switch input:checked + .setting-switch-track { background: rgb(var(--action-primary)); box-shadow: inset 0 0 0 1px rgb(var(--action-link)); }

@@ -163,8 +163,8 @@ onBeforeUnmount(() => { lifecycle.abort(); reader?.abort() })
       </div>
       <p v-if="loading" role="status" class="py-8 text-center text-sm text-slate-400 dark:text-slate-500">正在读取申请…</p>
       <p v-else-if="!items.length && !error" class="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-14 text-center text-sm text-slate-400 dark:text-slate-500">暂无符合条件的有效追更申请</p>
-      <div v-else class="subscription-grid grid grid-cols-1 items-stretch gap-4 md:grid-cols-2 xl:grid-cols-3" data-follow-grid>
-        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" compact-mobile admin :subscriber-count="item.subscriberCount" :busy="busy" @edit="edit(item)" />
+      <div v-else class="subscription-grid" data-follow-grid>
+        <FollowCard v-for="item in items" :key="`${item.kind}:${item.tmdbId}`" :item="item" admin :subscriber-count="item.subscriberCount" :busy="busy" @edit="edit(item)" />
       </div>
       <div v-if="offset || hasMore" class="flex justify-center gap-6 text-sm"><button :disabled="!offset || loading || busy" class="disabled:opacity-30" @click="filter(Math.max(0, offset - FOLLOW_PAGE_SIZE))">上一页</button><span class="text-slate-400 dark:text-slate-500">第 {{ Math.floor(offset / FOLLOW_PAGE_SIZE) + 1 }} 页</span><button :disabled="!hasMore || loading || busy" class="disabled:opacity-30" @click="filter(offset + FOLLOW_PAGE_SIZE)">下一页</button></div>
     </div>
