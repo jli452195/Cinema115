@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
 	"strm115/backend/internal/releaseparse"
@@ -43,7 +44,7 @@ func TestAnimeOrganizationNamesAndUniqueSubtitles(t *testing.T) {
 		t.Fatalf("%+v %v", p, err)
 	}
 	want := "/整理/黑暗召唤师在地下恋爱中 (2026) {tmdb-335790}/Season 01/黑暗召唤师在地下恋爱中.S01E01-银色子弹.mkv"
-	if p.Items[0].TargetPath != want || p.Items[1].TargetPath != strings.TrimSuffix(want, ".mkv")+".zh-Hans.forced.ass" || p.Items[1].VideoID != "300" || p.Items[2].Reason != "subtitle_unmatched" || p.Items[3].Status != "preserved" {
+	if p.Items[0].TargetPath != want || p.Items[1].TargetPath != strings.TrimSuffix(want, ".mkv")+".zh-CN.forced.ass" || p.Items[1].VideoID != "300" || p.Items[2].Reason != "subtitle_unmatched" || p.Items[3].Status != "preserved" {
 		t.Fatalf("%+v", p.Items)
 	}
 	if p.Items[0].OriginalPath != "/下载/anime-task/[组] 测试 - 25.MKV" {
@@ -134,11 +135,13 @@ func TestAnimeOrganizationSubtitleDirectoryAndUnicode(t *testing.T) {
 		sub, video, suffix string
 		ok                 bool
 	}{
-		{"k.chs", "K", ".chs", true}, {"K.en", "k", ".en", true}, {"k", "K", "", true}, {"video2.en", "video", "", false}, {"video.zip", "video", "", false},
+		{"k.chs", "K", ".zh-CN", true}, {"K.en", "k", ".en", true}, {"k", "K", "", true},
+		{"video2.en", "video", "", false}, {"video.zip", "video", "", false},
 	} {
-		suffix, ok := subtitleSuffix(tc.sub, tc.video)
-		if ok != tc.ok || suffix != tc.suffix {
-			t.Fatalf("%+v: %q %v", tc, suffix, ok)
+		matcher := mediafacts.NewSubtitleMatcher([]mediafacts.SubtitleVideo{{ID: "video", ParentID: "dir", Name: tc.video + ".mkv"}})
+		ids, suffix := matcher.TaggedStemCandidates("dir", tc.sub+".ass")
+		if (len(ids) == 1) != tc.ok || suffix != tc.suffix {
+			t.Fatalf("%+v: %q %v", tc, suffix, ids)
 		}
 	}
 	job := planJob("video.mkv", "video.ass")
@@ -230,7 +233,7 @@ func TestAnimeOrganizationSplitSeasonsAndExplicitSpecial(t *testing.T) {
 			t.Fatal("incorrect target season", p.Items[i])
 		}
 	}
-	if !strings.HasSuffix(p.Items[3].TargetPath, ".zh-Hans.ass") || p.Items[3].VideoID != "302" {
+	if !strings.HasSuffix(p.Items[3].TargetPath, ".zh-CN.ass") || p.Items[3].VideoID != "302" {
 		t.Fatal("special subtitle lost its explicit video", p.Items[3])
 	}
 	// TMDB episode metadata does not gate a configured naming offset.

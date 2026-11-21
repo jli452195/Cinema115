@@ -4,17 +4,18 @@ import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import FloatingDialog from './FloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
 import SelectMenu from './SelectMenu.vue'
-import { analyzeSubtitle, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitleLanguage, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
+import { analyzeSubtitle, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
 import { maxSubtitleFiles, subtitleSelectionIssue } from '../utils/subtitleLimits'
 import { subtitleOutputConflicts } from '../utils/subtitlePresentation'
-import { subtitleTargetName, type LibrarySubtitleFile, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
+import type { LibrarySubtitleFile, LibrarySubtitleSelection, SubtitleVersion } from '../utils/subtitleLibrary'
+import { subtitleLanguage, subtitleTargetName } from '../utils/subtitleNaming'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
 import { readSubtitleResponse } from '../utils/subtitleSources'
 import { useToast } from '../composables/useToast'
 import type { DismissDecision, DismissReason } from '../composables/useMobileSheet'
 import type { OrganizeRow } from '../types/organize'
 
-const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targetNames: Record<string, string>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targets: Record<string, { name: string; stem: string }>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
 const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion] }>()
 type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
 type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
@@ -66,15 +67,21 @@ const issue = computed(() => {
   const limitIssue = subtitleSelectionIssue(selected.value.length, total.value)
   if (limitIssue) return limitIssue
   const targets = new Set<string>()
+  const videoIDs = new Set(props.videos.map(video => video.id))
+  const subPartners = new Set<string>()
+  const requiredPartners: string[] = []
   for (const row of selected.value) {
-    if (!props.videos.some(video => video.id === row.videoId)) return '请为所选字幕指定对应视频。'
+    if (!videoIDs.has(row.videoId)) return '请为所选字幕指定对应视频。'
     const marker = row.version || ''
-    if (Array.from(marker).length > 30 || /[\\/:*?"<>|\x00-\x1f]/.test(marker) || marker.trim() !== marker || marker.endsWith('.')) return '字幕版本不能包含路径符号、首尾空格或末尾句点。'
-    const target = JSON.stringify([row.videoId, subtitleTargetName('', row.file.name, row.language, marker).toLowerCase()])
+    if (Array.from(marker).length > 30 || /[\\/:*?"<>|\x00-\x1f]/.test(marker) || marker.trim() !== marker || marker.startsWith('.') || marker.endsWith('.')) return '字幕版本不能包含路径符号或首尾空格、句点。'
+    const tail = subtitleTargetName('', row.file.name, row.language, marker)
+    const target = JSON.stringify([row.videoId, tail.toLowerCase()])
     if (targets.has(target)) return '多个字幕的目标名称相同，请调整语言、版本或取消勾选。'
     targets.add(target)
-    if (/\.idx$/i.test(row.file.name) && !selected.value.some(other => /\.sub$/i.test(other.file.name) && other.pairKey === row.pairKey && other.videoId === row.videoId && other.language === row.language && (other.version || '') === marker)) return 'IDX 需要选择配套 SUB，并关联相同视频、语言和版本。'
+    if (tail.endsWith('.sub')) subPartners.add(JSON.stringify([row.pairKey, row.videoId, tail]))
+    if (tail.endsWith('.idx')) requiredPartners.push(JSON.stringify([row.pairKey, row.videoId, `${tail.slice(0, -4)}.sub`]))
   }
+  if (requiredPartners.some(partner => !subPartners.has(partner))) return 'IDX 需要选择配套 SUB，并生成同名的字幕文件。'
   return ''
 })
 const request = <T,>(path: string) => subtitleRequest<T>(props.token, path, lifecycle.signal)
@@ -211,7 +218,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
         <p v-if="assrtBusy" role="status" class="picker-note">射手网正在搜索…</p><p v-if="assrtError" role="alert" class="picker-note">射手网：{{ assrtError }} <button type="button" :disabled="assrtBusy" @click="searchAssrt(assrtItems.length > 0)">重试</button></p><button v-if="assrtMore" type="button" :disabled="assrtBusy || reading || choosing" @click="searchAssrt(true)">加载更多射手字幕</button>
       </template>
       <p v-if="reading" role="status" class="picker-note">正在读取和解析字幕…<button type="button" @click="controller?.abort()">取消读取</button></p><p v-if="notice" role="status" class="picker-note">{{ notice }}</p><p v-if="importError" role="alert" class="picker-error">{{ importError }}</p>
-      <SubtitleMatchList v-if="rows.length" v-show="!showResults" ref="matchList" :rows="rows" :videos="videos" :target-names="targetNames" :disabled="reading || choosing" @manual-edit="protectManualRows" />
+      <SubtitleMatchList v-if="rows.length" v-show="!showResults" ref="matchList" :rows="rows" :videos="videos" :targets="targets" :disabled="reading || choosing" @manual-edit="protectManualRows" />
       <details class="picker-help"><summary>导入说明与管理</summary><p>支持字幕文件、ZIP / RAR / 7z，可拖入。单个 16 MiB，合计 64 MiB / {{ maxSubtitleFiles }} 个。确认下载整理后上传。</p><p v-if="version?.description" class="picker-description">{{ version.description }}</p><div v-if="hasLocal" class="picker-local"><label><input v-model="append" type="checkbox" :disabled="reading" />继续添加时保留已导入文件</label><button type="button" :disabled="reading" @click="localRows = localRows.filter(row => row.file.origin === 'assrt'); notice = ''; importError = ''">移除本地字幕</button></div><button v-if="rows.length" type="button" :disabled="reading || choosing" @click="clear">移除全部</button></details>
     </div>
     <template #footer>

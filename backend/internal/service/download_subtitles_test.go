@@ -21,7 +21,7 @@ func subtitleLimitPlan(count, languages int) (OrganizeJob, DownloadOrganizeInput
 		video := fmt.Sprintf("video-%d", i/languages)
 		if i%languages == 0 {
 			name := fmt.Sprintf("Show.S01E%03d.mkv", i/languages+1)
-			job.Items = append(job.Items, OrganizeItem{File: OrganizeFile{ShareFile: p115.ShareFile{ID: video}, MediaType: "video"}, Name: name, TargetPath: "/Show/" + name})
+			job.Items = append(job.Items, OrganizeItem{File: OrganizeFile{ShareFile: p115.ShareFile{ID: video}, MediaType: "video"}, Stem: strings.TrimSuffix(name, ".mkv"), Name: name, TargetPath: "/Show/" + name})
 		}
 		sub := localDownloadSubtitle(video, fmt.Sprintf("Show.S01E%03d.ass", i/languages+1), []byte("subtitle"))
 		sub.LocalID = fmt.Sprintf("%032x", i+1)
@@ -209,8 +209,9 @@ func TestDownloadExternalSubtitlesPlanUploadAndLostReceipt(t *testing.T) {
 	}
 	bad = in
 	bad.Subtitles = append(in.Subtitles, in.Subtitles...)
+	bad.Subtitles[1].Language = "chs"
 	if _, err = s.Preview(context.Background(), bad); err == nil {
-		t.Fatal("duplicate subtitles accepted")
+		t.Fatal("归一化后同名的字幕未被拒绝")
 	}
 	job, err := s.Start(plan.ID)
 	if err != nil {
@@ -308,7 +309,7 @@ func TestDownloadExternalSubtitleTitleBindingAndExistingPair(t *testing.T) {
 				t.Fatal(done, err, p.job)
 			}
 			video, sub := p.job.Items[0], p.job.Download.Subtitles[0]
-			if !strings.HasSuffix(video.Name, ".mp4") || sub.Name != strings.TrimSuffix(video.Name, ".mp4")+".zh-CN.ass" || sub.FileID == "" || sub.TargetPath != path.Join(path.Dir(video.TargetPath), sub.Name) {
+			if !strings.HasSuffix(video.Name, ".mp4") || sub.Name != strings.TrimSuffix(video.Name, ".mp4")+".zh-CN.ass" || sub.Name != plan.Download.Subtitles[0].Name || sub.FileID == "" || sub.TargetPath != path.Join(path.Dir(video.TargetPath), sub.Name) {
 				t.Fatal(video, sub)
 			}
 		})

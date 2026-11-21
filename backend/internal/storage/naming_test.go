@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"sync"
@@ -98,12 +99,41 @@ func TestNamingTemplateConcurrentSaves(t *testing.T) {
 func TestNamingTemplateRejectsIncompleteStoredJSON(t *testing.T) {
 	s, _ := testStore(t)
 	ctx := context.Background()
-	for _, raw := range []string{`{}`, `{"kind":"movie"}`, `{"kind":"tv","filename":[{"field":"title"}]}`} {
+	for _, raw := range []string{`{}`, `{"kind":"movie"}`, `{"kind":"tv","filename":[{"field":"title"}]}`, `{"kind":"movie","directories":[null],"filename":[{"field":"title"}]}`} {
 		if _, err := s.db.ExecContext(ctx, `INSERT OR REPLACE INTO naming_templates(kind,revision,template_json) VALUES('movie',1,?)`, raw); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.NamingTemplate(ctx, naming.Movie); err == nil {
 			t.Fatalf("accepted incomplete or mismatched stored template: %s", raw)
 		}
+	}
+}
+
+func TestNamingTemplateLoadsSavedTemplateWithRetiredCustomField(t *testing.T) {
+	s, _ := testStore(t)
+	ctx := context.Background()
+	raw := `{"kind":"movie","directories":[[{"field":"custom"}],[{"field":"title","prefix":"电影 "},{"field":"custom"}]],"filename":[{"field":"custom"}]}`
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO naming_templates(kind,revision,template_json) VALUES('movie',3,?)`, raw); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.NamingTemplate(ctx, naming.Movie)
+	want := naming.Snapshot{Revision: 3, Template: naming.Template{
+		Kind:        naming.Movie,
+		Directories: [][]naming.Block{{{Field: naming.Title, Prefix: "电影 "}}},
+		Filename:    []naming.Block{{Field: naming.Title}},
+	}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("read: %+v, %v", got, err)
+	}
+	saved, err := s.SaveNamingTemplate(ctx, got.Template, got.Revision)
+	if err != nil || saved.Revision != 4 {
+		t.Fatalf("save: %+v, %v", saved, err)
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT template_json FROM naming_templates WHERE kind='movie'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var stored naming.Template
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil || !reflect.DeepEqual(stored, want.Template) {
+		t.Fatalf("saved data contains retired fields: %s, %v", raw, err)
 	}
 }

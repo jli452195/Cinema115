@@ -468,6 +468,10 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 			continue
 		}
 		if err := files.conflict(ctx, *e); err != nil {
+			if e.File.MediaType == "subtitle" && errors.Is(err, errMediaTargetExists) {
+				mediaMarkSubtitleConflict(e)
+				continue
+			}
 			e.Status = "error"
 			if errors.Is(err, errMediaTargetExists) {
 				e.Status = "conflict"

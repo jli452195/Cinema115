@@ -51,7 +51,7 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 			eligible[e.File.ID] = true
 			continue
 		}
-		if e.Status == "done" || transient[e.Group] {
+		if e.Status == "done" || transient[e.Group] || e.ResultCode == mediaSubtitleCollisionCode {
 			continue
 		}
 		if e.Status == "needs_match" || e.Status == "invalid" || e.Status == "conflict" || e.Status == "unmatched" {
@@ -59,7 +59,7 @@ func mediaFailureEntries(run *MediaOrganizeRun) map[string]bool {
 		}
 	}
 	for _, e := range run.Entries {
-		if e.Status != "done" && e.VideoID != "" && eligible[e.VideoID] {
+		if e.Status != "done" && e.ResultCode != mediaSubtitleCollisionCode && e.VideoID != "" && eligible[e.VideoID] {
 			eligible[e.File.ID] = true
 		}
 	}

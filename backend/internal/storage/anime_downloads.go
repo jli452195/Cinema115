@@ -72,6 +72,9 @@ func scanAnimeDownloadJob(row animeScanner) (model.AnimeDownloadJob, error) {
 	if err := decodeAnimeJSON(raw, &job.Snapshot); err != nil {
 		return job, fmt.Errorf("decode anime download snapshot: %w", err)
 	}
+	if organization := job.Snapshot.Organization; organization != nil {
+		organization.Naming.Template.DropRetiredFields()
+	}
 	if tracking != nil {
 		job.Tracking = &model.AnimeDownloadTracking{}
 		if err := decodeAnimeJSON(*tracking, job.Tracking); err != nil {

@@ -38,13 +38,13 @@ func TestAnimeNamingPreviewUsesSharedTemplateAndMatchesRealFiles(t *testing.T) {
 	if err != nil || store.calls != 1 || preview.Naming.Revision != 7 || len(preview.Items) != 4 {
 		t.Fatalf("%+v %v, calls=%d", preview, err, store.calls)
 	}
-	if got := preview.Items[0].Result; got == nil || got.Name != "VERTEX FORCE.S01E01.1080p.WEB-DL.H264.AAC.[简繁]-Nix-Raws" || got.Extension != "" || got.Directory != "" {
+	if got := preview.Items[0].Result; got == nil || got.Name != "VERTEX FORCE.S01E01.1080p.WEB-DL.H264.AAC.[zh-CN+zh-TW]-Nix-Raws" || got.Extension != "" || got.Directory != "" {
 		t.Fatal(got)
 	}
-	if got := preview.Items[1].Result; got == nil || !strings.Contains(got.Name, "S01E00.1080p.[简体]") {
+	if got := preview.Items[1].Result; got == nil || !strings.Contains(got.Name, "S01E00.1080p.[zh-CN]") {
 		t.Fatal(got)
 	}
-	if got := preview.Items[2].Result; got == nil || !strings.Contains(got.Name, "S01E13.720p.WEBRip.BILIBILI.[简日].内嵌") {
+	if got := preview.Items[2].Result; got == nil || !strings.Contains(got.Name, "S01E13.720p.WEBRip.BILIBILI.[zh-CN+ja].hardsub") {
 		t.Fatal(got)
 	}
 	if preview.Items[3].Status != "unmapped" || preview.Items[3].Result != nil {

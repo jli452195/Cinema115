@@ -10,9 +10,15 @@ import { subtitleLimits } from './helpers/subtitle-limits.mjs'
 const require = createRequire(import.meta.url)
 const source = await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8')
 const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
+const namingSource = await readFile(new URL('../src/utils/subtitleNaming.ts', import.meta.url), 'utf8')
+const namingCompiled = ts.transpileModule(namingSource, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText
+const namingModule = { exports: {} }
+const requireNaming = createRequire(new URL('../src/utils/subtitleNaming.ts', import.meta.url))
+new Function('require', 'module', 'exports', namingCompiled)(requireNaming, namingModule, namingModule.exports)
 const module = { exports: {} }
 new Function('require', 'module', 'exports', compiled)(name => name === './subtitleLimits' ? subtitleLimits : name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
-const { episodeNumber, analyzeSubtitle, subtitlePairKey, subtitleLanguage, readLocalSubtitles, mergeSubtitleFiles } = module.exports
+const { episodeNumber, analyzeSubtitle, subtitlePairKey, readLocalSubtitles, mergeSubtitleFiles } = module.exports
+const { subtitleLanguage } = namingModule.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
 test('movie matching ignores episode-like numbers and leaves multiple versions for confirmation', () => {
@@ -45,7 +51,7 @@ test('season/episode matching stays ambiguous across versions, supports Chinese 
   assert.equal(episodeNumber('剧集 - S01E01-E02.ass'), undefined)
   assert.equal(analyzeSubtitle('不明字幕.ass', [video('combined', '剧集 - S01E01-E02.mkv')], 1).videoId, '')
   assert.equal(subtitleLanguage('show.chs.ass'), 'zh-CN')
-  assert.equal(subtitleLanguage('show.中英双语.ass'), 'zh-en')
+  assert.equal(subtitleLanguage('show.中英双语.ass'), 'zh')
   assert.equal(subtitleLanguage('unknown.ass'), '')
   for (const tag of ['scjp', 'GB', '简日双语']) assert.equal(subtitleLanguage(`Show.${tag}.ass`), 'zh-CN')
   for (const tag of ['tcjp', 'BIG5', '繁日雙語']) assert.equal(subtitleLanguage(`Show.${tag}.ass`), 'zh-TW')
@@ -238,11 +244,14 @@ test('subtitle language uses explicit subtitle tags and never the labeled audio 
   for (const name of ['Show AAC[eng].ass', 'Show FLAC[jpn].ass', 'Show Audio[eng jpn].ass', 'Show AAC[eng] SUB[fra].ass', 'Show SUB[eng] SUB[jpn].ass', 'Show SUB[jpn+eng].ass']) {
     assert.equal(subtitleLanguage(name), '', name)
   }
-  for (const [tag, language] of [['eng', 'en'], ['jpn', 'ja'], ['chs', 'zh-CN'], ['cht', 'zh-TW'], ['chs+eng', 'zh-en']]) {
+  for (const [tag, language] of [['eng', 'en'], ['jpn', 'ja'], ['chs', 'zh-CN'], ['cht', 'zh-TW'], ['chs+eng', 'zh-CN']]) {
     assert.equal(subtitleLanguage(`Show AAC[2.0(eng)+5.1(jpn)] SUB[${tag}].ass`), language)
   }
   assert.equal(subtitleLanguage('Show.jpn.ass'), 'ja')
   assert.equal(subtitleLanguage('Show[eng].ass'), 'en')
+  assert.equal(subtitleLanguage('Show_CHT.ass'), 'zh-TW')
+  assert.equal(subtitleLanguage('Show_CHT_ENG.ass'), 'zh-TW')
+  assert.equal(subtitleLanguage('Show_SUB[fra].zh-CN.ass'), '')
   assert.equal(subtitleLanguage('Show AAC[eng].chs.ass'), 'zh-CN')
 })
 

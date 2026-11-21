@@ -100,7 +100,7 @@ func TestDownloadTitleWorkerUsesActualExtensionSubtitlesAndFrozenMapping(t *test
 			}
 			in.ManifestID, in.Files = files.ManifestID, []OrganizeSelection{{ID: "title", Season: 2, Episode: 32}}
 			plan, err := s.Preview(context.Background(), in)
-			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[简体]-LoliHouse" {
+			if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != "测试作品.S02E32.1080p.[zh-CN]-LoliHouse" {
 				t.Fatal("title-only plan guessed an extension or discarded mapping", plan, err)
 			}
 			job, err := s.Start(plan.ID)
@@ -167,7 +167,7 @@ func TestDownloadTitleBindsAniOneVideoAndThreeSubtitleLanguages(t *testing.T) {
 	if len(job.Items) != 4 {
 		t.Fatal("Ani-One 视频和三种字幕未全部进入整理计划", job.Items)
 	}
-	for i, suffix := range []string{".mp4", ".zh-Hans.ass", ".zh-Hant.ass", ".ja.ass"} {
+	for i, suffix := range []string{".mp4", ".zh-CN.ass", ".zh-TW.ass", ".ja.ass"} {
 		item := job.Items[i]
 		if item.File.ID != files[i].ID || item.Name != stem+suffix || item.TargetPath != "/target/Love All Play/Season 01/"+stem+suffix {
 			t.Fatal("字幕关联或独立语言目标名称错误", item)

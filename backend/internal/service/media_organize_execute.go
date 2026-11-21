@@ -85,12 +85,14 @@ func (s *MediaOrganizer) executeMediaEntry(ctx context.Context, files *mediaOrga
 		release()
 	}
 	if err != nil && !errors.Is(err, errMediaDuplicateDone) {
-		e.Status = "error"
+		e.Status, e.Message = "error", organizePublicError(err, files.cookie)
 		if errors.Is(err, errMediaTargetExists) {
-			e.Status = "conflict"
-			e.ResultCode = "TARGET_EXISTS"
+			if e.File.MediaType == "subtitle" {
+				mediaMarkSubtitleConflict(e)
+			} else {
+				e.Status, e.ResultCode = "conflict", "TARGET_EXISTS"
+			}
 		}
-		e.Message = organizePublicError(err, files.cookie)
 	} else {
 		mediaCD2ApplyDuplicateReceipt(e, err)
 		e.Status, e.Message, e.Failure = "done", "", nil

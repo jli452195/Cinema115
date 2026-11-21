@@ -135,6 +135,19 @@ func bindTitleDownload(job *OrganizeJob, files []OrganizeFile) error {
 		}
 		seen[key] = true
 	}
+	if job.Download != nil {
+		if downloadSubtitlePairConflict(items, job.Download.Subtitles) {
+			return fmt.Errorf("%w：资源附带字幕与已选字幕的 IDX/SUB 来源不同", errDownloadTitleReview)
+		}
+		for _, sub := range job.Download.Subtitles {
+			target := path.Join(path.Dir(intent.TargetPath), sub.Name)
+			key := strings.ToLower(target)
+			if seen[key] {
+				return fmt.Errorf("%w：下载附带的字幕与已选字幕目标同名，请核对：%s", errDownloadTitleReview, sub.Name)
+			}
+			seen[key] = true
+		}
+	}
 	job.Items = items
 	if extras && job.Download != nil {
 		job.Download.KeepExtras = true

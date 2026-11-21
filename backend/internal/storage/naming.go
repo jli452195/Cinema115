@@ -36,6 +36,7 @@ func readNamingTemplate(ctx context.Context, q interface {
 	if err := json.Unmarshal([]byte(raw), &out.Template); err != nil {
 		return out, fmt.Errorf("解码命名模板: %w", err)
 	}
+	out.Template.DropRetiredFields()
 	if out.Template.Kind != kind {
 		return out, fmt.Errorf("命名模板作品类型不一致")
 	}

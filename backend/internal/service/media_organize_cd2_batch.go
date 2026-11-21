@@ -315,8 +315,11 @@ func mediaCD2SetResult(entry *MediaOrganizeEntry, err error) {
 	if err != nil && !errors.Is(err, errMediaDuplicateDone) {
 		entry.Status, entry.Message = "error", organizePublicError(err, "")
 		if errors.Is(err, errMediaTargetExists) || errors.Is(err, clouddrive2.ErrExists) {
-			entry.Status = "conflict"
-			entry.ResultCode = "TARGET_EXISTS"
+			if entry.File.MediaType == "subtitle" {
+				mediaMarkSubtitleConflict(entry)
+			} else {
+				entry.Status, entry.ResultCode = "conflict", "TARGET_EXISTS"
+			}
 		}
 	} else {
 		mediaCD2ApplyDuplicateReceipt(entry, err)

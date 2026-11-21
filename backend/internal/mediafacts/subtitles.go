@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"strm115/backend/internal/releaseparse"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 // SubtitleVideo describes every video in the listing, including unselected ones.
@@ -57,6 +58,15 @@ func subtitleFold(value string) string {
 
 // StemCandidates 按点号边界从长到短查完整视频文件名，保留同名文件的歧义。
 func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bool) ([]string, string) {
+	return m.stemCandidates(parentID, name, sameDirectory, false)
+}
+
+// TaggedStemCandidates 仅在同目录使用完整主干和有标签依据的后缀匹配字幕。
+func (m *SubtitleMatcher) TaggedStemCandidates(parentID, name string) ([]string, string) {
+	return m.stemCandidates(parentID, name, true, true)
+}
+
+func (m *SubtitleMatcher) stemCandidates(parentID, name string, sameDirectory, taggedOnly bool) ([]string, string) {
 	stem := strings.TrimSuffix(name, path.Ext(name))
 	for end := len(stem); end >= 0; end = strings.LastIndexByte(stem[:end], '.') {
 		var owners []string
@@ -66,7 +76,10 @@ func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bo
 			}
 		}
 		if len(owners) > 0 {
-			return owners, stem[end:]
+			if taggedOnly && stem[end:] != "" && !subtitle.KnownTail(stem[end:]) {
+				return nil, ""
+			}
+			return owners, subtitle.NormalizeTail(stem[end:])
 		}
 	}
 	// Ani-One 的音轨与字幕说明不同，仅在同目录按完整作品及集号原文匹配。
@@ -83,7 +96,7 @@ func (m *SubtitleMatcher) StemCandidates(parentID, name string, sameDirectory bo
 		}
 	}
 	if len(owners) > 0 {
-		tails := map[string]string{"簡中字幕": ".zh-Hans", "繁中字幕": ".zh-Hant", "日文自動產生字幕": ".ja"}
+		tails := map[string]string{"簡中字幕": ".zh-CN", "繁中字幕": ".zh-TW", "日文自動產生字幕": ".ja"}
 		return owners, tails[sub[2]]
 	}
 	return nil, ""
@@ -99,7 +112,7 @@ var (
 	aniOneSubtitleStem = regexp.MustCompile(`^(.+?)\s*\((日語原聲|簡中字幕|繁中字幕|日文自動產生字幕)\)【Ani-One】$`)
 )
 
-func subtitleFileIdentity(name string) *subtitleIdentity {
+func subtitleFileIdentity(name string, isSubtitle bool) *subtitleIdentity {
 	stem := strings.TrimSuffix(name, path.Ext(name))
 	parsed, err := releaseparse.Title(stem)
 	if err != nil || parsed.Kind != "episode" || parsed.Episode == nil || parsed.SpecAmbiguous {
@@ -109,14 +122,20 @@ func subtitleFileIdentity(name string) *subtitleIdentity {
 	if resourceQuality.MatchString(stem) && parsed.Spec.Resolution == "" {
 		return nil // Conflicting explicit qualities must not become unspecified.
 	}
-	flags := make(map[string]bool, 3)
+	groups := make([]string, 0, 3)
 	metadata := func(tag string) bool {
+		if isSubtitle && subtitle.KnownTag(tag) {
+			groups = append(groups, tag)
+			return true
+		}
 		if !subtitleMetadata.MatchString(strings.TrimSpace(tag)) {
 			return false
 		}
-		for _, field := range strings.FieldsFunc(strings.ToLower(tag), func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("._+&/-", r) }) {
-			if field == "forced" || field == "sdh" || field == "default" {
-				flags[field] = true
+		if isSubtitle {
+			for _, field := range strings.FieldsFunc(tag, func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("._+&/-", r) }) {
+				if subtitle.KnownTag(field) {
+					groups = append(groups, field)
+				}
 			}
 		}
 		return true
@@ -128,6 +147,24 @@ func subtitleFileIdentity(name string) *subtitleIdentity {
 		}
 		return block
 	})
+	for {
+		end := strings.LastIndexByte(core, '.')
+		if isSubtitle && end >= 3 && strings.EqualFold(core[end-3:end], ".zh") && subtitle.KnownTag(core[end-2:]) {
+			end -= 3
+		}
+		if end < 0 {
+			break
+		}
+		tag := strings.TrimSpace(core[end+1:])
+		if tag != "" && !metadata(tag) {
+			// 只移除视频末尾的规范字幕字段，保留作品名和版本里的正常单词。
+			unwrapped := strings.TrimSuffix(strings.TrimPrefix(tag, "["), "]")
+			if isSubtitle || !videoSubtitleContext.MatchString(core[:end]) || !videoSubtitleCodeTag.MatchString(unwrapped) && videoSubtitleModeValue(tag) == "" {
+				break
+			}
+		}
+		core = core[:end]
+	}
 	fields := strings.FieldsFunc(strings.ToLower(core), func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("[]【】()（）._-!！?？", r) })
 	for len(fields) > 0 && metadata(fields[len(fields)-1]) {
 		fields = fields[:len(fields)-1]
@@ -141,13 +178,8 @@ func subtitleFileIdentity(name string) *subtitleIdentity {
 		}
 	}
 	tail := ""
-	for _, language := range parsed.Spec.Languages {
-		tail += "." + language
-	}
-	for _, flag := range []string{"forced", "sdh", "default"} {
-		if flags[flag] {
-			tail += "." + flag
-		}
+	if isSubtitle {
+		tail = subtitle.InferredTail(groups, parsed.Spec.Languages)
 	}
 	return &subtitleIdentity{key: strings.Join(fields, " "), version: parsed.VersionLabel, episode: *parsed.Episode, spec: parsed.Spec, tail: tail}
 }
@@ -155,14 +187,14 @@ func subtitleFileIdentity(name string) *subtitleIdentity {
 // Candidates includes unselected videos so callers can retain ambiguous subtitles.
 // A subtitle may be assigned only when exactly one candidate remains.
 func (m *SubtitleMatcher) Candidates(parentID, name string) ([]string, string) {
-	sub := subtitleFileIdentity(name)
+	sub := subtitleFileIdentity(name, true)
 	if sub == nil {
 		return nil, ""
 	}
 	var owners []string
 	for _, video := range m.videos[parentID] {
 		if !video.parsed {
-			video.identity, video.parsed = subtitleFileIdentity(video.Name), true
+			video.identity, video.parsed = subtitleFileIdentity(video.Name, false), true
 		}
 		v := video.identity
 		if v == nil || v.key != sub.key || v.episode != sub.episode || v.version != sub.version {

@@ -58,6 +58,11 @@ type preparedMediaNaming struct {
 }
 
 func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected *int64) (preparedMediaNaming, error) {
+	return s.prepareWithDetail(ctx, kind, id, expected, nil)
+}
+
+// 已完成识别的预览复用作品详情，避免再查一次同一作品。
+func (s MediaNaming) prepareWithDetail(ctx context.Context, kind string, id int, expected *int64, detail *tmdb.Detail) (preparedMediaNaming, error) {
 	rules := namingRecognition(ctx)
 	if (kind != "movie" && kind != "tv") || id < 1 {
 		return preparedMediaNaming{}, ErrOrganizeInput
@@ -77,15 +82,17 @@ func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected 
 	if err != nil {
 		return preparedMediaNaming{}, fmt.Errorf("编译公共命名模板: %w", err)
 	}
-	if kind == "tv" {
-		ctx, err = pinNumbering(ctx, s.Metadata, id)
-		if err != nil {
-			return preparedMediaNaming{}, err
+	if detail == nil {
+		if kind == "tv" {
+			ctx, err = pinNumbering(ctx, s.Metadata, id)
+			if err != nil {
+				return preparedMediaNaming{}, err
+			}
 		}
-	}
-	detail, err := s.Metadata.Details(ctx, kind, id)
-	if err != nil {
-		return preparedMediaNaming{}, fmt.Errorf("读取 TMDB 作品: %w", err)
+		detail, err = s.Metadata.Details(ctx, kind, id)
+		if err != nil {
+			return preparedMediaNaming{}, fmt.Errorf("读取 TMDB 作品: %w", err)
+		}
 	}
 	if detail == nil || detail.ID != id || detail.Kind != kind || detail.Title == "" || snapshot.Template.Kind != naming.Kind(kind) {
 		return preparedMediaNaming{}, fmt.Errorf("命名模板或作品信息无效")
@@ -140,6 +147,9 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 	}
 	for field, value := range file.NamingValues {
 		values[field] = value
+	}
+	if file.NamingValues != nil {
+		mediafacts.NormalizeVideoSubtitleValues(values)
 	}
 	values[naming.Title], values[naming.OriginalTitle] = p.detail.Title, p.detail.OriginalTitle
 	values[naming.EnglishTitle] = p.english

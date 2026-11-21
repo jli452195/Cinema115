@@ -20,7 +20,8 @@ import { magnetKey } from '../lib/cloud-download-batch'
 import SubtitlePickerDialog from './SubtitlePickerDialog.vue'
 import type { LocalSubtitleSelection } from '../utils/subtitleImport'
 import { subtitleSelectionIssue } from '../utils/subtitleLimits'
-import { subtitleTargetName, type LibrarySubtitleSelection, type SubtitleVersion } from '../utils/subtitleLibrary'
+import type { LibrarySubtitleSelection, SubtitleVersion } from '../utils/subtitleLibrary'
+import { subtitleTargetName } from '../utils/subtitleNaming'
 import { formatEpisodeRanges } from '../types/seasonLibrary'
 
 const props = withDefaults(defineProps<{
@@ -51,7 +52,11 @@ const assrtSubtitleCount = computed(() => selectedLocal.value.length - localSubt
 const allExternal = computed(() => [...externalSubtitles.value, ...localSubtitles.value])
 const selectedExternal = computed(() => [...selectedLibrary.value, ...selectedLocal.value])
 const externalIssue = computed(() => subtitleSelectionIssue(selectedExternal.value.length, selectedExternal.value.reduce((sum, sub) => sum + ('localId' in sub ? sub.file.data.length : sub.file.size), 0)))
-const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => subtitleTargetName(results.value[sub.videoId] ? `${results.value[sub.videoId]!.stem}.mkv` : rows.value.find(row => row.id === sub.videoId)?.name || '', sub.file.name, sub.language, sub.version)
+const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) => {
+  const row = rows.value.find(row => row.id === sub.videoId)
+  const stem = results.value[sub.videoId]?.stem ?? subtitleVideoStem(row)
+  return subtitleTargetName(stem, sub.file.name, sub.language, sub.version)
+}
 function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion) {
   if (!props.active || !subtitleOpen.value) return
   const ids = subtitleIDs.value
@@ -227,6 +232,12 @@ const sharedDirectory = computed(() => {
   return directories.length > 1 && directories[0] && directories.every(directory => directory === directories[0]) ? directories[0] : ''
 })
 const targetNames = computed(() => Object.fromEntries(rows.value.map(row => [row.id, namingPreview.errors.value[row.id] ? '' : results.value[row.id]?.name || '等待命名预览'])))
+function subtitleVideoStem(row?: OrganizeRow) {
+  return row?.titleOnly ? row.name : row?.name.replace(/\.[^.]+$/, '') || ''
+}
+const subtitleTargets = computed(() => Object.fromEntries(subtitleVideos.value.map(row => [
+  row.id, { name: results.value[row.id]?.name ?? row.name, stem: results.value[row.id]?.stem ?? subtitleVideoStem(row) },
+])))
 const subtitleName = (sub: OrganizeSubtitle) => results.value[sub.file.id]?.name || '等待命名预览'
 const subtitlesByVideo = computed(() => {
   const groups: Record<string, OrganizeSubtitle[]> = {}
@@ -308,7 +319,7 @@ function resourceSelections() {
   return preparation.resourceSelections(selected.value).map(resource => ({ ...resource,
     subtitles: selectedExternal.value.filter(sub => preparation.owners.get(sub.videoId)?.key === magnetKey(resource.magnet))
       .map(sub => ({ language: sub.language, version: sub.version, videoId: preparation.owners.get(sub.videoId)!.id, ...('localId' in sub
-        ? { localId: sub.localId, originalName: sub.file.name, sha256: sub.file.sha256, size: sub.file.data.length }
+        ? { localId: sub.localId, sourceKey: sub.file.sourceKey, originalName: sub.file.name, sha256: sub.file.sha256, size: sub.file.data.length }
         : { versionId: sub.versionId, path: sub.path, sha: sub.file.sha }) })),
   }))
 }
@@ -593,7 +604,7 @@ onBeforeUnmount(() => {
     </template>
   </FloatingDialog>
   <P115DirectoryDialog v-if="props.active && directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="selectDirectory" />
-  <SubtitlePickerDialog v-if="props.active && subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :target-names="Object.fromEntries(subtitleVideos.filter(row => results[row.id]).map(row => [row.id, `${results[row.id]!.stem}.mkv`]))" @close="subtitleOpen = false" @select="selectSubtitles" />
+  <SubtitlePickerDialog v-if="props.active && subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :targets="subtitleTargets" @close="subtitleOpen = false" @select="selectSubtitles" />
 </template>
 
 <style scoped>

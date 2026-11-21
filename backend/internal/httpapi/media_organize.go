@@ -29,6 +29,21 @@ func RegisterMediaOrganize(admin *gin.RouterGroup, s *service.MediaOrganizer) {
 	g.GET("", func(c *gin.Context) {
 		c.JSON(200, s.State())
 	})
+	g.POST("/name-preview", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32<<10)
+		var in struct {
+			Name string `json:"name"`
+		}
+		if !bindNamingJSON(c, &in) {
+			return
+		}
+		out, err := s.PreviewName(c.Request.Context(), in.Name)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, out)
+	})
 	g.GET("/directories", func(c *gin.Context) {
 		out, err := s.LocalDirectories(c.Request.Context(), c.Query("path"))
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 )
 
 type mediaRegressionCase struct {
-	category, source, work, filename string
+	category, source, work, filename, videoSource string
 }
 
 // 成功样本表只保留输入和期望，元数据固定在测试中，避免网络波动改变回归结论。
@@ -32,12 +33,12 @@ func mediaRegressionCases(tb testing.TB) []mediaRegressionCase {
 	}
 	defer file.Close()
 	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = 4
+	reader.FieldsPerRecord = 5
 	rows, err := reader.ReadAll()
 	if err != nil || len(rows) < 2 {
 		tb.Fatalf("读取整理回归样本表: rows=%d err=%v", len(rows), err)
 	}
-	if strings.Join(rows[0], ",") != "类别,来源相对路径,预期作品,预期文件名" {
+	if strings.Join(rows[0], ",") != "类别,来源相对路径,预期作品,预期文件名,字幕对应视频" {
 		tb.Fatal("整理回归样本表字段不符")
 	}
 	cases := make([]mediaRegressionCase, 0, len(rows)-1)
@@ -47,7 +48,7 @@ func mediaRegressionCases(tb testing.TB) []mediaRegressionCase {
 			tb.Fatalf("整理回归样本为空或重复: %q", row)
 		}
 		seen[row[1]] = true
-		cases = append(cases, mediaRegressionCase{row[0], row[1], row[2], row[3]})
+		cases = append(cases, mediaRegressionCase{row[0], row[1], row[2], row[3], row[4]})
 	}
 	return cases
 }
@@ -71,6 +72,10 @@ func newMediaRegressionMetadata() *mediaRegressionMetadata {
 		}
 		return out
 	}
+	animation := tv(69292, "人渣的本愿", "クズの本懐", "2017-01-13", 1)
+	animation.Genres = []tmdb.Genre{{ID: 16}}
+	liveAction := tv(69812, "人渣的本愿真人版", "クズの本懐", "2017-01-18", 1)
+	liveAction.Genres = []tmdb.Genre{{ID: 18}}
 	return &mediaRegressionMetadata{works: []mediaRegressionWork{
 		{detail: tv(48936, "Wonderland", "Wonderland", "2013-08-21", 1, 2, 3)},
 		{detail: tv(126398, "五十公里桃花坞", "五十公里桃花坞", "2021-05-23", 0, 1, 2, 3, 4, 5), aliases: []string{"Wonderland"}},
@@ -81,6 +86,8 @@ func newMediaRegressionMetadata() *mediaRegressionMetadata {
 		{detail: tv(154770, "你好，星期六", "你好，星期六", "2022-01-01", 0, 1, 2, 3, 4, 5), aliases: []string{"Hello Saturday"}, queries: []string{"你好，星期六 Hello Saturday"}},
 		{detail: tv(129804, "你的名字我的姓氏", "你的名字我的姓氏", "2021-07-27", 1), aliases: []string{"Once Given, Never Forgotten"}, queries: []string{"你的名字我的姓氏 Once Given Never Forgotten"}},
 		{detail: tv(204541, "三体", "三体", "2023-01-15", 1)},
+		{detail: animation, aliases: []string{"Kuzu no Honkai"}},
+		{detail: liveAction, aliases: []string{"Kuzu no Honkai"}},
 	}}
 }
 
@@ -138,7 +145,11 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 	for _, tc := range mediaRegressionCases(t) {
 		t.Run(tc.category+"/"+path.Base(tc.source), func(t *testing.T) {
 			metadata := newMediaRegressionMetadata()
-			run := mediaRegressionRun(tc.source)
+			videoSource := tc.source
+			if tc.videoSource != "" {
+				videoSource = tc.videoSource
+			}
+			run := mediaRegressionRun(videoSource)
 			// 自动整理会持久化分组，恢复后必须保留相同的标题、年份和季集声明。
 			body, err := json.Marshal(run)
 			if err != nil {
@@ -168,6 +179,14 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			result, err := prepared.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name})
+			if err == nil && tc.videoSource != "" {
+				sub := mediaSubtitleTestFile(tc.source, path.Dir(tc.source), path.Base(tc.source), "subtitle")
+				matches := mediaOrganizeSubtitles([]OrganizeFile{file, sub})
+				if len(matches) != 1 || matches[0].VideoID != file.ID {
+					t.Fatalf("字幕没有关联预期视频: %+v", matches)
+				}
+				result, err = naming.Companion(result, matches[0].Tail, sub.Name)
+			}
 			if err != nil || result.Name != tc.filename {
 				t.Fatalf("季集或命名回归: got=%q want=%q err=%v", result.Name, tc.filename, err)
 			}
@@ -209,6 +228,64 @@ func TestMediaOrganizeRegressionLocalSTRM(t *testing.T) {
 				t.Fatalf("临时目录整理未完成: videos=%d status=%s", videos, run.Status)
 			}
 		})
+	}
+}
+
+func TestMediaOrganizeNamePreviewUsesFirstEligible(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		label       string
+		liveFirst   bool
+		wantID      int
+		wantLookups int
+	}{
+		{name: "动画排首位", wantID: 69292, wantLookups: 1},
+		{name: "真人排首位", liveFirst: true, wantID: 69812, wantLookups: 1},
+		{name: "明确动画标签筛除首位真人剧", label: " [动画]", liveFirst: true, wantID: 69292, wantLookups: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := newMediaRegressionMetadata()
+			if tc.liveFirst {
+				slices.Reverse(metadata.works)
+			}
+			template, err := naming.Default(naming.Kind("tv"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			organizer := &MediaOrganizer{
+				metadata:  metadata,
+				templates: &mediaNamingTemplates{record: naming.Snapshot{Template: template}},
+			}
+			ctx := pinNamingRecognition(context.Background(), recognition.Snapshot{})
+			input := "[JYFanSub]Kuzu no Honkai" + tc.label + " - 01 (BDrip 1920x1080 HEVC 2FLAC).mkv"
+			preview, err := organizer.PreviewName(ctx, input)
+			if err != nil || preview.Work == nil || preview.Work.ID != tc.wantID || preview.RelativePath == "" {
+				t.Fatalf("名称预览没有生成预期作品和路径: preview=%+v err=%v", preview, err)
+			}
+			if metadata.browseCalls != 1 || metadata.aliasCalls != tc.wantLookups || metadata.detailCalls != tc.wantLookups {
+				t.Fatalf("候选查找次数不符: search=%d aliases=%d details=%d", metadata.browseCalls, metadata.aliasCalls, metadata.detailCalls)
+			}
+		})
+	}
+}
+
+func TestMediaOrganizeNamePreviewNormalizesSubtitleTags(t *testing.T) {
+	template, err := naming.Default(naming.TV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	organizer := &MediaOrganizer{
+		metadata:  newMediaRegressionMetadata(),
+		templates: &mediaNamingTemplates{record: naming.Snapshot{Template: template}},
+	}
+	ctx := pinNamingRecognition(context.Background(), recognition.Snapshot{})
+	const want = "七大罪.S01E01.1080p.WEB-DL.[zh-CN+zh-TW].softsub.mkv"
+	for _, input := range []string{"Nanatsu.no.Taizai.2014.S01E01.1080p.WEB-DL.[简繁内封].mkv", want} {
+		preview, err := organizer.PreviewName(ctx, input)
+		if err != nil || preview.Work == nil || preview.Work.ID != 62104 || path.Base(preview.RelativePath) != want ||
+			preview.Specifications[naming.Languages] != "zh-CN+zh-TW" || preview.Specifications[naming.SubtitleMode] != "softsub" {
+			t.Fatalf("%q 的字幕规格或命名预览有误: %+v, %v", input, preview, err)
+		}
 	}
 }
 

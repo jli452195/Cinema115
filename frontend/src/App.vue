@@ -14,6 +14,7 @@ import { useMobileRouteMotion } from './composables/useMobileRouteMotion'
 import { useManagementSidebar } from './composables/useManagementSidebar'
 import { useSidebarWidthMotion } from './composables/useSidebarWidthMotion'
 import { networkConnectionTest, closeNetworkConnectionTest } from './composables/useNetworkConnectionTest'
+import { mediaNamePreview, closeMediaNamePreview } from './composables/useMediaNamePreview'
 import { portalToken as token, portalUser, portalAuthError, portalBrowseRoutes, ensurePortalSession, setPortalToken, clearPortalSession } from './composables/usePortalAuth'
 
 const route = useRoute()
@@ -39,9 +40,11 @@ provide(mobileToolNavigationKey, {
   toolBack: computed(() => toolOrigin.value ?? { label: mobileWorkspaceLabels.home, to: rememberedDashboardHome.value }),
 })
 const NetworkConnectionTestDialog = defineAsyncComponent(() => import('./components/NetworkConnectionTestDialog.vue'))
+const MediaNamePreviewDialog = defineAsyncComponent(() => import('./components/MediaNamePreviewDialog.vue'))
 watch([token, portalUser, portalAuthError, () => route.meta.public], () => {
-  const request = networkConnectionTest.value
-  if (request && (request.token !== token.value || portalUser.value?.role !== 'admin' || portalAuthError.value || route.meta.public)) closeNetworkConnectionTest()
+  const unavailable = portalUser.value?.role !== 'admin' || portalAuthError.value || route.meta.public
+  if (networkConnectionTest.value && (unavailable || networkConnectionTest.value.token !== token.value)) closeNetworkConnectionTest()
+  if (mediaNamePreview.value && (unavailable || mediaNamePreview.value.token !== token.value)) closeMediaNamePreview()
 })
 const { desktop, collapsed } = useManagementSidebar()
 // Apply page defaults on confirmed path changes; query/hash edits keep the layout.
@@ -100,6 +103,7 @@ onBeforeUnmount(() => {
   stopToolOrigin()
   phoneViewport.removeEventListener('change', updatePhone)
   closeNetworkConnectionTest()
+  closeMediaNamePreview()
   window.clearInterval(authTimer)
   window.removeEventListener('storage', syncLogin)
   document.removeEventListener('visibilitychange', resumeLogin)
@@ -122,6 +126,7 @@ onBeforeUnmount(() => {
     </RouterView>
     <MobileWorkspaceDock v-if="hasMobileDock" :section="mobileSection" :active-tool="activeTool?.to" />
     <NetworkConnectionTestDialog v-if="networkConnectionTest && portalUser.role === 'admin'" :request="networkConnectionTest" @close="closeNetworkConnectionTest" />
+    <MediaNamePreviewDialog v-if="mediaNamePreview && portalUser.role === 'admin'" :token="mediaNamePreview.token" @close="closeMediaNamePreview" />
   </div>
   <ReloadPrompt />
   <GlobalToast />

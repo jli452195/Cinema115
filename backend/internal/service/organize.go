@@ -154,6 +154,9 @@ func NewOrganizeEngine(store accountSecretStore, accounts *P115Accounts, drive O
 	}
 	for i := range s.doc.Jobs {
 		job := &s.doc.Jobs[i]
+		if job.Naming != nil {
+			job.Naming.Template.DropRetiredFields()
+		}
 		if job.Status == "running" || job.Status == "queued" || job.Status == "downloading" || job.Status == "submitting" {
 			if waitingDownloadShare(*job) {
 				continue // Bound files awaiting collection have no result-directory writes.

@@ -48,6 +48,10 @@ func TestAnimeOrganizationClaimFreezesTargetAndLeavesExistingTaskUntouched(t *te
 	if _, err := f.store.SaveNamingTemplate(ctx, template, saved.Revision); err != nil {
 		t.Fatal(err)
 	}
+	// 模拟升级前冻结的模板，刷新时只移除已经退役的字段。
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE anime_download_jobs SET snapshot_json=json_insert(snapshot_json,'$.organization.naming.template.filename[#]',json('{"field":"custom","separator":"-"}')) WHERE id=?`, first.Job.ID); err != nil {
+		t.Fatal(err)
+	}
 	sub, err := f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
 	if err != nil {
 		t.Fatal(err)

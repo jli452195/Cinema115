@@ -8,14 +8,14 @@ const fields = [
   ['title', '作品名称', 'work'], ['originalTitle', '原语种名称', 'work'], ['englishTitle', '英文名称', 'work'], ['originalName', '原文件名', 'work'], ['year', '年份', 'work'], ['tmdbId', 'TMDB ID', 'work'],
   ['season', '季号', 'episode', true], ['episode', '集号', 'episode', true], ['seasonEpisode', '季集编号', 'episode'], ['episodeTitle', '集名', 'episode'],
   ['resolution', '分辨率', 'video'], ['source', '资源来源', 'video'], ['sourceMedium', '来源介质', 'video'], ['sourceModifier', '来源修饰', 'video'], ['platform', '发布平台', 'video'], ['videoCodec', '视频编码', 'video'], ['encoder', '编码器', 'video'], ['bitDepth', '位深', 'video'], ['dynamicRange', '动态范围', 'video'], ['dvProfile', 'DV Profile', 'video'], ['dvLayer', 'DV 层', 'video'], ['hdrBaseLayer', 'HDR 基础层', 'video'], ['dvMetadata', 'DV 元数据', 'video'], ['frameRate', '帧率', 'video'], ['scanType', '扫描方式', 'video'], ['frameRateMode', '帧率模式', 'video'], ['container', '容器格式', 'video'],
-  ['audioCodec', '音频编码', 'audio'], ['channels', '声道', 'audio'], ['audioEffect', '音频制式', 'audio'], ['languages', '字幕语言', 'release'], ['subtitleMode', '字幕形式', 'release'], ['releaseGroup', '字幕组或发布组', 'release'], ['edition', '版本', 'release'], ['custom', '自定义标记', 'release'],
+  ['audioCodec', '音频编码', 'audio'], ['channels', '声道', 'audio'], ['audioEffect', '音频制式', 'audio'], ['languages', '字幕语言', 'release'], ['subtitleMode', '字幕形式', 'release'], ['releaseGroup', '字幕组或发布组', 'release'], ['edition', '版本', 'release'],
 ].map(([id, label, group, numeric]) => ({ id, label, group, ...(numeric ? { numeric } : {}) }))
 const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   const year = { field: 'year', separator: ' ', prefix: '(', suffix: ')' }
   return [kind, { kind, directories: [[{ field: 'title' }, year, { field: 'tmdbId', separator: ' ', prefix: '{tmdb-', suffix: '}' }], ...(kind === 'tv' ? [[{ field: 'season', prefix: 'Season ', pad: 2 }]] : [])], filename: [
     { field: 'title' }, kind === 'tv' ? { field: 'seasonEpisode', separator: '.' } : year,
     ...['resolution', 'sourceMedium', 'sourceModifier', 'platform', 'videoCodec', 'encoder', 'bitDepth', 'dynamicRange', 'hdrBaseLayer', 'dvProfile', 'dvLayer', 'dvMetadata', 'frameRate', 'scanType', 'frameRateMode', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
-    { field: 'releaseGroup', separator: '-' }, { field: 'custom', separator: '-' },
+    { field: 'releaseGroup', separator: '-' },
   ] }]
 }))
 ;(async () => {
@@ -39,7 +39,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
       if (gate) await gate
       if (rejected) { status = 400; data = { error: '无效命名模板：模板字段无效' } }
       else {
-        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.DDP.5.1.Atmos.[简繁].外挂.特别版-字幕组-收藏版`
+        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.BluRay.REMUX.HEVC.10bit.DV HDR10.P7.FEL.23.976fps.TrueHD.7.1.Atmos.[zh-CN+zh-TW].softsub.特别版-发布组`
         data = { items: [{ result: { directory: '示例作品 (2026) {tmdb-123456}', stem, extension: '.mkv', name: `${stem}.mkv`, relativePath: `示例作品 (2026) {tmdb-123456}/${tv ? 'Season 01/' : ''}${stem}.mkv [预览${number}]` } }] }
       }
     } else if (/^\/api\/admin\/naming\/(movie|tv)$/.test(endpoint)) {
@@ -89,6 +89,11 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.equal(await save.isDisabled(), true)
     assert.equal(calls.filter(call => call.endpoint === '/api/admin/naming').length, 1)
     assert.equal(await title().innerText(), '作品名称')
+    const sample = previewCalls()[0].body.items[0].values
+    assert.equal(sample.languages, 'zh-CN+zh-TW')
+    assert.equal(sample.subtitleMode, 'softsub')
+    assert.equal(Object.hasOwn(sample, 'custom'), false)
+    assert.equal(await page.locator('[data-field="custom"]').count(), 0)
     const restingSize = await title().boundingBox()
     await title().hover(); await page.waitForTimeout(180)
     const hoveredSize = await title().boundingBox()
@@ -203,12 +208,12 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.deepEqual(previewCalls().at(-1).body.template.directories[2], [{ field: 'year', separator: ' ', prefix: '(', suffix: ')' }])
     await page.getByRole('button', { name: '删除目录层 3', exact: true }).click(); await settled()
     await filename.locator('[data-field="englishTitle"]').press('Delete'); await settled()
-    const lastChip = filename.locator('[data-field="custom"]')
+    const lastChip = filename.locator('[data-field="edition"]')
     assert.ok((await lastChip.boundingBox()).y > (await title().boundingBox()).y)
     await drag(lastChip, title()); await settled()
-    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'custom')
+    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'edition')
     await drag(lastChip, filename.locator('[data-field="releaseGroup"]'), true); await settled()
-    assert.equal(await filename.locator('[data-field="custom"]').count(), 1)
+    assert.equal(await lastChip.count(), 1)
     passed.push('字段库复制不丢失来源；目标去重；空目录插入保留默认格式；跨行排序可用')
 
     for (const width of [1440, 320, 390]) {
@@ -289,7 +294,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.ok(await phone.evaluate(() => scrollY) > scrollBefore)
     assert.equal(await phone.locator('.drag-list-fallback').count(), 0)
     await mobileFilename.locator('.nt-chips').evaluate(el => el.scrollIntoView({ block: 'center' }))
-    const lastMobileChip = await mobileFilename.locator('[data-field="custom"]').boundingBox(), firstMobileChip = await mobileResolution.boundingBox()
+    const lastMobileChip = await mobileFilename.locator('[data-field="edition"]').boundingBox(), firstMobileChip = await mobileResolution.boundingBox()
     assert.ok(lastMobileChip.y > firstMobileChip.y)
     const verticalPreview = previewCalls().length, verticalScroll = await phone.evaluate(() => scrollY)
     const verticalStart = { x: lastMobileChip.x + lastMobileChip.width * .7, y: lastMobileChip.y + lastMobileChip.height / 2 }
@@ -305,7 +310,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.equal(await phone.evaluate(() => scrollY), verticalScroll)
     await touchAt('touchEnd'); await phone.locator('.drag-list-fallback').waitFor({ state: 'detached' })
     await phone.waitForFunction(() => document.querySelector('.ns-preview')?.getAttribute('aria-busy') === 'false')
-    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'custom')
+    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'edition')
     assert.equal(previewCalls().length, verticalPreview + 1)
     assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await phone.screenshot({ path: 'test-results/naming-mobile-after-drag.png', fullPage: true })

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"path"
 	"regexp"
-	"slices"
 	"strings"
 
 	"strm115/backend/internal/naming"
@@ -55,15 +54,8 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 	if search.Resolution != "" || resourceQuality.MatchString(name) {
 		hint.Resolution = search.Resolution
 	}
-	if len(search.Languages) > 0 {
-		hint.Languages = search.Languages
-	}
-	if search.SubtitleMode != "" {
-		hint.SubtitleMode = search.SubtitleMode
-	}
 	values := map[naming.Field]string{naming.Resolution: hint.Resolution, naming.ReleaseGroup: group}
-	values[naming.Languages] = subtitleLanguages(hint.Languages)
-	values[naming.SubtitleMode] = map[string]string{"hard": "内嵌", "soft": "内封", "external": "外挂"}[hint.SubtitleMode]
+	values[naming.Languages], values[naming.SubtitleMode] = videoSubtitleValues(name, search, hint)
 	tags := make(map[naming.Field][]string, 16)
 	// 下载资源的标题规格属于已解析的输入事实。与文件名标签一起参与冲突检查，
 	// 只有唯一值才会进入命名模板，避免把不确定的规格写进目标名称。
@@ -222,23 +214,6 @@ func contains(values []string, value string) bool {
 		}
 	}
 	return false
-}
-
-func subtitleLanguages(languages []string) string {
-	var label strings.Builder
-	single := ""
-	count := 0
-	for _, language := range [][3]string{{"zh-Hans", "简", "简体"}, {"zh-Hant", "繁", "繁体"}, {"ja", "日", "日语"}, {"en", "英", "英语"}} {
-		if slices.Contains(languages, language[0]) {
-			label.WriteString(language[1])
-			single = language[2]
-			count++
-		}
-	}
-	if count == 1 {
-		return single
-	}
-	return label.String()
 }
 
 // InheritSubtitles is only for a known immediate directory with one video.

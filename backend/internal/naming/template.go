@@ -53,7 +53,6 @@ const (
 	SubtitleMode   Field = "subtitleMode"
 	ReleaseGroup   Field = "releaseGroup"
 	Edition        Field = "edition"
-	Custom         Field = "custom"
 )
 
 // FieldDefinition is also the field library for the visual editor. A supported
@@ -101,7 +100,6 @@ var fields = [...]FieldDefinition{
 	{SubtitleMode, "字幕形式", "release", false, false},
 	{ReleaseGroup, "字幕组或发布组", "release", false, false},
 	{Edition, "版本", "release", false, false},
-	{Custom, "自定义标记", "release", false, false},
 }
 
 // Block's decorations belong to its value: an empty value omits the whole block.
@@ -124,6 +122,27 @@ type Template struct {
 type Snapshot struct {
 	Revision int64    `json:"revision"`
 	Template Template `json:"template"`
+}
+
+// DropRetiredFields 清理刚解码的旧模板，保留其他字段、装饰和层级顺序。
+func (t *Template) DropRetiredFields() {
+	retired := func(block Block) bool { return block.Field == "custom" }
+	directories := t.Directories[:0]
+	for _, layer := range t.Directories {
+		cleaned := slices.DeleteFunc(layer, retired)
+		if len(layer) == 0 || len(cleaned) != 0 {
+			directories = append(directories, cleaned)
+		}
+	}
+	clear(t.Directories[len(directories):])
+	t.Directories = directories
+	if cleaned := slices.DeleteFunc(t.Filename, retired); len(t.Filename) != len(cleaned) {
+		t.Filename = cleaned
+		// 旧电影模板可以只使用自定义标记，删除后使用作品名称。
+		if len(cleaned) == 0 && t.Kind == Movie {
+			t.Filename = []Block{{Field: Title}}
+		}
+	}
 }
 
 func (t Template) Clone() Template {
@@ -246,6 +265,6 @@ func Default(kind Kind) (Template, error) {
 		}
 		template.Filename = append(template.Filename, block)
 	}
-	template.Filename = append(template.Filename, Block{Field: ReleaseGroup, Separator: "-"}, Block{Field: Custom, Separator: "-"})
+	template.Filename = append(template.Filename, Block{Field: ReleaseGroup, Separator: "-"})
 	return template, nil
 }

@@ -89,6 +89,9 @@ func TestDownloadLocalSubtitlesPersistRestartAndLostUploadReceipt(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasSuffix(plan.Download.Subtitles[0].Name, ".zh-CN.Group.ass") {
+		t.Fatal("语言与手填版本顺序错误", plan.Download.Subtitles[0])
+	}
 	if _, err = s.Start(plan.ID); !errors.Is(err, ErrOrganizeConflict) || len(s.History()) != 0 {
 		t.Fatal("started before local bytes were saved", err)
 	}
@@ -133,6 +136,9 @@ func TestDownloadLocalSubtitlesPersistRestartAndLostUploadReceipt(t *testing.T) 
 	job.Items[0].Status, job.Items[0].TargetCID = "done", "30"
 	job.Items[0].Name = drive.dirs["30"][0].Name
 	job.Status = "completed"
+	saved := &job.Download.Subtitles[0]
+	saved.Name = strings.TrimSuffix(saved.Name, ".zh-CN.Group.ass") + ".Group.zh-CN.ass"
+	legacyName := saved.Name
 	upload := &subtitleFakeDrive{organizeFakeDrive: drive, uploadErr: errors.New("lost receipt")}
 	s.Organize.drive = upload
 	if err = s.uploadSubtitles(ctx, &job, s.live[plan.ID].account.Cookie); err != nil || job.Status != "partial" || upload.uploads != 1 {
@@ -158,8 +164,8 @@ func TestDownloadLocalSubtitlesPersistRestartAndLostUploadReceipt(t *testing.T) 
 	if done, err := restarted.advance(ctx, p); err != nil || !done || p.job.Status != "completed" || upload.uploads != 1 {
 		t.Fatal("retry uploaded twice or did not finish", p.job, err)
 	}
-	if !strings.HasSuffix(p.job.Download.Subtitles[0].Name, ".Group.zh-CN.ass") {
-		t.Fatal("version lost", p.job.Download.Subtitles[0])
+	if p.job.Download.Subtitles[0].Name != legacyName {
+		t.Fatal("恢复时更改了旧任务已确认的字幕目标名", p.job.Download.Subtitles[0])
 	}
 	if err = restarted.pruneSubtitleAttachments(time.Now()); err != nil {
 		t.Fatal(err)
@@ -176,10 +182,24 @@ func TestDownloadLocalSubtitlePairAndSelectionValidation(t *testing.T) {
 	idx := localDownloadSubtitle(transport.names[0], "Group/Show [01].chs.idx", []byte("index"))
 	sub := localDownloadSubtitle(transport.names[0], "Group/Show [01].chs.sub", []byte("bitmap"))
 	sub.LocalID = strings.Repeat("b", 32)
+	idx.SourceKey, sub.SourceKey = "archive:original", "archive:original"
+	sub.Language = "chs"
 	ctx := context.Background()
 	in.Subtitles = []DownloadSubtitleSelection{idx}
 	if _, err := s.Preview(ctx, in); !errors.Is(err, ErrOrganizeInput) {
 		t.Fatal("unpaired IDX accepted", err)
+	}
+	for _, invalid := range []func(*DownloadSubtitleSelection){
+		func(s *DownloadSubtitleSelection) { s.SourceKey = "archive:other" },
+		func(s *DownloadSubtitleSelection) { s.Version = "group" },
+		func(s *DownloadSubtitleSelection) { s.OriginalName = "Other/Show [01].chs.sub" },
+	} {
+		other := sub
+		invalid(&other)
+		in.Subtitles = []DownloadSubtitleSelection{idx, other}
+		if _, err := s.Preview(ctx, in); !errors.Is(err, ErrOrganizeInput) {
+			t.Fatal("mismatched IDX/SUB pair accepted", err)
+		}
 	}
 	in.Subtitles = []DownloadSubtitleSelection{idx, sub}
 	plan, err := s.Preview(ctx, in)

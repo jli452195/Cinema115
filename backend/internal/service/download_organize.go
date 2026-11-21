@@ -167,7 +167,7 @@ func (s *DownloadOrganize) snapshotJob(job OrganizeJob) (P115Account, error) {
 		}
 		for _, item := range job.Items {
 			if slices.Contains(p.targets, downloadTargetKey(item)) {
-				return a, fmt.Errorf("%w：队列中已有相同目标名称，请调整自定义标记", ErrOrganizeConflict)
+				return a, fmt.Errorf("%w：队列中已有相同目标名称，请核对目标文件名或命名模板", ErrOrganizeConflict)
 			}
 		}
 	}

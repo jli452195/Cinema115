@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
-import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolderExclamation, IconClock, IconRadar, IconAdjustmentsHorizontal, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconEdit, IconTrash, IconX } from '@tabler/icons-vue'
+import { IconPlus, IconCloud, IconServer, IconFolder, IconFolderCheck, IconFolderExclamation, IconClock, IconRadar, IconAdjustmentsHorizontal, IconPlayerPause, IconPlayerPlay, IconPlayerStop, IconEdit, IconTrash, IconX, IconFileSearch } from '@tabler/icons-vue'
 import FloatingDialog from '../components/FloatingDialog.vue'
 import SettingSwitch from '../components/SettingSwitch.vue'
 import SelectMenu from '../components/SelectMenu.vue'
@@ -9,6 +9,7 @@ import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import MediaLocalDirectoryDialog from '../components/MediaLocalDirectoryDialog.vue'
 import CD2DirectoryDialog from '../components/CD2DirectoryDialog.vue'
 import P115ActionDialog from '../components/P115ActionDialog.vue'
+import { openMediaNamePreview } from '../composables/useMediaNamePreview'
 import { mediaOrganizeRequest, type MediaMonitorStatus, type MediaRule, type MediaState } from '../lib/media-organize-api'
 import { p115Request } from '../lib/p115-api'
 import { cd2Request, type CD2Config, type CD2DirectorySelection } from '../lib/cd2-api'
@@ -207,7 +208,13 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
       <p v-if="error" role="alert" class="mo-error">{{ error }}<button @click="refresh()">重新加载</button></p>
       <p v-if="notice" role="status" class="mo-muted">{{ notice }}</p>
       <section class="mo-rules" aria-label="整理规则">
-        <header class="mo-section"><h2>整理规则</h2><button class="mo-button mo-primary" @click="edit()"><IconPlus :size="17" aria-hidden="true" />新增规则</button></header>
+        <header class="mo-section">
+          <h2>整理规则</h2>
+          <div class="mo-section-actions">
+            <button type="button" class="mo-button" aria-haspopup="dialog" @click="openMediaNamePreview()"><IconFileSearch :size="17" aria-hidden="true" />名称识别测试</button>
+            <button type="button" class="mo-button mo-primary" @click="edit()"><IconPlus :size="17" aria-hidden="true" />新增规则</button>
+          </div>
+        </header>
         <p v-if="loading" class="mo-empty">正在读取配置…</p>
         <div v-else-if="!rules.length" class="mo-empty"><IconFolder :size="30" /><p>添加来源与目标目录，立即运行或启用监控。</p><button class="mo-button" @click="edit()">添加整理规则</button></div>
         <div v-else class="mo-rule-grid">
@@ -280,6 +287,7 @@ onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); window.re
 
 <style scoped src="../styles/media-organize.css"></style>
 <style scoped>
+.mo-section{flex-wrap:wrap}.mo-section-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-left:auto}
 .mo-rules{min-width:0}.mo-rule-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:16px}
 .mo-rule-card{display:flex;min-width:0;flex-direction:column;padding:18px;border:1px solid rgb(148 163 184/.16);border-radius:16px;background:#fff;box-shadow:0 2px 8px rgb(15 23 42/.035);transition:box-shadow .2s;--ambient-glow-strength:.55}
 .mo-rule-symbol{display:flex;align-items:center;justify-content:center;flex:none;width:38px;height:38px;border-radius:11px;background:#dbeafe;color:#1d4ed8}

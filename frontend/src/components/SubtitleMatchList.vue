@@ -3,11 +3,12 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { IconAlertTriangle, IconEdit, IconLayersIntersect, IconX } from '@tabler/icons-vue'
 import SelectMenu from './SelectMenu.vue'
 import PaginationControl from './PaginationControl.vue'
-import { subtitleLanguages, subtitleTargetName } from '../utils/subtitleLibrary'
+import { subtitleLanguages } from '../utils/subtitleLibrary'
+import { subtitleTargetName } from '../utils/subtitleNaming'
 import { subtitleOutputConflicts, subtitleScopeKey, subtitleVariantGroups, subtitleVariantHint, subtitleVariantHints, type SubtitlePresentationRow } from '../utils/subtitlePresentation'
 import type { SubtitleMatchRow, SubtitleMatchVideo } from '../utils/subtitleImport'
 
-const props = defineProps<{ rows: SubtitlePresentationRow[]; videos: SubtitleMatchVideo[]; targetNames: Record<string, string>; disabled?: boolean }>()
+const props = defineProps<{ rows: SubtitlePresentationRow[]; videos: SubtitleMatchVideo[]; targets: Record<string, { name: string; stem: string }>; disabled?: boolean }>()
 const emit = defineEmits<{ 'manual-edit': [keys: string[]] }>()
 const language = ref('all'), conflictsOnly = ref(false), selectionNotice = ref(''), page = ref(1), pageSize = 25
 const editingKey = ref(''), lockedOrder = ref<string[]>([])
@@ -62,11 +63,10 @@ function selectVariant(scope: string, hint: string) {
 }
 const conflicts = computed(() => subtitleOutputConflicts(props.rows))
 const conflictKeys = computed(() => new Set(conflicts.value.flatMap(group => group.rowKeys)))
-const videoNames = computed(() => new Map(props.videos.map(video => [video.id, video.name])))
 const natural = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
 const orderedVideos = computed(() => [...props.videos].sort((a, b) => (a.season ?? Infinity) - (b.season ?? Infinity) || (a.episode ?? Infinity) - (b.episode ?? Infinity) || natural.compare(a.name, b.name)))
 const videoIndex = computed(() => new Map(orderedVideos.value.map((video, index) => [video.id, index])))
-const videoOptions = computed(() => [{ value: '', label: '请选择对应视频' }, ...orderedVideos.value.map(video => ({ value: video.id, label: props.targetNames[video.id] || video.name }))])
+const videoOptions = computed(() => [{ value: '', label: '请选择对应视频' }, ...orderedVideos.value.map(video => ({ value: video.id, label: props.targets[video.id]?.name || video.name }))])
 const sorted = computed(() => [...props.rows].sort((a, b) => (videoIndex.value.get(a.videoId) ?? Infinity) - (videoIndex.value.get(b.videoId) ?? Infinity) || natural.compare(a.file.name, b.file.name)))
 const ordered = computed(() => {
   if (!editingKey.value) return sorted.value
@@ -127,7 +127,7 @@ function episode(row: SubtitleMatchRow) {
 const missingLabel = (name: string) => { const video = props.videos.find(item => item.name === name); return video && Number.isInteger(video.episode) ? `S${String(video.season).padStart(2, '0')}E${String(video.episode).padStart(2, '0')}` : name.replace(/\\/g, '/').split('/').pop() || name }
 const langLabel = (value: string) => subtitleLanguages.find(item => item.value === value)?.label || '未指定语言'
 const basename = (name: string) => name.replace(/\\/g, '/').split('/').pop() || name
-const output = (row: SubtitleMatchRow) => subtitleTargetName(props.targetNames[row.videoId] || videoNames.value.get(row.videoId) || '', row.file.name, row.language, row.version)
+const output = (row: SubtitleMatchRow) => subtitleTargetName(props.targets[row.videoId]?.stem || '', row.file.name, row.language, row.version)
 defineExpose({ closeEditor, showConflicts: () => { conflictsOnly.value = true; page.value = 1 } })
 </script>
 

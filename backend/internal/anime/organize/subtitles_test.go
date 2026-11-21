@@ -17,7 +17,7 @@ func TestAnimeOrganizationBracketLanguageSubtitles(t *testing.T) {
 		t.Fatal(plan, err)
 	}
 	stem := strings.TrimSuffix(plan.Items[0].TargetPath, ".mkv")
-	for i, tail := range []string{".zh-Hant.ass", ".zh-Hans.ass"} {
+	for i, tail := range []string{".zh-TW.ass", ".zh-CN.ass"} {
 		item := plan.Items[i+1]
 		if item.VideoID != plan.Items[0].ID || item.TargetPath != stem+tail {
 			t.Fatal("subtitle failed to follow video name", item)

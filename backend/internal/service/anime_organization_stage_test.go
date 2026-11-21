@@ -204,7 +204,7 @@ func TestAnimeOrganizationStageDownloadToArchiveAndRestart(t *testing.T) {
 			for _, entry := range d.entries[destination] {
 				gotNames = append(gotNames, entry.Name)
 			}
-			if !reflect.DeepEqual(gotNames, []string{wantStem + ".mkv", wantStem + ".zh-Hans.forced.ass"}) || len(d.entries["200"]) != 1 || d.entries["200"][0].ID != "402" {
+			if !reflect.DeepEqual(gotNames, []string{wantStem + ".mkv", wantStem + ".zh-CN.forced.ass"}) || len(d.entries["200"]) != 1 || d.entries["200"][0].ID != "402" {
 				t.Fatal("incorrect offset, subtitle pairing or original-file move", d.entries)
 			}
 			if d.downloadCreates != 1 || inspects != 1 || submits != 1 || statuses != 1 || d.creates != creates || d.renames != 1 || d.moves != 1 {

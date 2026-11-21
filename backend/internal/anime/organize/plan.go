@@ -10,6 +10,7 @@ import (
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
 	"strm115/backend/internal/releaseparse"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 type Item struct {
@@ -31,7 +32,6 @@ type Plan struct {
 	CloudConflictChecked bool   `json:"cloudConflictChecked"`
 }
 
-func base(v string) string { return strings.TrimSuffix(v, path.Ext(v)) }
 func isVideo(ext string) bool {
 	switch strings.ToLower(ext) {
 	case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg":
@@ -45,27 +45,6 @@ func isSubtitle(ext string) bool {
 		return true
 	}
 	return false
-}
-func subtitleSuffix(sub, video string) (string, bool) {
-	subRunes, videoRunes := []rune(sub), []rune(video)
-	if len(subRunes) < len(videoRunes) || !strings.EqualFold(string(subRunes[:len(videoRunes)]), video) {
-		return "", false
-	}
-	suffix := string(subRunes[len(videoRunes):])
-	if suffix == "" {
-		return "", true
-	}
-	if suffix[0] != '.' {
-		return "", false
-	}
-	for _, tag := range strings.Split(strings.ToLower(suffix[1:]), ".") {
-		switch tag {
-		case "chs", "cht", "sc", "tc", "zh", "zh-cn", "zh-tw", "zh-hans", "zh-hant", "ja", "jp", "jpn", "en", "eng", "forced", "sdh", "default", "简体", "繁体", "简日", "繁日":
-		default:
-			return "", false
-		}
-	}
-	return suffix, true
 }
 
 // Build accepts an already validated manifest from the fixed task directory.
@@ -148,20 +127,20 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			selected[matches[0].ID] = file
 		}
 	}
-	videoIndices := make([]int, 0, videoCount)
+	videoIndices := make(map[string]int, videoCount)
 	subtitleVideos := make([]mediafacts.SubtitleVideo, 0, videoCount)
 	for _, e := range job.Files.Entries {
 		if e.Kind != "file" || !isVideo(path.Ext(e.Name)) {
 			continue
 		}
 		subtitleVideos = append(subtitleVideos, mediafacts.SubtitleVideo{ID: e.ID, ParentID: e.ParentCID, Name: e.Name})
+		videoIndices[e.ID] = len(out.Items)
 		item := Item{ID: e.ID, Kind: "video", OriginalPath: original(e), Status: "needs_review", Reason: "unmapped"}
 		parsed, err := releaseparse.TitleForChapter(e.Name, job.Snapshot.Decision.Rules.SpecialChapter)
 		if batch {
 			file, ok := selected[e.ID]
 			if !ok {
 				item.Status, item.Reason = "preserved", "batch_not_selected"
-				videoIndices = append(videoIndices, len(out.Items))
 				out.Items = append(out.Items, item)
 				continue
 			}
@@ -176,10 +155,19 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		item.Reason = projection.Status
 		if projection.Status == "mapped" {
 			hint := releaseparse.Spec{}
+			var subtitleLanguage, subtitleMode string
 			if videoCount == 1 && !batch {
 				hint = mediafacts.Specification(job.Snapshot.Release.Title)
+				hint.Languages, hint.SubtitleMode = nil, ""
+				subtitleLanguage, subtitleMode = mediafacts.VideoSubtitleFields(job.Snapshot.Release.Title)
 			}
 			values := mediafacts.Values(e.Name, hint, job.Snapshot.Source.GroupName)
+			if values[naming.Languages] == "" {
+				values[naming.Languages] = subtitleLanguage
+			}
+			if values[naming.SubtitleMode] == "" {
+				values[naming.SubtitleMode] = subtitleMode
+			}
 			if directoryVideos[e.ParentCID] == 1 {
 				mediafacts.InheritSubtitles(values, entries[e.ParentCID].Name)
 			}
@@ -194,7 +182,6 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		} else if projection.Status == "ignored" {
 			item.Status = "preserved"
 		}
-		videoIndices = append(videoIndices, len(out.Items))
 		out.Items = append(out.Items, item)
 	}
 	subtitleMatcher := mediafacts.NewSubtitleMatcher(subtitleVideos)
@@ -208,39 +195,20 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			if batch {
 				item.Status, item.Reason = "preserved", "batch_not_selected"
 			}
-			var candidates []int
-			suffix := ""
-			for _, index := range videoIndices {
-				v := out.Items[index]
-				entry := entries[v.ID]
-				s, ok := subtitleSuffix(base(e.Name), base(entry.Name))
-				if entry.ParentCID != e.ParentCID || !ok {
-					continue
-				}
-				candidates, suffix = append(candidates, index), s
-			}
+			candidates, suffix := subtitleMatcher.TaggedStemCandidates(e.ParentCID, e.Name)
 			if len(candidates) == 0 {
-				ids, tail := subtitleMatcher.Candidates(e.ParentCID, e.Name)
-				suffix = tail
-				for _, id := range ids {
-					for _, index := range videoIndices {
-						if out.Items[index].ID == id {
-							candidates = append(candidates, index)
-							break
-						}
-					}
-				}
+				candidates, suffix = subtitleMatcher.Candidates(e.ParentCID, e.Name)
 			}
 			if len(candidates) > 1 {
-				for _, index := range candidates {
-					if !batch || out.Items[index].Status != "preserved" {
+				for _, id := range candidates {
+					if !batch || out.Items[videoIndices[id]].Status != "preserved" {
 						item.Status, item.Reason = "needs_review", "subtitle_unmatched"
 						break
 					}
 				}
 			}
 			if len(candidates) == 1 {
-				v := out.Items[candidates[0]]
+				v := out.Items[videoIndices[candidates[0]]]
 				item.VideoID = v.ID
 				if v.Status == "ready" {
 					result, err := naming.Companion(rendered[v.ID], suffix, e.Name)
@@ -260,6 +228,8 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 		out.Items = append(out.Items, item)
 	}
 	paths := make(map[string]int, len(out.Items))
+	var pairMoves []subtitle.Move
+	var pairIndices []int
 	for i := range out.Items {
 		item := &out.Items[i]
 		if item.TargetPath == "" {
@@ -269,6 +239,11 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			item.Status, item.Reason = "needs_review", "name_too_long"
 			continue
 		}
+		if item.Kind == "subtitle" && subtitle.PairStem(item.TargetPath) != "" {
+			entry := entries[item.ID]
+			pairMoves = append(pairMoves, subtitle.Move{SourceScope: entry.ParentCID, SourceName: entry.Name, Target: item.TargetPath})
+			pairIndices = append(pairIndices, i)
+		}
 		key := strings.ToLower(item.TargetPath)
 		if previous, ok := paths[key]; ok {
 			out.Items[previous].Status, out.Items[previous].Reason = "conflict", "duplicate_target"
@@ -277,13 +252,16 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 			paths[key] = i
 		}
 	}
+	for _, index := range subtitle.PairConflicts(pairMoves) {
+		item := &out.Items[pairIndices[index]]
+		item.Status, item.Reason, item.Error = "conflict", "duplicate_target", "IDX/SUB 目标同名，但来源无法配对"
+	}
 	for i := range out.Items {
 		item := &out.Items[i]
-		if item.VideoID != "" {
-			for _, v := range out.Items {
-				if v.ID == item.VideoID && v.Status != "ready" && (!batch || v.Status != "preserved") {
-					item.Status, item.Reason = "needs_review", "video_needs_review"
-				}
+		if index, ok := videoIndices[item.VideoID]; ok {
+			video := out.Items[index]
+			if video.Status != "ready" && (!batch || video.Status != "preserved") {
+				item.Status, item.Reason = "needs_review", "video_needs_review"
 			}
 		}
 	}

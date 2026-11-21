@@ -146,22 +146,6 @@ export function subtitlePairKey(name: string): string {
   return /\.(idx|sub)$/i.test(name) ? name.replace(/\\/g, '/').replace(/\.(idx|sub)$/i, '').toLowerCase() : ''
 }
 
-export function subtitleLanguage(name: string): string {
-  const tags = [...stem(name).matchAll(/(?:^|[^a-z0-9])SUB(?:TITLE)?S?[ ._:-]*\[([^\[\]]*)\]/gi)]
-  if (!tags.length) return languageFromName(withoutAudioMetadata(stem(name)))
-  const languages = new Set(tags.map(tag => languageFromName(tag[1])))
-  return languages.size === 1 ? [...languages][0] : ''
-}
-
-function languageFromName(name: string): string {
-  if (/中英|(?:chs|cht|sc|tc)[ ._+&/-]+(?:eng|en)(?=$|[^a-z0-9])/i.test(name)) return 'zh-en'
-  if (/简体|簡體|简中|簡中|简日|簡日|chs|zh[._-]cn|(?:^|[._\[ -])(?:sc(?:jp)?|gb)(?=$|[._\] -])/i.test(name)) return 'zh-CN'
-  if (/繁体|繁體|繁中|繁日|cht|zh[._-]tw|(?:^|[._\[ -])(?:tc(?:jp)?|big5)(?=$|[._\] -])/i.test(name)) return 'zh-TW'
-  const english = /英文|(?:^|[^a-z0-9])(?:eng|en)(?=$|[^a-z0-9])/i.test(name)
-  if (/日文|日语|日語|(?:^|[^a-z0-9])(?:jp|jpn|ja)(?=$|[^a-z0-9])/i.test(name)) return english ? '' : 'ja'
-  return english ? 'en' : ''
-}
-
 const crcTable = new Uint32Array(256).map((_, n) => {
   let c = n
   for (let i = 0; i < 8; i++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1

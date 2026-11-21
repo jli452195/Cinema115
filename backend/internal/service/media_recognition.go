@@ -63,28 +63,20 @@ type mediaRecognitionObservation struct {
 }
 
 type mediaRecognitionSearch struct {
-	source            MediaRecognitionSource
-	decision          *MediaRecognitionDecision
-	observations      []*mediaRecognitionObservation
-	details           map[string]*tmdb.Detail
-	detailErrors      map[string]error
-	aliases           map[string][]string
-	aliasErrors       map[string]error
-	detailCalls       int
-	aliasCalls        int
-	queryError        error
-	seasonEvidence    map[mediaRecognitionSeasonKey]mediaRecognitionSeasonEvidence
-	seasonCalls       int
-	seasonRejection   MediaRecognitionDecision
-	seasonContexts    map[int]context.Context
-	undatedMatch      *mediaRecognition
-	undatedBasis      string
-	undatedKey        string
-	undatedTerminal   bool
-	undatedIncomplete bool
-	undatedUncertain  bool
-	undatedSearched   bool
-	yearDiscarded     bool
+	source          MediaRecognitionSource
+	decision        *MediaRecognitionDecision
+	observations    []*mediaRecognitionObservation
+	details         map[string]*tmdb.Detail
+	detailErrors    map[string]error
+	aliases         map[string][]string
+	aliasErrors     map[string]error
+	detailCalls     int
+	aliasCalls      int
+	queryError      error
+	seasonEvidence  map[mediaRecognitionSeasonKey]mediaRecognitionSeasonEvidence
+	seasonCalls     int
+	seasonRejection MediaRecognitionDecision
+	seasonContexts  map[int]context.Context
 }
 
 func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSource, identity mediafacts.Identity) (match *mediaRecognition, decision MediaRecognitionDecision, err error) {
@@ -159,26 +151,19 @@ func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSour
 	}
 	queried := make(map[string]bool, len(queries))
 	searchCalls := 0
-	for queryIndex, query := range queries {
+	fullTitleTruncated := false
+	for _, query := range queries {
 		queryKey := mediafacts.NameKey(query.name)
 		if queryKey == "" || queried[queryKey] {
 			continue
 		}
 		if len(queried) >= mediaRecognitionQueryLimit || searchCalls >= mediaRecognitionSearchLimit {
-			for _, pending := range queries[queryIndex:] {
-				pendingKey := mediafacts.NameKey(pending.name)
-				if pendingKey != "" && !queried[pendingKey] {
-					search.undatedIncomplete = true
-					break
-				}
-			}
 			break
 		}
-		// 数字片名的完整名称优先于备用的年份解释。
-		if !mediaRecognitionUndated(query.identity) && (search.undatedMatch != nil || search.undatedSearched && (search.undatedIncomplete || search.undatedUncertain)) {
-			return search.finishUndated(), decision, nil
+		// 完整数字片名的搜索已被截断时，不将尾部数字改作年份。
+		if fullTitleTruncated && query.name == identity.AlternativeName {
+			continue
 		}
-		search.undatedSearched = search.undatedSearched || mediaRecognitionUndated(query.identity)
 		queried[queryKey] = true
 		seen := make(map[string]bool, mediaRecognitionPageSize)
 		searchKind := kind
@@ -197,8 +182,10 @@ func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSour
 			if page == nil {
 				return nil, decision, fmt.Errorf("TMDB 未返回有效搜索结果")
 			}
-			if len(page.Items) > mediaRecognitionPageSize || page.TotalPages > pageNumber && (pageNumber == mediaRecognitionPageLimit || searchCalls == mediaRecognitionSearchLimit) {
-				search.undatedIncomplete = true
+			hasMorePages := page.TotalPages > pageNumber
+			atSearchLimit := pageNumber == mediaRecognitionPageLimit || searchCalls == mediaRecognitionSearchLimit
+			if identity.AlternativeName != "" && query.name == identity.Name && (len(page.Items) > mediaRecognitionPageSize || hasMorePages && atSearchLimit) {
+				fullTitleTruncated = true
 			}
 			observations := make([]*mediaRecognitionObservation, 0, min(len(page.Items), mediaRecognitionPageSize))
 			for index, item := range page.Items[:min(len(page.Items), mediaRecognitionPageSize)] {
@@ -215,37 +202,22 @@ func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSour
 			if found, matchErr := search.choose(ctx, observations, "exact"); found != nil || matchErr != nil {
 				return found, decision, matchErr
 			}
-			if search.undatedTerminal {
-				return nil, decision, nil
-			}
-			if page.TotalPages <= pageNumber {
+			if !hasMorePages {
 				break
 			}
 		}
-	}
-	if search.undatedMatch != nil {
-		return search.finishUndated(), decision, nil
 	}
 	// 所有已搜索片名的直接结果优先于别名和模糊结果，避免近似首条遮住后续精确命中。
 	for _, mode := range []string{"alias", "fuzzy"} {
 		if found, matchErr := search.choose(ctx, search.observations, mode); found != nil || matchErr != nil {
 			return found, decision, matchErr
 		}
-		if search.undatedTerminal {
-			return nil, decision, nil
-		}
 		if search.queryError != nil {
 			return nil, decision, search.queryError
 		}
-		if mode == "alias" && search.undatedMatch != nil {
-			return search.finishUndated(), decision, nil
-		}
 	}
-	if search.queryError != nil {
-		return nil, decision, search.queryError
-	}
-	if search.undatedSearched && (search.undatedIncomplete || search.undatedUncertain) {
-		search.finishUndated()
+	if fullTitleTruncated {
+		decision.ResultCode, decision.Message = "SEARCH_INCOMPLETE", "完整片名搜索达到查询上限，请指定作品"
 		return nil, decision, nil
 	}
 	if len(search.observations) > 0 {
@@ -255,30 +227,6 @@ func recognizeMediaWithDecision(ctx context.Context, source MediaRecognitionSour
 		}
 	}
 	return nil, decision, nil
-}
-
-func mediaRecognitionUndated(identity mediafacts.Identity) bool {
-	return identity.Year == "" && (identity.TMDBID == 0 || identity.Kind != "tv" && identity.Kind != "movie")
-}
-
-func (s *mediaRecognitionSearch) finishUndated() *mediaRecognition {
-	if s.undatedIncomplete {
-		s.undatedTerminal = true
-		s.decision.ResultCode, s.decision.Message = "SEARCH_INCOMPLETE", "来源没有年份，候选核验达到查询上限，无法确认唯一作品，请指定作品"
-		return nil
-	}
-	if s.undatedUncertain {
-		s.undatedTerminal = true
-		s.decision.ResultCode, s.decision.Message = "CANDIDATE_METADATA_INSUFFICIENT", "来源没有年份，同名候选资料不足，无法确认唯一作品，请指定作品"
-		if s.seasonRejection.ResultCode == "SEASON_METADATA_INSUFFICIENT" {
-			*s.decision = s.seasonRejection
-		}
-		return nil
-	}
-	if s.undatedMatch != nil {
-		s.decision.ResultCode, s.decision.Message = mediaRecognitionBasisCode(s.undatedBasis), "已匹配唯一作品"
-	}
-	return s.undatedMatch
 }
 
 func mediaRecognitionYear(date string) string {

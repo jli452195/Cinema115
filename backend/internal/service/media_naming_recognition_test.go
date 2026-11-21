@@ -107,7 +107,7 @@ func TestDownloadRecognitionSkipsUnneededTitleConflicts(t *testing.T) {
 		t.Fatal("文件已有完整组名和平台时不应受无关标题冲突影响", err)
 	}
 	values := out.Files[0].NamingValues
-	if values[naming.ReleaseGroup] != "ANi" || values[naming.Platform] != "NF" || values[naming.Resolution] != "2160p" || values[naming.Languages] != "简体" {
+	if values[naming.ReleaseGroup] != "ANi" || values[naming.Platform] != "NF" || values[naming.Resolution] != "2160p" || values[naming.Languages] != "zh-CN" {
 		t.Fatal("跳过标题词表不能丢失文件事实或原有规格继承", values)
 	}
 }

@@ -73,7 +73,7 @@ func TestMediaNamingFileFacts(t *testing.T) {
 		want map[naming.Field]string
 	}{
 		{"Movie.2160p.NF.WEB-DL.HEVC.10bit.DV.HDR10.DDP5.1.Atmos.23.976fps.mkv", map[naming.Field]string{naming.Resolution: "2160p", naming.Platform: "NF", naming.Source: "WEB-DL", naming.VideoCodec: "HEVC", naming.BitDepth: "10bit", naming.DynamicRange: "DV HDR10", naming.AudioCodec: "DDP", naming.Channels: "5.1", naming.AudioEffect: "Atmos", naming.FrameRate: "23.976fps"}},
-		{"[沸班亚马制作组] 青之箱 第二季 - 03 [BILIBILI WebRip 2160p H265 Veryslow EAC3][简繁内封字幕].mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEBRip", naming.Resolution: "2160p", naming.VideoCodec: "HEVC", naming.AudioCodec: "DDP", naming.Languages: "简繁", naming.SubtitleMode: "内封"}},
+		{"[沸班亚马制作组] 青之箱 第二季 - 03 [BILIBILI WebRip 2160p H265 Veryslow EAC3][简繁内封字幕].mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEBRip", naming.Resolution: "2160p", naming.VideoCodec: "HEVC", naming.AudioCodec: "DDP", naming.Languages: "zh-CN+zh-TW", naming.SubtitleMode: "softsub"}},
 		{"Show.bilibili.WEB-DL.mkv", map[naming.Field]string{naming.Platform: "BILIBILI", naming.Source: "WEB-DL"}},
 		{"Show.[BiLiBiLi][BILIBILI].mkv", map[naming.Field]string{naming.Platform: "BILIBILI"}},
 		{"Show.NotBILIBILI.BILIBILIPlus.BILIBILI2.mkv", map[naming.Field]string{naming.Platform: ""}},
@@ -98,22 +98,22 @@ func TestMediaNamingSubtitleTags(t *testing.T) {
 	for _, tc := range []struct {
 		name, languages, mode string
 	}{
-		{"[Nix-Raws] VERTEX FORCE S01E01 [CR WEB-DL 1080p AVC AAC][SC_TC].mkv", "简繁", ""},
-		{"xxxx - [简体] GB .mkv", "简体", ""},
-		{"Show - 01 GB.mkv", "简体", ""},
-		{"Show [01][GB][CHS][SC][简体].mkv", "简体", ""},
-		{"Show [01][BIG5][CHT][TC][繁體].mkv", "繁体", ""},
-		{"Show [01][简繁日内封].mkv", "简繁日", "内封"},
-		{"Show [01][简日双语外挂].mkv", "简日", "外挂"},
-		{"Show [01][CHS&CHT][ENG].mkv", "简繁英", ""},
-		{"Show [01][繁体内嵌].mp4", "繁体", "内嵌"},
-		{"Movie [ENG].mkv", "英语", ""},
-		{"Movie [JPN].mkv", "日语", ""},
-		{"海洋奇缘2[国英多音轨+简繁英字幕].2024.mkv", "简繁英", ""},
+		{"[Nix-Raws] VERTEX FORCE S01E01 [CR WEB-DL 1080p AVC AAC][SC_TC].mkv", "zh-CN+zh-TW", ""},
+		{"xxxx - [简体] GB .mkv", "zh-CN", ""},
+		{"Show - 01 GB.mkv", "zh-CN", ""},
+		{"Show [01][GB][CHS][SC][简体].mkv", "zh-CN", ""},
+		{"Show [01][BIG5][CHT][TC][繁體].mkv", "zh-TW", ""},
+		{"Show [01][简繁日内封].mkv", "zh-CN+zh-TW+ja", "softsub"},
+		{"Show [01][简日双语外挂].mkv", "zh-CN+ja", "external"},
+		{"Show [01][CHS&CHT][ENG].mkv", "zh-CN+zh-TW+en", ""},
+		{"Show [01][繁体内嵌].mp4", "zh-TW", "hardsub"},
+		{"Movie [ENG].mkv", "en", ""},
+		{"Movie [JPN].mkv", "ja", ""},
+		{"海洋奇缘2[国英多音轨+简繁英字幕].2024.mkv", "zh-CN+zh-TW+en", ""},
 		{"海洋奇缘2[国英多音轨].2024.mkv", "", ""},
 		{"Movie.2024.[20GB].mkv", "", ""},
 		{"Movie.2024.[20 GB].mkv", "", ""},
-		{"Show [01][20 GB][CHT].mkv", "繁体", ""},
+		{"Show [01][20 GB][CHT].mkv", "zh-TW", ""},
 		{"[简繁字幕组] 每日字幕故事 [01][1080p].mkv", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -125,10 +125,10 @@ func TestMediaNamingSubtitleTags(t *testing.T) {
 	}
 	// Standard codes stay independent of display order and duplicate aliases.
 	hint := DownloadFileSpec{Spec: releaseparse.Spec{Languages: []string{"en", "zh-Hant", "zh-Hans", "zh-Hans"}, SubtitleMode: "soft"}}
-	if got := mediaFileValues("Movie.mkv", hint); got[naming.Languages] != "简繁英" {
+	if got := mediaFileValues("Movie.mkv", hint); got[naming.Languages] != "zh-CN+zh-TW+en" {
 		t.Fatal("duplicate/reordered languages changed the label", got)
 	}
-	if got := mediaFileValues("Movie [简体内嵌].mkv", hint); got[naming.Languages] != "简体" || got[naming.SubtitleMode] != "内嵌" {
+	if got := mediaFileValues("Movie [简体内嵌].mkv", hint); got[naming.Languages] != "zh-CN" || got[naming.SubtitleMode] != "hardsub" {
 		t.Fatal("source hints overrode explicit file tags", got)
 	}
 }
@@ -138,11 +138,11 @@ func TestMediaNamingDirectorySubtitleScope(t *testing.T) {
 		name, directory, filename, languages, mode string
 		peer                                       bool
 	}{
-		{"single film", "/海洋奇缘2[国英多音轨+简繁英字幕]", "Moana.2.2024.mkv", "简繁英", "", false},
-		{"explicit directory mode", "/Movie[简繁英内封]", "Movie.mkv", "简繁英", "内封", false},
+		{"single film", "/海洋奇缘2[国英多音轨+简繁英字幕]", "Moana.2.2024.mkv", "zh-CN+zh-TW+en", "", false},
+		{"explicit directory mode", "/Movie[简繁英内封]", "Movie.mkv", "zh-CN+zh-TW+en", "softsub", false},
 		{"mixed files", "/Movie[简繁英内封]", "Movie.mkv", "", "", true},
-		{"file language wins", "/Movie[简繁英内封]", "Movie[CHS].mkv", "简体", "", false},
-		{"file mode wins", "/Movie[简繁内封]", "Movie[内嵌].mp4", "简繁", "内嵌", false},
+		{"file language wins", "/Movie[简繁英内封]", "Movie[CHS].mkv", "zh-CN", "", false},
+		{"file mode wins", "/Movie[简繁内封]", "Movie[内嵌].mp4", "zh-CN+zh-TW", "hardsub", false},
 		{"no ancestor inheritance", "/Movie[简繁英内封]/1080p", "Movie.mkv", "", "", false},
 		{"audio only", "/Movie[国英多音轨]", "Movie.mkv", "", "", false},
 	} {
@@ -177,7 +177,7 @@ func TestOrganizeNamingSubtitlePreviewMatchesExecution(t *testing.T) {
 	if err != nil || len(preview.Items) != 1 || preview.Items[0].Result == nil {
 		t.Fatal("naming preview", preview, err)
 	}
-	want := "测试作品 (2024).2160p.BluRay.HEVC.x265.10bit.DV HDR.TRUEHD.7.1.Atmos.[简繁英].mkv"
+	want := "测试作品 (2024).2160p.BluRay.HEVC.x265.10bit.DV HDR.TRUEHD.7.1.Atmos.[zh-CN+zh-TW+en].mkv"
 	plan, err := s.buildPlan(context.Background(), scan, OrganizePreviewInput{Kind: "movie", TMDBID: 42, Files: []OrganizeSelection{selection}})
 	if err != nil || len(plan.Items) != 1 || plan.Items[0].Name != want || preview.Items[0].Result.Name != want {
 		t.Fatal("subtitle naming differs between preview and plan", preview, plan, err)
@@ -236,7 +236,7 @@ func TestMediaNamingEnglishTitleEnrichment(t *testing.T) {
 func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	template, _ := naming.Default(naming.TV)
 	template.Directories = nil
-	template.Filename = []naming.Block{{Field: naming.OriginalTitle}, {Field: naming.SeasonEpisode, Separator: "."}, {Field: naming.Resolution, Separator: "."}, {Field: naming.Custom, Separator: "."}}
+	template.Filename = []naming.Block{{Field: naming.OriginalTitle}, {Field: naming.SeasonEpisode, Separator: "."}, {Field: naming.Resolution, Separator: "."}, {Field: naming.Edition, Separator: "."}}
 	templates := &mediaNamingTemplates{record: naming.Snapshot{Revision: 7, Template: template}}
 	metadata := &mediaNamingMetadata{}
 	s := MediaNaming{Templates: templates, Metadata: metadata}
@@ -322,13 +322,21 @@ func TestDownloadNamingSnapshotRootAndRestart(t *testing.T) {
 	if _, err := s.Start(plan.ID); err != nil {
 		t.Fatal(err)
 	}
+	// 旧任务可以带有已退役的字段，继续使用创建时生成的目标路径。
+	doc := s.Organize.doc
+	doc.Jobs = append([]OrganizeJob(nil), doc.Jobs...)
+	doc.Jobs[0] = cloneOrganizeJob(doc.Jobs[0])
+	doc.Jobs[0].Naming.Template.Filename = append(doc.Jobs[0].Naming.Template.Filename, naming.Block{Field: "custom", Separator: "-"})
+	if err := s.Organize.saveLocked(doc); err != nil {
+		t.Fatal(err)
+	}
 	restarted, err := NewOrganizeEngine(s.Organize.store, s.Organize.accounts, drive, s.Organize.metadata, templates)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s = NewDownloadOrganize(restarted, nil, s.Downloads, s.Settings, tracker)
 	job, err := s.Resume(plan.ID)
-	if err != nil || job.Naming.Revision != 2 || job.Naming.Template.Filename[0].Prefix != "" || job.Items[0].Name != want || job.Items[0].Directory != "" {
+	if err != nil || job.Naming.Revision != 2 || len(job.Naming.Template.Filename) != 1 || job.Naming.Template.Filename[0].Prefix != "" || job.Items[0].Name != want || job.Items[0].Directory != "" {
 		t.Fatal("restart changed original intent", job, err)
 	}
 	pending := s.live[job.ID]

@@ -97,7 +97,10 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules recognition.Snapshot) error {
 	for i := range out.Files {
 		spec := out.Specs[out.Files[i].ID]
-		values, err := mediafacts.ValuesWithRecognition(out.Files[i].Name, spec.Spec, rules)
+		fileSpec := spec.Spec
+		// 清单规格来自同一文件名，字幕由命名规则单独判定，避免把音轨标签重新填回。
+		fileSpec.Languages, fileSpec.SubtitleMode = nil, ""
+		values, err := mediafacts.ValuesWithRecognition(out.Files[i].Name, fileSpec, rules)
 		if err != nil {
 			return fmt.Errorf("%s：%w", out.Files[i].Name, err)
 		}
@@ -123,7 +126,12 @@ func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules r
 			spec.Languages = title.Languages
 		}
 		// 文件名和固定词表没有变化，只补充规格，复用首轮已校验的发布组与平台。
-		values := mediafacts.ValuesWithRecognizedRelease(out.Files[0].Name, spec.Spec, out.Files[0].NamingValues)
+		fileSpec := spec.Spec
+		fileSpec.Languages, fileSpec.SubtitleMode = nil, ""
+		values := mediafacts.ValuesWithRecognizedRelease(out.Files[0].Name, fileSpec, out.Files[0].NamingValues)
+		if out.Files[0].NamingValues[naming.Languages] == "" {
+			values[naming.Languages], _ = mediafacts.VideoSubtitleFields(in.Title)
+		}
 		// 保留原有规格继承范围，发布标题只额外补充缺失的组名和平台。
 		if values[naming.ReleaseGroup] == "" || values[naming.Platform] == "" {
 			titleValues, err := mediafacts.ValuesWithRecognition(in.Title, spec.Spec, rules)
@@ -274,7 +282,7 @@ func (s *DownloadOrganize) previewResources(ctx context.Context, common Download
 	for _, indexes := range targets {
 		if len(indexes) > 1 {
 			for _, i := range indexes {
-				combined.Items[i].Conflict = "本次多个文件目标同名，请调整自定义标记或季集号"
+				combined.Items[i].Conflict = "本次多个文件目标同名，请核对季集编号或命名模板"
 			}
 		}
 	}

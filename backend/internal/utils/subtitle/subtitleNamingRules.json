@@ -1,0 +1,33 @@
+{
+  "languages": {
+    "zh-CN": ["zh-cn", "zh-hans", "chs", "sc", "gb", "简体", "簡體", "简中", "簡中", "简体中文", "簡體中文"],
+    "zh-TW": ["zh-tw", "zh-hant", "cht", "tc", "big5", "繁体", "繁體", "繁中", "繁体中文", "繁體中文"],
+    "zh-HK": ["zh-hk"],
+    "zh-SG": ["zh-sg"],
+    "zh": ["zh"],
+    "ja": ["ja", "jp", "jpn", "日文", "日语", "日語"],
+    "en": ["en", "eng", "英文"]
+  },
+  "bilingual": {
+    "bilingual": {
+      "zh": ["zh-en", "中英", "中英双语", "中英雙語"]
+    },
+    "bilingual-ja": {
+      "zh-CN": ["scjp", "简日", "簡日", "简日双语", "簡日雙語"],
+      "zh-TW": ["tcjp", "繁日", "繁日双语", "繁日雙語"]
+    }
+  },
+  "variants": {
+    "bilingual": ["bilingual", "双语", "雙語"],
+    "bilingual-ja": ["bilingual-ja"],
+    "effects": ["effects", "特效", "特效字幕"],
+    "commentary": ["commentary", "评论字幕", "評論字幕"],
+    "lyrics": ["lyrics", "歌词", "歌詞"]
+  },
+  "flags": {
+    "forced": ["forced", "foreign"],
+    "sdh": ["sdh", "cc", "hi"],
+    "default": ["default"]
+  },
+  "flagsRequiringLanguage": ["hi"]
+}

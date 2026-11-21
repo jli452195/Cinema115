@@ -144,14 +144,13 @@ func (s *mediaRecognitionSearch) rejectSeason(code, message string) {
 }
 
 func (s *mediaRecognitionSearch) season(ctx context.Context, identity mediafacts.Identity, detail *tmdb.Detail, names []string, year string) (int, bool, error) {
-	if (mediaRecognitionUndated(identity) || s.yearDiscarded) && year == "" && detail.Kind == "tv" && identity.SeasonExplicit {
+	if year == "" && detail.Kind == "tv" && identity.SeasonExplicit {
 		for _, season := range detail.Seasons {
 			if season.Number == identity.Season {
 				return identity.Season, true, nil
 			}
 		}
 		if len(detail.Seasons) == 0 {
-			s.undatedUncertain = true
 			s.rejectSeason("SEASON_METADATA_INSUFFICIENT", "来源没有年份，候选缺少季资料，无法核对明确季号，请指定作品")
 		} else {
 			s.rejectSeason("SEASON_MISMATCH", "候选不包含来源声明的季号，请核对作品")

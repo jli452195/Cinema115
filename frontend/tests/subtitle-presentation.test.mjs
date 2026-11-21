@@ -12,11 +12,11 @@ function load(name) {
   const module = { exports: {} }
   cache.set(name, module.exports)
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
-  new Function('require', 'module', 'exports', compiled)(path => path.startsWith('./') ? load(path.slice(2)) : require(path), module, module.exports)
+  new Function('require', 'module', 'exports', compiled)(path => path.endsWith('.json') ? { default: require(`../src/utils/${path}`) } : path.startsWith('./') ? load(path.slice(2)) : require(path), module, module.exports)
   return module.exports
 }
 const { subtitleVariantHint, subtitleScopeKey, subtitleVariantGroups, subtitleOutputConflicts } = load('subtitlePresentation')
-const { subtitleTargetName } = load('subtitleLibrary')
+const { subtitleTargetName } = load('subtitleNaming')
 const video = (episode, season = 1, id = `${season}:${episode}`) => ({ id, name: `Yuyushiki.S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}.mkv`, season, episode })
 const row = (key, name, overrides = {}) => ({ key: String(key), file: { name }, videoId: '', language: '', version: '', selected: false, reason: '', ...overrides })
 const videos = Array.from({ length: 12 }, (_, i) => video(i + 1))

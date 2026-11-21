@@ -59,13 +59,16 @@ func TestMediaOrganizerLocalSameTarget(t *testing.T) {
 				if !reflect.DeepEqual(entry.File, original.File) || entry.Group != original.Group || entry.Relative != original.Relative || entry.Target != original.Target {
 					t.Fatal("冲突处理不能改变识别、命名或附件归属", original, entry)
 				}
-				expected := "done"
-				if entry.File.ID != other {
+				expected, expectedCode := "done", ""
+				if entry.File.MediaType == "subtitle" {
+					// 同一目标对应不同来源字幕，提前保留双方待核对。
+					expected, expectedCode = "conflict", mediaSubtitleCollisionCode
+				} else if entry.File.ID != other {
 					isFirst := strings.HasPrefix(entry.File.SourcePath, "a/")
 					failed := scenario == "first succeeds" && !isFirst || scenario == "first source changed" && isFirst || scenario == "target already exists" || scenario == "target appears after scan"
 					if failed {
-						expected = "conflict"
-						if entry.File.MediaType != "video" || scenario == "first source changed" {
+						expected, expectedCode = "conflict", "TARGET_EXISTS"
+						if scenario == "first source changed" {
 							expected = "error"
 						}
 					}
@@ -73,7 +76,7 @@ func TestMediaOrganizerLocalSameTarget(t *testing.T) {
 				if entry.Status != expected {
 					t.Fatalf("%s: expected %s, got %+v", entry.File.ID, expected, entry)
 				}
-				if expected == "conflict" && entry.ResultCode != "TARGET_EXISTS" {
+				if expected == "conflict" && entry.ResultCode != expectedCode {
 					t.Fatal("执行时冲突与预检使用相同结果码", entry)
 				}
 				source := filepath.Join(rule.Source, filepath.FromSlash(entry.File.SourcePath))

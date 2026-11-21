@@ -334,10 +334,13 @@ func TestDownloadSubtitleNamingScopes(t *testing.T) {
 		name, title, file, languages string
 		peer                         bool
 	}{
-		{"explicit file", "[简繁内封]", "Show/Show.S01E01.[简体].mkv", "简体", false},
-		{"directory", "", "Movie[国英多音轨+简繁英字幕]/Movie.mkv", "简繁英", false},
-		{"directory before post", "Movie[简繁英内封]", "Movie[CHS]/Movie.mkv", "简体", false},
-		{"post title", "Movie[国英多音轨+简繁英字幕]", "Movie/Movie.mkv", "简繁英", false},
+		{"explicit file", "[简繁内封]", "Show/Show.S01E01.[简体].mkv", "zh-CN", false},
+		{"directory", "", "Movie[国英多音轨+简繁英字幕]/Movie.mkv", "zh-CN+zh-TW+en", false},
+		{"directory before post", "Movie[简繁英内封]", "Movie[CHS]/Movie.mkv", "zh-CN", false},
+		{"post title", "Movie[国英多音轨+简繁英字幕]", "Movie/Movie.mkv", "zh-CN+zh-TW+en", false},
+		{"post title region", "Movie[zh-HK]", "Movie/Movie.mkv", "zh-HK", false},
+		{"audio label in file", "", "Movie/Movie.AAC[简繁].mkv", "", false},
+		{"audio label in post", "Movie AAC[简繁]", "Movie/Movie.mkv", "", false},
 		{"size is not GB subtitles", "", "Movie/Movie.[20 GB].mkv", "", false},
 		{"mixed directory", "Movie[简繁英字幕]", "Movie[简繁英字幕]/Movie.mkv", "", true},
 	} {

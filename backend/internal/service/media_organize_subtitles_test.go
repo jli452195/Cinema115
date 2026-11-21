@@ -19,14 +19,14 @@ func TestMediaOrganizeSubtitlesAcrossDirectories(t *testing.T) {
 		videos                              []OrganizeFile
 	}{
 		{"arbitrary nested directory", "xxx.xxx.ass", "custom/nested", "video", "", nil},
-		{"language suffix in sibling directory", "xxx.xxx.chs.ass", "other", "video", ".chs", nil},
-		{"case insensitive", "XXX.XXX.CHS.ASS", "other", "video", ".CHS", nil},
+		{"language suffix in sibling directory", "xxx.xxx.chs.ass", "other", "video", ".zh-CN", nil},
+		{"case insensitive", "XXX.XXX.CHS.ASS", "other", "video", ".zh-CN", nil},
 		{"unrelated filename", "other.xxx.chs.ass", "other", "", "", nil},
 		{"prefix without separator", "xxx.xxx2.ass", "other", "", "", nil},
 		{"full stem with language-like ending", "xxx.xxx.chs.ass", "other", "longer", "", []OrganizeFile{mediaSubtitleTestFile("longer", "versions", "xxx.xxx.chs.mkv", "video")}},
-		{"ambiguous cross directory videos", "xxx.xxx.chs.ass", "other", "", ".chs", []OrganizeFile{mediaSubtitleTestFile("duplicate", "versions", "xxx.xxx.mp4", "video")}},
-		{"same directory wins", "xxx.xxx.chs.ass", "videos", "video", ".chs", []OrganizeFile{mediaSubtitleTestFile("longer", "versions", "xxx.xxx.chs.mkv", "video")}},
-		{"same directory ambiguity is retained", "xxx.xxx.chs.ass", "videos", "", ".chs", []OrganizeFile{mediaSubtitleTestFile("duplicate", "videos", "xxx.xxx.mp4", "video"), mediaSubtitleTestFile("longer", "versions", "xxx.xxx.chs.mkv", "video")}},
+		{"ambiguous cross directory videos", "xxx.xxx.chs.ass", "other", "", ".zh-CN", []OrganizeFile{mediaSubtitleTestFile("duplicate", "versions", "xxx.xxx.mp4", "video")}},
+		{"same directory wins", "xxx.xxx.chs.ass", "videos", "video", ".zh-CN", []OrganizeFile{mediaSubtitleTestFile("longer", "versions", "xxx.xxx.chs.mkv", "video")}},
+		{"same directory ambiguity is retained", "xxx.xxx.chs.ass", "videos", "", ".zh-CN", []OrganizeFile{mediaSubtitleTestFile("duplicate", "videos", "xxx.xxx.mp4", "video"), mediaSubtitleTestFile("longer", "versions", "xxx.xxx.chs.mkv", "video")}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			files := []OrganizeFile{mediaSubtitleTestFile("video", "videos", "xxx.xxx.mkv", "video")}
@@ -56,7 +56,7 @@ func TestMediaOrganizeSubtitlesKeepsWeakMatchingInSameDirectory(t *testing.T) {
 		files := []OrganizeFile{video, mediaSubtitleTestFile("sub", parent, "[Show][02][CHT].ass", "subtitle")}
 		got := mediaOrganizeSubtitles(files)
 		if parent == "videos" {
-			if got[0].VideoID != "video" || got[0].Tail != ".zh-Hant" {
+			if got[0].VideoID != "video" || got[0].Tail != ".zh-TW" {
 				t.Fatal("同目录现有匹配规则应继续生效", got)
 			}
 		} else if got[0].VideoID != "" {
@@ -68,7 +68,7 @@ func TestMediaOrganizeSubtitlesKeepsWeakMatchingInSameDirectory(t *testing.T) {
 		mediaSubtitleTestFile("cross", "imported", "[Show][02][CHT].mkv", "video"),
 		mediaSubtitleTestFile("sub", "videos", "[Show][02][CHT].ass", "subtitle"),
 	}
-	if got := mediaOrganizeSubtitles(files); got[0].VideoID != video.ID || got[0].Tail != ".zh-Hant" {
+	if got := mediaOrganizeSubtitles(files); got[0].VideoID != video.ID || got[0].Tail != ".zh-TW" {
 		t.Fatal("已有同目录归属应优先于跨目录同名视频", got)
 	}
 }

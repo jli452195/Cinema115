@@ -9,6 +9,7 @@ import (
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 // buildPlan is shared by actual cloud scans and pre-download website lists.
@@ -85,9 +86,15 @@ func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 		return files, err
 	}
 	targetNames := make(map[string][]int)
+	var pairMoves []subtitle.Move
+	var pairIndices []int
 	for i := range job.Items {
 		item := &job.Items[i]
 		targetNames[strings.ToLower(item.TargetPath)] = append(targetNames[strings.ToLower(item.TargetPath)], i)
+		if item.File.MediaType == "subtitle" && subtitle.PairStem(item.Name) != "" {
+			pairMoves = append(pairMoves, subtitle.Move{SourceScope: item.File.ParentID, SourceName: item.File.Name, Target: item.TargetPath})
+			pairIndices = append(pairIndices, i)
+		}
 		cid := job.Config.TargetCID
 		for _, part := range strings.Split(item.Directory, "/") {
 			if part == "" {
@@ -139,9 +146,12 @@ func (s *OrganizeEngine) checkPlan(ctx context.Context, job *OrganizeJob, cookie
 	for _, indexes := range targetNames {
 		if len(indexes) > 1 {
 			for _, i := range indexes {
-				job.Items[i].Conflict = "本次多个文件的目标同名，请调整自定义标记或季集号"
+				job.Items[i].Conflict = "本次多个文件目标同名，请核对季集编号或命名模板"
 			}
 		}
+	}
+	for _, index := range subtitle.PairConflicts(pairMoves) {
+		job.Items[pairIndices[index]].Conflict = "IDX/SUB 目标同名，但来源无法配对"
 	}
 	return nil
 }

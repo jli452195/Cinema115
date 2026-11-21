@@ -117,6 +117,54 @@ func TestMediaAttachmentCopySuffixKeepsExplicitVideoVersion(t *testing.T) {
 	}
 }
 
+func TestMediaSubtitlePlanKeepsCollidingOriginsForReview(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		first  string
+		second string
+		suffix string
+	}{
+		{"语言别名", "Work.chs.ass", "Work.zh-CN.ass", ".ass"},
+		{"配对语言别名", "Work.chs.idx", "Work.zh-CN.sub", ".sub"},
+		{"配对复制编号", "Work.chs.idx", "Work.chs(1).sub", ".sub"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := MediaOrganizeRun{Rule: MediaOrganizeRule{Failure: "/失败"}, Groups: []MediaOrganizeGroup{{ID: "1", Kind: "tv", TMDBID: 42}}, Entries: []MediaOrganizeEntry{
+				{File: OrganizeFile{ShareFile: p115.ShareFile{ID: "video", Name: "Work.mkv"}, MediaType: "video"}, Group: "1", Relative: "Work.mkv", Status: "done"},
+				{File: mediaSubtitleTestFile("one", "source", tc.first, "subtitle"), Group: "1", VideoID: "video", Relative: "Work.zh-CN" + path.Ext(tc.first), Status: "ready"},
+				{File: mediaSubtitleTestFile("two", "source", tc.second, "subtitle"), Group: "1", VideoID: "video", Relative: "Work.zh-CN" + tc.suffix, Status: "ready"},
+			}}
+			mediaPlanAttachmentChoices(&run)
+			quarantine := mediaFailureEntries(&run)
+			for _, entry := range run.Entries[1:] {
+				if entry.Status != "conflict" || entry.ResultCode != mediaSubtitleCollisionCode || entry.AttachmentKeep != nil || quarantine[entry.File.ID] {
+					t.Fatal("重名字幕应保留原处，且不进入回收或失败搬运", entry)
+				}
+			}
+		})
+	}
+}
+
+func TestMediaSubtitleTargetRequiresCopyOrKnownOrigin(t *testing.T) {
+	entry := MediaOrganizeEntry{File: mediaSubtitleTestFile("one", "source", "Work.chs.ass", "subtitle"), Group: "1", VideoID: "video", Relative: "Work.zh-CN.ass"}
+	video := MediaOrganizeEntry{File: mediaSubtitleTestFile("video", "source", "Work.mkv", "video"), Relative: "Work.mkv"}
+	run := MediaOrganizeRun{Rule: MediaOrganizeRule{Storage: "115"}, Entries: []MediaOrganizeEntry{video}}
+	targets := []MediaAttachmentFileSnapshot{{ID: "target", Name: "Work.zh-CN.ass", Size: 12}}
+	if mediaAttachmentTarget(&run, entry, targets) != nil || !mediaSubtitleTargetConflict(&run, entry, targets) {
+		t.Fatal("仅凭归一化后的同一字幕角色不能回收来源")
+	}
+	entry.File.Name, entry.Relative = "Work.chs.sub", "Work.zh-CN.sub"
+	targets[0].Name = "Work.zh-CN.idx"
+	if !mediaSubtitleTargetConflict(&run, entry, targets) {
+		t.Fatal("现有目标索引的来源未知，不能拼成新字幕对")
+	}
+	index := MediaOrganizeEntry{File: mediaSubtitleTestFile("target", "source", "Work.chs.idx", "subtitle"), VideoID: "video", Status: "done", Relative: "Work.zh-CN.idx"}
+	run.Entries = append(run.Entries, index)
+	if mediaSubtitleTargetConflict(&run, entry, targets) {
+		t.Fatal("同任务的原配索引已确认时，应允许继续整理 SUB")
+	}
+}
+
 func TestMediaAttachmentLocalTargetRootCanKeepExistingFile(t *testing.T) {
 	s, _, _, rule := newMediaOrganizeTest(t)
 	mediaTestFile(t, rule.Source, "Work.S01E01(1).nfo", "来源附件")

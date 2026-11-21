@@ -138,8 +138,8 @@ func TestMediaRecognitionShortUndatedTitleAndFirstEligible(t *testing.T) {
 		// 别名有界查询目前只看前 3 个排名，本样本将另一条放入该范围。
 		f.items = []tmdb.Item{f.items[0], other.Item}
 		match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: "Nanatsu no Taizai", Kind: "tv", Season: 1})
-		if err != nil || match != nil || decision.ResultCode != "AMBIGUOUS_TITLE" {
-			t.Fatalf("无年份同别名作品必须等待人工选择: match=%+v decision=%+v err=%v", match, decision, err)
+		if err != nil || match == nil || match.Detail.ID != f.items[0].ID || decision.ResultCode != "ALIAS_EXACT" {
+			t.Fatalf("无年份时应匹配首个合格别名: match=%+v decision=%+v err=%v", match, decision, err)
 		}
 	})
 }
@@ -253,8 +253,12 @@ func TestMediaRecognitionQueryErrorsDoNotBecomeNoResult(t *testing.T) {
 			)
 			f.detailError["movie:"+strconv.Itoa(failedID)] = context.DeadlineExceeded
 			match, decision, err := recognizeMediaWithDecision(context.Background(), f, mediafacts.Identity{Name: "Known Film", Kind: "movie", Season: 1})
-			if match != nil || !errors.Is(err, context.DeadlineExceeded) || decision.ResultCode != "METADATA_QUERY_FAILED" {
-				t.Fatalf("无年份相关候选未核实，不能断言唯一作品: %+v %+v %v", match, decision, err)
+			if failedID == 1 {
+				if match != nil || !errors.Is(err, context.DeadlineExceeded) || decision.ResultCode != "METADATA_QUERY_FAILED" || f.detailCalls != 1 {
+					t.Fatalf("候选查询错误不可视作不合格: %+v %+v %v", match, decision, err)
+				}
+			} else if err != nil || match == nil || match.Detail.ID != 1 || decision.ResultCode != "TITLE_EXACT" || f.detailCalls != 1 {
+				t.Fatalf("首个候选合格后应停止核验: %+v %+v %v", match, decision, err)
 			}
 		})
 	}

@@ -1,5 +1,5 @@
-import { episodeNumber, isSubtitle, subtitleLanguage, type SubtitleMatchRow, type SubtitleMatchVideo } from './subtitleImport'
-import { subtitleTargetName } from './subtitleLibrary'
+import { episodeNumber, isSubtitle, type SubtitleMatchRow, type SubtitleMatchVideo } from './subtitleImport'
+import { subtitleMetadata, subtitleTargetName } from './subtitleNaming'
 
 export type SubtitlePresentationRow = SubtitleMatchRow & {
   versionId?: string
@@ -29,14 +29,16 @@ export interface SubtitleOutputConflict {
 const normalized = (path: string) => path.replace(/\\/g, '/')
 const basename = (path: string) => normalized(path).split('/').pop() || ''
 const directory = (path: string) => normalized(path).split('/').slice(0, -1).join('/')
-const nonVariant = /^(?:MULTI|DUAL|BILINGUAL|SDH|FORCED|DEFAULT|UTF|UTFBOM|ANSI|ASCII|GBK|BIG|HANS|HANT|CHS|CHT|CHN|SCJP|TCJP|JAP|ESP|FIL|YUE|CMN|NAN|WUU|HAK|AAC|FLAC|ALAC|EAC|DDP|DTS|TRUEHD|OPUS|PCM|AVC|HEVC|XVID|DIVX|HDR|HDRIP|SDR|DOVI|UHD|FHD|BDRIP|BLURAY|DVD|DVDRIP|WEB|WEBDL|WEBRIP|HDTV|REMUX|RAW|LOSSLESS|PROPER|REPACK|FINAL|REV|REVISION|VER|VERSION)$/
+const nonVariant = /^(?:MULTI|DUAL|UTF|UTFBOM|ANSI|ASCII|GBK|BIG|HANS|HANT|CHN|JAP|ESP|FIL|YUE|CMN|NAN|WUU|HAK|AAC|FLAC|ALAC|EAC|DDP|DTS|TRUEHD|OPUS|PCM|AVC|HEVC|XVID|DIVX|HDR|HDRIP|SDR|DOVI|UHD|FHD|BDRIP|BLURAY|DVD|DVDRIP|WEB|WEBDL|WEBRIP|HDTV|REMUX|RAW|LOSSLESS|PROPER|REPACK|FINAL|REV|REVISION|VER|VERSION)$/
 
 export function subtitleVariantHint(name: string): string {
   const file = basename(name)
   if (!isSubtitle(file)) return ''
   // 只认紧邻扩展名、由句点独立分隔的大写字母；不越过语言等后缀找标记。
   const hint = file.match(/\.([A-Z]{3,12})\.[^.]+$/)?.[1] || ''
-  if (!hint || nonVariant.test(hint) || subtitleLanguage(hint) || isSubtitle(`.${hint}`)) return ''
+  if (!hint || nonVariant.test(hint) || isSubtitle(`.${hint}`)) return ''
+  const metadata = subtitleMetadata(hint)
+  if (metadata.language || metadata.variants.length || metadata.flags.length) return ''
   // 两字母标记不识别；三字母语言别名沿用标准归一化，避免把 FRA、NLD 等当成版本。
   if (hint.length === 3 && new Intl.Locale(hint.toLowerCase()).language.length === 2) return ''
   // 纯十六进制片段更可能是校验值；数字、年份、编码和修订号已被字母规则排除。

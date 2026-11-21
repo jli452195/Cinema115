@@ -58,14 +58,14 @@ func TestDownloadRecognitionReusedFileTagsKeepInheritanceOrder(t *testing.T) {
 	cases := []struct {
 		name, file, title, group, platform, languages, mode, resolution string
 	}{
-		{"目录字幕优先于标题", "Show [繁体][内封]/[LoliHouse] Show [01].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][简体][2160p]", "LoliHouse", "NF", "繁体", "内封", "2160p"},
-		{"文件字幕优先于目录", "Show [繁体][内封]/[LoliHouse] Show [01][简体][内嵌][1080p].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][2160p]", "LoliHouse", "NF", "简体", "内嵌", "1080p"},
-		{"文件平台保留并补组名", "Show [01][NF WEB-DL].mkv", "[喵萌奶茶屋] Show [01][IQ WEB-DL][简体][2160p]", "喵萌奶茶屋", "NF", "简体", "", "2160p"},
-		{"标题补平台不覆盖组名", "[LoliHouse] Show [01].mkv", "[喵萌奶茶屋] Show [01][iQIYI WEB-DL][繁体][1080p]", "LoliHouse", "IQ", "繁体", "", "1080p"},
-		{"未映射组名保留命中原文", "[lOLIHOUSE] Show [01].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][简体][1080p]", "lOLIHOUSE", "NF", "简体", "", "1080p"},
-		{"文件多平台不能漏出旧平台结果", "[LoliHouse] Show [01][NF IQ WEB-DL].mkv", "Show [01][简体][1080p]", "LoliHouse", "", "简体", "", "1080p"},
-		{"文件多平台允许标题补唯一平台", "[LoliHouse] Show [01][NF IQ WEB-DL].mkv", "Show [01][NF WEB-DL][繁体][1080p]", "LoliHouse", "NF", "繁体", "", "1080p"},
-		{"无匹配维持空发布信息", "Show [01].mkv", "Show [01][简体][1080p]", "", "", "简体", "", "1080p"},
+		{"目录字幕优先于标题", "Show [繁体][内封]/[LoliHouse] Show [01].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][简体][2160p]", "LoliHouse", "NF", "zh-TW", "softsub", "2160p"},
+		{"文件字幕优先于目录", "Show [繁体][内封]/[LoliHouse] Show [01][简体][内嵌][1080p].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][2160p]", "LoliHouse", "NF", "zh-CN", "hardsub", "1080p"},
+		{"文件平台保留并补组名", "Show [01][NF WEB-DL].mkv", "[喵萌奶茶屋] Show [01][IQ WEB-DL][简体][2160p]", "喵萌奶茶屋", "NF", "zh-CN", "", "2160p"},
+		{"标题补平台不覆盖组名", "[LoliHouse] Show [01].mkv", "[喵萌奶茶屋] Show [01][iQIYI WEB-DL][繁体][1080p]", "LoliHouse", "IQ", "zh-TW", "", "1080p"},
+		{"未映射组名保留命中原文", "[lOLIHOUSE] Show [01].mkv", "[喵萌奶茶屋] Show [01][NF WEB-DL][简体][1080p]", "lOLIHOUSE", "NF", "zh-CN", "", "1080p"},
+		{"文件多平台不能漏出旧平台结果", "[LoliHouse] Show [01][NF IQ WEB-DL].mkv", "Show [01][简体][1080p]", "LoliHouse", "", "zh-CN", "", "1080p"},
+		{"文件多平台允许标题补唯一平台", "[LoliHouse] Show [01][NF IQ WEB-DL].mkv", "Show [01][NF WEB-DL][繁体][1080p]", "LoliHouse", "NF", "zh-TW", "", "1080p"},
+		{"无匹配维持空发布信息", "Show [01].mkv", "Show [01][简体][1080p]", "", "", "zh-CN", "", "1080p"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

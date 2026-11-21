@@ -23,7 +23,7 @@ func TestOrganizeBracketSubtitlesFollowVideo(t *testing.T) {
 		t.Fatal("preview lost subtitles or wrote to drive", plan)
 	}
 	stem := strings.TrimSuffix(plan.Items[0].Name, ".mkv")
-	if plan.Items[1].Name != stem+".zh-Hant.ass" || plan.Items[2].Name != stem+".zh-Hans.ass" {
+	if plan.Items[1].Name != stem+".zh-TW.ass" || plan.Items[2].Name != stem+".zh-CN.ass" {
 		t.Fatal("subtitle language or shared video stem lost", plan.Items)
 	}
 	job := organizeTestRun(t, s, account, plan)
@@ -56,7 +56,7 @@ func TestTorrentOrganizeBracketSubtitleMapping(t *testing.T) {
 	}
 	for _, sub := range files.Subtitles {
 		if sub.File.ParentID == "release" {
-			if sub.VideoID != files.Files[0].ID || sub.Tail != ".zh-Hant" {
+			if sub.VideoID != files.Files[0].ID || sub.Tail != ".zh-TW" {
 				t.Fatal("torrent manifest did not reuse subtitle matching", sub)
 			}
 		} else if sub.VideoID != "" {
@@ -105,7 +105,7 @@ func TestAnimeOrganizeBracketSubtitlesAndCleanup(t *testing.T) {
 				t.Fatal("subtitle fallback changed request count or cleanup", op.Progress, drive)
 			}
 			stem := strings.TrimSuffix(drive.entries["902"][0].Name, ".mkv")
-			if !strings.Contains(stem, "S01E02") || path.Ext(drive.entries["902"][0].Name) != ".mkv" || drive.entries["902"][1].Name != stem+".zh-Hant.ass" {
+			if !strings.Contains(stem, "S01E02") || path.Ext(drive.entries["902"][0].Name) != ".mkv" || drive.entries["902"][1].Name != stem+".zh-TW.ass" {
 				t.Fatal("subtitle did not follow the final organized video name", drive.entries["902"])
 			}
 		})

@@ -47,14 +47,15 @@ const origin = new URL(process.env.CINEMA_URL || 'http://127.0.0.1:5173').origin
         const rows = reactive(Array.from({length:count}, (_,i) => ({key:String(i), file:{name:'Show.S01E'+String(Math.floor(i/2)+1).padStart(3,'0')+(i%2?'.cht':'.chs')+'.ass'}, videoId:String(Math.floor(i/2)+1), language:i%2?'zh-TW':'zh-CN', version:'', selected:false, reason:''})));
         window.fixture = { rows, videos, nextTick };
         const start = performance.now();
-        app = createApp({render:()=>h(SubtitleMatchList, {rows, videos, targetNames:{}})});
+        const stem = 'Show.S01E001.1080p.[zh-CN+zh-TW].softsub';
+        app = createApp({render:()=>h(SubtitleMatchList, {rows, videos, targets:{'1':{name:stem+'.mkv',stem}}})});
         app.mount('#app'); await nextTick(); await new Promise(requestAnimationFrame);
         return {count, mountMs:Math.round(performance.now()-start), renderedRows:document.querySelectorAll('.match-files>li').length, options:document.querySelectorAll('option').length};
       };
       window.mountPicker = async (videoCount) => {
         app?.unmount(); window.applied = null;
         const videos = Array.from({length:videoCount}, (_,i)=>({id:String(i+1), name:'YuYuHakusho.S01E'+String(i+1).padStart(3,'0')+'.mkv', season:1, episode:i+1}));
-        app = createApp({render:()=>h(SubtitlePickerDialog, {token:'fixture', kind:'tv', animationLibrary:true, title:'幽游白书', videos, targetNames:{}, library:[], local:[], onSelect:(library, local)=>{ window.applied = {library, local:local.map(({file,videoId,language})=>({name:file.name,videoId,language,bytes:file.data.length}))}; }})});
+        app = createApp({render:()=>h(SubtitlePickerDialog, {token:'fixture', kind:'tv', animationLibrary:true, title:'幽游白书', videos, targets:{}, library:[], local:[], onSelect:(library, local)=>{ window.applied = {library, local:local.map(({file,videoId,language})=>({name:file.name,videoId,language,bytes:file.data.length}))}; }})});
         app.mount('#app'); await nextTick();
       };
       window.ready = true;
@@ -68,6 +69,7 @@ const origin = new URL(process.env.CINEMA_URL || 'http://127.0.0.1:5173').origin
       assert(result.options < 26000, '每页最多渲染 25 组视频选项')
       assert.equal(await page.locator('.match-editor').count(),0,'默认紧凑行不挂载编辑控件')
       assert.equal(await page.getByRole('combobox').count(),1,'默认只展示语言筛选，避免为每行创建视频选项')
+      assert.equal(await page.getByText('整理后：Show.S01E001.1080p.[zh-CN+zh-TW].softsub.zh-CN.ass', {exact:true}).count(), 1)
       timings.push(result)
       await button('全选已匹配').click()
       assert.equal(await page.evaluate(() => window.fixture.rows.filter(row=>row.selected).length), count, '选择覆盖全部分页')

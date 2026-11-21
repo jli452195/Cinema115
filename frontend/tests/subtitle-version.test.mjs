@@ -20,14 +20,14 @@ function moduleLoader(mocks = {}) {
       codeCache.set(file, ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText)
     }
     const module = { exports: {} }
-    const resolve = id => mocks[id] || (id.endsWith('.vue') ? { default: {} } : id.startsWith('.') ? load(path.resolve(path.dirname(file), `${id}.ts`)) : require(id))
+    const resolve = id => mocks[id] || (id.endsWith('.vue') ? { default: {} } : id.endsWith('.json') ? { default: require(path.resolve(path.dirname(file), id)) } : id.startsWith('.') ? load(path.resolve(path.dirname(file), `${id}.ts`)) : require(id))
     new Function('require', 'module', 'exports', codeCache.get(file))(resolve, module, module.exports)
     modules.set(file, module.exports)
     return module.exports
   }
 }
 const sourceFile = name => fileURLToPath(new URL(`../src/${name}`, import.meta.url))
-const { subtitleTargetName } = moduleLoader()(sourceFile('utils/subtitleLibrary.ts'))
+const { subtitleTargetName } = moduleLoader()(sourceFile('utils/subtitleNaming.ts'))
 const renderer = createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, patchProp() {}, parentNode: () => null, nextSibling: () => null })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const hash = index => (index ? 'b' : 'a').repeat(40)
@@ -103,15 +103,26 @@ async function harness(t, { batch = false, seasons = [1], rename = false } = {})
   return { state, requests }
 }
 
-test('字幕命名按用户确认版本、语言、扩展名输出，空版本保留原格式', () => {
+test('字幕命名按语言、用户确认版本、变体和标志输出', () => {
   for (const [version, language, expected] of [
-    ['HKG', 'zh-CN', 'Show.S01E01.HKG.zh-CN.ass'],
-    ['KTXP', 'zh-CN', 'Show.S01E01.KTXP.zh-CN.ass'],
+    ['HKG', 'zh-CN', 'Show.S01E01.zh-CN.HKG.ass'],
+    ['KTXP', 'zh-CN', 'Show.S01E01.zh-CN.KTXP.ass'],
     ['HKG', '', 'Show.S01E01.HKG.ass'],
     ['', 'zh-TW', 'Show.S01E01.zh-TW.ass'],
     ['', '', 'Show.S01E01.ass'],
-  ]) assert.equal(subtitleTargetName('Show.S01E01.mkv', '字幕目录/01.ASS', language, version), expected)
-  for (const ext of ['IDX', 'SUB']) assert.equal(subtitleTargetName('Show.mkv', `01.${ext}`, 'zh-CN', 'KTXP'), `Show.KTXP.zh-CN.${ext.toLowerCase()}`)
+  ]) assert.equal(subtitleTargetName('Show.S01E01', '字幕目录/01.ASS', language, version), expected)
+  for (const ext of ['IDX', 'SUB']) assert.equal(subtitleTargetName('Show', `01.CHS.CC.${ext}`, 'zh-CN', 'KTXP'), `Show.zh-CN.KTXP.sdh.${ext.toLowerCase()}`)
+  assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.[CHS+ENG].特效.Default.CC.Foreign.ASS', 'CHS', 'HKG'), 'Show.S01E01.zh-CN.HKG.bilingual.effects.forced.sdh.default.ass')
+  assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.zh-Hant.hi.srt', '', ''), 'Show.S01E01.sdh.srt')
+  assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.zh-HK.srt', 'zh-HK'), 'Show.S01E01.zh-HK.srt')
+  assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.srt', 'zh-en'), 'Show.S01E01.zh.bilingual.srt')
+  assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.CHS+ENG.SUB[jpn].effects.ass', 'ja'), 'Show.S01E01.ja.effects.ass')
+})
+
+test('前后端使用相同的字幕别名表和输出顺序', () => {
+  const frontend = readFileSync(new URL('../src/utils/subtitleNamingRules.json', import.meta.url), 'utf8')
+  const backend = readFileSync(new URL('../../backend/internal/utils/subtitle/subtitleNamingRules.json', import.meta.url), 'utf8')
+  assert.equal(frontend.replace(/\r\n/g, '\n'), backend.replace(/\r\n/g, '\n'))
 })
 
 test('单资源真实请求同时传递字幕库和本地版本，保留主账号、摘要与附件安全边界', async t => {
@@ -135,7 +146,7 @@ test('单资源真实请求同时传递字幕库和本地版本，保留主账�
   assert.equal(upload.body.get('previewId'), 'preview-1')
   assert.equal(upload.body.get('c'.repeat(32)).size, 3)
   assert.deepEqual(requests.find(request => request.endpoint === 'download-organize/jobs').body, { previewId: 'preview-1' })
-  assert.deepEqual(s.selectedExternal.map(s.externalName), ['Show.S01E01.HKG.zh-CN.ass', 'Show.S01E01.KTXP.zh-CN.ass', 'Show.S01E01.KTXP.en.vtt'])
+  assert.deepEqual(s.selectedExternal.map(s.externalName), ['Show.S01E01.zh-CN.HKG.ass', 'Show.S01E01.zh-CN.KTXP.ass', 'Show.S01E01.en.KTXP.vtt'])
 })
 
 test('只修改字幕库版本会改变快照并重新预览，正式命名回显继续带版本', async t => {
@@ -145,15 +156,15 @@ test('只修改字幕库版本会改变快照并重新预览，正式命名回�
   const before = s.snapshotKey
   await s.start()
   assert.match(s.notice, /最终命名有变化/)
-  assert.equal(s.externalName(s.selectedLibrary[0]), 'Official.Show.S01E01.HKG.zh-CN.ass')
+  assert.equal(s.externalName(s.selectedLibrary[0]), 'Official.Show.S01E01.zh-CN.HKG.ass')
   s.externalSubtitles[0].version = 'KTXP'
   assert.notEqual(s.snapshotKey, before)
-  assert.equal(s.externalName(s.selectedLibrary[0]), 'Show.S01E01.KTXP.zh-CN.ass')
+  assert.equal(s.externalName(s.selectedLibrary[0]), 'Show.S01E01.zh-CN.KTXP.ass')
   await s.start()
   const previews = requests.filter(request => request.endpoint.endsWith('/preview'))
   assert.equal(previews.length, 2)
   assert.deepEqual(previews.map(request => request.body.subtitles[0].version), ['HKG', 'KTXP'])
-  assert.equal(s.externalName(s.selectedLibrary[0]), 'Official.Show.S01E01.KTXP.zh-CN.ass')
+  assert.equal(s.externalName(s.selectedLibrary[0]), 'Official.Show.S01E01.zh-CN.KTXP.ass')
   assert.equal(requests.some(request => request.endpoint.endsWith('/jobs')), false)
 })
 

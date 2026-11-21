@@ -44,9 +44,9 @@ func TestDefaultNames(t *testing.T) {
 			naming.Title: "电影", naming.Year: "2026", naming.TMDBID: "123", naming.Resolution: "2160p",
 			naming.Source: "WEB-DL", naming.Platform: "NF", naming.VideoCodec: "HEVC", naming.BitDepth: "10bit",
 			naming.DynamicRange: "DV HDR10", naming.FrameRate: "24fps", naming.AudioCodec: "TrueHD",
-			naming.Channels: "7.1", naming.AudioEffect: "Atmos", naming.Languages: "简繁", naming.SubtitleMode: "外挂",
-			naming.Edition: "导演剪辑版", naming.ReleaseGroup: "Group", naming.Custom: "Remux",
-		}, OriginalName: "original.MKV"}, "电影 (2026) {tmdb-123}/电影 (2026).2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.TrueHD.7.1.Atmos.[简繁].外挂.导演剪辑版-Group-Remux.mkv"},
+			naming.Channels: "7.1", naming.AudioEffect: "Atmos", naming.Languages: "zh-CN+zh-TW", naming.SubtitleMode: "external",
+			naming.Edition: "导演剪辑版", naming.ReleaseGroup: "Group",
+		}, OriginalName: "original.MKV"}, "电影 (2026) {tmdb-123}/电影 (2026).2160p.WEB-DL.NF.HEVC.10bit.DV HDR10.24fps.TrueHD.7.1.Atmos.[zh-CN+zh-TW].external.导演剪辑版-Group.mkv"},
 		{"movie without metadata or specifications", naming.Movie, naming.Data{Values: map[naming.Field]string{
 			naming.Title: "电影",
 		}, OriginalName: "original.mp4"}, "电影/电影.mp4"},
@@ -129,7 +129,7 @@ func TestOptionalDecorationsAndOrdering(t *testing.T) {
 
 func TestOriginalNameAndProtectedExtension(t *testing.T) {
 	renderer := compile(t, naming.Template{Kind: naming.Movie, Filename: []naming.Block{
-		{Field: naming.OriginalName}, {Field: naming.Custom, Separator: "-"},
+		{Field: naming.OriginalName}, {Field: naming.Edition, Separator: "-"},
 	}})
 	for _, example := range []struct {
 		source    string
@@ -140,10 +140,36 @@ func TestOriginalNameAndProtectedExtension(t *testing.T) {
 		{"Movie.2026.1080p", true, "Movie.2026.1080p-修正"},
 		{"Movie", false, "Movie-修正"},
 	} {
-		got, err := renderer.Render(naming.Data{OriginalName: example.source, TitleOnly: example.titleOnly, Values: map[naming.Field]string{naming.Custom: "修正"}})
+		got, err := renderer.Render(naming.Data{OriginalName: example.source, TitleOnly: example.titleOnly, Values: map[naming.Field]string{naming.Edition: "修正"}})
 		if err != nil || got.Name != example.want {
 			t.Fatalf("%q: %+v, %v; want %s", example.source, got, err, example.want)
 		}
+	}
+}
+
+func TestStoredTemplateDropsRetiredCustomField(t *testing.T) {
+	raw := `{"revision":4,"template":{"kind":"tv","directories":[[{"field":"custom"}],[{"field":"title","prefix":"作品 "},{"field":"custom"}]],"filename":[{"field":"seasonEpisode"},{"field":"custom","separator":"-"},{"field":"releaseGroup","separator":"-"}]}}`
+	var snapshot naming.Snapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Template.DropRetiredFields()
+	want := naming.Snapshot{Revision: 4, Template: naming.Template{
+		Kind:        naming.TV,
+		Directories: [][]naming.Block{{{Field: naming.Title, Prefix: "作品 "}}},
+		Filename:    []naming.Block{{Field: naming.SeasonEpisode}, {Field: naming.ReleaseGroup, Separator: "-"}},
+	}}
+	if !reflect.DeepEqual(snapshot, want) {
+		t.Fatalf("snapshot = %+v, want %+v", snapshot, want)
+	}
+	got, err := compile(t, snapshot.Template).Render(naming.Data{
+		Values:       map[naming.Field]string{naming.Title: "剧集", naming.ReleaseGroup: "Group"},
+		OriginalName: "source.mkv",
+		Season:       integer(1),
+		Episode:      integer(2),
+	})
+	if err != nil || got.RelativePath != "作品 剧集/S01E02-Group.mkv" {
+		t.Fatalf("render = %+v, %v", got, err)
 	}
 }
 
@@ -217,6 +243,7 @@ func TestRejectInvalidTemplates(t *testing.T) {
 		{"too many directories", func(p *naming.Template) { p.Directories = make([][]naming.Block, 5) }},
 		{"too many blocks", func(p *naming.Template) { p.Filename = make([]naming.Block, 33) }},
 		{"unknown field", func(p *naming.Template) { p.Filename[0].Field = "unsupported" }},
+		{"retired custom field", func(p *naming.Template) { p.Filename[0].Field = "custom" }},
 		{"extension is not editable", func(p *naming.Template) { p.Filename[0].Field = "extension" }},
 		{"duplicate field", func(p *naming.Template) { p.Filename = append(p.Filename, p.Filename[0]) }},
 		{"tv field in movie", func(p *naming.Template) { p.Filename = append(p.Filename, naming.Block{Field: naming.EpisodeTitle}) }},
@@ -262,7 +289,7 @@ func TestRejectInvalidData(t *testing.T) {
 		{"unknown field", func(d *naming.Data) { d.Values["guess"] = "SDR" }},
 		{"computed field override", func(d *naming.Data) { d.Values[naming.SeasonEpisode] = "S01E99" }},
 		{"original name override", func(d *naming.Data) { d.Values[naming.OriginalName] = "fake.mkv" }},
-		{"oversized value", func(d *naming.Data) { d.Values[naming.Custom] = strings.Repeat("a", 4097) }},
+		{"oversized value", func(d *naming.Data) { d.Values[naming.Edition] = strings.Repeat("a", 4097) }},
 		{"oversized output directory", func(d *naming.Data) { d.Values[naming.Title] = strings.Repeat("a", 241) }},
 		{"invalid utf8", func(d *naming.Data) { d.Values[naming.Title] = string([]byte{0xff}) }},
 		{"source is a path", func(d *naming.Data) { d.OriginalName = "../file.mkv" }},

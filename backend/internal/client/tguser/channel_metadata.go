@@ -259,6 +259,7 @@ func channelFacts(text string) map[naming.Field]string {
 	// Values performs the shared title/spec scan once and also extracts the
 	// filename quality tokens; avoid a second independent parse here.
 	values := mediafacts.Values(text, releaseparse.Spec{}, "")
+	values[naming.Languages], values[naming.SubtitleMode] = mediafacts.VideoSubtitleDisplayLabels(values[naming.Languages], values[naming.SubtitleMode])
 	// 发布组和自定义平台复用当前词表；冲突只留空，不根据文件后缀猜发布组。
 	if recognized, err := recognition.Current().Recognize(text); err == nil {
 		groupsConflict, platformsConflict := false, false

@@ -138,7 +138,7 @@ func TestMediaOrganizerRecursiveSameNameSubtitles(t *testing.T) {
 		for _, tc := range []struct {
 			name, video, subtitle, tail string
 		}{
-			{"arbitrary nested directory", "Season 1/" + stem + ".mkv", "Season 1/补充资料/中文/" + stem + ".chs.ass", ".chs"},
+			{"arbitrary nested directory", "Season 1/" + stem + ".mkv", "Season 1/补充资料/中文/" + stem + ".chs.ass", ".zh-CN"},
 			{"subtitle scanned first", "z-video/" + stem + ".mkv", "a-import/" + stem + ".ass", ""},
 		} {
 			t.Run(storage+"/"+tc.name, func(t *testing.T) {
@@ -200,7 +200,7 @@ func TestMediaOrganizerRecursiveLateSubtitleUsesVideoMapping(t *testing.T) {
 			var target string
 			for _, entry := range first.Entries {
 				if entry.File.MediaType == "video" && entry.Status == "done" {
-					target = strings.TrimSuffix(entry.Target, path.Ext(entry.Target)) + ".chs.ass"
+					target = strings.TrimSuffix(entry.Target, path.Ext(entry.Target)) + ".zh-CN.ass"
 				}
 			}
 			if target == "" {

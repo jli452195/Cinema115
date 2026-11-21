@@ -38,6 +38,26 @@ export interface MediaState { rules: MediaRule[]; active: boolean; activeRules: 
 export interface MediaLocalDirectoryPage {
   path: string; parentPath: string | null; directories: { name: string; path: string }[]; truncated: boolean
 }
+export interface MediaNamePreviewWork {
+  id: number
+  kind: 'movie' | 'tv'
+  title: string
+  date?: string
+  posterUrl?: string
+  overview?: string
+}
+export interface MediaNamePreview {
+  source: string
+  title?: string
+  year?: string
+  season?: number
+  episode?: number
+  endEpisode?: number
+  specifications?: Record<string, string>
+  message?: string
+  work?: MediaNamePreviewWork
+  relativePath?: string
+}
 export class MediaOrganizeRequestError extends Error {
   constructor(message: string, readonly status: number) { super(message); this.name = 'MediaOrganizeRequestError' }
 }
@@ -47,6 +67,10 @@ export async function mediaOrganizeRequest<T>(token: string, path = '', init: Re
   const data = await response.json().catch(() => null)
   if (!response.ok || !data) throw new MediaOrganizeRequestError(data?.error || `请求失败（HTTP ${response.status}）`, response.status)
   return data as T
+}
+
+export function previewMediaName(token: string, name: string, signal: AbortSignal) {
+  return mediaOrganizeRequest<MediaNamePreview>(token, '/name-preview', { method: 'POST', body: JSON.stringify({ name }), signal })
 }
 
 export async function mediaOrganizeHistoryEvents(token: string, signal: AbortSignal, changed: (event: 'ready' | 'changed') => void): Promise<void> {

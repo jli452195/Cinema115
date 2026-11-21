@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import { IconFileSearch } from '@tabler/icons-vue'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import NavigationIcon from './NavigationIcon.vue'
 import { isPortalAdmin, portalUser } from '../composables/usePortalAuth'
 import { openNetworkConnectionTest } from '../composables/useNetworkConnectionTest'
+import { openMediaNamePreview } from '../composables/useMediaNamePreview'
 import { websiteUnread } from '../composables/useWebsiteNotifications'
 import { isAccountLinkActive, type AccountLink } from '../utils/accountNavigation'
 
@@ -61,8 +63,12 @@ function logout() {
           </RouterLink>
         </div>
 
-        <div v-if="isPortalAdmin" class="account-group connection-test-utility">
-          <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
+        <div v-if="isPortalAdmin" class="account-group" role="group" aria-label="管理员工具">
+          <button type="button" class="account-row" aria-haspopup="dialog" @click="emit('close'); openMediaNamePreview()">
+            <IconFileSearch class="account-icon" aria-hidden="true" />
+            <span>名称识别测试</span>
+          </button>
+          <button type="button" class="account-row connection-test-utility" aria-haspopup="dialog" @click="emit('close'); openNetworkConnectionTest()">
             <svg class="account-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" /></svg>
             <span>服务连通性</span>
           </button>

@@ -17,11 +17,14 @@ import (
 
 	"strm115/backend/internal/client/clouddrive2"
 	"strm115/backend/internal/client/p115"
+	"strm115/backend/internal/utils/subtitle"
 )
 
 var mediaAttachmentCopySuffix = regexp.MustCompile(`\s*[(（][1-9][0-9]{0,2}[)）]$`)
 
 var errMediaAttachmentCheckpoint = errors.New("保存附件执行状态失败")
+
+const mediaSubtitleCollisionCode = "SUBTITLE_NAME_COLLISION"
 
 // 附件选择只在本次运行中缓存，来源与保留项快照仅用于当次身份核验。
 type MediaAttachmentKeepIntent struct {
@@ -74,6 +77,9 @@ func mediaSidecar(entry MediaOrganizeEntry) bool {
 
 func mediaAttachmentSameDestinationRole(entry MediaOrganizeEntry, name string) bool {
 	if !mediaSidecar(entry) || entry.VideoID == "" || entry.Group == "" || entry.Relative == "" {
+		return false
+	}
+	if entry.File.MediaType == "subtitle" && (mediaSubtitlePairStem(entry.Relative) != "" || !mediaAttachmentIsCopy(entry.File.Name)) {
 		return false
 	}
 	expected, actual := mediaAttachmentCanonicalName(path.Base(entry.Relative)), mediaAttachmentCanonicalName(name)
@@ -216,6 +222,9 @@ func mediaAttachmentChoiceKey(run *MediaOrganizeRun, entry MediaOrganizeEntry) s
 	if !mediaSidecar(entry) || entry.VideoID == "" || entry.Relative == "" {
 		return ""
 	}
+	if entry.File.MediaType == "subtitle" && mediaSubtitlePairStem(entry.Relative) != "" {
+		return ""
+	}
 	work := ""
 	for _, group := range run.Groups {
 		if group.ID == entry.Group && group.TMDBID > 0 && (group.Kind == "tv" || group.Kind == "movie") {
@@ -239,9 +248,67 @@ func mediaNewAttachmentKeep(rule MediaOrganizeRule, entry MediaOrganizeEntry, ke
 		ConnectionID: rule.ConnectionID, ConnectionRevision: rule.ConnectionRevision, SourceRoot: rule.Source, TargetRoot: rule.Target, Relative: entry.Relative}
 }
 
+func mediaSubtitlePairStem(name string) string {
+	return strings.ToLower(subtitle.PairStem(name))
+}
+
+func mediaSubtitleSourceKey(entry MediaOrganizeEntry) string {
+	name := mediaAttachmentCanonicalName(entry.File.Name)
+	if mediaSubtitlePairStem(entry.Relative) != "" {
+		// IDX 和 SUB 必须保留原来的配对主干，包括末尾的复制编号。
+		name = mediaSubtitlePairStem(entry.File.Name)
+	}
+	return entry.VideoID + "\x00" + entry.File.ParentID + "\x00" + strings.ToLower(name)
+}
+
+func mediaMarkSubtitleConflict(entry *MediaOrganizeEntry) {
+	entry.AttachmentKeep = nil
+	entry.Status, entry.ResultCode, entry.Message = "conflict", mediaSubtitleCollisionCode, "字幕目标名称冲突，已保留来源待核对"
+}
+
+// 即使属于不同视频，写向同一目标的不同来源也不能参与附件留一回收。
+func mediaPlanSubtitleCollisions(run *MediaOrganizeRun) map[string]bool {
+	groups := make(map[string][]int, len(run.Entries))
+	for i, entry := range run.Entries {
+		if entry.File.MediaType != "subtitle" || entry.Relative == "" {
+			continue
+		}
+		key := strings.ToLower(entry.Relative)
+		if stem := mediaSubtitlePairStem(entry.Relative); stem != "" {
+			key = stem + "\x00"
+		}
+		groups[key] = append(groups[key], i)
+	}
+	conflicts := make(map[string]bool)
+	for _, indices := range groups {
+		if len(indices) < 2 {
+			continue
+		}
+		first := run.Entries[indices[0]]
+		source := mediaSubtitleSourceKey(first)
+		conflict := mediaSubtitlePairStem(first.Relative) != "" &&
+			(len(indices) != 2 || strings.EqualFold(path.Ext(first.Relative), path.Ext(run.Entries[indices[1]].Relative)) ||
+				subtitle.PairStem(first.Relative) != subtitle.PairStem(run.Entries[indices[1]].Relative))
+		for _, index := range indices[1:] {
+			conflict = conflict || mediaSubtitleSourceKey(run.Entries[index]) != source
+		}
+		if !conflict {
+			continue
+		}
+		for _, index := range indices {
+			entry := &run.Entries[index]
+			if entry.Status != "done" && entry.P115Move == nil && entry.CD2Current == nil && mediaInRunTask(run, *entry) {
+				mediaMarkSubtitleConflict(entry)
+				conflicts[entry.File.ID] = true
+			}
+		}
+	}
+	return conflicts
+}
+
 // 同角色同格式只选一份，正常原名优先；未识别的标签与不同视频身份仍各自独立。
-func mediaPlanAttachmentChoices(run *MediaOrganizeRun) bool {
-	changed := false
+func mediaPlanAttachmentChoices(run *MediaOrganizeRun) map[string]bool {
+	conflicts := mediaPlanSubtitleCollisions(run)
 	groups := make(map[string][]int)
 	for i, entry := range run.Entries {
 		if entry.Status != "ready" && entry.Status != "error" || entry.P115Move != nil || entry.AttachmentKeep != nil || !mediaInRunTask(run, entry) {
@@ -252,6 +319,12 @@ func mediaPlanAttachmentChoices(run *MediaOrganizeRun) bool {
 		}
 	}
 	for key, indices := range groups {
+		first := run.Entries[indices[0]]
+		if first.File.MediaType == "subtitle" && slices.ContainsFunc(indices[1:], func(index int) bool {
+			return mediaSubtitleSourceKey(run.Entries[index]) != mediaSubtitleSourceKey(first)
+		}) {
+			continue
+		}
 		slices.SortFunc(indices, func(a, b int) int {
 			left, right := run.Entries[a].File, run.Entries[b].File
 			leftCopy, rightCopy := mediaAttachmentCopyForEntry(run, run.Entries[a], left.Name, false), mediaAttachmentCopyForEntry(run, run.Entries[b], right.Name, false)
@@ -267,10 +340,9 @@ func mediaPlanAttachmentChoices(run *MediaOrganizeRun) bool {
 			entry := &run.Entries[index]
 			entry.AttachmentKeep = mediaNewAttachmentKeep(run.Rule, *entry, key)
 			entry.AttachmentKeep.KeeperID = run.Entries[indices[0]].File.ID
-			changed = true
 		}
 	}
-	return changed
+	return conflicts
 }
 
 func mediaAttachmentSnapshotCD2(file clouddrive2.File) MediaAttachmentFileSnapshot {
@@ -402,6 +474,15 @@ func (f *mediaOrganizeFiles) attachmentTargets(ctx context.Context, entry MediaO
 }
 
 func mediaAttachmentTarget(run *MediaOrganizeRun, entry MediaOrganizeEntry, targets []MediaAttachmentFileSnapshot) *MediaAttachmentFileSnapshot {
+	isSubtitle := entry.File.MediaType == "subtitle"
+	if isSubtitle && mediaSubtitlePairStem(entry.Relative) != "" {
+		return nil
+	}
+	explicitCopy := isSubtitle && mediaAttachmentCopyForEntry(run, entry, entry.File.Name, false)
+	keeperID := ""
+	if entry.AttachmentKeep != nil {
+		keeperID = entry.AttachmentKeep.KeeperID
+	}
 	role := mediaAttachmentRoleName(run, entry, path.Base(entry.Relative))
 	matches := make([]MediaAttachmentFileSnapshot, 0)
 	for _, file := range targets {
@@ -409,6 +490,9 @@ func mediaAttachmentTarget(run *MediaOrganizeRun, entry MediaOrganizeEntry, targ
 			continue
 		}
 		if run.Rule.Storage == "115" && file.ID == entry.File.ID || run.Rule.Storage == "cd2" && file.ID == entry.CD2FileID {
+			continue
+		}
+		if isSubtitle && (!explicitCopy || keeperID != "") && !mediaSubtitleKnownTarget(run, entry, file, keeperID) {
 			continue
 		}
 		matches = append(matches, file)
@@ -429,6 +513,50 @@ func mediaAttachmentTarget(run *MediaOrganizeRun, entry MediaOrganizeEntry, targ
 	return &matches[0]
 }
 
+func mediaSubtitleKnownTarget(run *MediaOrganizeRun, entry MediaOrganizeEntry, target MediaAttachmentFileSnapshot, keeperID string) bool {
+	relative := path.Join(path.Dir(entry.Relative), target.Name)
+	source := mediaSubtitleSourceKey(entry)
+	return slices.ContainsFunc(run.Entries, func(other MediaOrganizeEntry) bool {
+		if other.File.MediaType != "subtitle" || other.Status != "done" || other.File.ID == entry.File.ID ||
+			keeperID != "" && other.File.ID != keeperID || !strings.EqualFold(other.Relative, relative) || mediaSubtitleSourceKey(other) != source {
+			return false
+		}
+		switch run.Rule.Storage {
+		case "115":
+			return target.ID == other.File.ID
+		case "cd2":
+			return target.ID == other.CD2FileID
+		default:
+			return target.ID == other.LocalIdentity
+		}
+	})
+}
+
+// 已在同一任务中完成的配对成员可以用于恢复另一半，其他文件必须人工核对。
+func mediaSubtitleTargetConflict(run *MediaOrganizeRun, entry MediaOrganizeEntry, targets []MediaAttachmentFileSnapshot) bool {
+	name := path.Base(entry.Relative)
+	stem := mediaSubtitlePairStem(name)
+	for _, target := range targets {
+		sameName := strings.EqualFold(name, target.Name)
+		if !sameName && (stem == "" || mediaSubtitlePairStem(target.Name) != stem) {
+			continue
+		}
+		if run.Rule.Storage == "115" && target.ID == entry.File.ID || run.Rule.Storage == "cd2" && target.ID == entry.CD2FileID {
+			continue
+		}
+		if stem == "" && run.Rule.DeleteDuplicates &&
+			(run.Rule.Storage == "115" && media115SameSHA1(entry, p115.ShareFile{ID: target.ID, SHA1: target.SHA1}) ||
+				run.Rule.Storage == "cd2" && mediaCD2SameSHA1(entry, clouddrive2.File{Hashes: target.Hashes})) {
+			continue
+		}
+		if !sameName && mediaSubtitleKnownTarget(run, entry, target, "") {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // 每次重试重新选择，只列已命名附件的精确目标目录。
 func (s *MediaOrganizer) prepareAttachmentChoices(ctx context.Context, files *mediaOrganizeFiles, run *MediaOrganizeRun) (choiceErr error) {
 	clear := func() {
@@ -444,12 +572,16 @@ func (s *MediaOrganizer) prepareAttachmentChoices(ctx context.Context, files *me
 			clear()
 		}
 	}()
-	mediaPlanAttachmentChoices(run)
+	conflicts := mediaPlanAttachmentChoices(run)
 	targets := make(map[string][]MediaAttachmentFileSnapshot)
 	for i := range run.Entries {
 		entry := &run.Entries[i]
+		isSubtitle := entry.File.MediaType == "subtitle" && entry.Relative != ""
 		key := mediaAttachmentChoiceKey(run, *entry)
-		if key == "" || entry.Status == "done" || entry.P115Move != nil || !mediaInRunTask(run, *entry) {
+		if key == "" && !isSubtitle || entry.Status == "done" || entry.P115Move != nil || entry.CD2Current != nil || !mediaInRunTask(run, *entry) {
+			continue
+		}
+		if conflicts[entry.File.ID] {
 			continue
 		}
 		directory := path.Dir(entry.Relative)
@@ -462,13 +594,23 @@ func (s *MediaOrganizer) prepareAttachmentChoices(ctx context.Context, files *me
 			}
 			targets[directory] = children
 		}
-		if keep := mediaAttachmentTarget(run, *entry, children); keep != nil {
+		var keep *MediaAttachmentFileSnapshot
+		if key != "" {
+			keep = mediaAttachmentTarget(run, *entry, children)
+		}
+		if keep != nil {
 			if entry.AttachmentKeep != nil && entry.AttachmentKeep.Keep != nil && mediaAttachmentIntentMatches(run, *entry) && mediaAttachmentSnapshotEqual(*entry.AttachmentKeep.Keep, *keep) {
 				continue
 			}
 			entry.AttachmentKeep = mediaNewAttachmentKeep(run.Rule, *entry, key)
 			entry.AttachmentKeep.Keep = keep
 			entry.AttachmentKeep.Phase = "selected"
+		} else if isSubtitle && mediaSubtitleTargetConflict(run, *entry, children) {
+			mediaMarkSubtitleConflict(entry)
+			continue
+		}
+		if entry.ResultCode == mediaSubtitleCollisionCode {
+			entry.Status, entry.ResultCode, entry.Message = "ready", "", ""
 		}
 	}
 	return nil
@@ -713,6 +855,9 @@ func (s *MediaOrganizer) executeAttachmentChoice(ctx context.Context, files *med
 	}
 	var verifiedKeep *MediaAttachmentFileSnapshot
 	if entry.AttachmentKeep == nil {
+		if entry.File.MediaType == "subtitle" && !mediaAttachmentCopyForEntry(run, *entry, entry.File.Name, false) {
+			return false, nil
+		}
 		targets, err := files.attachmentTargets(ctx, *entry)
 		if err != nil {
 			return true, err

@@ -8,6 +8,7 @@ import PaginationControl from '../components/PaginationControl.vue'
 import SegmentedControl from '../components/SegmentedControl.vue'
 import { useMediaOrganizeHistoryUpdates } from '../composables/useMediaOrganizeHistoryUpdates'
 import { mediaProgressSeconds } from '../lib/media-organize-progress'
+import { mediaSpecificationLabels, mediaSpecificationValue } from '../utils/mediaSpecificationLabels'
 import { mediaOrganizeRequest, MediaOrganizeRequestError, type MediaHistory, type MediaHistoryItem, type MediaHistoryStatus, type MediaTask, type MediaGroup, type MediaEntry, type MediaRetryBatch, type MediaBatchRetryResult, type MediaState } from '../lib/media-organize-api'
 
 const props = defineProps<{ token: string }>()
@@ -39,8 +40,10 @@ const detailLoading = ref('')
 const primary = computed(() => current.value?.entries.find(entry => entry.file.id === current.value?.fileId))
 const attachments = computed(() => current.value?.entries.filter(entry => entry.file.id !== current.value?.fileId) || [])
 const taskProcessing = computed(() => !!current.value && (running(current.value.status) || !current.value.canDelete && !current.value.canRetry))
-const specificationLabels: Record<string, string> = { resolution: '分辨率', source: '资源来源', sourceMedium: '来源介质', sourceModifier: '来源修饰', platform: '平台', videoCodec: '视频编码', encoder: '编码器', bitDepth: '位深', dynamicRange: '动态范围', dvProfile: 'DV Profile', dvLayer: 'DV 层', hdrBaseLayer: 'HDR 基础层', dvMetadata: 'DV 元数据', frameRate: '帧率', scanType: '扫描方式', frameRateMode: '帧率模式', container: '容器', audioCodec: '音频编码', channels: '声道', audioEffect: '音效', languages: '字幕语言', subtitleMode: '字幕形式', releaseGroup: '发布组', edition: '版本', custom: '自定义标记' }
-const specifications = computed(() => Object.entries(primary.value?.file.namingValues || {}).filter(([field, value]) => specificationLabels[field] && value.trim()).map(([field, value]) => ({ label: specificationLabels[field], value })))
+const specifications = computed(() => Object.entries(primary.value?.file.namingValues || {}).flatMap(([field, raw]) => {
+  const label = mediaSpecificationLabels[field], value = raw.trim()
+  return label && value ? [{ label, value: mediaSpecificationValue(field, value) }] : []
+}))
 const workSummary = computed(() => { const task = current.value; if (!task) return ''; const group = task.group, file = primary.value?.file; return group.tmdbId ? [group.kind === 'movie' ? '电影' : '剧集', group.year, `TMDB ${group.tmdbId}`, episodeLabel({ kind: group.kind, season: file?.season ?? task.season, episode: file?.episode ?? task.episode, episodeExplicit: file?.episodeExplicit ?? task.episodeExplicit, endEpisode: file?.endEpisode })].filter(Boolean).join(' · ') : group.message })
 const editable = computed(() => primary.value?.status !== 'done')
 const dirty = computed(() => !!current.value && editable.value && taskSignature(current.value) !== taskSnapshot.value)
