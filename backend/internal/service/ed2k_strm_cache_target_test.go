@@ -214,13 +214,23 @@ func TestED2KSTRMRestoreReusesExistingFileBeforeOpeningNewDirectory(t *testing.T
 				return &p115.DownloadInfo{FileID: v.FileID, SHA1: v.SHA1, Size: v.Size, Name: v.Name}, nil
 			}
 			f.client.find = func(string, string) (*p115.DrivePlaybackFile, error) { return nil, nil }
-			f.client.dirs = map[string]p115.DriveDirectory{
-				"84": {CID: "84", ParentCID: "9", Name: "新缓存"},
-				"11": {CID: "11", ParentCID: "42", Name: "ed2k-" + v.Hash + "-1234"},
+			parent := p115.DriveDirectory{CID: "84", ParentCID: "9", Name: "新缓存"}
+			f.client.directory = func(cid, _ string) (p115.DriveDirectory, error) {
+				if cid == "11" {
+					return p115.DriveDirectory{}, errors.New("旧目录列表返回网盘根目录")
+				}
+				return parent, nil
+			}
+			f.client.missing = func(string, string) (bool, error) { return false, nil }
+			f.client.listing = func(cid, _ string) (p115.DriveDirectory, []p115.ShareFile, error) {
+				if cid != parent.CID {
+					t.Fatalf("完整读取了错误父目录：%s", cid)
+				}
+				return parent, nil, nil
 			}
 			f.client.create = func(parent, child, _ string) (string, error) {
 				stored, err := f.store.GetED2KSTRMResource(ctx, v.Hash, v.Size)
-				if err != nil || parent != "84" || child != "ed2k-"+v.Hash+"-1234" || stored.CacheParentCID != "84" || stored.FileID != "" || !stored.DirectoryPending {
+				if err != nil || parent != "84" || child != "ed2k-"+v.Hash+"-1234" || stored.CacheParentCID != "84" || stored.CacheCID != "" || stored.FileID != "" || !stored.DirectoryPending {
 					t.Fatalf("新恢复目录或写入前快照错误：parent=%s child=%s stored=%+v err=%v", parent, child, stored, err)
 				}
 				return "", context.DeadlineExceeded
@@ -234,11 +244,67 @@ func TestED2KSTRMRestoreReusesExistingFileBeforeOpeningNewDirectory(t *testing.T
 				if err != nil || queued.Status != "ready" || queued.CacheCID != "11" || queued.FileID != v.FileID || !slices.Equal(f.client.calls, []string{"info"}) {
 					t.Fatalf("可用旧文件未直接复用：%+v calls=%v err=%v", queued, f.client.calls, err)
 				}
-			} else if !errors.Is(err, context.DeadlineExceeded) || !slices.Equal(f.client.calls, []string{"info", "find", "directory", "directory", "create"}) {
+			} else if !errors.Is(err, context.DeadlineExceeded) || !slices.Equal(f.client.calls, []string{"info", "find", "directory", "directory", "listing", "create"}) {
 				t.Fatalf("缓存未确认缺失就准备新目录：calls=%v err=%v", f.client.calls, err)
 			}
 			if f.cloud.calls != 0 {
 				t.Fatal("文件复用或建目录阶段触发云任务查询")
+			}
+		})
+	}
+}
+
+func TestED2KSTRMRestoreReconcilesHistoricalCacheDirectory(t *testing.T) {
+	for _, mode := range []string{"healthy", "reuse", "incomplete", "renamed"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			f := newED2KSTRMFixture(t)
+			v := f.knownResource(t)
+			v.Stage, v.CacheTargetCID, v.CacheCID = "locate", "42", "11"
+			child := "ed2k-" + v.Hash + "-1234"
+			f.client.dirs = map[string]p115.DriveDirectory{
+				"42": {CID: "42", ParentCID: "0", Name: "缓存"},
+				"11": {CID: "11", ParentCID: "42", Name: child},
+				"12": {CID: "12", ParentCID: "42", Name: child},
+			}
+			f.client.directory = func(cid, _ string) (p115.DriveDirectory, error) {
+				if cid == "11" && mode != "healthy" {
+					return p115.DriveDirectory{}, errors.New("旧目录列表返回网盘根目录")
+				}
+				return f.client.dirs[cid], nil
+			}
+			f.client.listing = func(cid, _ string) (p115.DriveDirectory, []p115.ShareFile, error) {
+				if mode == "healthy" || cid != "42" {
+					t.Fatalf("完整读取了错误父目录：%s", cid)
+				}
+				files := []p115.ShareFile{{ID: "12", Name: child, Directory: true}}
+				switch mode {
+				case "incomplete":
+					return f.client.dirs[cid], nil, p115.ErrDriveDirectorySnapshotChanged
+				case "renamed":
+					files = append(files, p115.ShareFile{ID: "11", Name: "原目录已更名", Directory: true})
+				}
+				return f.client.dirs[cid], files, nil
+			}
+			a, err := f.accounts.Primary(v.AccountID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.service.ensureDirectory(ctx, &v, a)
+			wantErr := map[string]error{"incomplete": p115.ErrDriveDirectorySnapshotChanged, "renamed": ErrGenerationInput}[mode]
+			if !errors.Is(err, wantErr) {
+				t.Fatal(err)
+			}
+			if wantErr == nil {
+				wantCID, wantCalls := "11", []string{"directory", "directory"}
+				if mode == "reuse" {
+					wantCID, wantCalls = "12", append(wantCalls, "listing", "directory")
+				}
+				if v.CacheCID != wantCID || v.CacheParentCID != "42" || v.DirectoryPending || !slices.Equal(f.client.calls, wantCalls) {
+					t.Fatalf("未核验并复用现有资源目录：%+v calls=%v", v, f.client.calls)
+				}
+			} else if v.CacheCID != "11" || v.CacheParentCID != "" || v.DirectoryPending {
+				t.Fatalf("目录无法核验时改写了旧记录：%+v", v)
 			}
 		})
 	}
@@ -361,13 +427,61 @@ func TestED2KSTRMUncertainDirectoryRestartKeepsOriginalParentAndName(t *testing.
 				t.Fatalf("未知写入未保持只读核对：%v", err)
 			}
 			found = true
+			f.client.dirs["11"] = p115.DriveDirectory{CID: "11", ParentCID: "42", Name: child}
 			if err := f.service.ensureDirectory(ctx, &restored, a); err != nil {
 				t.Fatal(err)
 			}
-			if restored.CacheCID != "11" || restored.DirectoryPending || restored.CacheParentCID != "42" || !slices.Equal(f.client.calls, []string{"directory", "listing", "directory", "listing"}) {
+			if restored.CacheCID != "11" || restored.DirectoryPending || restored.CacheParentCID != "42" || !slices.Equal(f.client.calls, []string{"directory", "listing", "directory", "listing", "directory"}) {
 				t.Fatalf("未知目录未复用原父目录的确定结果：%+v calls=%v", restored, f.client.calls)
 			}
 		})
+	}
+}
+
+func TestED2KSTRMDirectoryReceiptStaysPendingUntilVerified(t *testing.T) {
+	ctx := context.Background()
+	f := newED2KSTRMFixture(t)
+	v := f.imported(t)
+	v.CacheTargetCID = "42"
+	child := "ed2k-" + v.Hash + "-1234"
+	visible := false
+	f.client.directory = func(cid, _ string) (p115.DriveDirectory, error) {
+		if cid == "42" {
+			return p115.DriveDirectory{CID: "42", ParentCID: "0", Name: "缓存"}, nil
+		}
+		if cid != "11" {
+			t.Fatalf("未核对原回执目录：%s", cid)
+		}
+		if !visible {
+			return p115.DriveDirectory{}, context.DeadlineExceeded
+		}
+		return p115.DriveDirectory{CID: "11", ParentCID: "42", Name: child}, nil
+	}
+	f.client.create = func(string, string, string) (string, error) { return "11", nil }
+	a, err := f.accounts.Primary(v.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.service.ensureDirectory(ctx, &v, a); !errors.Is(err, errED2KDirectoryPending) || v.CacheCID != "11" || !v.DirectoryPending {
+		t.Fatalf("回执回读失败后丢失待确认状态：%+v err=%v", v, err)
+	}
+	// 模拟服务保存本轮状态后重启，续查必须只使用已有回执。
+	if err := f.service.save(ctx, v); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	f.client.calls = nil
+	restored := f.service.List()[0]
+	if err := f.service.ensureDirectory(ctx, &restored, a); !errors.Is(err, errED2KDirectoryPending) || !restored.DirectoryPending {
+		t.Fatalf("重启后未保留待确认状态：%+v err=%v", restored, err)
+	}
+	visible = true
+	if err := f.service.ensureDirectory(ctx, &restored, a); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := f.store.GetED2KSTRMResource(ctx, v.Hash, v.Size)
+	if err != nil || stored.CacheCID != "11" || stored.CacheParentCID != "42" || stored.DirectoryPending || !slices.Equal(f.client.calls, []string{"directory", "directory", "directory", "directory"}) {
+		t.Fatalf("回执确认结果错误：%+v calls=%v err=%v", stored, f.client.calls, err)
 	}
 }
 

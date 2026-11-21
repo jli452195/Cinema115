@@ -381,6 +381,9 @@ func (s *ED2KSTRMService) pick() (model.ED2KSTRMResource, bool) {
 }
 
 func ed2kPublicError(err error) string {
+	if errors.Is(err, errED2KDirectoryPending) {
+		return errED2KDirectoryPending.Error()
+	}
 	if errors.Is(err, p115.ErrInstantUncertain) || CloudDownloadUncertain(err) {
 		return "115 处理结果尚未确认，将先核对原操作，请勿重复提交"
 	}

@@ -55,14 +55,20 @@ func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string
 	return model.ED2KSTRMCache{AccountID: a.ID, UID: a.UID, CID: cid, Name: dir.Name}, nil
 }
 
-func (s *ED2KSTRMService) directoryByName(ctx context.Context, parent, name, cookie string) (string, error) {
-	_, files, err := s.Client.ReadDirectoryFiles(ctx, parent, cookie)
+func (s *ED2KSTRMService) directoryByName(ctx context.Context, parent, name, previousCID, cookie string) (string, error) {
+	dir, files, err := s.Client.ReadDirectoryFiles(ctx, parent, cookie)
 	if err != nil {
 		return "", err
+	}
+	if dir.CID != parent {
+		return "", generationInputError("缓存父目录身份已变化")
 	}
 	id := ""
 	for _, f := range files {
 		if f.Name != name {
+			if previousCID != "" && f.ID == previousCID {
+				return "", generationInputError("原资源缓存目录名称已变化")
+			}
 			continue
 		}
 		if !f.Directory || id != "" {
@@ -116,7 +122,7 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 		}
 		if cache.CID == "" {
 			// 固定目录名先查后建；创建结果未知时只核对原结果，不重复写入。
-			cid, err := s.directoryByName(ctx, "0", cache.Name, a.Cookie)
+			cid, err := s.directoryByName(ctx, "0", cache.Name, "", a.Cookie)
 			if err != nil {
 				return err
 			}
@@ -151,25 +157,45 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 			}
 		}
 	}
+	return s.ensureResourceCacheDirectory(ctx, v, a, cache.CID)
+}
+
+func (s *ED2KSTRMService) ensureResourceCacheDirectory(ctx context.Context, v *model.ED2KSTRMResource, a P115Account, parent string) error {
 	name := "ed2k-" + v.Hash + "-" + strconv.FormatInt(v.Size, 10)
+	if v.DirectoryPending {
+		v.Status = "uncertain"
+		cid := v.CacheCID
+		if cid == "" {
+			var err error
+			cid, err = s.directoryByName(ctx, parent, name, "", a.Cookie)
+			if err != nil {
+				return err
+			}
+			if cid == "" {
+				return errED2KDirectoryPending
+			}
+		}
+		return s.confirmResourceCacheDirectory(ctx, v, a, parent, name, cid)
+	}
+
 	if v.CacheCID != "" {
+		historical := v.CacheParentCID == "" && v.Stage == "locate" && v.SHA1 != "" && v.CacheState == "missing"
 		dir, err := s.Client.ReadDirectory(ctx, v.CacheCID, a.Cookie)
 		if err == nil {
 			if dir.CID != v.CacheCID || dir.Name != name {
 				return generationInputError("资源缓存目录身份已变化")
 			}
-			if dir.ParentCID == cache.CID {
+			if dir.ParentCID == parent {
 				if v.CacheParentCID == "" {
-					v.CacheParentCID = cache.CID
+					v.CacheParentCID = parent
 					return s.save(ctx, *v)
 				}
 				return nil
 			}
-			if v.CacheParentCID != "" || v.DirectoryPending {
+			if v.CacheParentCID != "" {
 				return generationInputError("资源缓存目录位置已变化")
 			}
-			// 新恢复任务已选择其他根目录，原文件缺失后只在新目录准备缓存。
-		} else {
+		} else if !historical {
 			missing, checkErr := s.Client.DirectoryMissing(ctx, v.CacheCID, a.Cookie)
 			if checkErr != nil {
 				return checkErr
@@ -178,43 +204,52 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 				return err
 			}
 		}
-		v.CacheCID = ""
-		v.DirectoryPending = false
-	}
-	v.CacheParentCID = cache.CID
-	if v.DirectoryPending {
-		cid, err := s.directoryByName(ctx, cache.CID, name, a.Cookie)
-		if err != nil {
-			return err
+		if historical {
+			// 旧 CID 可能仍有详情却无法列出，使用已核验父目录的完整列表定位本轮写入目录。
+			cid, err := s.directoryByName(ctx, parent, name, v.CacheCID, a.Cookie)
+			if err != nil {
+				return err
+			}
+			if cid != "" {
+				return s.confirmResourceCacheDirectory(ctx, v, a, parent, name, cid)
+			}
 		}
-		if cid == "" {
-			v.Status = "uncertain"
-			return errED2KDirectoryPending
-		}
-		v.CacheCID, v.DirectoryPending = cid, false
-		return s.save(ctx, *v)
 	}
-	v.DirectoryPending = true
+	v.CacheCID, v.CacheParentCID, v.DirectoryPending = "", parent, true
 	if err := s.save(ctx, *v); err != nil {
 		return err
 	}
 	if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
 		return err
 	}
-	cid, err := s.Client.CreateDirectory(ctx, cache.CID, name, a.Cookie)
+	cid, err := s.Client.CreateDirectory(ctx, parent, name, a.Cookie)
 	if err != nil {
 		v.Status = "uncertain"
 		return err
 	}
-	v.CacheCID, v.DirectoryPending = cid, false
+	v.CacheCID = cid
+	return s.confirmResourceCacheDirectory(ctx, v, a, parent, name, cid)
+}
+
+func (s *ED2KSTRMService) confirmResourceCacheDirectory(ctx context.Context, v *model.ED2KSTRMResource, a P115Account, parent, name, cid string) error {
 	dir, err := s.Client.ReadDirectory(ctx, cid, a.Cookie)
 	if err != nil {
+		if v.DirectoryPending {
+			v.Status = "uncertain"
+			return fmt.Errorf("%w：%w", errED2KDirectoryPending, err)
+		}
 		return err
 	}
-	if dir.CID != cid || dir.ParentCID != cache.CID || dir.Name != name {
-		return generationInputError("新资源缓存目录核验失败")
+	if dir.CID != cid || dir.ParentCID != parent || dir.Name != name {
+		return generationInputError("资源缓存子目录身份或归属核验失败")
 	}
-	return s.save(ctx, *v)
+	confirmed := *v
+	confirmed.CacheCID, confirmed.CacheParentCID, confirmed.DirectoryPending = cid, parent, false
+	if err := s.save(ctx, confirmed); err != nil {
+		return err
+	}
+	*v = confirmed
+	return nil
 }
 
 func (s *ED2KSTRMService) observe(ctx context.Context, v *model.ED2KSTRMResource, a P115Account) error {
