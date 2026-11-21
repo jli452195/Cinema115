@@ -462,7 +462,6 @@ func writeGeneratedFile(ctx context.Context, directory, relative, content string
 	return "", false, fmt.Errorf("同名输出超过 10000 个：%s", relative)
 }
 
-// 先完整写入同目录临时文件，再替换目标；无需检查已存在文件，也不会截断旧内容。
 func writeSTRM(ctx context.Context, destination, content string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -472,6 +471,14 @@ func writeSTRM(ctx context.Context, destination, content string) error {
 		if readErr == nil && string(existing) == content {
 			return nil
 		}
+	}
+	return replaceSTRM(ctx, destination, content)
+}
+
+// 先完整写入同目录临时文件，再替换目标，避免截断旧内容。
+func replaceSTRM(ctx context.Context, destination, content string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	stream, err := os.CreateTemp(filepath.Dir(destination), ".strm-*")
 	if err != nil {

@@ -32,39 +32,6 @@ func driveSTRMSignature(file p115.ShareFile) string {
 	return strings.ToUpper(file.SHA1) + ":" + strconv.FormatInt(file.Size, 10)
 }
 
-// readDriveSTRMOutput checks every parent, rejects links, and bounds reads.
-func readDriveSTRMOutput(directory, relative string) ([]byte, error) {
-	if _, err := statDriveSTRMOutput(directory, relative); err != nil {
-		return nil, err
-	}
-	return os.ReadFile(filepath.Join(directory, filepath.FromSlash(relative)))
-}
-
-// Coordinate final checks with the existing share writer. Network attachment
-// downloads happen before taking this lock, so they never block STRM writes.
-func writeDriveSTRMOutput(ctx context.Context, directory string, record, previous model.DriveSTRMFile, data []byte) (bool, error) {
-	generatedFileWriteMu.Lock()
-	defer generatedFileWriteMu.Unlock()
-	existing, err := readDriveSTRMOutput(directory, record.Path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	if err == nil {
-		digest := driveSTRMDigest(existing)
-		if digest == record.Digest {
-			return false, nil
-		}
-		owned := driveSTRMOwnsOutput(record, previous)
-		if !owned {
-			return false, fmt.Errorf("目标含其他文件，已保留：%s", record.Path)
-		}
-	}
-	if err := writeSTRM(ctx, filepath.Join(directory, filepath.FromSlash(record.Path)), string(data)); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 func (s *DriveSTRMService) progress(ctx context.Context, id string, stats model.DriveSTRMStats) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -81,8 +48,14 @@ type driveSTRMBulkReader interface {
 }
 
 type driveSTRMItem struct {
-	file             p115.ShareFile
-	record, previous model.DriveSTRMFile
+	file   p115.ShareFile
+	record model.DriveSTRMFile
+	video  bool
+}
+
+type driveSTRMClaim struct {
+	id    string
+	video bool
 }
 
 type driveSTRMScan struct {
@@ -92,7 +65,7 @@ type driveSTRMScan struct {
 	videos, metadata  map[string]bool
 	stats             model.DriveSTRMStats
 	failures          []error
-	claimed           map[string]string
+	claimed           map[string]driveSTRMClaim
 	blocked           map[string]bool
 	lastProgress      time.Time
 	lastLog           time.Time
@@ -165,32 +138,32 @@ func driveSTRMAttachmentUnchanged(directory string, record, previous model.Drive
 	return err == nil && driveSTRMOwnsOutput(record, previous) && previous.Signature != "" && previous.Signature == record.Signature && info.Size() == size
 }
 
-func (r *driveSTRMScan) write(ctx context.Context, item driveSTRMItem) (model.DriveSTRMFile, error) {
-	file, record, previous := item.file, item.record, item.previous
-	info, statErr := statDriveSTRMOutput(r.directory, record.Path)
-	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return record, statErr
-	}
+func (r *driveSTRMScan) writeVideo(ctx context.Context, item driveSTRMItem) (model.DriveSTRMFile, bool, error) {
+	record, file := item.record, item.file
 	link, err := strm.DriveURL(r.value.Settings.BaseURL, strm.Drive{PickCode: file.PickCode, FileID: file.ID, SHA1: file.SHA1, Size: file.Size, Name: file.Name})
 	if err != nil {
-		return record, err
+		return record, false, err
 	}
-	data := []byte(link + "\n")
-	record.Digest = driveSTRMDigest(data)
-	if driveSTRMOwnsOutput(record, previous) && record.Digest == previous.Digest && statErr == nil && info.Size() == int64(len(data)) {
-		r.stats.Unchanged++
-		return record, nil
+	content := link + "\n"
+	record.Digest = driveSTRMDigest([]byte(content))
+	info, statErr := statDriveSTRMOutput(r.directory, record.Path)
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return record, false, statErr
 	}
-	written, err := writeDriveSTRMOutput(ctx, r.directory, record, previous, data)
-	if err != nil {
-		return record, fmt.Errorf("保存 %s: %w", record.Path, err)
+	destination := filepath.Join(r.directory, filepath.FromSlash(record.Path))
+	if statErr == nil && info.Size() == int64(len(content)) {
+		existing, err := os.ReadFile(destination)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return record, false, err
+		}
+		if string(existing) == content {
+			return record, false, nil
+		}
 	}
-	if !written {
-		r.stats.Unchanged++
-	} else {
-		r.stats.Written++
+	if err := replaceSTRM(ctx, destination, content); err != nil {
+		return record, false, err
 	}
-	return record, nil
+	return record, true, nil
 }
 
 func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEntry) error {
@@ -212,68 +185,22 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 			relative := driveSTRMOutputPath(entry.RelativePath, video)
 			key := strings.ToLower(relative)
 			parent := strings.ToLower(path.Dir(relative))
-			if r.blocked[entry.ParentCID] || r.claimed[parent] != "" && r.claimed[parent] != entry.ParentCID {
+			if owner := r.claimed[parent].id; r.blocked[entry.ParentCID] || owner != "" && owner != entry.ParentCID {
 				r.blocked[entry.ID] = true
 				continue
 			}
-			if owner, ok := r.claimed[key]; ok && owner != entry.ID {
+			if owner, ok := r.claimed[key]; ok && owner.id != entry.ID && !(owner.video && video) {
 				r.failure(fmt.Errorf("不同来源映射到同一输出：%s", relative))
 				r.blocked[entry.ID] = true
 				continue
 			}
-			r.claimed[key] = entry.ID
+			r.claimed[key] = driveSTRMClaim{id: entry.ID, video: video}
 			record := model.DriveSTRMFile{MappingID: r.value.ID, FileID: entry.ID, ParentCID: entry.ParentCID, Path: relative, Directory: entry.Directory, Signature: driveSTRMSignature(entry.ShareFile)}
-			items = append(items, driveSTRMItem{file: entry.ShareFile, record: record})
+			items = append(items, driveSTRMItem{file: entry.ShareFile, record: record, video: video})
 			paths = append(paths, relative)
 		}
-		old, err := r.service.Store.ListDriveSTRMFilesByPaths(ctx, r.value.ID, paths)
+		attachments, err := r.commitBatch(ctx, items, paths)
 		if err != nil {
-			return err
-		}
-		byID := make(map[string]model.DriveSTRMFile, len(old))
-		for _, record := range old {
-			byID[record.FileID] = record
-		}
-		changed := make([]model.DriveSTRMFile, 0, len(items))
-		attachments := make([]model.DriveSTRMAttachment, 0, len(items))
-		for _, item := range items {
-			previous := byID[item.record.FileID]
-			if driveSTRMSamePath(previous.Path, item.record.Path) {
-				item.previous = previous
-			}
-			if item.record.Directory {
-				r.stats.Directories++
-				if item.record != previous {
-					changed = append(changed, item.record)
-				}
-				continue
-			}
-			if !r.videos[strings.ToLower(path.Ext(item.file.Name))] {
-				if driveSTRMAttachmentUnchanged(r.directory, item.record, item.previous, item.file.Size, r.value.Settings.MetadataImageMode) {
-					r.stats.Unchanged++
-					continue
-				}
-				attachments = append(attachments, model.DriveSTRMAttachment{
-					Record: item.record, AccountID: r.value.AccountID,
-					SourceCID: r.value.SourceCID, OutputDir: r.value.OutputDir, Settings: r.value.Settings,
-					Name: item.file.Name, PickCode: item.file.PickCode, SHA1: item.file.SHA1, Size: item.file.Size, Thumbnail: item.file.Thumbnail,
-				})
-				continue
-			}
-			r.stats.Videos++
-			record, err := r.write(ctx, item)
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if err != nil {
-				r.failure(err)
-				continue
-			}
-			if record != previous {
-				changed = append(changed, record)
-			}
-		}
-		if err := r.service.Store.SaveDriveSTRMFiles(ctx, changed); err != nil {
 			return err
 		}
 		if err := r.service.queueAttachments(ctx, r.value, attachments, r.cookie); err != nil {
@@ -284,6 +211,78 @@ func (r *driveSTRMScan) consume(ctx context.Context, entries []p115.DriveTreeEnt
 		}
 	}
 	return nil
+}
+
+func (r *driveSTRMScan) commitBatch(ctx context.Context, items []driveSTRMItem, paths []string) ([]model.DriveSTRMAttachment, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	// 文件写入和索引提交共用清理锁，避免清理任务在两者之间删除新输出。
+	generatedFileWriteMu.Lock()
+	defer generatedFileWriteMu.Unlock()
+	old, err := r.service.Store.ListDriveSTRMFilesByPaths(ctx, r.value.ID, paths)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]model.DriveSTRMFile, len(old))
+	owners := make(map[string]int, len(old))
+	for _, record := range old {
+		byID[record.FileID] = record
+		if !record.Directory && strings.HasSuffix(record.Path, ".strm") {
+			owners[driveSTRMPathKey(record.Path)]++
+		}
+	}
+	changed := make([]model.DriveSTRMFile, 0, len(items))
+	attachments := make([]model.DriveSTRMAttachment, 0, len(items))
+	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		record, previous := item.record, byID[item.record.FileID]
+		switch {
+		case record.Directory:
+			r.stats.Directories++
+			if record != previous {
+				changed = append(changed, record)
+			}
+		case item.video:
+			r.stats.Videos++
+			record, written, err := r.writeVideo(ctx, item)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if err != nil {
+				r.failure(fmt.Errorf("保存 %s: %w", record.Path, err))
+				continue
+			}
+			if written {
+				r.stats.Written++
+			} else {
+				r.stats.Unchanged++
+			}
+			if written || record != previous || owners[driveSTRMPathKey(record.Path)] > 1 {
+				changed = append(changed, record)
+			}
+		default:
+			if driveSTRMAttachmentUnchanged(r.directory, record, previous, item.file.Size, r.value.Settings.MetadataImageMode) {
+				r.stats.Unchanged++
+				continue
+			}
+			attachments = append(attachments, model.DriveSTRMAttachment{
+				Record: record, AccountID: r.value.AccountID,
+				SourceCID: r.value.SourceCID, OutputDir: r.value.OutputDir, Settings: r.value.Settings,
+				Name: item.file.Name, PickCode: item.file.PickCode, SHA1: item.file.SHA1, Size: item.file.Size, Thumbnail: item.file.Thumbnail,
+			})
+		}
+	}
+	return attachments, r.service.Store.SaveDriveSTRMScanFiles(ctx, changed)
+}
+
+func driveSTRMPathKey(relative string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(relative)
+	}
+	return relative
 }
 
 func driveSTRMSamePath(a, b string) bool {
@@ -307,7 +306,7 @@ func (s *DriveSTRMService) scan(ctx context.Context, value model.DriveSTRM) (mod
 	if err != nil {
 		return model.DriveSTRMStats{}, err
 	}
-	r := driveSTRMScan{service: s, value: value, cookie: account.Cookie, directory: directory, videos: videos, metadata: metadata, claimed: make(map[string]string), blocked: make(map[string]bool), lastProgress: time.Now(), lastLog: time.Now()}
+	r := driveSTRMScan{service: s, value: value, cookie: account.Cookie, directory: directory, videos: videos, metadata: metadata, claimed: make(map[string]driveSTRMClaim), blocked: make(map[string]bool), lastProgress: time.Now(), lastLog: time.Now()}
 	root, err := s.Client.ReadDirectory(ctx, value.SourceCID, account.Cookie)
 	if err != nil {
 		return r.stats, fmt.Errorf("核验来源目录: %w", err)
@@ -478,7 +477,7 @@ func (s *DriveSTRMService) scan(ctx context.Context, value model.DriveSTRM) (mod
 				return err
 			}
 			for _, entry := range entries {
-				if !entry.Directory || r.claimed[strings.ToLower(driveSTRMOutputPath(entry.RelativePath, false))] != entry.ID {
+				if !entry.Directory || r.claimed[strings.ToLower(driveSTRMOutputPath(entry.RelativePath, false))].id != entry.ID {
 					continue
 				}
 				if err := walk(entry.ID, entry.RelativePath, depth+1); err != nil {

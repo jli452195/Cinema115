@@ -29,7 +29,7 @@ type DriveSTRMStore interface {
 	ListDriveSTRM(context.Context) ([]model.DriveSTRM, error)
 	DeleteDriveSTRM(context.Context, string) error
 	ListDriveSTRMDirectories(context.Context, string) ([]model.DriveSTRMFile, error)
-	SaveDriveSTRMFiles(context.Context, []model.DriveSTRMFile) error
+	SaveDriveSTRMScanFiles(context.Context, []model.DriveSTRMFile) error
 	ListDriveSTRMFilesByIDs(context.Context, string, []string) ([]model.DriveSTRMFile, error)
 	ListDriveSTRMFilesByPaths(context.Context, string, []string) ([]model.DriveSTRMFile, error)
 	SaveDriveSTRMExport(context.Context, string, string) error

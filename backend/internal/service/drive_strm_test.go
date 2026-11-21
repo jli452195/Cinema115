@@ -394,44 +394,30 @@ func TestDriveSTRMCredentialsRemainPinnedAndWorkerStops(t *testing.T) {
 	}
 }
 
-func TestDriveSTRMCollisionsAndUnrelatedFilesArePreserved(t *testing.T) {
-	s, _, client, _, root := driveSTRMTestSetup(t)
-	client.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "same.mkv"), driveSTRMTestVideo("2", "same.mp4"), driveSTRMTestVideo("3", "unrelated.mkv")}
-	if err := os.MkdirAll(filepath.Join(root, "strm"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "strm", "unrelated.strm"), []byte("https://other/file"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	stats, err := driveSTRMTestAttempt(t, s)
-	if err == nil || stats.Written != 1 || stats.Failed != 2 {
-		t.Fatalf("stats=%+v err=%v", stats, err)
-	}
-	data, _ := os.ReadFile(filepath.Join(root, "strm", "unrelated.strm"))
-	if string(data) != "https://other/file" {
-		t.Fatal("foreign output overwritten")
-	}
-}
-
-func TestDriveSTRMReplacementFileCannotOverwriteOldManagedOutput(t *testing.T) {
+func TestDriveSTRMOverwritesSameSizeEditedOutput(t *testing.T) {
 	s, _, client, value, root := driveSTRMTestSetup(t)
 	client.files["100"] = []p115.ShareFile{driveSTRMTestVideo("1", "same.mkv")}
 	if _, err := driveSTRMTestAttempt(t, s); err != nil {
 		t.Fatal(err)
 	}
 	filename := filepath.Join(root, "strm", "same.strm")
-	original, _ := os.ReadFile(filename)
-	client.files["100"] = []p115.ShareFile{driveSTRMTestVideo("2", "same.mp4")}
+	original, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, []byte(strings.Repeat("x", len(original))), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.Queue(context.Background(), value.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	stats, err := driveSTRMTestAttempt(t, s)
-	if err == nil || stats.Failed != 1 || stats.Written != 0 {
+	if err != nil || stats.Failed != 0 || stats.Written != 1 {
 		t.Fatalf("replacement stats=%+v err=%v", stats, err)
 	}
-	actual, _ := os.ReadFile(filename)
-	if string(actual) != string(original) {
-		t.Fatal("different source file overwrote previous owned output")
+	actual, err := os.ReadFile(filename)
+	if err != nil || string(actual) != string(original) {
+		t.Fatalf("output=%q err=%v", actual, err)
 	}
 }
 

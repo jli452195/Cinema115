@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS drive_strm_attachments(id INTEGER PRIMARY KEY AUTOINC
 CREATE INDEX IF NOT EXISTS drive_strm_attachments_due ON drive_strm_attachments(next_attempt_at,id);
 CREATE TABLE IF NOT EXISTS drive_strm_cleanup(id INTEGER PRIMARY KEY AUTOINCREMENT, mapping_id TEXT NOT NULL REFERENCES drive_strm_mappings(id) ON DELETE CASCADE, file_id TEXT NOT NULL, path TEXT NOT NULL, record TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '', UNIQUE(mapping_id,file_id,path));
 CREATE INDEX IF NOT EXISTS drive_strm_cleanup_due ON drive_strm_cleanup(next_attempt_at,id);
+CREATE INDEX IF NOT EXISTS drive_strm_cleanup_paths ON drive_strm_cleanup(mapping_id,path COLLATE NOCASE);
 CREATE TABLE IF NOT EXISTS drive_strm_cursors(account_id TEXT PRIMARY KEY, cursor TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS drive_strm_exports(export_id TEXT PRIMARY KEY, account_id TEXT NOT NULL);`
 
@@ -344,6 +346,15 @@ func queueReplacedDriveSTRMFile(ctx context.Context, tx *sql.Tx, value model.Dri
 // SaveDriveSTRMFiles commits one page of ownership records together. Replaying
 // identical records does not dirty SQLite pages or rewrite the output index.
 func (s *Store) SaveDriveSTRMFiles(ctx context.Context, values []model.DriveSTRMFile) error {
+	return s.saveDriveSTRMFiles(ctx, values, false)
+}
+
+// SaveDriveSTRMScanFiles 提交已写入的目录 STRM，后处理的索引接管同一输出路径。
+func (s *Store) SaveDriveSTRMScanFiles(ctx context.Context, values []model.DriveSTRMFile) error {
+	return s.saveDriveSTRMFiles(ctx, values, true)
+}
+
+func (s *Store) saveDriveSTRMFiles(ctx context.Context, values []model.DriveSTRMFile, replacePathOwners bool) error {
 	if len(values) == 0 {
 		return nil
 	}
@@ -372,12 +383,34 @@ func (s *Store) SaveDriveSTRMFiles(ctx context.Context, values []model.DriveSTRM
 		if err := queueReplacedDriveSTRMFile(ctx, tx, value); err != nil {
 			return err
 		}
+		if replacePathOwners && !value.Directory && strings.HasSuffix(value.Path, ".strm") {
+			if err := replaceDriveSTRMPathOwner(ctx, tx, value); err != nil {
+				return err
+			}
+		}
 		if _, err := stmt.ExecContext(ctx, value.MappingID, value.FileID, value.Directory, raw[i]); err != nil {
 			return fmt.Errorf("保存目录 STRM 文件索引: %w", err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("提交目录 STRM 文件索引: %w", err)
+	}
+	return nil
+}
+
+func replaceDriveSTRMPathOwner(ctx context.Context, tx *sql.Tx, record model.DriveSTRMFile) error {
+	// 先用路径索引缩小范围，区分大小写的系统再核对原始路径。
+	ignoreCase := runtime.GOOS == "windows"
+	if _, err := tx.ExecContext(ctx, `DELETE FROM drive_strm_files
+WHERE mapping_id=? AND json_extract(record,'$.path') COLLATE NOCASE=?
+AND directory=0 AND file_id<>? AND (? OR json_extract(record,'$.path')=?)`,
+		record.MappingID, record.Path, record.FileID, ignoreCase, record.Path); err != nil {
+		return fmt.Errorf("撤销目录 STRM 旧路径归属: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM drive_strm_cleanup
+WHERE mapping_id=? AND path COLLATE NOCASE=? AND (? OR path=?)`,
+		record.MappingID, record.Path, ignoreCase, record.Path); err != nil {
+		return fmt.Errorf("取消目录 STRM 已复用路径的清理任务: %w", err)
 	}
 	return nil
 }

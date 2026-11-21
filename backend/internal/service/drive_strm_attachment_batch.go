@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -116,6 +118,33 @@ func (s *DriveSTRMService) prepareAttachmentLocal(ctx context.Context, job model
 	return local, true, nil
 }
 
+func writeDriveSTRMAttachment(ctx context.Context, local *driveSTRMAttachmentLocal) (bool, error) {
+	generatedFileWriteMu.Lock()
+	defer generatedFileWriteMu.Unlock()
+	record := local.record
+	destination := filepath.Join(local.directory, filepath.FromSlash(record.Path))
+	_, err := statDriveSTRMOutput(local.directory, record.Path)
+	var existing []byte
+	if err == nil {
+		existing, err = os.ReadFile(destination)
+	}
+	switch {
+	case err == nil:
+		if driveSTRMDigest(existing) == record.Digest {
+			return false, nil
+		}
+		if !driveSTRMOwnsOutput(record, local.previous) {
+			return false, fmt.Errorf("目标含其他文件，已保留：%s", record.Path)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return false, err
+	}
+	if err := replaceSTRM(ctx, destination, string(local.data)); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (s *DriveSTRMService) commitAttachment(ctx context.Context, job model.DriveSTRMAttachment, local *driveSTRMAttachmentLocal, cookie string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -128,7 +157,7 @@ func (s *DriveSTRMService) commitAttachment(ctx context.Context, job model.Drive
 	}
 	written := false
 	if !local.unchanged {
-		written, err = writeDriveSTRMOutput(ctx, local.directory, local.record, local.previous, local.data)
+		written, err = writeDriveSTRMAttachment(ctx, local)
 		if err != nil {
 			return err
 		}

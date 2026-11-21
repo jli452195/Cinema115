@@ -110,6 +110,8 @@ func (s *DriveSTRMService) removeDriveSTRMOldOutput(ctx context.Context, directo
 	if driveSTRMSamePath(old.Path, current.Path) || driveSTRMCleanupAmbiguousCase(old.Path) {
 		return nil
 	}
+	generatedFileWriteMu.Lock()
+	defer generatedFileWriteMu.Unlock()
 	owners, err := s.Store.ListDriveSTRMFilesByPaths(ctx, old.MappingID, []string{old.Path})
 	if err != nil {
 		return err
@@ -119,8 +121,6 @@ func (s *DriveSTRMService) removeDriveSTRMOldOutput(ctx context.Context, directo
 			return nil // This path was reused, possibly with identical bytes.
 		}
 	}
-	generatedFileWriteMu.Lock()
-	defer generatedFileWriteMu.Unlock()
 	oldFull, err := driveSTRMCleanupOutputPath(directory, old.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return pruneDriveSTRMParents(ctx, directory, old.Path)
