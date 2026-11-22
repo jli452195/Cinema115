@@ -40,13 +40,43 @@ func TestAnimeStatusExactNormalization(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := `{"state":true,"data":{"info_hash":"` + hash + `","file_id":9007199254740993,"wp_path_id":"200",` + tc.fields + `}}`
-			got, err := parseAnimeTaskStatus([]byte(raw), hash)
+			got, err := parseAnimeTaskStatus([]byte(raw), hash, false)
 			if err != nil || !got.Valid() || got.State != tc.state || got.ResultID != "9007199254740993" || got.Source != model.AnimeOfflineExact {
 				t.Fatal(got, err)
 			}
 			saved, err := json.Marshal(got)
 			if err != nil || strings.Contains(string(saved), "private") || strings.Contains(string(saved), "Cookie") {
 				t.Fatal("unallowlisted data escaped", string(saved), err)
+			}
+		})
+	}
+}
+
+func TestAnimeStatusSubscriptionFinishedDisplayProgress(t *testing.T) {
+	hash := strings.Repeat("a", 40)
+	for _, tc := range []struct {
+		name, fields string
+		completed    bool
+	}{
+		{"实测已完成", `"status":1,"display_status":"finished","file_id":"300"`, true},
+		{"运行中", `"status":1,"display_status":"running","file_id":"300"`, false},
+		{"列表状态码", `"status":2,"display_status":"finished","file_id":"300"`, false},
+		{"无结果标识", `"status":1,"display_status":"finished","file_id":""`, false},
+		{"其他进度冲突", `"status":1,"display_status":"finished","file_id":"300","progress":99`, false},
+		{"携带错误", `"status":1,"display_status":"finished","file_id":"300","error":"failed"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{"state":true,"errcode":0,"info_hash":"` + hash + `","percentDone":0,"display_percent":100,` + tc.fields + `}`)
+			got, err := parseAnimeTaskStatus(raw, hash, true)
+			if err != nil || !got.Valid() || (got.State == "completed") != tc.completed {
+				t.Fatal(got, err)
+			}
+			if tc.completed && (got.Progress == nil || *got.Progress != 100) {
+				t.Fatal(got)
+			}
+			strict, err := parseAnimeTaskStatus(raw, hash, false)
+			if err != nil || strict.State != "unknown" {
+				t.Fatal(strict, err)
 			}
 		})
 	}
@@ -64,15 +94,15 @@ func TestAnimeStatusListsAndMalformedIdentityAreNeverAbsence(t *testing.T) {
 		`{"state":true,"info_hash":"` + hash + `","status":1,"status":2}`,
 		`{"state":true,"info_hash":"` + hash + `","file_id":null}`,
 	} {
-		if got, err := parseAnimeTaskStatus([]byte(body), hash); err == nil {
+		if got, err := parseAnimeTaskStatus([]byte(body), hash, false); err == nil {
 			t.Fatal("unsafe response accepted", body, got)
 		}
 	}
-	got, err := parseAnimeTaskStatus([]byte(`{"state":false,"errcode":10021}`), hash)
+	got, err := parseAnimeTaskStatus([]byte(`{"state":false,"errcode":10021}`), hash, false)
 	if err != nil || !got.Valid() || got.Present || got.State != "unknown" {
 		t.Fatal("strict absence lost", got, err)
 	}
-	got, err = parseAnimeTaskStatus([]byte(animeMissingTaskResponse), hash)
+	got, err = parseAnimeTaskStatus([]byte(animeMissingTaskResponse), hash, false)
 	if err != nil || !got.Valid() || got.Present || got.State != "unknown" {
 		t.Fatal("upstream empty defaults became a failed read", got, err)
 	}
@@ -83,7 +113,7 @@ func TestAnimeStatusEmptyResultRemainsPresentAndIncomplete(t *testing.T) {
 	// Observed immediately after a real accepted submission. Unknown display
 	// values and unequal progress must not prove download/file completion.
 	raw := `{"state":true,"errcode":0,"info_hash":"` + hash + `","file_id":"","status":0,"display_status":"unrecognized","percentDone":100,"display_percent":99}`
-	got, err := parseAnimeTaskStatus([]byte(raw), hash)
+	got, err := parseAnimeTaskStatus([]byte(raw), hash, false)
 	if err != nil || !got.Valid() || !got.Present || got.ResultID != "" || got.State != "unknown" || !got.Malformed {
 		t.Fatal("initial result was treated as a missing task, failed read or completion", got, err)
 	}

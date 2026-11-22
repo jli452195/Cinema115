@@ -11,20 +11,19 @@ import (
 	"strm115/backend/internal/model"
 )
 
-func parseAnimeTaskStatus(raw []byte, hash string) (model.AnimeOfflineStatus, error) {
+func parseAnimeTaskStatus(raw []byte, hash string, allowFinishedDisplayProgress bool) (model.AnimeOfflineStatus, error) {
 	identity, err := parseAnimeTask(raw, hash)
 	if err != nil {
 		return model.AnimeOfflineStatus{}, err
 	}
 	out := model.AnimeOfflineStatus{SchemaVersion: 1, Source: model.AnimeOfflineExact, Present: identity.Present, InfoHash: identity.InfoHash, TargetCID: identity.TargetCID, ResultID: identity.ResultID, State: "unknown"}
+	if !identity.Present {
+		// parseAnimeTask 已经校验任务确实未命中的响应。
+		return out, nil
+	}
 	envelope, _, _, err := animeEnvelope(raw)
 	if err != nil {
 		return model.AnimeOfflineStatus{}, err
-	}
-	if !identity.Present {
-		// parseAnimeTask already checked the exact missing envelope, including
-		// the upstream's empty task defaults and rejection of partial lists.
-		return out, nil
 	}
 	payload, err := animePayload(envelope)
 	if err != nil {
@@ -43,13 +42,16 @@ func parseAnimeTaskStatus(raw []byte, hash string) (model.AnimeOfflineStatus, er
 	if json.Unmarshal(payload["display_status"], &display) != nil {
 		out.Malformed = true
 	} else {
-		switch strings.ToLower(strings.TrimSpace(display)) {
+		display = strings.ToLower(strings.TrimSpace(display))
+		switch display {
 		case "pending", "waiting", "parsing", "running", "downloading", "finished", "completed", "success", "failed", "stopped", "cancelled", "canceled":
-			out.DisplayStatus = strings.ToLower(strings.TrimSpace(display))
+			out.DisplayStatus = display
 		default:
 			out.Malformed = true
 		}
 	}
+	finishedWithResult := allowFinishedDisplayProgress && out.Status != nil && *out.Status == 1 &&
+		out.DisplayStatus == "finished" && out.ResultID != ""
 	for _, key := range []string{"percentDone", "display_percent", "percent_done", "progress", "percent"} {
 		value, exists := payload[key]
 		if !exists {
@@ -61,9 +63,16 @@ func parseAnimeTaskStatus(raw []byte, hash string) (model.AnimeOfflineStatus, er
 			continue
 		}
 		progress, err := n.Float64()
-		if err != nil || math.IsInf(progress, 0) || math.IsNaN(progress) || progress < 0 || progress > 100 || out.Progress != nil && *out.Progress != progress {
+		if err != nil || math.IsInf(progress, 0) || math.IsNaN(progress) || progress < 0 || progress > 100 {
 			out.Malformed = true
 			continue
+		}
+		if out.Progress != nil && *out.Progress != progress {
+			// 115 的已完成任务仍可能返回 percentDone=0，此处只兼容实测的 0/100 组合。
+			if !finishedWithResult || key != "display_percent" || *out.Progress != 0 || progress != 100 {
+				out.Malformed = true
+				continue
+			}
 		}
 		out.Progress = &progress
 	}
@@ -87,6 +96,15 @@ func parseAnimeTaskStatus(raw []byte, hash string) (model.AnimeOfflineStatus, er
 // ReadAnimeTaskStatus only uses exact-hash GET. A partial/missing list never
 // proves absence. Missing means the strict 10021 envelope, not a resubmit grant.
 func (c *CloudClient) ReadAnimeTaskStatus(ctx context.Context, cookie, hash string) (model.AnimeOfflineStatus, error) {
+	return c.readAnimeTaskStatus(ctx, cookie, hash, false)
+}
+
+// ReadAnimeSubscriptionTaskStatus 按精确 Hash 查询，并兼容动漫订阅实测的完成进度。
+func (c *CloudClient) ReadAnimeSubscriptionTaskStatus(ctx context.Context, cookie, hash string) (model.AnimeOfflineStatus, error) {
+	return c.readAnimeTaskStatus(ctx, cookie, hash, true)
+}
+
+func (c *CloudClient) readAnimeTaskStatus(ctx context.Context, cookie, hash string, allowFinishedDisplayProgress bool) (model.AnimeOfflineStatus, error) {
 	if normalized, ok := normalizeTaskHash(hash, "magnet"); !ok || normalized != hash || len(hash) != 40 {
 		return model.AnimeOfflineStatus{}, ErrCloudInput
 	}
@@ -94,5 +112,5 @@ func (c *CloudClient) ReadAnimeTaskStatus(ctx context.Context, cookie, hash stri
 	if err != nil {
 		return model.AnimeOfflineStatus{}, err
 	}
-	return parseAnimeTaskStatus(raw, hash)
+	return parseAnimeTaskStatus(raw, hash, allowFinishedDisplayProgress)
 }

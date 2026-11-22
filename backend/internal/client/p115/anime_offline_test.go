@@ -76,7 +76,7 @@ func TestAnimeMissingTaskDefaultsRejectContradictions(t *testing.T) {
 			if _, err := parseAnimeTask(raw, hash); !errors.Is(err, ErrAnimeOfflineResponse) {
 				t.Fatal("contradictory miss authorized submission", err)
 			}
-			if _, err := parseAnimeTaskStatus(raw, hash); !errors.Is(err, ErrAnimeOfflineResponse) {
+			if _, err := parseAnimeTaskStatus(raw, hash, false); !errors.Is(err, ErrAnimeOfflineResponse) {
 				t.Fatal("contradictory miss became status observation", err)
 			}
 		})

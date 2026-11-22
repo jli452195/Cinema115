@@ -17,7 +17,7 @@ import (
 
 type animeStatusReaderFunc func(context.Context, string, string) (model.AnimeOfflineStatus, error)
 
-func (f animeStatusReaderFunc) ReadAnimeTaskStatus(ctx context.Context, cookie, hash string) (model.AnimeOfflineStatus, error) {
+func (f animeStatusReaderFunc) ReadAnimeSubscriptionTaskStatus(ctx context.Context, cookie, hash string) (model.AnimeOfflineStatus, error) {
 	return f(ctx, cookie, hash)
 }
 
@@ -78,7 +78,7 @@ func TestAnimeStatusRunnerUsesPinnedExactReadAndNeverResubmits(t *testing.T) {
 		case "list incomplete":
 			w.Write([]byte(`{"state":true,"tasks":[],"page":1,"page_count":99}`))
 		case "completed":
-			w.Write([]byte(`{"state":true,"info_hash":"` + job.Snapshot.InfoHash + `","file_id":"300","status":1,"display_status":"finished","percentDone":100}`))
+			w.Write([]byte(`{"state":true,"errcode":0,"info_hash":"` + job.Snapshot.InfoHash + `","file_id":"300","status":1,"display_status":"finished","percentDone":0,"display_percent":100}`))
 		}
 	}))
 	defer server.Close()

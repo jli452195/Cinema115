@@ -14,7 +14,7 @@ import (
 
 // Deliberately read-only: status polling cannot invoke submit/delete/redo.
 type AnimeStatusReader interface {
-	ReadAnimeTaskStatus(context.Context, string, string) (model.AnimeOfflineStatus, error)
+	ReadAnimeSubscriptionTaskStatus(context.Context, string, string) (model.AnimeOfflineStatus, error)
 }
 
 type AnimeStatusRunner struct {
@@ -193,7 +193,7 @@ func (r *AnimeStatusRunner) poll(ctx context.Context, poll storage.AnimeStatusPo
 			if job.Generation != poll.Job.Generation || job.Revision != poll.Job.Revision || job.WorkflowState != "active" || job.FileState == "verified" {
 				return storage.ErrAnimeConflict
 			}
-			remote, err := r.Admin.StatusGateway.ReadAnimeTaskStatus(ctx, session.cookie, job.Snapshot.InfoHash)
+			remote, err := r.Admin.StatusGateway.ReadAnimeSubscriptionTaskStatus(ctx, session.cookie, job.Snapshot.InfoHash)
 			if err != nil {
 				return err
 			}
