@@ -93,8 +93,9 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 	return out, nil
 }
 
-// 清单有无缓存均使用同一份词表，只从文件名或明确对应单视频的原始发布标题识别。
+// 清单有无缓存均使用同一套季集与命名识别规则。
 func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules recognition.Snapshot) error {
+	completeDownloadFileNumbering(out.Files)
 	for i := range out.Files {
 		spec := out.Specs[out.Files[i].ID]
 		fileSpec := spec.Spec

@@ -18,7 +18,10 @@ import (
 	"strm115/backend/internal/mediafacts"
 	"strm115/backend/internal/naming"
 	"strm115/backend/internal/recognition"
+	"strm115/backend/internal/utils/torrentmeta"
 )
+
+const mediaRegressionDownloadCategory = "下载清单季集"
 
 type mediaRegressionCase struct {
 	category, source, work, filename, videoSource string
@@ -87,6 +90,7 @@ func newMediaRegressionMetadata() *mediaRegressionMetadata {
 		{detail: tv(129804, "你的名字我的姓氏", "你的名字我的姓氏", "2021-07-27", 1), aliases: []string{"Once Given, Never Forgotten"}, queries: []string{"你的名字我的姓氏 Once Given Never Forgotten"}},
 		{detail: tv(204541, "三体", "三体", "2023-01-15", 1)},
 		{detail: tv(196944, "我的幸福婚姻", "わたしの幸せな結婚", "2023-07-05", 0), aliases: []string{"My Happy Marriage"}},
+		{detail: tv(42972, "轮回的拉格朗日", "輪廻のラグランジェ", "2012-01-08", 0, 1, 2)},
 		{detail: animation, aliases: []string{"Kuzu no Honkai"}},
 		{detail: liveAction, aliases: []string{"Kuzu no Honkai"}},
 	}}
@@ -143,9 +147,15 @@ func mediaRegressionRun(source string) MediaOrganizeRun {
 }
 
 func TestMediaOrganizeRegressionCorpus(t *testing.T) {
-	for _, tc := range mediaRegressionCases(t) {
+	cases := mediaRegressionCases(t)
+	for _, tc := range cases {
 		t.Run(tc.category+"/"+path.Base(tc.source), func(t *testing.T) {
 			metadata := newMediaRegressionMetadata()
+			ctx := pinNamingRecognition(context.Background(), recognition.Snapshot{})
+			if tc.category == mediaRegressionDownloadCategory {
+				testMediaRegressionDownload(t, ctx, metadata, tc, cases)
+				return
+			}
 			videoSource := tc.source
 			if tc.videoSource != "" {
 				videoSource = tc.videoSource
@@ -160,7 +170,6 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 				t.Fatal(err)
 			}
 			organizer := &MediaOrganizer{metadata: metadata}
-			ctx := pinNamingRecognition(context.Background(), recognition.Snapshot{})
 			if err := organizer.recognize(ctx, &run, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -171,14 +180,7 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 			if group.Kind+":"+strconv.Itoa(group.TMDBID) != tc.work {
 				t.Fatalf("作品识别回归: got=%+v want=%s", group, tc.work)
 			}
-			template, err := naming.Default(naming.Kind(group.Kind))
-			if err != nil {
-				t.Fatal(err)
-			}
-			prepared, err := (MediaNaming{Templates: &mediaNamingTemplates{record: naming.Snapshot{Template: template}}, Metadata: metadata}).prepare(ctx, group.Kind, group.TMDBID, nil)
-			if err != nil {
-				t.Fatal(err)
-			}
+			prepared := mediaRegressionPreparedNaming(t, ctx, metadata, group.Kind, group.TMDBID)
 			result, err := prepared.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name})
 			if err == nil && tc.videoSource != "" {
 				sub := mediaSubtitleTestFile(tc.source, path.Dir(tc.source), path.Base(tc.source), "subtitle")
@@ -193,6 +195,53 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testMediaRegressionDownload(t *testing.T, ctx context.Context, metadata *mediaRegressionMetadata, tc mediaRegressionCase, cases []mediaRegressionCase) {
+	t.Helper()
+	// 同目录的代表样本一起进入实际清单，保留发布号供用户设置偏移。
+	files := make([]torrentmeta.File, 0, 2)
+	for _, sample := range cases {
+		if sample.category == tc.category && path.Dir(sample.source) == path.Dir(tc.source) {
+			files = append(files, torrentmeta.File{Path: sample.source})
+		}
+	}
+	out, err := organizeResourceFiles(gardenTestHash, files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareDownloadNaming(&out, DownloadResourceInput{}, namingRecognition(ctx)); err != nil {
+		t.Fatal(err)
+	}
+	kind, rawID, _ := strings.Cut(tc.work, ":")
+	id, err := strconv.Atoi(rawID)
+	if err != nil {
+		t.Fatalf("下载整理样本的作品标识无效 %q: %v", tc.work, err)
+	}
+	prepared := mediaRegressionPreparedNaming(t, ctx, metadata, kind, id)
+	for _, file := range out.Files {
+		if file.ID == tc.source {
+			result, err := prepared.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name, NamingValues: file.NamingValues})
+			if err != nil || result.Name != tc.filename {
+				t.Fatalf("下载整理季集或命名回归: got=%q want=%q err=%v", result.Name, tc.filename, err)
+			}
+			return
+		}
+	}
+	t.Fatalf("下载整理清单缺少样本文件 %q", tc.source)
+}
+
+func mediaRegressionPreparedNaming(t *testing.T, ctx context.Context, metadata *mediaRegressionMetadata, kind string, id int) preparedMediaNaming {
+	t.Helper()
+	template, err := naming.Default(naming.Kind(kind))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := (MediaNaming{Templates: &mediaNamingTemplates{record: naming.Snapshot{Template: template}}, Metadata: metadata}).prepare(ctx, kind, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prepared
 }
 
 func TestMediaOrganizeRegressionLocalSTRM(t *testing.T) {
