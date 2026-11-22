@@ -9,9 +9,10 @@ import (
 // A selected video within one verified batch. Paths are relative to the download
 // directory and may include the torrent root name. Numbering uses frozen rules.
 type AnimeBatchFile struct {
-	Path  string              `json:"path"`
-	Size  int64               `json:"size"`
-	Parse releaseparse.Result `json:"parse"`
+	Path                    string              `json:"path"`
+	Size                    int64               `json:"size"`
+	Parse                   releaseparse.Result `json:"parse"`
+	SourceEpisodeNormalized bool                `json:"sourceEpisodeNormalized,omitempty"`
 }
 
 // AnimeSelectionBasis records the background worker's execution authorization

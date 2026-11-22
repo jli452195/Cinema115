@@ -66,7 +66,7 @@ func refreshAnimePendingJobTx(ctx context.Context, tx *sql.Tx, p AnimeSourcePoll
 		if p.Subscription.Naming == nil {
 			return nil
 		}
-		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, p.Source, release, snapshot.Manifest)
+		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, p.Source, release, snapshot.Manifest, p.Subscription.Naming)
 		if errors.Is(err, ErrAnimeConflict) {
 			// Like a now-excluded ordinary post, a queued collection remains
 			// blocked when its frozen files no longer satisfy the edited rules.
@@ -76,6 +76,16 @@ func refreshAnimePendingJobTx(ctx context.Context, tx *sql.Tx, p AnimeSourcePoll
 			return err
 		}
 		decision.BatchFiles, snapshot.BatchFiles = all, selected
+		if len(selected) > 0 && selected[0].SourceEpisodeNormalized {
+			// 下载授权会比较刷新后的决策与任务快照，两处都须保留已确认的集号。
+			raw, err := animeJSON(decision)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE anime_release_decisions SET snapshot_json=? WHERE source_id=? AND release_id=?`, raw, p.Source.ID, release.ID); err != nil {
+				return err
+			}
+		}
 	}
 	snapshot.Release, snapshot.Decision, snapshot.Naming = release, decision, p.Subscription.Naming
 	snapshot.Source.SourceRevision, snapshot.Source.SourceGeneration = p.Source.Revision, p.Source.RunGeneration

@@ -215,7 +215,7 @@ func claimAnimeDownloadTx(ctx context.Context, tx *sql.Tx, sourceID, releaseID s
 		if sub.Naming == nil {
 			return out, ErrAnimeDirectoryRequired
 		}
-		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, source, release, manifest)
+		all, selected, err := selectAnimeBatchFilesTx(ctx, tx, source, release, manifest, sub.Naming)
 		if err != nil {
 			return out, err
 		}

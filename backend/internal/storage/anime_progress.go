@@ -165,7 +165,7 @@ func animeProgressReleases(binding model.AnimeBinding, rules model.AnimeRules, r
 	for _, file := range files {
 		manifest = append(manifest, torrentmeta.File{Path: file.Path, Size: file.Size})
 	}
-	matched, err := preview.MatchBatchFiles(binding, rules, release.Title, manifest)
+	matched, err := preview.MatchBatchFilesWithSourceEpisodes(binding, rules, release.Title, manifest, preview.FrozenSpecialBatchSourceEpisodes(files))
 	if err != nil {
 		return nil, err
 	}

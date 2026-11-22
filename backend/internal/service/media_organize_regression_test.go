@@ -86,6 +86,7 @@ func newMediaRegressionMetadata() *mediaRegressionMetadata {
 		{detail: tv(154770, "你好，星期六", "你好，星期六", "2022-01-01", 0, 1, 2, 3, 4, 5), aliases: []string{"Hello Saturday"}, queries: []string{"你好，星期六 Hello Saturday"}},
 		{detail: tv(129804, "你的名字我的姓氏", "你的名字我的姓氏", "2021-07-27", 1), aliases: []string{"Once Given, Never Forgotten"}, queries: []string{"你的名字我的姓氏 Once Given Never Forgotten"}},
 		{detail: tv(204541, "三体", "三体", "2023-01-15", 1)},
+		{detail: tv(196944, "我的幸福婚姻", "わたしの幸せな結婚", "2023-07-05", 0), aliases: []string{"My Happy Marriage"}},
 		{detail: animation, aliases: []string{"Kuzu no Honkai"}},
 		{detail: liveAction, aliases: []string{"Kuzu no Honkai"}},
 	}}

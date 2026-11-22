@@ -53,23 +53,32 @@ func animeReservedEpisodesTx(ctx context.Context, tx *sql.Tx, sourceID, exceptRe
 	return out, nil
 }
 
-func selectAnimeBatchFilesTx(ctx context.Context, tx *sql.Tx, source model.AnimeSource, release model.AnimeRelease, manifest []torrentmeta.File) ([]model.AnimeBatchFile, []model.AnimeBatchFile, error) {
+func selectAnimeBatchFilesTx(ctx context.Context, tx *sql.Tx, source model.AnimeSource, release model.AnimeRelease, manifest []torrentmeta.File, naming *model.AnimeNamingPlan) ([]model.AnimeBatchFile, []model.AnimeBatchFile, error) {
 	rules := source.Rules
 	zero := 0
 	rules.MinimumEpisode = &zero
-	all, err := preview.MatchBatchFiles(source.Binding, rules, release.Title, manifest)
-	if err != nil {
-		return nil, nil, ErrAnimeInvalid
-	}
-	// Idempotent re-linking preserves the original selection, even after it has
-	// completed. It never turns the rest of this torrent into another download.
+	// 已关联的合集沿用原来确认的编号和选中文件，避免重复下载。
 	var raw string
-	err = tx.QueryRowContext(ctx, `SELECT x.snapshot_json FROM anime_job_selections x JOIN anime_download_jobs j ON j.id=x.job_id WHERE x.source_id=? AND x.release_id=? AND x.status='authorized' ORDER BY j.attempt DESC LIMIT 1`, source.ID, release.ID).Scan(&raw)
-	if err == nil {
-		var snapshot model.AnimeDownloadSnapshot
+	err := tx.QueryRowContext(ctx, `SELECT x.snapshot_json FROM anime_job_selections x JOIN anime_download_jobs j ON j.id=x.job_id WHERE x.source_id=? AND x.release_id=? AND x.status='authorized' ORDER BY j.attempt DESC LIMIT 1`, source.ID, release.ID).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, err
+	}
+	existing := err == nil
+	var snapshot model.AnimeDownloadSnapshot
+	var episodes preview.BatchEpisodeMap
+	if existing {
 		if err := decodeAnimeJSON(raw, &snapshot); err != nil {
 			return nil, nil, err
 		}
+		episodes = preview.FrozenSpecialBatchSourceEpisodes(snapshot.Decision.BatchFiles)
+	} else {
+		episodes = preview.SpecialBatchSourceEpisodes(rules, release.Parse, naming, source.ID, manifest)
+	}
+	all, err := preview.MatchBatchFilesWithSourceEpisodes(source.Binding, rules, release.Title, manifest, episodes)
+	if err != nil {
+		return nil, nil, ErrAnimeInvalid
+	}
+	if existing {
 		for _, selected := range snapshot.BatchFiles {
 			valid := false
 			for _, file := range all {
@@ -83,9 +92,6 @@ func selectAnimeBatchFilesTx(ctx context.Context, tx *sql.Tx, source model.Anime
 			}
 		}
 		return all, snapshot.BatchFiles, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, nil, err
 	}
 	occupied, err := animeReservedEpisodesTx(ctx, tx, source.ID, release.ID, false)
 	if err != nil {

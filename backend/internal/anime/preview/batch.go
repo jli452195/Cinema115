@@ -4,6 +4,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -19,8 +20,16 @@ var batchQualityToken = regexp.MustCompile(`(?i)\b(?:[0-9]{3,4}p|4k|[0-9]{3,4}[x
 // MatchBatchFiles checks the actual episode files. Missing publisher labels may
 // come from the post or directories, but explicit file specifications win.
 func MatchBatchFiles(binding model.AnimeBinding, rules model.AnimeRules, title string, files []torrentmeta.File) ([]model.AnimeBatchFile, error) {
+	return MatchBatchFilesWithSourceEpisodes(binding, rules, title, files, nil)
+}
+
+// MatchBatchFilesWithSourceEpisodes 提供已确认的集号时，只匹配其中记录的视频。
+func MatchBatchFilesWithSourceEpisodes(binding model.AnimeBinding, rules model.AnimeRules, title string, files []torrentmeta.File, episodes BatchEpisodeMap) ([]model.AnimeBatchFile, error) {
 	if len(files) == 0 || len(files) > 512 {
 		return nil, ErrInput
+	}
+	if !rules.SpecialChapter || rules.EpisodePattern != "" {
+		episodes = nil
 	}
 	compiled, err := CompileRules(rules)
 	if err != nil {
@@ -57,9 +66,11 @@ func MatchBatchFiles(binding model.AnimeBinding, rules model.AnimeRules, title s
 		if len(directories)+1 > 32 || len(files)+len(directories)+1 > 512 {
 			return nil, ErrInput
 		}
-		switch strings.ToLower(path.Ext(file.Path)) {
-		case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg":
-		default:
+		if !batchVideo(file.Path) {
+			continue
+		}
+		episode, normalized := episodes[file]
+		if episodes != nil && !normalized {
 			continue
 		}
 		name := path.Base(file.Path)
@@ -101,6 +112,9 @@ func MatchBatchFiles(binding model.AnimeBinding, rules model.AnimeRules, title s
 		if compiled.Filter(contexts...) != "" {
 			continue
 		}
+		if normalized {
+			parsed.Episode, parsed.RawEpisode = &episode, strconv.Itoa(episode)
+		}
 		item := Item{Release: model.AnimeRelease{PostKey: file.Path, Title: name, Parse: parsed}}
 		if err := evaluateCompiled(binding, rules, fileRules, &item); err != nil {
 			return nil, err
@@ -127,10 +141,20 @@ func MatchBatchFiles(binding model.AnimeBinding, rules model.AnimeRules, title s
 	out := make([]model.AnimeBatchFile, 0, len(items))
 	for _, item := range items {
 		if item.Selectable && counts[*item.Release.Parse.Episode] == 1 && !ambiguous[*item.Release.Parse.Episode] {
-			out = append(out, model.AnimeBatchFile{Path: item.Release.PostKey, Size: byPath[item.Release.PostKey], Parse: item.Release.Parse})
+			file := torrentmeta.File{Path: item.Release.PostKey, Size: byPath[item.Release.PostKey]}
+			_, normalized := episodes[file]
+			out = append(out, model.AnimeBatchFile{Path: file.Path, Size: file.Size, Parse: item.Release.Parse, SourceEpisodeNormalized: normalized})
 		}
 	}
 	return out, nil
+}
+
+func batchVideo(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".mkv", ".mp4", ".avi", ".ts", ".m2ts", ".mov", ".wmv", ".flv", ".webm", ".mpg", ".mpeg":
+		return true
+	}
+	return false
 }
 
 func compatibleBatchSpec(file releaseparse.Spec, parsed releaseparse.Result, label string) bool {

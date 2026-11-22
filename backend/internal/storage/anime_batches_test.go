@@ -116,6 +116,47 @@ func TestAnimeBatchCannotReplaceQueuedOrVerifyingSingle(t *testing.T) {
 	}
 }
 
+func TestAnimeSpecialBatchUsesSourceEpisodesForClaimAndProgress(t *testing.T) {
+	f := batchClaimFixture(t)
+	ctx := context.Background()
+	sourceID := f.sub.Sources[0].ID
+	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.specialChapter',json('true'),'$.minimumEpisode',2), binding_json=json_set(binding_json,'$.scope.last',3) WHERE id=?`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_subscriptions SET naming_json=json_set(naming_json,'$.target.season',0,'$.target.seasons[0].number',0,'$.sources[0].segments[0].targetSeason',0,'$.sources[0].segments[0].targetBase',2) WHERE id=?`, f.sub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_entries SET metadata_json=json_set(metadata_json,'$.totalEpisodes',3)`); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	f.sub, err = f.store.GetAnimeSubscription(ctx, f.sub.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := []torrentmeta.File{
+		{Path: "My.Happy.Marriage.S00E04.Special.Part.3.1080p.HEVC.mkv", Size: 1024},
+		{Path: "My.Happy.Marriage.S00E02.Special.Part.1.1080p.HEVC.mkv", Size: 1024},
+		{Path: "My.Happy.Marriage.S00E03.Special.Part.2.1080p.HEVC.mkv", Size: 1024},
+	}
+	release, proof := f.selectTitle(t, 0, "rel_special_batch", fmt.Sprintf("%040x", 7003), "My Happy Marriage - 01-03 [HEVC]")
+	first := claimBatch(t, f, 0, release, proof, files)
+	selected := first.Job.Snapshot.BatchFiles
+	if !first.Created || len(selected) != 2 || selected[0].Path != files[0].Path || selected[1].Path != files[2].Path ||
+		!selected[0].SourceEpisodeNormalized || !selected[1].SourceEpisodeNormalized || *selected[0].Parse.Episode != 3 || *selected[1].Parse.Episode != 2 {
+		t.Fatal("补番起点和来源范围应按来源集号选择第 2、3 话", selected)
+	}
+	if again := claimBatch(t, f, 0, release, proof, files); again.Created || again.Job.ID != first.Job.ID || !reflect.DeepEqual(again.Job.Snapshot.BatchFiles, selected) {
+		t.Fatal("重新关联应保留原来选中的两话", again)
+	}
+	if _, err := f.store.db.Exec(`UPDATE anime_download_jobs SET download_state='completed',file_state='verified',workflow_state='organized' WHERE id=?`, first.Job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if progress := refreshProgress(t, f)[sourceID]; progress.State != "complete" || progress.OrganizedCount != 2 || progress.FirstEpisode != 2 || progress.PublishedThrough != 3 {
+		t.Fatal("只整理部分合集时，进度仍应按已保存的来源集号统计", progress)
+	}
+}
+
 func TestAnimeBatchPublisherLabelsSurviveSubmitAndCompletion(t *testing.T) {
 	f := batchClaimFixture(t)
 	if _, err := f.store.db.Exec(`UPDATE anime_subscription_sources SET rules_json=json_set(rules_json,'$.match',json('["(?i)1080p","外挂"]')) WHERE id=?`, f.sub.Sources[0].ID); err != nil {
