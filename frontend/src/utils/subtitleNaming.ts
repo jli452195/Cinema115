@@ -8,6 +8,7 @@ const languageAliases = new Map(aliasEntries(rules.languages))
 const bilingualAliases = new Map(Object.entries(rules.bilingual).flatMap(([tag, languages]) =>
   aliasEntries(languages).map(([alias, language]) => [alias, { language, tag }] as const),
 ))
+export const isSubtitleBilingualAlias = (tag: string) => bilingualAliases.has(tag.toLowerCase())
 const tagAliases = new Map([...aliasEntries(rules.variants), ...aliasEntries(rules.flags)])
 const conditionalFlags = new Set(rules.flagsRequiringLanguage)
 const variants = Object.keys(rules.variants)

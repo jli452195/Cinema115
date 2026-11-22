@@ -45,7 +45,7 @@ export function subtitleVariantHint(name: string): string {
   return /^[A-F]{4,}$/.test(hint) ? '' : hint
 }
 
-export function subtitleScopeKey(row: SubtitlePresentationRow): string {
+export function subtitleScopeKey(row: Pick<SubtitlePresentationRow, 'versionId' | 'path' | 'file'>): string {
   // 库版本 ID 属于来源身份；用户填写的输出版本和语言均不能改变此范围。
   const source = row.versionId ? ['library', row.versionId] : ['file', row.file.sourceKey || 'local']
   return JSON.stringify([source, directory(row.path || row.file.name)])

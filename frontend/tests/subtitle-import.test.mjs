@@ -16,8 +16,13 @@ const namingModule = { exports: {} }
 const requireNaming = createRequire(new URL('../src/utils/subtitleNaming.ts', import.meta.url))
 new Function('require', 'module', 'exports', namingCompiled)(requireNaming, namingModule, namingModule.exports)
 const module = { exports: {} }
-new Function('require', 'module', 'exports', compiled)(name => name === './subtitleLimits' ? subtitleLimits : name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } } : require(name), module, module.exports)
-const { episodeNumber, analyzeSubtitle, subtitlePairKey, readLocalSubtitles, mergeSubtitleFiles } = module.exports
+new Function('require', 'module', 'exports', compiled)(name => {
+  if (name === './subtitleLimits') return subtitleLimits
+  if (name === './subtitleNaming') return namingModule.exports
+  if (name === './subtitleArchiveClient') return { readSubtitleArchive: (bytes, kind, limits, signal) => { assert.equal(kind, 'zip'); return module.exports.readSubtitleZip(bytes, signal, limits) } }
+  return require(name)
+}, module, module.exports)
+const { episodeNumber, analyzeSubtitle, continuousSubtitleRanges, subtitlePairKey, readLocalSubtitles, mergeSubtitleFiles } = module.exports
 const { subtitleLanguage } = namingModule.exports
 const video = (id, name) => ({ id, name, parentId: '10', path: `/剧集/${name}`, size: 100, directory: false })
 
@@ -97,6 +102,9 @@ test('space-separated release episodes accept complete technical suffixes withou
     'Shangri-La 01 DVDRip 852x480 x264 FLAC.ass',
     '目录/[ReinForce] Shangri-La 01 (DVDRip 852x480 x264 FLAC).tc.ass',
     '香格里拉 01 (DVDRip 852×480 x264 FLAC).srt',
+    '[Nekomoe kissaten] Kanojo mo Kanojo 01 [WebRip 1080p HEVC-10bit AAC].JPSC.ass',
+    '[Nekomoe kissaten] Kanojo mo Kanojo 01 [WebRip 1080p HEVC-10bit AAC].JPTC.ass',
+    'Shangri-La 01 [DVDRip][852x480][x264][FLAC].ScJp.ass',
   ]
   const videos = [video('first', '香格里拉.S02E01.mkv'), video('other-season', '香格里拉.S01E01.mkv')]
   for (const name of names) {
@@ -122,6 +130,8 @@ test('space-separated episodes reject revisions, resolutions, specials and compe
     'Show 01 (BDRip 1080p x265 FLAC v2).ass', 'Show 01 (BDRip 1080p x265 FLAC 02).ass',
     'Show 01 (BDRip 1080p x265 FLAC) (SP).ass',
     'Show 852x480 x264 FLAC.ass', '[Group] 01 (BDRip 1080p x265 FLAC).ass',
+    'Show 01 [WebRip 1080p HEVC-10bit AAC].CUSTOM.ass', 'Show 01 [WebRip 1080p].JPTC.v2.ass',
+    'Show 01 [unknown].JPTC.ass', 'Show 01 [WebRip 1080p].JPSC.mkv',
   ]
   const videos = [video('first', 'Show.S01E01.mkv'), video('second', 'Show.S01E02.mkv')]
   for (const name of invalid) {
@@ -215,6 +225,74 @@ test('download subtitle matching can use source numbers after offsets without ch
   assert.deepEqual(new Set(ambiguous.candidates.map(candidate => candidate.id)), new Set(['offset', 'target']))
   assert.equal(analyzeSubtitle('S02E27.sc.ass', [first, second], NaN, 'tv', options).videoId, 'target')
   assert.equal(analyzeSubtitle('27.sc.ass', [{ ...first, episode: 0 }], 2, 'tv', options).videoId, '', 'invalid target mapping never becomes eligible through its original name')
+})
+
+test('连续字幕编号按指定范围换算，只关联季内唯一视频', () => {
+  const videos = Array.from({ length: 12 }, (_, i) => ({ ...video(String(i + 1), `Release - ${String(i + 1).padStart(2, '0')}.mkv`), season: 2, episode: i + 1 }))
+  const options = { sourceEpisodes: true, continuousRanges: [{ season: 2, offset: 12, episodeCount: 12 }] }
+  const subtitleName = number => `[Coalgirls]_Rinne_no_Lagrange_${String(number).padStart(2, '0')}_(1920x1080_Blu-Ray_FLAC)_[108C51C3].DHR.tc.ass`
+  for (let i = 1; i <= 12; i++) {
+    const matched = analyzeSubtitle(subtitleName(i + 12), videos, 2, 'tv', options)
+    assert.equal(matched.videoId, String(i))
+    const earlierSeason = analyzeSubtitle(subtitleName(i), videos, 2, 'tv', options)
+    assert.equal(earlierSeason.videoId, '')
+    assert.match(earlierSeason.reason, /不在第 2 季范围内/)
+  }
+  assert.match(analyzeSubtitle(subtitleName(13), videos, 2, 'tv', options).reason, /连续第 13 集.*S02E01/)
+  assert.equal(analyzeSubtitle(subtitleName(25), videos, 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle(subtitleName(13), videos.slice(1), 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle(subtitleName(13), [...videos, { ...videos[0], id: 'second-version' }], 2, 'tv', options).confidence, 'medium')
+  assert.equal(analyzeSubtitle('S02E01.tc.ass', videos, 2, 'tv', options).videoId, '1')
+  assert.equal(analyzeSubtitle('S01E13.tc.ass', videos, 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('Show - 13-14.tc.ass', videos, 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('01.tc.ass', [video('exact', '01.tc.mkv')], 2, 'tv', options).videoId, '')
+  const rawMatch = { ...video('raw', 'Release - 13.mkv'), season: 2, episode: 2 }
+  assert.equal(analyzeSubtitle('13.tc.ass', [rawMatch], 2, 'tv', options).videoId, '')
+})
+
+test('连续字幕编号按完整正式季累计，未选季保留区间且忽略特别篇', () => {
+  const seasons = [{ number: 3, episodeCount: 6 }, { number: 1, episodeCount: 12 }, { number: 0, episodeCount: 5 }, { number: 2, episodeCount: 12 }]
+  const ranges = continuousSubtitleRanges(seasons, [3, 0, 1, 3])
+  assert.deepEqual(ranges, [{ season: 1, offset: 0, episodeCount: 12 }, { season: 3, offset: 24, episodeCount: 6 }])
+  const videos = [
+    { ...video('s1-12', 'Release.S01E12.mkv'), season: 1, episode: 12 },
+    { ...video('s3-01', 'Release.S03E01.mkv'), season: 3, episode: 1 },
+    { ...video('special', 'Release.S00E01.mkv'), season: 0, episode: 1 },
+  ]
+  const options = { sourceEpisodes: true, continuousRanges: ranges }
+  assert.equal(analyzeSubtitle('12.tc.ass', videos, NaN, 'tv', options).videoId, 's1-12')
+  assert.equal(analyzeSubtitle('13.tc.ass', videos, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('24.tc.ass', videos, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('25.tc.ass', videos, NaN, 'tv', options).videoId, 's3-01')
+  assert.equal(analyzeSubtitle('01.tc.ass', videos, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('S00E01.tc.ass', videos, NaN, 'tv', options).videoId, 'special')
+  assert.deepEqual(continuousSubtitleRanges(seasons.filter(item => item.number !== 2), [1, 3]), [])
+  assert.deepEqual(continuousSubtitleRanges(seasons.map(item => item.number === 3 ? { ...item, episodeCount: 0 } : item), [3]), [])
+  assert.deepEqual(continuousSubtitleRanges(seasons, [0]), [])
+})
+
+test('连续字幕 01–24 关联两季，缺集保留原编号且同季同集多个版本待确认', () => {
+  const continuousRanges = continuousSubtitleRanges([{ number: 1, episodeCount: 12 }, { number: 2, episodeCount: 12 }], [1, 2])
+  const options = { sourceEpisodes: true, continuousRanges }
+  const videos = [1, 2].flatMap(season => Array.from({ length: 12 }, (_, i) => ({
+    ...video(`s${season}-${i + 1}`, `Release.S0${season}E${String(i + 1).padStart(2, '0')}.mkv`),
+    season, episode: i + 1,
+  })))
+  const name = number => `[Coalgirls]_Rinne_no_Lagrange_${String(number).padStart(2, '0')}_(1920x1080_Blu-Ray_FLAC)_[108C51C3].DHR.tc.ass`
+  for (let number = 1; number <= 24; number++) {
+    const expected = number <= 12 ? `s1-${number}` : `s2-${number - 12}`
+    assert.equal(analyzeSubtitle(name(number), videos, NaN, 'tv', options).videoId, expected)
+  }
+  const remaining = videos.filter(item => item.id !== 's2-1' && item.id !== 's1-11')
+  assert.equal(analyzeSubtitle(name(11), remaining, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle(name(13), remaining, NaN, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle(name(14), remaining, NaN, 'tv', options).videoId, 's2-2')
+  assert.equal(analyzeSubtitle(name(25), videos, NaN, 'tv', options).videoId, '')
+  const duplicate = { ...videos[12], id: 'alternate' }
+  const match = analyzeSubtitle(name(13), [...videos, duplicate], NaN, 'tv', options)
+  assert.equal(match.videoId, '')
+  assert.deepEqual(new Set(match.candidates.map(candidate => candidate.id)), new Set(['s2-1', 'alternate']))
+  assert.equal(analyzeSubtitle('S02E01.tc.ass', videos, NaN, 'tv', options).videoId, 's2-1')
 })
 
 test('specials, ranges, years, checksums and encoding numbers are not guessed', () => {

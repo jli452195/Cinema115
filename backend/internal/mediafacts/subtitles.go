@@ -114,7 +114,14 @@ var (
 
 func subtitleFileIdentity(name string, isSubtitle bool) *subtitleIdentity {
 	stem := strings.TrimSuffix(name, path.Ext(name))
-	parsed, err := releaseparse.Title(stem)
+	episodeStem := stem
+	if isSubtitle {
+		// 裸集号解析前跳过已知双语尾标记，原标记仍参与字幕语言归一。
+		if dot := strings.LastIndexByte(stem, '.'); dot >= 0 && subtitle.IsBilingualAlias(stem[dot+1:]) {
+			episodeStem = stem[:dot]
+		}
+	}
+	parsed, err := releaseparse.Title(episodeStem)
 	if err != nil || parsed.Kind != "episode" || parsed.Episode == nil || parsed.SpecAmbiguous {
 		return nil
 	}

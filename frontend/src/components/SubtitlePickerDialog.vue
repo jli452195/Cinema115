@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { IconArrowLeft, IconSearch, IconUpload } from '@tabler/icons-vue'
 import FloatingDialog from './FloatingDialog.vue'
 import SubtitleMatchList from './SubtitleMatchList.vue'
 import SelectMenu from './SelectMenu.vue'
-import { analyzeSubtitle, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchRow } from '../utils/subtitleImport'
+import { analyzeSubtitle, continuousSubtitleRange, continuousSubtitleRanges, episodeNumber, formatSubtitleSize, mergeSubtitleFiles, readLocalSubtitles, subtitlePairKey, type LocalSubtitle, type LocalSubtitleSelection, type SubtitleMatchingState, type SubtitleMatchRow } from '../utils/subtitleImport'
 import { maxSubtitleFiles, subtitleSelectionIssue } from '../utils/subtitleLimits'
-import { subtitleOutputConflicts } from '../utils/subtitlePresentation'
+import { subtitleOutputConflicts, subtitleScopeKey } from '../utils/subtitlePresentation'
 import type { LibrarySubtitleFile, LibrarySubtitleSelection, SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleLanguage, subtitleTargetName } from '../utils/subtitleNaming'
 import { subtitleRequest, type AssrtSearchResult, type AssrtSubtitle } from '../utils/subtitleApi'
@@ -15,10 +15,11 @@ import { useToast } from '../composables/useToast'
 import type { DismissDecision, DismissReason } from '../composables/useMobileSheet'
 import type { OrganizeRow } from '../types/organize'
 
-const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; targets: Record<string, { name: string; stem: string }>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
-const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion] }>()
-type LibraryRow = LibrarySubtitleSelection & SubtitleMatchRow
-type LocalRow = LocalSubtitleSelection & SubtitleMatchRow
+const props = defineProps<{ token: string; kind: 'movie' | 'tv'; animationLibrary?: boolean; title: string; originalTitle?: string; videos: OrganizeRow[]; seasons?: { number: number; episodeCount: number }[]; matching?: SubtitleMatchingState; targets: Record<string, { name: string; stem: string }>; library: LibrarySubtitleSelection[]; local: LocalSubtitleSelection[]; version?: SubtitleVersion }>()
+const emit = defineEmits<{ close: []; select: [library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion, matching?: SubtitleMatchingState] }>()
+type PickerRow = SubtitleMatchRow & { confirmed?: boolean }
+type LibraryRow = LibrarySubtitleSelection & PickerRow
+type LocalRow = LocalSubtitleSelection & PickerRow
 const lifecycle = new AbortController()
 const toast = useToast()
 const query = ref(props.title), busy = ref<'' | 'search' | 'files'>(''), searchError = ref(''), versions = ref<SubtitleVersion[]>([]), version = ref(props.version), showResults = ref(!props.library.length && !props.local.length)
@@ -44,15 +45,79 @@ const choosing = computed(() => busy.value === 'files')
 const assrtItems = ref<AssrtSubtitle[]>([]), assrtBusy = ref(false), assrtError = ref(''), assrtConfigured = ref(false), assrtMore = ref(false)
 const searching = computed(() => busy.value === 'search' || assrtBusy.value)
 const targetSeasons = computed(() => [...new Set(props.videos.map(video => video.season).filter(season => Number.isInteger(season) && season >= 0 && season <= 1000))].sort((a, b) => a - b))
+const multipleSeasons = computed(() => targetSeasons.value.length > 1)
 const matchingSeason = ref(targetSeasons.value.length === 1 ? String(targetSeasons.value[0]) : '')
 const seasonOptions = computed(() => [{ value: '', label: '请选择字幕所属季' }, ...targetSeasons.value.map(number => ({ value: String(number), label: number === 0 ? '特别篇' : `第 ${number} 季` }))])
-const subtitleMatch = (name: string) => analyzeSubtitle(name, props.videos, matchingSeason.value === '' ? NaN : Number(matchingSeason.value), props.kind, { sourceEpisodes: true })
+const continuousRanges = computed(() => props.kind === 'tv' && targetSeasons.value.some(season => season > 1)
+  ? continuousSubtitleRanges(props.seasons || [], targetSeasons.value) : [])
+const continuousSummary = computed(() => continuousRanges.value.map(range => `${range.offset + 1}–${range.offset + range.episodeCount} 对应第 ${range.season} 季`).join('，'))
+const continuousScopes = reactive(new Set(props.matching?.continuousScopes))
+const subtitleMatch = (name: string, scope: string) => analyzeSubtitle(name, props.videos, matchingSeason.value === '' ? NaN : Number(matchingSeason.value), props.kind, {
+  sourceEpisodes: true,
+  continuousRanges: continuousRanges.value.length && continuousScopes.has(scope) ? continuousRanges.value : undefined,
+})
 let assrtQuery = '', assrtPosition = 0
-const libraryRows = ref<LibraryRow[]>(props.library.map(item => ({ ...item, key: `library:${item.versionId}:${item.path}`, pairKey: libraryPairKey(item.versionId, item.path), sourceLabel: '字幕库', selected: true, reason: '已保存的字幕匹配' })))
-const localRows = ref<LocalRow[]>(props.local.map(item => ({ ...item, key: item.localId, pairKey: localPairKey(item.file), sourceLabel: localSourceLabel(item.file), selected: true, reason: '已保存的字幕匹配' })))
+const libraryRows = ref(savedLibraryRows(props.library))
+const localRows = ref<LocalRow[]>(props.local.map(item => ({ ...item, key: item.localId, pairKey: localPairKey(item.file), sourceLabel: localSourceLabel(item.file), selected: true, confirmed: true, reason: '已保存的字幕匹配' })))
 const hasLocal = computed(() => localRows.value.some(row => row.file.origin !== 'assrt'))
 const rows = computed(() => [...libraryRows.value, ...localRows.value])
-const manualRows = new Set<string>()
+const manualRows = reactive(new Set(props.matching?.manualRows))
+const mappingProtected = (row: PickerRow) => manualRows.has(row.key) || multipleSeasons.value && row.confirmed
+const showSeasonPicker = computed(() => props.kind === 'tv' && multipleSeasons.value && (showResults.value || rows.value.some(row => !continuousScopes.has(subtitleScopeKey(row)))))
+const continuousSources = computed(() => {
+  if (!continuousRanges.value.length) return []
+  const sources = new Map<string, { value: string; label: string }>()
+  for (const row of rows.value) {
+    const scope = subtitleScopeKey(row)
+    if (sources.has(scope)) continue
+    if (!continuousScopes.has(scope)) {
+      const episode = episodeNumber(row.file.name)
+      const range = episode && episode.season === undefined ? continuousSubtitleRange(continuousRanges.value, episode.episode) : undefined
+      if (!range || range.offset === 0) continue
+    }
+    const folder = ('path' in row ? row.path : row.file.name).replace(/\\/g, '/').split('/').slice(0, -1).join('/')
+    const sourceLabel = 'localId' in row ? row.file.sourceLabel || row.sourceLabel : row.sourceLabel
+    sources.set(scope, { value: scope, label: [sourceLabel, folder || '根目录'].filter(Boolean).join(' · ') })
+  }
+  return [...sources.values()]
+})
+const continuousSource = ref('')
+const activeContinuousSource = computed(() => continuousSources.value.find(source => source.value === continuousSource.value) || continuousSources.value[0])
+const mappingWarnings = computed(() => {
+  const warnings = new Map<string, string>()
+  if (!multipleSeasons.value || !continuousScopes.size) return warnings
+  const videosByID = new Map(props.videos.map(video => [video.id, video]))
+  for (const row of rows.value) {
+    if (!row.videoId || !continuousScopes.has(subtitleScopeKey(row)) || !mappingProtected(row)) continue
+    const episode = episodeNumber(row.file.name)
+    if (!episode || episode.season !== undefined) continue
+    const video = videosByID.get(row.videoId)
+    const range = continuousSubtitleRange(continuousRanges.value, episode.episode)
+    if (!range) warnings.set(row.key, '连续集号超出所选季范围，已保留当前关联。')
+    else if (video?.season !== range.season || video.episode !== episode.episode - range.offset) {
+      warnings.set(row.key, `连续编号建议第 ${range.season} 季第 ${episode.episode - range.offset} 集，已保留当前关联。`)
+    }
+  }
+  return warnings
+})
+function toggleContinuousMatching() {
+  const source = activeContinuousSource.value
+  if (!source || reading.value || choosing.value) return
+  if (continuousScopes.has(source.value)) continuousScopes.delete(source.value)
+  else continuousScopes.add(source.value)
+  matchList.value?.clearSelectionHistory()
+  for (const row of rows.value) {
+    if (subtitleScopeKey(row) !== source.value || mappingProtected(row)) continue
+    const episode = episodeNumber(row.file.name)
+    if (!episode || episode.season !== undefined) continue
+    const match = subtitleMatch(row.file.name, source.value)
+    row.reason = match.reason
+    if (row.videoId === match.videoId) continue
+    const keepSelected = row.videoId ? row.selected : 'localId' in row || row.language === 'zh-CN'
+    row.videoId = match.videoId
+    row.selected = !!match.videoId && keepSelected
+  }
+}
 function protectManualRows(keys: string[]) {
   for (const key of keys) manualRows.add(key)
 }
@@ -120,11 +185,21 @@ async function choose(item: SubtitleVersion) {
   busy.value = 'files'; searchError.value = ''
   try {
     const data = await request<{ files: LibrarySubtitleFile[] }>(`versions/${encodeURIComponent(item.id)}/files`)
-    const existing = libraryRows.value.some(row => row.versionId === item.id)
-    libraryRows.value = [...libraryRows.value.filter(row => row.versionId !== item.id), ...data.files.map(file => {
-      const match = subtitleMatch(file.name), lang = subtitleLanguage(file.name)
-      const saved = libraryRows.value.find(row => row.versionId === item.id && row.path === file.path && row.file.sha === file.sha)
-      return { key: `library:${item.id}:${file.path}`, pairKey: libraryPairKey(item.id, file.path), sourceLabel: `字幕库 · ${item.name}`, versionId: item.id, path: file.path, file, language: saved?.language ?? lang, version: saved?.version || '', videoId: saved ? props.videos.some(video => video.id === saved.videoId) ? saved.videoId : '' : match.videoId, selected: existing ? !!saved?.selected : props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: saved?.reason || match.reason }
+    const existing = libraryRows.value.filter(row => row.versionId === item.id)
+    const byFile = new Map<string, LibraryRow[]>()
+    for (const row of existing) {
+      const key = JSON.stringify([row.path, row.file.sha])
+      const matches = byFile.get(key) || []
+      matches.push(row)
+      byFile.set(key, matches)
+    }
+    const sourceLabel = `字幕库 · ${item.name}`
+    const videoIDs = new Set(props.videos.map(video => video.id))
+    libraryRows.value = [...libraryRows.value.filter(row => row.versionId !== item.id), ...data.files.flatMap(file => {
+      const saved = byFile.get(JSON.stringify([file.path, file.sha]))
+      if (saved) return saved.map(row => ({ ...row, file, sourceLabel, videoId: videoIDs.has(row.videoId) ? row.videoId : '' }))
+      const match = subtitleMatch(file.name, subtitleScopeKey({ versionId: item.id, path: file.path, file })), lang = subtitleLanguage(file.name)
+      return [{ key: libraryRowKey(item.id, file.path), pairKey: libraryPairKey(item.id, file.path), sourceLabel, versionId: item.id, path: file.path, file, language: lang, version: '', videoId: match.videoId, selected: !existing.length && props.kind !== 'movie' && !!match.videoId && lang === 'zh-CN', reason: match.reason }]
     })]
     version.value = item; loadedVersion = item.id; showResults.value = false
   } catch (reason) {
@@ -134,7 +209,23 @@ async function choose(item: SubtitleVersion) {
   }
   finally { busy.value = '' }
 }
+function libraryRowKey(id: string, path: string) { return `library:${id}:${path}` }
 function libraryPairKey(id: string, name: string) { const pair = subtitlePairKey(name); return pair ? `library:${id}/${pair}` : '' }
+function savedLibraryRows(selections: LibrarySubtitleSelection[]): LibraryRow[] {
+  const groups = new Map<string, Set<string>>()
+  for (const item of selections) {
+    const group = libraryPairKey(item.versionId, item.path) || libraryRowKey(item.versionId, item.path)
+    const videos = groups.get(group) || new Set<string>()
+    videos.add(item.videoId)
+    groups.set(group, videos)
+  }
+  return selections.map(item => {
+    const key = libraryRowKey(item.versionId, item.path), pairKey = libraryPairKey(item.versionId, item.path)
+    // 同一份字幕分季保存时，列表行和 IDX/SUB 联动都要按原目标拆开。
+    const split = (groups.get(pairKey || key)?.size || 0) > 1
+    return { ...item, key: split ? JSON.stringify([key, item.videoId]) : key, pairKey: split && pairKey ? JSON.stringify([pairKey, item.videoId]) : pairKey, sourceLabel: '字幕库', selected: true, confirmed: true, reason: '已保存的字幕匹配' }
+  })
+}
 function localPairKey(file: LocalSubtitleSelection['file']) { const pair = subtitlePairKey(file.name); return pair ? `local:${file.sourceKey || 'local'}/${pair}` : '' }
 function localSourceLabel(file: LocalSubtitle) { return file.origin === 'assrt' ? file.sourceLabel || '射手网' : '本地导入' }
 async function read(files: File[], item?: AssrtSubtitle) {
@@ -159,7 +250,7 @@ async function read(files: File[], item?: AssrtSubtitle) {
     const merged = mergeSubtitleFiles(current.map(row => row.file), data.files, true)
     const kept = localRows.value.filter(row => merged.kept.includes(row.file))
     localRows.value = [...kept, ...merged.added.map(file => {
-      const match = subtitleMatch(file.name)
+      const match = subtitleMatch(file.name, subtitleScopeKey({ file }))
       const localId = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('')
       return { key: localId, pairKey: localPairKey(file), sourceLabel: localSourceLabel(file), localId, file, videoId: match.videoId, language: subtitleLanguage(file.name), version: '', selected: props.kind !== 'movie' && !!match.videoId, reason: match.reason }
     })]
@@ -179,13 +270,13 @@ function selectFiles(event: Event) { const input = event.target as HTMLInputElem
 function matchUnassigned() {
   for (const row of rows.value) {
     if (row.videoId || manualRows.has(row.key)) continue
-    const match = subtitleMatch(row.file.name)
+    const match = subtitleMatch(row.file.name, subtitleScopeKey(row))
     row.reason = match.reason
     row.videoId = match.videoId
     if (match.videoId) row.selected = props.kind !== 'movie' && ('localId' in row || row.language === 'zh-CN')
   }
 }
-function clear() { libraryRows.value = []; localRows.value = []; manualRows.clear(); version.value = undefined; loadedVersion = ''; loadedAssrt.clear(); notice.value = ''; importError.value = ''; showResults.value = true }
+function clear() { libraryRows.value = []; localRows.value = []; manualRows.clear(); continuousScopes.clear(); continuousSource.value = ''; version.value = undefined; loadedVersion = ''; loadedAssrt.clear(); notice.value = ''; importError.value = ''; showResults.value = true }
 function apply() {
   if (reading.value || choosing.value || issue.value) return
   const library: LibrarySubtitleSelection[] = [], local: LocalSubtitleSelection[] = []
@@ -193,7 +284,12 @@ function apply() {
     if ('localId' in row) { const { localId, file, videoId, language, version } = row; local.push({ localId, file, videoId, language, version }) }
     else { const { versionId, path, file, videoId, language, version } = row; library.push({ versionId, path, file, videoId, language, version }) }
   }
-  emit('select', library, local, library.length ? version.value : undefined)
+  const scopes = new Set(selected.value.map(subtitleScopeKey))
+  const matching = !multipleSeasons.value && continuousRanges.value.length ? {
+    continuousScopes: [...continuousScopes].filter(scope => scopes.has(scope)),
+    manualRows: selected.value.filter(row => manualRows.has(row.key)).map(row => row.key),
+  } : undefined
+  emit('select', library, local, library.length ? version.value : undefined, matching)
 }
 onMounted(() => { if (showResults.value) void search(true) })
 onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
@@ -209,7 +305,12 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
         <div v-else class="picker-stats"><span>已匹配 <strong>{{ rows.filter(row => row.videoId).length }}</strong> / {{ rows.length }}</span><span v-if="rows.some(row => !row.videoId)">{{ rows.filter(row => !row.videoId).length }} 个待指定</span><a v-if="version" :href="version.url" target="_blank" rel="noopener noreferrer">查看来源</a></div>
         <button type="button" class="picker-import" :disabled="reading || choosing" @click="picker?.click()"><IconUpload :size="16" aria-hidden="true" />导入字幕</button>
       </div>
-      <div v-if="kind === 'tv' && targetSeasons.length > 1" class="picker-season"><label>字幕所属季 <SelectMenu v-model="matchingSeason" :options="seasonOptions" label="字幕所属季" :disabled="reading || choosing" @change="matchUnassigned" /></label><p class="picker-note">只为未关联且未手动调整的字幕补充匹配。</p></div>
+      <div v-if="showSeasonPicker" class="picker-season"><label>字幕所属季 <SelectMenu v-model="matchingSeason" :options="seasonOptions" label="字幕所属季" :disabled="reading || choosing" @change="matchUnassigned" /></label><p class="picker-note">只为未关联且未手动调整的字幕补充匹配。</p></div>
+      <div v-if="!showResults && activeContinuousSource" class="picker-season picker-numbering">
+        <label v-if="continuousSources.length > 1"><span>字幕来源</span><SelectMenu :model-value="activeContinuousSource.value" :options="continuousSources" label="连续集号字幕来源" :disabled="reading || choosing" @update:model-value="continuousSource = $event" /></label>
+        <button type="button" :disabled="reading || choosing" @click="toggleContinuousMatching">{{ continuousScopes.has(activeContinuousSource.value) ? '恢复按季集号匹配' : '按连续集号匹配' }}</button>
+        <p class="picker-note">字幕 {{ continuousSummary }}。</p>
+      </div>
       <p v-if="busy" role="status" class="picker-note">{{ choosing ? '正在读取字幕文件…' : '正在查找字幕…' }}</p>
       <p v-if="searchError" role="alert" class="picker-error">{{ searchError }}</p>
       <template v-if="showResults">
@@ -218,7 +319,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
         <p v-if="assrtBusy" role="status" class="picker-note">射手网正在搜索…</p><p v-if="assrtError" role="alert" class="picker-note">射手网：{{ assrtError }} <button type="button" :disabled="assrtBusy" @click="searchAssrt(assrtItems.length > 0)">重试</button></p><button v-if="assrtMore" type="button" :disabled="assrtBusy || reading || choosing" @click="searchAssrt(true)">加载更多射手字幕</button>
       </template>
       <p v-if="reading" role="status" class="picker-note">正在读取和解析字幕…<button type="button" @click="controller?.abort()">取消读取</button></p><p v-if="notice" role="status" class="picker-note">{{ notice }}</p><p v-if="importError" role="alert" class="picker-error">{{ importError }}</p>
-      <SubtitleMatchList v-if="rows.length" v-show="!showResults" ref="matchList" :rows="rows" :videos="videos" :targets="targets" :disabled="reading || choosing" @manual-edit="protectManualRows" />
+      <SubtitleMatchList v-if="rows.length" v-show="!showResults" ref="matchList" :rows="rows" :videos="videos" :targets="targets" :mapping-warnings="mappingWarnings" :disabled="reading || choosing" @manual-edit="protectManualRows" />
       <details class="picker-help"><summary>导入说明与管理</summary><p>支持字幕文件、ZIP / RAR / 7z，可拖入。单个 16 MiB，合计 64 MiB / {{ maxSubtitleFiles }} 个。确认下载整理后上传。</p><p v-if="version?.description" class="picker-description">{{ version.description }}</p><div v-if="hasLocal" class="picker-local"><label><input v-model="append" type="checkbox" :disabled="reading" />继续添加时保留已导入文件</label><button type="button" :disabled="reading" @click="localRows = localRows.filter(row => row.file.origin === 'assrt'); notice = ''; importError = ''">移除本地字幕</button></div><button v-if="rows.length" type="button" :disabled="reading || choosing" @click="clear">移除全部</button></details>
     </div>
     <template #footer>
@@ -237,6 +338,7 @@ onBeforeUnmount(() => { lifecycle.abort(); controller?.abort() })
 button { display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;border-radius:8px;padding:6px 12px;background:rgb(var(--surface-hover) / .3);font-weight:500; }button:hover { background:rgb(var(--surface-hover) / .6); }button:disabled { opacity:.45;cursor:default; }.picker-back { flex:none;background:transparent;color:rgb(var(--content-secondary)); }
 .picker-actions { justify-content:space-between;margin-bottom:8px; }.picker-search { flex:1;min-width:0; }.picker-search input { flex:1;min-width:0;min-height:40px;padding:8px 12px;border:1px solid rgb(var(--line-default));border-radius:9px;background:rgb(var(--surface-card));color:inherit; }.picker-import { flex:none;border:1px solid rgb(var(--line-default));background:transparent; }.picker-stats { display:flex;flex-wrap:wrap;gap:8px 16px;color:rgb(var(--content-secondary));font-size:12px; }.picker-stats strong { color:rgb(var(--content-primary)); }.picker-stats a,a { color:rgb(var(--action-link)); }
 .picker-season { margin:12px 0; }.picker-season label { display:flex;align-items:center;gap:8px; }.picker-note { margin:8px 0;color:rgb(var(--content-secondary));font-size:12px;line-height:1.6;overflow-wrap:anywhere; }.picker-note button { margin-left:6px; }
+.picker-numbering { display:flex;align-items:center;flex-wrap:wrap;gap:8px; }.picker-numbering label { min-width:0; }.picker-numbering label>span { flex:none; }.picker-numbering .picker-note { flex-basis:100%;margin:0; }
 .picker-versions { list-style:none;padding:0;margin:16px 0;display:grid;gap:8px; }.picker-versions button { display:block;width:100%;padding:16px;text-align:left;border:1px solid rgb(var(--line-default));border-radius:12px;background:rgb(var(--surface-card) / .5); }.picker-versions button:hover { border-color:rgb(var(--action-link) / .5);background:rgb(var(--action-primary) / .06); }.picker-versions strong,.picker-versions span { display:block;overflow-wrap:anywhere; }.picker-versions small { font-weight:400;color:rgb(var(--content-secondary)); }.picker-source { display:inline-block;margin-left:8px;padding:2px 6px;border-radius:5px;background:rgb(var(--surface-hover) / .4);font-size:11px; }.picker-versions span { margin-top:5px;color:rgb(var(--content-secondary));font-size:12px; }
 .picker-empty { display:flex;flex-direction:column;align-items:center;gap:12px;padding:48px 20px;text-align:center;border:1px dashed rgb(var(--line-default));border-radius:14px; }.picker-empty svg,.picker-empty p { color:rgb(var(--content-secondary)); }.picker-empty p { font-size:12px;line-height:1.7; }
 .picker-footer { justify-content:space-between;min-width:0; }.picker-footer>span { color:rgb(var(--content-secondary));font-size:12px; }.picker-footer strong { color:rgb(var(--content-primary)); }.picker-apply { background:rgb(var(--action-primary));color:#fff;min-width:110px; }.picker-apply:hover { background:rgb(var(--action-primary-hover)); }

@@ -1,10 +1,12 @@
 import { Inflate } from 'fflate'
 import { sha256 } from 'js-sha256'
 import { maxSubtitleFiles, maxFileBytes, maxTotalBytes, subtitleLimitMessages, subtitleSelectionIssue } from './subtitleLimits'
+import { isSubtitleBilingualAlias } from './subtitleNaming'
 
 export { maxFileBytes, maxTotalBytes } from './subtitleLimits'
 export interface LocalSubtitle { name: string; data: Uint8Array; sha256: string; sourceKey?: string; sourceLabel?: string; origin?: 'assrt' }
 export interface LocalSubtitleSelection { localId: string; file: LocalSubtitle; videoId: string; language: string; version: string }
+export interface SubtitleMatchingState { continuousScopes: string[]; manualRows: string[] }
 export interface SubtitleMatchRow { key: string; pairKey?: string; sourceLabel?: string; file: { name: string }; videoId: string; language: string; version?: string; selected: boolean; reason: string }
 export const isSubtitle = (name: string) => /\.(srt|ass|ssa|vtt|idx|sub)$/i.test(name)
 export const isSubtitleArchive = (name: string) => /\.(zip|rar|7z)$/i.test(name)
@@ -55,10 +57,13 @@ export function episodeNumber(name: string): { season?: number; episode: number 
     if (spaced) {
       const episode = Number(spaced[2])
       const prefix = spaced[1].replace(/\[[^\]]*\]|【[^】]*】/g, ' ')
+      const suffix = isSubtitle(name)
+        ? spaced[3].replace(/\.([^.]+)$/, (part, tag: string) => isSubtitleBilingualAlias(tag) ? '' : part)
+        : spaced[3]
       // 常见尺寸、分辨率和编码数字不能独立充当新增格式的集号。
       if (!/\p{L}/u.test(prefix) || /\d/.test(spaced[1]) || /(?:^|[^a-z0-9])(?:v|ver|version|rev|revision)[ ._-]*$/i.test(prefix)
         || episode < 1 || episode > 999 || [240, 264, 265, 360, 480, 540, 576, 640, 704, 720, 768, 800, 848, 852, 854, 960].includes(episode)
-        || !technicalEpisodeSuffix(spaced[3])) return undefined
+        || !technicalEpisodeSuffix(suffix)) return undefined
       numbers.push(episode)
     }
   }
@@ -79,6 +84,31 @@ export interface SubtitleMatch {
   candidates: { id: string; reason: string; score: number }[]
 }
 export interface SubtitleMatchVideo { id: string; name: string; season?: number; episode?: number }
+export interface SubtitleSeasonRange { season: number; offset: number; episodeCount: number }
+interface SubtitleMatchOptions {
+  sourceEpisodes?: boolean
+  continuousRanges?: readonly SubtitleSeasonRange[]
+}
+
+export function continuousSubtitleRanges(seasons: readonly { number: number; episodeCount: number }[], targetSeasons: readonly number[]): SubtitleSeasonRange[] {
+  const targets = new Set(targetSeasons.filter(season => Number.isInteger(season) && season >= 1 && season <= 1000))
+  const lastSeason = Math.max(0, ...targets)
+  const counts = new Map(seasons.map(({ number, episodeCount }) => [number, episodeCount]))
+  const ranges: SubtitleSeasonRange[] = []
+  let offset = 0
+  // 未选中的正式季也占用连续集号；特别篇不进入累计范围。
+  for (let season = 1; season <= lastSeason; season++) {
+    const episodeCount = counts.get(season)
+    if (episodeCount === undefined || !Number.isSafeInteger(episodeCount) || episodeCount < 1 || !Number.isSafeInteger(offset + episodeCount)) return []
+    if (targets.has(season)) ranges.push({ season, offset, episodeCount })
+    offset += episodeCount
+  }
+  return ranges
+}
+
+export function continuousSubtitleRange(ranges: readonly SubtitleSeasonRange[], episode: number): SubtitleSeasonRange | undefined {
+  return ranges.find(range => episode > range.offset && episode <= range.offset + range.episodeCount)
+}
 
 function videoEpisode(video: SubtitleMatchVideo) {
   // Editable target numbers are authoritative, even when currently invalid.
@@ -106,7 +136,7 @@ function rankCandidates(name: string, videos: SubtitleMatchVideo[]) {
   }).sort((a, b) => b.score - a.score)
 }
 
-export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number, kind: 'movie' | 'tv' = 'tv', options: { sourceEpisodes?: boolean } = {}): SubtitleMatch {
+export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], season: number, kind: 'movie' | 'tv' = 'tv', options: SubtitleMatchOptions = {}): SubtitleMatch {
   const no = (reason: string): SubtitleMatch => ({ videoId: '', confidence: 'none', reason, candidates: [] })
   if (kind === 'movie') {
     if (!videos.length) return no('请先选择视频')
@@ -114,23 +144,30 @@ export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], seas
     return { videoId: '', confidence: 'medium', reason: '存在多个电影版本，请指定对应视频', candidates: rankCandidates(name, videos) }
   }
   const exact = videos.filter(video => !('season' in video || 'episode' in video) && stem(name).toLowerCase() === stem(video.name).toLowerCase())
-  if (exact.length === 1) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
-  if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')
   const episode = episodeNumber(name)
+  const ranges = episode?.season === undefined ? options.continuousRanges : undefined
+  if (exact.length === 1 && !ranges) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
+  if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')
   if (episode) {
-    const targetSeason = episode.season ?? season
+    const continuous = ranges && continuousSubtitleRange(ranges, episode.episode)
+    if (ranges && !continuous) {
+      const scope = ranges.length === 1 ? `第 ${ranges[0].season} 季` : '所选季'
+      return no(`连续第 ${episode.episode} 集不在${scope}范围内`)
+    }
+    const targetSeason = episode.season ?? continuous?.season ?? season
     if (!Number.isInteger(targetSeason) || targetSeason < 0 || targetSeason > 1000) return no('请先选择字幕所属季')
+    const targetEpisode = episode.episode - (continuous?.offset ?? 0)
     const candidates = videos.filter(video => {
       const target = videoEpisode(video)
       if (!target || (target.season ?? season) !== targetSeason) return false
-      // A plain release number may refer to the source before an offset. Keep
-      // both interpretations as candidates rather than silently choosing one.
-      return target.episode === episode.episode || options.sourceEpisodes && episode.season === undefined && episodeNumber(video.name)?.episode === episode.episode
+      // 连续编号仅比较换算后的目标集号，避免上一季的字幕通过视频原始集号再次匹配。
+      return target.episode === targetEpisode || !continuous && options.sourceEpisodes && episode.season === undefined && episodeNumber(video.name)?.episode === episode.episode
     })
-    const label = `S${String(targetSeason).padStart(2, '0')}E${String(episode.episode).padStart(2, '0')}`
+    const label = `S${String(targetSeason).padStart(2, '0')}E${String(targetEpisode).padStart(2, '0')}`
     if (candidates.length === 1) {
       const target = videoEpisode(candidates[0])!
-      const reason = target.episode !== episode.episode ? `发布第 ${episode.episode} 集唯一对应 S${String(targetSeason).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : `${label} 唯一对应${episode.season === undefined ? '（使用所选季）' : ''}`
+      const reason = continuous ? `连续第 ${episode.episode} 集唯一对应 ${label}`
+        : target.episode !== episode.episode ? `发布第 ${episode.episode} 集唯一对应 S${String(targetSeason).padStart(2, '0')}E${String(target.episode).padStart(2, '0')}` : `${label} 唯一对应${episode.season === undefined ? '（使用所选季）' : ''}`
       return { videoId: candidates[0].id, confidence: 'high', reason, candidates: [] }
     }
     if (!candidates.length) return no(`${label} 没有对应视频，可能缺集或季不一致`)

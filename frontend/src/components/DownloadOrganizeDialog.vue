@@ -18,7 +18,7 @@ import { directoryFileRows, directoryGroups } from '../utils/organizeSelection'
 import type { NamingResult } from '../types/naming'
 import { magnetKey } from '../lib/cloud-download-batch'
 import SubtitlePickerDialog from './SubtitlePickerDialog.vue'
-import type { LocalSubtitleSelection } from '../utils/subtitleImport'
+import type { LocalSubtitleSelection, SubtitleMatchingState } from '../utils/subtitleImport'
 import { subtitleSelectionIssue } from '../utils/subtitleLimits'
 import type { LibrarySubtitleSelection, SubtitleVersion } from '../utils/subtitleLibrary'
 import { subtitleTargetName } from '../utils/subtitleNaming'
@@ -41,6 +41,11 @@ const subtitleOpen = ref(false), externalSubtitles = ref<LibrarySubtitleSelectio
 const localSubtitles = ref<LocalSubtitleSelection[]>([])
 const subtitleScope = ref<number>()
 const subtitleVideos = computed(() => selected.value.filter(row => subtitleScope.value === undefined || row.season === subtitleScope.value))
+const subtitleSeason = computed(() => {
+  const season = subtitleVideos.value[0]?.season
+  if (subtitleVideos.value.every(row => row.season === season)) return season
+})
+const subtitleMatchingBySeason = new Map<number, SubtitleMatchingState>()
 const subtitleIDs = computed(() => new Set(subtitleVideos.value.map(row => row.id)))
 const scopedLibrary = computed(() => externalSubtitles.value.filter(sub => subtitleIDs.value.has(sub.videoId)))
 const scopedLocal = computed(() => localSubtitles.value.filter(sub => subtitleIDs.value.has(sub.videoId)))
@@ -57,9 +62,10 @@ const externalName = (sub: LibrarySubtitleSelection | LocalSubtitleSelection) =>
   const stem = results.value[sub.videoId]?.stem ?? subtitleVideoStem(row)
   return subtitleTargetName(stem, sub.file.name, sub.language, sub.version)
 }
-function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion) {
+function selectSubtitles(library: LibrarySubtitleSelection[], local: LocalSubtitleSelection[], version?: SubtitleVersion, matching?: SubtitleMatchingState) {
   if (!props.active || !subtitleOpen.value) return
   const ids = subtitleIDs.value
+  if (matching && subtitleSeason.value !== undefined) subtitleMatchingBySeason.set(subtitleSeason.value, matching)
   externalSubtitles.value = [...externalSubtitles.value.filter(sub => !ids.has(sub.videoId)), ...library]
   localSubtitles.value = [...localSubtitles.value.filter(sub => !ids.has(sub.videoId)), ...local]
   subtitleVersion.value = version || (externalSubtitles.value.length ? subtitleVersion.value : undefined)
@@ -604,7 +610,7 @@ onBeforeUnmount(() => {
     </template>
   </FloatingDialog>
   <P115DirectoryDialog v-if="props.active && directoryOpen" :token="token" :account-id="accountId" title="选择本次整理目录" description="只用于本次任务，不修改全局整理配置" @close="directoryOpen = false" @select="selectDirectory" />
-  <SubtitlePickerDialog v-if="props.active && subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :targets="subtitleTargets" @close="subtitleOpen = false" @select="selectSubtitles" />
+  <SubtitlePickerDialog v-if="props.active && subtitleOpen" :token="token" :kind="kind" :animation-library="animationLibrary" :title="title" :original-title="originalTitle" :videos="subtitleVideos" :seasons="seasons" :matching="subtitleSeason === undefined ? undefined : subtitleMatchingBySeason.get(subtitleSeason)" :library="scopedLibrary" :local="scopedLocal" :version="subtitleVersion" :targets="subtitleTargets" @close="subtitleOpen = false" @select="selectSubtitles" />
 </template>
 
 <style scoped>

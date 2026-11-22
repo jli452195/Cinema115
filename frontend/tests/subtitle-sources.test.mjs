@@ -13,7 +13,12 @@ function compile(source, resolver = require) {
   new Function('require', 'module', 'exports', compiled)(resolver, module, module.exports)
   return module.exports
 }
-loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => name === './subtitleLimits' ? subtitleLimits : name === './subtitleArchiveClient' ? { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) } : require(name)))
+loaded.set('./subtitleNaming', compile(await readFile(new URL('../src/utils/subtitleNaming.ts', import.meta.url), 'utf8'), name => ({ default: require(`../src/utils/${name}`) })))
+loaded.set('./subtitleImport', compile(await readFile(new URL('../src/utils/subtitleImport.ts', import.meta.url), 'utf8'), name => {
+  if (name === './subtitleLimits') return subtitleLimits
+  if (name === './subtitleArchiveClient') return { readSubtitleArchive: (bytes, kind, limits, signal) => loaded.get('./subtitleImport').readSubtitleZip(bytes, signal, limits) }
+  return loaded.get(name) || require(name)
+}))
 const { readSubtitleResponse } = compile(await readFile(new URL('../src/utils/subtitleSources.ts', import.meta.url), 'utf8'), name => loaded.get(name) || require(name))
 
 test('download streams enforce exact size, errors, progress and cancellation', async () => {

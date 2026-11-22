@@ -4,13 +4,22 @@ const fs = require('node:fs/promises'), path = require('node:path'), os = requir
 const { selectOption } = require('./select-menu-helpers.cjs')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'))
 const origin = new URL(process.env.CINEMA_URL || 'http://127.0.0.1:5173').origin
+const continuousVersion = {id:'coalgirls',title:'轮回的拉格朗日',source:'字幕库夹具',name:'CoalGirls 01–24',url:'https://example.invalid/subtitles'}
+const continuousFiles = Array.from({length:24}, (_, index) => {
+  const episode = String(index + 1).padStart(2, '0')
+  const name = `[Coalgirls]_Rinne_no_Lagrange_${episode}_(1920x1080_Blu-Ray_FLAC)_[108C51C3].DHR.tc.ass`
+  return {name,path:'字幕目录/'+name,sha:'c'.repeat(40),revision:'fixture',size:128}
+})
 const harness = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/src/style.css"></head><body><div id="app"></div><script type="module">
 import { createApp, h, nextTick } from '/node_modules/.vite/deps/vue.js';
 import Picker from '/src/components/SubtitlePickerDialog.vue';
 let app;
 window.mountDesign = async (options = {}) => {
   app?.unmount(); window.applied = null; window.fixtureCloseCount = 0;
-  const videos = Array.from({length:12}, (_,i)=>({id:'v'+(i+1),name:'Chu-Bra!!.S01E'+String(i+1).padStart(2,'0')+'.1080p.H264.AAC.mkv',season:1,episode:i+1}));
+  const season = options.continuous && !options.multiSeason ? 2 : 1;
+  const title = options.continuous ? '轮回的拉格朗日' : '青春CUP';
+  const release = options.continuous ? 'Rinne.no.Lagrange' : 'Chu-Bra!!';
+  const videos = Array.from({length:12}, (_,i)=>({id:'v'+(i+1),name:release+'.S0'+season+'E'+String(i+1).padStart(2,'0')+'.1080p.H264.AAC.mkv',season,episode:i+1}));
   if (options.multiSeason) videos.push(...videos.map(video=>({...video,id:'s2-'+video.id,name:video.name.replace('S01E','S02E'),season:2})));
   const library = options.library || videos.flatMap((video,i)=>['HKG','KTXP'].filter(hint=>!(options.missing && hint==='KTXP' && i===4)).map(hint=>{
     const name='ちゅーぶら！！ 第'+String(i+1).padStart(2,'0')+'話 「おとなパンツ！の女の子」 (BD 1920x1080 x264 AAC).'+hint+'.ass';
@@ -18,7 +27,10 @@ window.mountDesign = async (options = {}) => {
   }));
   if (options.extra) library.push({versionId:'another-source',path:'Other.en.srt',file:{name:'Other.en.srt',path:'Other.en.srt',sha:'b'.repeat(40),revision:'fixture',size:20},videoId:'v1',language:'en',version:''});
   window.fixture = {videos, library};
-  app = createApp({render:()=>h(Picker,{token:'fixture',kind:'tv',animationLibrary:true,title:'青春CUP',videos,targetNames:Object.fromEntries(videos.map(v=>[v.id,v.name])),library:options.empty?[]:library,local:[],version:{id:'chu-bra',title:'青春CUP',name:'BD 字幕合集',url:'https://example.invalid/subtitles',description:'HKG / KTXP 文件名标记，未指定语言。'},onSelect:(library,local)=>window.applied={library,local},onClose:()=>window.fixtureCloseCount++})});
+  const targets = Object.fromEntries(videos.map(v=>[v.id,{name:v.name,stem:v.name.slice(0,-4)}]));
+  const seasons = options.continuous ? [{number:1,episodeCount:12},{number:2,episodeCount:12}] : undefined;
+  const version = options.continuous ? undefined : {id:'chu-bra',title,name:'BD 字幕合集',url:'https://example.invalid/subtitles',description:'HKG / KTXP 文件名标记，未指定语言。'};
+  app = createApp({render:()=>h(Picker,{token:'fixture',kind:'tv',animationLibrary:true,title,videos,seasons,targets,matching:options.matching,library:options.empty?[]:library,local:[],version,onSelect:(library,local,version,matching)=>window.applied={library,local,matching},onClose:()=>window.fixtureCloseCount++})});
   app.mount('#app'); await nextTick(); await new Promise(requestAnimationFrame);
 }; window.designReady=true;
 </script></body></html>`
@@ -34,7 +46,8 @@ window.mountDesign = async (options = {}) => {
       const request=route.request(),url=new URL(request.url())
       if(url.origin===origin && url.pathname==='/__subtitle-design-test') return route.fulfill({contentType:'text/html; charset=utf-8',body:harness})
       if(url.origin===origin && request.method()==='GET' && /\/api\/admin\/subtitles\/assrt\/search/.test(url.pathname)) return route.fulfill({json:{configured:false,items:[],hasMore:false}})
-      if(url.origin===origin && request.method()==='GET' && /\/api\/admin\/subtitles\/search/.test(url.pathname)) return route.fulfill({json:{versions:[]}})
+      if(url.origin===origin && request.method()==='GET' && url.pathname==='/api/admin/subtitles/search') return route.fulfill({json:{versions:url.searchParams.get('q')===continuousVersion.title?[continuousVersion]:[]}})
+      if(url.origin===origin && request.method()==='GET' && url.pathname==='/api/admin/subtitles/versions/coalgirls/files') return route.fulfill({json:{files:continuousFiles}})
       if(url.origin===origin && request.method()==='GET' && /^\/(?:src\/|node_modules\/|@vite\/|@id\/|@fs\/)/.test(url.pathname)) return route.continue()
       return route.abort('blockedbyclient')
     })
@@ -167,6 +180,83 @@ window.mountDesign = async (options = {}) => {
     assert.match(await rowFor('01.ass').innerText(),/未匹配/)
     assert.match(await rowFor('02.ass').innerText(),/S02 E02/)
     passed.push('选择所属季时保留手动清空的对应关系')
+
+    const chooseContinuousSource = () => page.locator('.picker-versions').getByRole('button',{name:/CoalGirls 01–24/}).click()
+    await mount({empty:true,continuous:true})
+    await chooseContinuousSource()
+    const continuousRow = episode => rowFor(continuousFiles[episode-1].name)
+    const continuousCheckbox = episode => continuousRow(episode).getByRole('checkbox')
+    const continuousMatch = episode => continuousRow(episode).locator('.match-episode').innerText()
+    const manualName = continuousFiles[1].name
+    const continuousButton = button('按连续集号匹配')
+    await continuousButton.waitFor()
+    assert.equal(await continuousMatch(1),'S02 E01')
+    assert.equal(await continuousMatch(13),'未匹配')
+    await continuousCheckbox(1).check()
+    await button('编辑字幕 '+manualName).click()
+    await selectOption(page.getByRole('combobox',{name:manualName+' 对应视频',exact:true}),'v3')
+    await button('编辑字幕 '+manualName).click()
+    await continuousButton.click()
+    for (let episode=1;episode<=12;episode++) {
+      assert.equal(await continuousMatch(episode),episode===2?'S02 E03':'未匹配',`字幕 ${episode}`)
+      assert.equal(await continuousMatch(episode+12),`S02 E${String(episode).padStart(2,'0')}`,`字幕 ${episode+12}`)
+    }
+    assert.equal(await continuousCheckbox(1).isChecked(),false,'原先勾选的过季字幕应取消勾选')
+    assert.equal(await selected(),0,'繁体字幕等待用户选择')
+    await button('全选已匹配').click()
+    assert.equal(await continuousCheckbox(13).isChecked(),true)
+    assert.equal(await continuousCheckbox(24).isChecked(),true)
+    await continuousCheckbox(2).uncheck()
+    await button('使用字幕').click()
+    const continuousResult = await page.evaluate(()=>window.applied)
+    assert.deepEqual(continuousResult.library.map(row=>[row.file.name,row.videoId,row.language]),continuousFiles.slice(12).map((file,index)=>[file.name,`v${index+1}`,'zh-TW']))
+    await button('恢复按季集号匹配').click()
+    assert.equal(await continuousMatch(1),'S02 E01')
+    assert.equal(await continuousMatch(2),'S02 E03','手动选择的视频在恢复后保留')
+    assert.equal(await continuousMatch(13),'未匹配')
+    assert.equal(await continuousMatch(24),'未匹配')
+    passed.push('字幕库连续集号换算、手动关联保护、繁体全选与恢复')
+
+    await mount({continuous:true,...continuousResult})
+    await button('更换字幕').click()
+    await chooseContinuousSource()
+    await button('恢复按季集号匹配').waitFor()
+    assert.equal(await continuousMatch(1),'未匹配')
+    assert.equal(await continuousMatch(13),'S02 E01')
+    assert.equal(await selected(),12)
+    passed.push('重新打开并重新载入字幕时保留已确认的连续匹配')
+
+    await mount({empty:true,continuous:true,multiSeason:true})
+    await chooseContinuousSource()
+    await continuousButton.waitFor()
+    assert.equal(await continuousButton.count(),1,'两季只需一个连续编号按钮')
+    assert.equal(await page.getByRole('combobox',{name:'连续集号字幕来源',exact:true}).count(),0,'单一来源无需额外选择')
+    assert.equal(await continuousMatch(1),'未匹配')
+    await continuousButton.click()
+    for (const [episode, expected] of [[1,'S01 E01'],[12,'S01 E12'],[13,'S02 E01'],[24,'S02 E12']]) {
+      assert.equal(await continuousMatch(episode),expected,`字幕 ${episode}`)
+    }
+    await button('全选已匹配').click()
+    await button('使用字幕').click()
+    const allSeasonResult = await page.evaluate(()=>window.applied.library)
+    assert.deepEqual(allSeasonResult.map(row=>[row.path,row.videoId]),continuousFiles.map((file,index)=>[file.path,index<12?`v${index+1}`:`s2-v${index-11}`]))
+    await button('恢复按季集号匹配').click()
+    assert.equal(await continuousMatch(1),'未匹配')
+    assert.equal(await continuousMatch(24),'未匹配')
+    assert.equal(await selected(),0)
+    passed.push('全部所选字幕一次匹配两季并可恢复按季匹配')
+
+    const file = continuousFiles[1]
+    const saved = {versionId:continuousVersion.id,path:file.path,file,videoId:'s2-v2',language:'zh-TW',version:''}
+    await mount({continuous:true,multiSeason:true,library:[saved,{...saved,videoId:'v2'}]})
+    await button('更换字幕').click()
+    await chooseContinuousSource()
+    await continuousButton.click()
+    assert.deepEqual(await continuousRow(2).locator('.match-episode').allTextContents(),['S01 E02','S02 E02'],'保留同一字幕文件已确认的两个关联')
+    assert.equal(await continuousRow(2).getByRole('checkbox',{checked:true}).count(),2)
+    await continuousRow(2).getByText('连续编号建议第 1 季第 2 集，已保留当前关联。',{exact:true}).waitFor()
+    assert.equal(await continuousMatch(13),'S02 E01')
+    passed.push('跨季连续匹配保留已保存的对应关系')
 
     for(const width of [980,390,320]) for(const dark of [false,true]) {
       await page.setViewportSize({width,height:660});await page.evaluate(dark=>document.documentElement.classList.toggle('dark',dark),dark);await mount()

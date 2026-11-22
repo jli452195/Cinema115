@@ -100,6 +100,12 @@ func metadataTokens(group string) []string {
 // KnownTag 判断完整标签组是否由已知字幕元数据组成。
 func KnownTag(group string) bool { return len(metadataTokens(group)) > 0 }
 
+// IsBilingualAlias 判断单个标记是否是带语言的双语字幕别名。
+func IsBilingualAlias(tag string) bool {
+	rule := rules.aliases[strings.ToLower(tag)]
+	return rule.language != "" && rule.tag != ""
+}
+
 // LanguageCodes 将完整字幕标签中的别名转换为语言代码，保留每种语言。
 func LanguageCodes(group string) []string {
 	tokens := metadataTokens(strings.TrimSpace(group))

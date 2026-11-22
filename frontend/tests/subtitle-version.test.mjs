@@ -27,7 +27,7 @@ function moduleLoader(mocks = {}) {
   }
 }
 const sourceFile = name => fileURLToPath(new URL(`../src/${name}`, import.meta.url))
-const { subtitleTargetName } = moduleLoader()(sourceFile('utils/subtitleNaming.ts'))
+const { subtitleLanguage, subtitleTargetName } = moduleLoader()(sourceFile('utils/subtitleNaming.ts'))
 const renderer = createRenderer({ createElement: () => ({}), createText: () => ({}), createComment: () => ({}), insert() {}, remove() {}, setText() {}, setElementText() {}, patchProp() {}, parentNode: () => null, nextSibling: () => null })
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const hash = index => (index ? 'b' : 'a').repeat(40)
@@ -117,6 +117,12 @@ test('字幕命名按语言、用户确认版本、变体和标志输出', () =>
   assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.zh-HK.srt', 'zh-HK'), 'Show.S01E01.zh-HK.srt')
   assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.srt', 'zh-en'), 'Show.S01E01.zh.bilingual.srt')
   assert.equal(subtitleTargetName('Show.S01E01', 'Download/01.CHS+ENG.SUB[jpn].effects.ass', 'ja'), 'Show.S01E01.ja.effects.ass')
+  const videoStem = '女友成双.S01E01.1080p.[zh-CN]-KTXP'
+  for (const [tag, language] of [['JPSC', 'zh-CN'], ['JPTC', 'zh-TW']]) {
+    const source = `[Nekomoe kissaten] Kanojo mo Kanojo 01 [WebRip 1080p HEVC-10bit AAC].${tag}.ass`
+    assert.equal(subtitleLanguage(source), language)
+    assert.equal(subtitleTargetName(videoStem, source, subtitleLanguage(source)), `${videoStem}.${language}.bilingual-ja.ass`)
+  }
 })
 
 test('前后端使用相同的字幕别名表和输出顺序', () => {
