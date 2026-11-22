@@ -66,7 +66,7 @@ type record struct {
 type response struct {
 	Status *int `json:"status"`
 	Sub    *struct {
-		Items []record `json:"subs"`
+		Items json.RawMessage `json:"subs"`
 	} `json:"sub"`
 	User struct {
 		Quota int `json:"quota"`
@@ -160,11 +160,24 @@ func (c *Client) Search(ctx context.Context, query string, position int) ([]Item
 	if err != nil {
 		return nil, err
 	}
-	if out.Sub == nil || len(out.Sub.Items) > PageSize {
+	if out.Sub == nil {
 		return nil, ErrUnavailable
 	}
-	items := make([]Item, 0, len(out.Sub.Items))
-	for _, item := range out.Sub.Items {
+	var records []record
+	if raw := out.Sub.Items; len(raw) != 0 {
+		if err := json.Unmarshal(raw, &records); err != nil {
+			// 射手网搜索无匹配时会用空对象表示字幕列表。
+			var empty map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &empty); err != nil || len(empty) != 0 {
+				return nil, ErrUnavailable
+			}
+		}
+	}
+	if len(records) > PageSize {
+		return nil, ErrUnavailable
+	}
+	items := make([]Item, 0, len(records))
+	for _, item := range records {
 		if item.ID == 0 && item.FileID != "" {
 			id, err := strconv.ParseInt(item.FileID, 10, 64)
 			if err != nil {
@@ -202,10 +215,11 @@ func (c *Client) Download(ctx context.Context, id int64) (Download, error) {
 	if err != nil {
 		return Download{}, err
 	}
-	if out.Sub == nil || len(out.Sub.Items) != 1 || out.Sub.Items[0].ID != id {
+	var records []record
+	if out.Sub == nil || json.Unmarshal(out.Sub.Items, &records) != nil || len(records) != 1 || records[0].ID != id {
 		return Download{}, ErrUnavailable
 	}
-	item := out.Sub.Items[0]
+	item := records[0]
 	name := path.Base(strings.ReplaceAll(item.Filename, "\\", "/"))
 	ext := strings.ToLower(path.Ext(name))
 	if !subtitle.Supported(name) && ext != ".zip" && ext != ".rar" && ext != ".7z" {

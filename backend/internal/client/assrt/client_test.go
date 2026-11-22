@@ -106,6 +106,30 @@ func TestAssrtSearchAPIStatusAndDownloadBoundary(t *testing.T) {
 	}
 }
 
+func TestAssrtSearchEmptyObject(t *testing.T) {
+	c := New(strings.Repeat("a", 32))
+	body := `{"status":0,"sub":{"action":"search","keyword":"寻找见习魔女","result":"succeed","subs":{}}}`
+	c.HTTP.Transport = transportFunc(func(*http.Request) (*http.Response, error) {
+		return reply(body), nil
+	})
+	items, err := c.Search(context.Background(), "寻找见习魔女", 0)
+	if err != nil || items == nil || len(items) != 0 {
+		t.Fatalf("搜索零结果应返回空列表，实际为 %#v，错误为 %v", items, err)
+	}
+	if _, err := c.Download(context.Background(), 123); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("字幕详情不应接受空对象，实际错误为 %v", err)
+	}
+	for _, invalid := range []string{
+		`{"status":0,"sub":{"subs":{"id":123}}}`,
+		`{"status":30002,"sub":{"subs":{}}}`,
+	} {
+		body = invalid
+		if _, err := c.Search(context.Background(), "寻找见习魔女", 0); !errors.Is(err, ErrUnavailable) {
+			t.Fatalf("异常响应 %s 应报告服务错误，实际为 %v", invalid, err)
+		}
+	}
+}
+
 func TestAssrtDownloadRedirectDoesNotForwardCredentials(t *testing.T) {
 	c := New(strings.Repeat("a", 32))
 	calls := 0
