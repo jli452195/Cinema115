@@ -52,8 +52,10 @@ const continuousRanges = computed(() => props.kind === 'tv' && targetSeasons.val
   ? continuousSubtitleRanges(props.seasons || [], targetSeasons.value) : [])
 const continuousSummary = computed(() => continuousRanges.value.map(range => `${range.offset + 1}–${range.offset + range.episodeCount} 对应第 ${range.season} 季`).join('，'))
 const continuousScopes = reactive(new Set(props.matching?.continuousScopes))
+const workTitles = computed(() => props.originalTitle ? [props.title, props.originalTitle] : [props.title])
 const subtitleMatch = (name: string, scope: string) => analyzeSubtitle(name, props.videos, matchingSeason.value === '' ? NaN : Number(matchingSeason.value), props.kind, {
   sourceEpisodes: true,
+  workTitles: workTitles.value,
   continuousRanges: continuousRanges.value.length && continuousScopes.has(scope) ? continuousRanges.value : undefined,
 })
 let assrtQuery = '', assrtPosition = 0
@@ -71,7 +73,7 @@ const continuousSources = computed(() => {
     const scope = subtitleScopeKey(row)
     if (sources.has(scope)) continue
     if (!continuousScopes.has(scope)) {
-      const episode = episodeNumber(row.file.name)
+      const episode = episodeNumber(row.file.name, workTitles.value)
       const range = episode && episode.season === undefined ? continuousSubtitleRange(continuousRanges.value, episode.episode) : undefined
       if (!range || range.offset === 0) continue
     }
@@ -89,7 +91,7 @@ const mappingWarnings = computed(() => {
   const videosByID = new Map(props.videos.map(video => [video.id, video]))
   for (const row of rows.value) {
     if (!row.videoId || !continuousScopes.has(subtitleScopeKey(row)) || !mappingProtected(row)) continue
-    const episode = episodeNumber(row.file.name)
+    const episode = episodeNumber(row.file.name, workTitles.value)
     if (!episode || episode.season !== undefined) continue
     const video = videosByID.get(row.videoId)
     const range = continuousSubtitleRange(continuousRanges.value, episode.episode)
@@ -108,7 +110,7 @@ function toggleContinuousMatching() {
   matchList.value?.clearSelectionHistory()
   for (const row of rows.value) {
     if (subtitleScopeKey(row) !== source.value || mappingProtected(row)) continue
-    const episode = episodeNumber(row.file.name)
+    const episode = episodeNumber(row.file.name, workTitles.value)
     if (!episode || episode.season !== undefined) continue
     const match = subtitleMatch(row.file.name, source.value)
     row.reason = match.reason

@@ -8,27 +8,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
-	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/model"
 )
 
-// pinSettings runs at submission, before the worker can start remote writes.
-// A directory binding is never transferred to a newly selected share account.
+// 提交时固定当前主账号和生成设置，分享目录不会转交给其他账号。
 func (s *FolderMonitorService) pinSettings(value *model.FolderMonitor) error {
 	settings := s.sharedSettings(value)
 	if settings.AccountID == "" || settings.AccountID != value.AccountID {
-		return generationInputError("分享 STRM 账号已变化，请重新选择并保存分享目录")
+		return generationInputError("监控目录绑定的主账号已变化，请重新选择并保存目录")
 	}
 	if s.SharedSettings != nil {
-		value.BaseURL, value.OutputDir = settings.Generation.BaseURL, settings.Generation.OutputDir
-		value.VideoExtensions, value.MetadataExtensions = settings.Generation.VideoExtensions, settings.Generation.MetadataExtensions
-		value.MinSizeMB, value.Recursive = settings.Generation.MinSizeMB, settings.Generation.Recursive
+		applyFolderGenerationOptions(value, settings.Generation)
 	}
 	if err := s.validate(*value); err != nil {
-		return err
-	}
-	if err := s.Accounts.ValidatePrimary(value.AccountID); err != nil {
 		return err
 	}
 	settings.Generation = s.generationInput(*value, "")
@@ -38,8 +32,14 @@ func (s *FolderMonitorService) pinSettings(value *model.FolderMonitor) error {
 	return err
 }
 
+func applyFolderGenerationOptions(value *model.FolderMonitor, input GenerateInput) {
+	value.BaseURL, value.OutputDir = input.BaseURL, input.OutputDir
+	value.VideoExtensions, value.MetadataExtensions = input.VideoExtensions, input.MetadataExtensions
+	value.MinSizeMB, value.Recursive = input.MinSizeMB, input.Recursive
+}
+
 func (s *FolderMonitorService) batchSettings(value *model.FolderMonitor) (AutomationSettings, error) {
-	// Legacy batches retain their saved generation options and account.
+	// 旧批次沿用已记录的生成选项和主账号。
 	settings := AutomationSettings{AccountID: value.AccountID, ParentCID: value.BatchParentCID, Generation: s.generationInput(*value, value.ShareURL)}
 	if len(value.GenerationSettings) > 0 {
 		if err := json.Unmarshal(value.GenerationSettings, &settings); err != nil {
@@ -52,124 +52,56 @@ func (s *FolderMonitorService) batchSettings(value *model.FolderMonitor) (Automa
 	return settings, nil
 }
 
-// sharedGeneration links a durable directory checkpoint to a durable common
-// share task. The common worker owns generation and retries; this worker only
-// proceeds to cleanup after all video and metadata writes have succeeded.
-func (s *FolderMonitorService) sharedGeneration(ctx context.Context, value *model.FolderMonitor) (bool, error) {
-	if value.GenerationTaskID == "" {
+// 已确认的分享按需提交公共直生，生成结果由独立任务保存。
+func (s *FolderMonitorService) queueFolderGeneration(ctx context.Context, value *model.FolderMonitor) error {
+	settings, err := s.batchSettings(value)
+	if err != nil {
+		return err
+	}
+	input := settings.Generation
+	taskID := value.GenerationTaskID
+	if taskID == "" && strings.TrimSpace(input.OutputDir) == "" {
+		return nil
+	}
+	if s.Tasks == nil || s.Tasks.Store == nil || s.Tasks.Settings == nil || s.Tasks.Generator == nil {
+		return generationInputError("分享 STRM 服务尚未初始化")
+	}
+	if taskID == "" {
+		if value.LogTaskID == "" {
+			return generationInputError("缺少目录分享批次编号")
+		}
 		digest := sha256.Sum256([]byte("directory:" + value.LogTaskID))
-		value.GenerationTaskID = hex.EncodeToString(digest[:16])
-		if err := s.checkpoint(ctx, value); err != nil {
-			return false, err
-		}
+		taskID = hex.EncodeToString(digest[:16])
 	}
-	task, err := s.Tasks.Store.GetShareTask(ctx, value.GenerationTaskID)
-	if errors.Is(err, sql.ErrNoRows) {
-		settings, settingsErr := s.batchSettings(value)
-		if settingsErr != nil {
-			return false, s.failAt(ctx, value, "generating", settingsErr.Error())
-		}
-		ctx = context.WithValue(ctx, automationContextKey{}, settings)
-		ctx = WithGenerationSource(ctx, "目录分享")
-		ctx = context.WithValue(ctx, directoryGenerationKey{}, value.LogTaskID)
-		ctx = context.WithValue(ctx, directoryFingerprintKey{}, value.BatchFingerprint)
-		ctx = context.WithValue(ctx, directoryIDKey{}, value.BatchDirectoryID)
-		_, _, err = s.Tasks.prepareTaskRecord(ctx, s.generationInput(*value, value.ShareURL), value.GenerationTaskID, "queued")
-		if err != nil {
-			return false, s.failAt(ctx, value, "generating", "提交分享 STRM 任务失败："+err.Error())
-		}
-		logGeneration(ctx, "INFO", "已提交公共分享 STRM 任务："+value.GenerationTaskID)
-		select {
-		case s.Tasks.RetryWake <- struct{}{}:
-		default:
-		}
-		return false, nil
+	// 批次归档失败后可再次提交，已存在的生成任务保留原状态。
+	if _, err := s.Tasks.Store.GetShareTask(ctx, taskID); err == nil {
+		value.GenerationTaskID = taskID
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("查询目录分享生成记录: %w", err)
 	}
-	if err != nil {
-		return false, err
+	input.URL, input.Mode, input.CID = value.ShareURL, "direct", "0"
+	if err := ValidateGenerationOptions(s.Root, input); err != nil {
+		return fmt.Errorf("校验目录分享生成设置: %w", err)
 	}
-	switch task.Status {
-	case "queued", "running", "retry_queued", "waiting_review":
-		return false, nil
-	case "success":
-		logGeneration(ctx, "INFO", fmt.Sprintf("公共 STRM 任务完成：%d 个视频", task.Written))
-		return true, nil
-	case "interrupted":
-		// Direct generation has no remote writes; retry the same saved request.
-		results, retryErr := s.Tasks.RetryTasks(ctx, []string{task.ID})
-		if retryErr != nil {
-			return false, retryErr
-		}
-		if len(results) == 1 && results[0].Accepted {
-			return false, nil
-		}
+	ctx = context.WithValue(ctx, automationContextKey{}, settings)
+	ctx = WithGenerationSource(ctx, "目录分享")
+	ctx = context.WithValue(ctx, directoryGenerationKey{}, value.LogTaskID)
+	if _, _, err := s.Tasks.prepareTaskRecord(ctx, input, taskID, "queued"); err != nil {
+		return fmt.Errorf("提交目录分享 STRM 任务: %w", err)
 	}
-	return false, s.failAt(ctx, value, "generating", "分享 STRM 任务未完成，临时目录已保留："+task.Error)
-}
-
-type directoryGenerationKey struct{}
-type directoryFingerprintKey struct{}
-type directoryIDKey struct{}
-
-var ErrDirectoryBatchChanged = errors.New("本批临时目录或文件已删除、移动或变化，请结束本次任务后重新分享；不会自动清理剩余文件")
-
-// VerifyGeneration belongs to the shared generation task so both snapshot
-// waits and review retries use the task's saved settings and credentials.
-func (s *FolderMonitorService) VerifyGeneration(ctx context.Context, input GenerateInput, fingerprint, directoryID string) error {
-	share, err := p115.ParseShareURL(input.URL)
-	if err != nil {
-		return err
-	}
-	value := model.FolderMonitor{VideoExtensions: input.VideoExtensions, MinSizeMB: input.MinSizeMB, Recursive: input.Recursive}
-	cookie := generationCookie(ctx, nil)
-	if directoryID == "" {
-		// Resolve older requests through their exact parent checkpoint.
-		logID, _ := ctx.Value(directoryGenerationKey{}).(string)
-		if logID != "" {
-			values, err := s.Store.ListFolderMonitors(ctx)
-			if err != nil {
-				return err
-			}
-			for _, batch := range values {
-				if batch.LogTaskID == logID && batch.BatchDirectoryID != "" {
-					directoryID = batch.BatchDirectoryID
-					if fingerprint == "" {
-						fingerprint = batch.BatchFingerprint
-					}
-					break
-				}
-			}
-		}
-	}
-	// Check the owned directory before treating incomplete share contents as
-	// an eventually consistent snapshot. A real deletion will never converge.
-	if directoryID != "" {
-		current, _, err := s.scanDrive(ctx, directoryID, nil, cookie)
-		if err != nil {
-			return fmt.Errorf("读取本批临时目录失败，请核对目录是否已被删除或移动；可结束任务解除占用: %w", err)
-		}
-		if len(current) == 0 || (fingerprint != "" && !manifestMatchesFingerprint(current, fingerprint)) {
-			return ErrDirectoryBatchChanged
-		}
-	}
-	manifest, mediaID, _, err := s.waitShareSnapshot(ctx, &value, share, cookie)
-	if err != nil {
-		return err
-	}
-	if fingerprint != "" && !manifestMatchesFingerprint(manifest, fingerprint) {
-		return fmt.Errorf("分享快照尚未包含本批完整内容: %w", p115.ErrShareSnapshotPending)
-	}
-	if mediaID == "" {
-		return fmt.Errorf("%w；分享读取 %d 项，没有匹配的视频", ErrNoMedia, len(manifest))
-	}
-	if _, err := s.Client.DownloadURL(ctx, share, mediaID, cookie); err != nil {
-		return fmt.Errorf("验证分享视频可读性: %w", err)
+	value.GenerationTaskID = taskID
+	logGeneration(ctx, "INFO", "已提交公共分享 STRM 任务："+taskID)
+	select {
+	case s.Tasks.RetryWake <- struct{}{}:
+	default:
 	}
 	return nil
 }
 
-// Trigger exposes a receipt for all UI entry points. Duplicate clicks resolve
-// to the same persisted directory job rather than creating another batch.
+type directoryGenerationKey struct{}
+
+// Trigger 返回当前批次提交记录，重复触发沿用已有批次。
 func (s *FolderMonitorService) Trigger(ctx context.Context, id string) (model.FolderMonitor, bool, error) {
 	err := s.ScanNow(ctx, id)
 	if err != nil && !errors.Is(err, ErrFolderMonitorBusy) {

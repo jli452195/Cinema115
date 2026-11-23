@@ -33,7 +33,7 @@ function technicalEpisodeSuffix(suffix: string) {
   return brackets.length === 0
 }
 
-export function episodeNumber(name: string): { season?: number; episode: number } | undefined {
+export function episodeNumber(name: string, workTitles: readonly string[] = []): { season?: number; episode: number } | undefined {
   const title = episodeTitle(name)
   // Ranges, specials, resolutions, years and release revisions are not episodes.
   if (ambiguousEpisode(title)) return undefined
@@ -61,10 +61,16 @@ export function episodeNumber(name: string): { season?: number; episode: number 
         ? spaced[3].replace(/\.([^.]+)$/, (part, tag: string) => isSubtitleBilingualAlias(tag) ? '' : part)
         : spaced[3]
       // 常见尺寸、分辨率和编码数字不能独立充当新增格式的集号。
-      if (!/\p{L}/u.test(prefix) || /\d/.test(spaced[1]) || /(?:^|[^a-z0-9])(?:v|ver|version|rev|revision)[ ._-]*$/i.test(prefix)
-        || episode < 1 || episode > 999 || [240, 264, 265, 360, 480, 540, 576, 640, 704, 720, 768, 800, 848, 852, 854, 960].includes(episode)
-        || !technicalEpisodeSuffix(suffix)) return undefined
-      numbers.push(episode)
+      if (/\p{L}/u.test(prefix) && !/\d/.test(spaced[1]) && !/(?:^|[^a-z0-9])(?:v|ver|version|rev|revision)[ ._-]*$/i.test(prefix)
+        && episode >= 1 && episode <= 999 && ![240, 264, 265, 360, 480, 540, 576, 640, 704, 720, 768, 800, 848, 852, 854, 960].includes(episode)
+        && technicalEpisodeSuffix(suffix)) numbers.push(episode)
+    }
+    // 只有片名与当前作品一致时，紧贴片名的两位数字才可作为集号。
+    if (!numbers.length && workTitles.length && isSubtitle(name)) {
+      const subtitleStem = stem(name).toLowerCase()
+      const match = subtitleStem.match(/^(.+)(\d{2})$/)
+      const titles = workTitles.map(title => title.trim().toLowerCase())
+      if (match && !titles.includes(subtitleStem) && titles.includes(match[1])) numbers.push(Number(match[2]))
     }
   }
   const unique = [...new Set(numbers.filter(n => n > 0 && ![480, 576, 720].includes(n)))]
@@ -88,6 +94,7 @@ export interface SubtitleSeasonRange { season: number; offset: number; episodeCo
 interface SubtitleMatchOptions {
   sourceEpisodes?: boolean
   continuousRanges?: readonly SubtitleSeasonRange[]
+  workTitles?: readonly string[]
 }
 
 export function continuousSubtitleRanges(seasons: readonly { number: number; episodeCount: number }[], targetSeasons: readonly number[]): SubtitleSeasonRange[] {
@@ -144,7 +151,7 @@ export function analyzeSubtitle(name: string, videos: SubtitleMatchVideo[], seas
     return { videoId: '', confidence: 'medium', reason: '存在多个电影版本，请指定对应视频', candidates: rankCandidates(name, videos) }
   }
   const exact = videos.filter(video => !('season' in video || 'episode' in video) && stem(name).toLowerCase() === stem(video.name).toLowerCase())
-  const episode = episodeNumber(name)
+  const episode = episodeNumber(name, options.workTitles)
   const ranges = episode?.season === undefined ? options.continuousRanges : undefined
   if (exact.length === 1 && !ranges) return { videoId: exact[0].id, confidence: 'high', reason: '文件主名称完全一致', candidates: [] }
   if (ambiguousEpisode(episodeTitle(name))) return no('特典或多集范围，请手动指定视频')

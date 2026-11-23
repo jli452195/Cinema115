@@ -16,7 +16,7 @@ export const managementCategories = {
       { title: 'ED2K STRM', description: '接收 ED2K 生成 STRM，复用文件资料并按需恢复云端缓存。', to: '/115/ed2k-strm', icon: 'link', menuIcon: 'link' },
       { title: '115 转存', description: '磁力下载与 115 分享链接接收目录。', to: '/115/cloud-download', icon: 'download', menuIcon: 'download' },
       { title: '下载整理', description: '查看详情页发起的下载整理任务，检查进度并继续未完成的文件。', to: '/115/download-organize', icon: 'download', menuIcon: 'organize' },
-      { title: '115 监控分享', description: '监控指定网盘目录，自动创建分享并生成本地 STRM。', to: '/115/folder-monitor', icon: 'monitor', menuIcon: 'folder' },
+      { title: '115 监控分享', description: '监控指定网盘目录，自动移动文件并创建 115 分享。', to: '/115/folder-monitor', icon: 'monitor', menuIcon: 'folder' },
     ],
   },
   telegram: {

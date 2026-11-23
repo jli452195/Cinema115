@@ -17,7 +17,6 @@ func directorySharedTasks(t *testing.T, svc *FolderMonitorService, generator Med
 	settings := &AutomationStore{value: AutomationSettings{AccountID: value.AccountID, ParentCID: "0", Generation: svc.generationInput(value, ""), ReviewRetryMinutes: 1, ReviewRetryMax: 2}}
 	tasks := &ShareTasks{Generator: generator, Store: svc.Store.(*storage.Store), Settings: settings, AccountCookie: svc.Accounts.CookieFor, RetryWake: make(chan struct{}, 1)}
 	svc.Tasks = tasks
-	tasks.DirectoryPrepare = svc.VerifyGeneration
 	svc.SetSharedSettings(settings.Value)
 	return tasks
 }
@@ -46,13 +45,13 @@ func TestDirectoryShareUsesDurableCommonTaskAndPreservesMetadataFailure(t *testi
 	if err != nil || accepted || duplicate.LogTaskID != first.LogTaskID {
 		t.Fatal("duplicate created a new task")
 	}
-	// A queued task must keep the options from the click, not later settings.
+	// 生成任务沿用提交时记录的设置。
 	tasks.Settings.value.Generation.OutputDir = "changed"
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	if value.Stage != "generating" || value.GenerationTaskID == "" || len(client.deleted) != 0 {
+	if value.Stage != "completed" || value.BatchDirectoryID != "" || value.GenerationTaskID == "" || len(client.deleted) != 0 {
 		t.Fatal("did not hand off generation safely")
 	}
 	queued, err := tasks.Store.GetShareTask(ctx, value.GenerationTaskID)
@@ -62,8 +61,8 @@ func TestDirectoryShareUsesDurableCommonTaskAndPreservesMetadataFailure(t *testi
 	if strings.Contains(string(queued.Request), "UID=") || strings.Contains(string(value.GenerationSettings), "UID=") {
 		t.Fatal("persisted cookie")
 	}
-	// Rebuild the directory service to exercise recovery, retaining the same task.
-	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, svc.Generator, svc.Root, nil)
+	// 重启监控仍沿用同一份生成记录。
+	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, svc.Root, nil)
 	svc.Tasks = tasks
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
@@ -74,16 +73,14 @@ func TestDirectoryShareUsesDurableCommonTaskAndPreservesMetadataFailure(t *testi
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	value = loadMonitor(t, svc, value.ID)
-	if value.LastError == "" || len(client.deleted) != 0 {
-		t.Fatal("metadata failure allowed cleanup")
-	}
-	if count, err := svc.Store.(*storage.Store).ClearShareTasks(ctx, nil); err != nil || count != 0 {
-		t.Fatal("deleted linked task before batch completion", err)
+	failed, err := tasks.Store.GetShareTask(ctx, queued.ID)
+	if err != nil || failed.Status != "failed" || failed.Error == "" || len(client.deleted) != 0 || loadMonitor(t, svc, value.ID).Stage != "completed" {
+		t.Fatal("metadata failure must be isolated from the share batch", err)
 	}
 	failMetadata = false
-	if err := svc.ScanNow(ctx, value.ID); err != nil {
-		t.Fatal(err)
+	results, err := tasks.RetryTasks(ctx, []string{queued.ID})
+	if err != nil || len(results) != 1 || !results[0].Accepted {
+		t.Fatalf("could not retry generation: %+v %v", results, err)
 	}
 	if err := tasks.retryDue(ctx, time.Now()); err != nil {
 		t.Fatal(err)
@@ -92,7 +89,7 @@ func TestDirectoryShareUsesDurableCommonTaskAndPreservesMetadataFailure(t *testi
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	if value.Stage != "completed" || value.GenerationTaskID != queued.ID || len(client.shareCalls) != 1 || len(client.deleted) != 1 || calls != 2 {
+	if value.Stage != "completed" || value.GenerationTaskID != queued.ID || len(client.shareCalls) != 1 || len(client.deleted) != 0 || calls != 2 {
 		t.Fatalf("recovery duplicated work: %+v calls=%d", value, calls)
 	}
 	if count, err := svc.Store.(*storage.Store).ClearShareTasks(ctx, nil); err != nil || count != 1 {
@@ -128,7 +125,7 @@ func TestDirectorySharePinsBindingAndAcceptsSameAccountLoginRefresh(t *testing.T
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.createdNames) != 1 || loadMonitor(t, svc, value.ID).Stage != "generating" {
+	if len(client.createdNames) != 1 || loadMonitor(t, svc, value.ID).Stage != "completed" {
 		t.Fatal("same-account login blocked queued task")
 	}
 	if err := tasks.retryDue(ctx, time.Now()); err != nil {
@@ -137,15 +134,15 @@ func TestDirectorySharePinsBindingAndAcceptsSameAccountLoginRefresh(t *testing.T
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if generator.calls != 1 || loadMonitor(t, svc, value.ID).Stage != "completed" || len(client.deleted) != 1 {
-		t.Fatal("same-account login blocked generation or cleanup")
+	if generator.calls != 1 || loadMonitor(t, svc, value.ID).Stage != "completed" || len(client.deleted) != 0 {
+		t.Fatal("same-account login blocked the share or generation")
 	}
 }
 
-func TestDirectorySharePreflightRejectsNoMediaBeforeMoving(t *testing.T) {
+func TestDirectoryShareOnlyWorksWithoutMediaOrOutput(t *testing.T) {
 	for _, kind := range []string{"extension", "size", "recursive"} {
 		t.Run(kind, func(t *testing.T) {
-			svc, client, _, value := newMonitorScheduleTest(t)
+			svc, client, generator, value := newMonitorScheduleTest(t)
 			switch kind {
 			case "extension":
 				client.drive["100"][0].Name = "notes.txt"
@@ -156,6 +153,8 @@ func TestDirectorySharePreflightRejectsNoMediaBeforeMoving(t *testing.T) {
 				client.drive["100"] = []p115.ShareFile{{ID: "22", Name: "season", Directory: true}}
 				client.drive["22"] = []p115.ShareFile{{ID: "11", Name: "movie.mkv", Size: 10}}
 			}
+			value.OutputDir, value.BaseURL = "", ""
+			directorySharedTasks(t, svc, generator, value)
 			if err := svc.Store.SaveFolderMonitor(context.Background(), value); err != nil {
 				t.Fatal(err)
 			}
@@ -165,8 +164,9 @@ func TestDirectorySharePreflightRejectsNoMediaBeforeMoving(t *testing.T) {
 			if err := svc.runDue(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			if len(client.createdNames) != 0 || len(client.moveCalls) != 0 || len(client.shareCalls) != 0 {
-				t.Fatal("empty media selection mutated drive")
+			saved := loadMonitor(t, svc, value.ID)
+			if saved.Stage != "completed" || saved.ShareURL == "" || saved.GenerationTaskID != "" || len(client.createdNames) != 1 || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 || len(client.deleted) != 0 {
+				t.Fatalf("share-only batch did not complete: %+v", saved)
 			}
 		})
 	}
@@ -207,8 +207,9 @@ func TestDirectoryShareInterruptedCommonGenerationResumes(t *testing.T) {
 	if err := tasks.Store.SaveShareTask(ctx, task); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.runDue(ctx); err != nil {
-		t.Fatal(err)
+	results, err := tasks.RetryTasks(ctx, []string{task.ID})
+	if err != nil || len(results) != 1 || !results[0].Accepted {
+		t.Fatalf("interrupted task could not be retried: %+v %v", results, err)
 	}
 	if err := tasks.retryDue(ctx, time.Now()); err != nil {
 		t.Fatal(err)
@@ -271,12 +272,11 @@ func TestDirectoryShareReviewUsesCommonRetry(t *testing.T) {
 	}
 }
 
-func TestDirectoryShareSnapshotPreparationRetriesWithoutAnotherShare(t *testing.T) {
+func TestDirectoryShareSnapshotRetryDoesNotRecreateShare(t *testing.T) {
 	svc, client, generator, value := newMonitorScheduleTest(t)
 	tasks := directorySharedTasks(t, svc, generator, value)
 	tasks.Settings.value.ReviewRetryEnabled = true
-	svc.snapshotTimeout, svc.snapshotInterval = 5*time.Millisecond, time.Millisecond
-	client.listHook = func(context.Context, string, int, string) error { return p115.ErrShareSnapshotPending }
+	generator.hook = func(context.Context, GenerateInput) error { return p115.ErrShareSnapshotPending }
 	ctx := context.Background()
 	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -289,17 +289,17 @@ func TestDirectoryShareSnapshotPreparationRetriesWithoutAnotherShare(t *testing.
 		t.Fatal(err)
 	}
 	task, err := tasks.Store.GetShareTask(ctx, value.GenerationTaskID)
-	if err != nil || task.Status != "waiting_review" || generator.calls != 0 {
+	if err != nil || task.Status != "waiting_review" || generator.calls != 1 {
 		t.Fatalf("snapshot wait: %+v %v", task, err)
 	}
-	client.listHook = nil
+	generator.hook = nil
 	if err := tasks.retryDue(ctx, time.Now().Add(2*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(client.shareCalls) != 1 || len(client.moveCalls) != 1 || len(client.deleted) != 1 || generator.calls != 1 {
+	if len(client.shareCalls) != 1 || len(client.moveCalls) != 1 || len(client.deleted) != 0 || generator.calls != 2 {
 		t.Fatal("snapshot recovery duplicated cloud writes")
 	}
 }

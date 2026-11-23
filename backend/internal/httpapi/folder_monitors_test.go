@@ -28,7 +28,7 @@ func TestFolderMonitorScheduleAndManualAPI(t *testing.T) {
 	if err := db.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
 	}
-	svc := service.NewFolderMonitorService(db, nil, nil, nil, t.TempDir(), nil)
+	svc := service.NewFolderMonitorService(db, nil, nil, t.TempDir(), nil)
 	router := gin.New()
 	RegisterFolderMonitors(router.Group("/api/admin"), svc)
 	request := func(method, path, body string, status int) map[string]any {

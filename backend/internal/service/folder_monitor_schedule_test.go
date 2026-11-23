@@ -43,7 +43,7 @@ func newMonitorScheduleTest(t *testing.T) (*FolderMonitorService, *folderMonitor
 	}
 	client := &folderMonitorClientFake{drive: map[string][]p115.ShareFile{"100": {{ID: "11", Name: "movie.mkv", Size: 10}}}, share: map[string][]p115.ShareFile{}}
 	generator := &folderMonitorGeneratorFake{}
-	svc := NewFolderMonitorService(db, accounts, client, generator, t.TempDir(), nil)
+	svc := NewFolderMonitorService(db, accounts, client, t.TempDir(), nil)
 	value, err := svc.Save(ctx, model.FolderMonitor{Name: "monitor", AccountID: id, SourceCID: "100", OutputDir: "strm", BaseURL: "http://nas:3002", VideoExtensions: "mkv", MetadataExtensions: "srt", Recursive: true, IntervalSeconds: 30})
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func loadMonitor(t *testing.T, svc *FolderMonitorService, id string) model.Folde
 }
 
 func TestFolderMonitorDisabledManualTaskSurvivesRestart(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	value.NextScanAt = time.Now().Add(-time.Hour)
 	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
@@ -83,18 +83,18 @@ func TestFolderMonitorDisabledManualTaskSurvivesRestart(t *testing.T) {
 	if queued.Enabled || !queued.TaskPending || queued.TaskTrigger != "manual" {
 		t.Fatalf("queue=%+v", queued)
 	}
-	// Recreate the service: the one-shot request is durable, not a memory flag.
-	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, generator, svc.Root, nil)
+	// 重启后仍执行已提交的单次任务。
+	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, svc.Root, nil)
 	client.addOnShare = p115.ShareFile{ID: "12", Name: "later.mkv", Size: 20}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	if value.Enabled || value.TaskPending || value.Stage != "completed" || generator.calls != 1 {
-		t.Fatalf("completed=%+v calls=%d", value, generator.calls)
+	if value.Enabled || value.TaskPending || value.Stage != "completed" || len(client.shareCalls) != 1 {
+		t.Fatalf("completed=%+v", value)
 	}
-	if len(client.deleted) != 1 || client.deleted[0] != "900" {
-		t.Fatalf("cleanup=%v", client.deleted)
+	if len(client.deleted) != 0 || len(client.drive["900"]) != 1 || client.drive["900"][0].ID != "11" {
+		t.Fatal("shared file did not stay in the batch folder")
 	}
 	if len(client.drive["100"]) != 1 || client.drive["100"][0].ID != "12" {
 		t.Fatal("new arrival was not retained")
@@ -102,13 +102,13 @@ func TestFolderMonitorDisabledManualTaskSurvivesRestart(t *testing.T) {
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if generator.calls != 1 {
+	if len(client.shareCalls) != 1 {
 		t.Fatal("one-shot task ran twice")
 	}
 }
 
 func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
-	svc, _, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
@@ -116,10 +116,10 @@ func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
 	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
 	}
-	generator.hook = func(ctx context.Context, _ GenerateInput) error {
+	client.onShare = func() {
 		values, err := svc.List(ctx)
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
 		if !values[0].Running {
 			t.Error("running state not exposed")
@@ -133,8 +133,9 @@ func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
 		if err := svc.Delete(ctx, value.ID); err == nil {
 			t.Error("deleted a running task")
 		}
-		_, err = svc.SetSchedule(ctx, value.ID, false)
-		return err
+		if _, err := svc.SetSchedule(ctx, value.ID, false); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := svc.runOne(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -148,6 +149,7 @@ func TestFolderMonitorManualTaskRejectsEditsAndDuplicateTriggers(t *testing.T) {
 func TestFolderMonitorRetryRetainsBatchAndPinnedSettings(t *testing.T) {
 	svc, client, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
+	tasks := directorySharedTasks(t, svc, generator, value)
 	shared := AutomationSettings{AccountID: value.AccountID, ParentCID: "0", FixedSharePassword: "abcd", Generation: svc.generationInput(value, "")}
 	svc.SetSharedSettings(func() AutomationSettings { return shared })
 	client.configureErr = errors.New("temporary configure failure")
@@ -194,22 +196,32 @@ func TestFolderMonitorRetryRetainsBatchAndPinnedSettings(t *testing.T) {
 	if value.Stage != "completed" || value.Enabled || len(client.createdNames) != 1 || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 {
 		t.Fatalf("retry=%+v create=%d move=%d share=%d", value, len(client.createdNames), len(client.moveCalls), len(client.shareCalls))
 	}
+	if len(value.RecentRuns) != 1 || value.RecentRuns[0].GenerationTaskID == "" || generator.calls != 0 {
+		t.Fatalf("generation was not queued separately: %+v", value)
+	}
+	if err := tasks.retryDue(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("generation calls=%d", generator.calls)
+	}
 }
 
 func TestFolderMonitorInterruptedBatchResumesWithScheduleOff(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	value.Stage, value.BatchDirectoryID, value.BatchParentCID, value.TaskTrigger = "moving", "900", "0", "manual"
+	value.BatchIDs, value.BatchDirectoryName, value.SharePassword = []string{"11"}, "Cinema115-临时-test", "test"
 	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
 	}
 	client.drive["900"] = nil
-	client.drive["0"] = []p115.ShareFile{{ID: "900", Name: "Cinema115-临时-test", Directory: true}}
+	client.drive["0"] = []p115.ShareFile{{ID: "900", Name: value.BatchDirectoryName, Directory: true}}
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	if value.Stage != "completed" || value.Enabled || generator.calls != 1 || len(client.createdNames) != 0 {
+	if value.Stage != "completed" || value.Enabled || len(client.shareCalls) != 1 || len(client.createdNames) != 0 || len(client.deleted) != 0 {
 		t.Fatalf("resume=%+v", value)
 	}
 }

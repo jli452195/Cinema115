@@ -33,7 +33,7 @@ func (s *creationCheckpointFailure) SaveFolderMonitor(ctx context.Context, value
 }
 
 func TestFolderCreationRecoversAfterCheckpointFailureAndRestart(t *testing.T) {
-	svc, fake, generator, value := newMonitorScheduleTest(t)
+	svc, fake, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	store := &creationCheckpointFailure{FolderMonitorStore: svc.Store}
 	svc.Store = store
@@ -47,12 +47,17 @@ func TestFolderCreationRecoversAfterCheckpointFailureAndRestart(t *testing.T) {
 	if pending.Stage != "creating" || !pending.BatchCreationPending || len(fake.createdNames) != 1 || len(fake.moveCalls) != 0 {
 		t.Fatal("lost creation boundary")
 	}
-	restarted := NewFolderMonitorService(store.FolderMonitorStore, svc.Accounts, fake, generator, svc.Root, nil)
+	restarted := NewFolderMonitorService(store.FolderMonitorStore, svc.Accounts, fake, svc.Root, nil)
 	if err := restarted.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if loadMonitor(t, restarted, value.ID).Stage != "ended" || len(fake.createdNames) != 1 || len(fake.deleted) != 1 {
-		t.Fatal("replayed creation or lost empty directory")
+	blocked := loadMonitor(t, restarted, value.ID)
+	if blocked.Stage != "blocked" || len(fake.createdNames) != 1 || len(fake.deleted) != 0 {
+		t.Fatal("创建结果不明时应留待人工核对")
+	}
+	ended, err := restarted.Recover(ctx, value.ID, blocked.LogTaskID)
+	if err != nil || ended.Stage != "ended" || len(fake.deleted) != 1 {
+		t.Fatal("核对后应回收本批空目录", err)
 	}
 }
 
@@ -246,7 +251,7 @@ func TestFolderCreationIntentSurvivesLostResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := loadMonitor(t, svc, value.ID)
-	if result.Stage != "ended" || len(client.createdNames) != 1 || len(client.deleted) != 1 || len(client.moveCalls) != 0 {
+	if result.Stage != "blocked" || len(client.createdNames) != 1 || len(client.deleted) != 0 || len(client.moveCalls) != 0 {
 		t.Fatalf("lost response not recovered: %+v", result)
 	}
 	if err := svc.runDue(context.Background()); err != nil {
@@ -287,46 +292,6 @@ func TestFolderCreationIntentDoesNotGuessAbsentOrAmbiguousDirectory(t *testing.T
 	}
 }
 
-func TestFolderCleaningRestartRevalidatesManifestAndLocation(t *testing.T) {
-	for _, scenario := range []string{"unchanged", "added", "moved", "unknown"} {
-		t.Run(scenario, func(t *testing.T) {
-			svc, client, value := failedRecoveryBatch(t)
-			client.drive["900"] = []p115.ShareFile{{ID: "11", Name: "movie.mkv", Size: 10}}
-			manifest, _, err := svc.scanDrive(context.Background(), "900", nil, "cookie")
-			if err != nil {
-				t.Fatal(err)
-			}
-			value.BatchFingerprint = manifestFingerprint(manifest)
-			value.Stage = "cleaning"
-			value.LastError = ""
-			value.ShareURL = "https://115.com/s/own?password=abcd"
-			switch scenario {
-			case "added":
-				client.drive["900"] = append(client.drive["900"], p115.ShareFile{ID: "12", Name: "new.mkv", Size: 20})
-			case "moved":
-				client.drive["0"] = nil
-			case "unknown":
-				client.drive["0"] = nil
-				client.missingErr = errors.New("timeout")
-			}
-			if err := svc.Store.SaveFolderMonitor(context.Background(), value); err != nil {
-				t.Fatal(err)
-			}
-			if err := svc.runDue(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			result := loadMonitor(t, svc, value.ID)
-			if scenario == "unchanged" {
-				if result.Stage != "completed" || len(client.deleted) != 1 {
-					t.Fatalf("valid cleanup failed: %+v", result)
-				}
-			} else if result.Stage == "completed" || len(client.deleted) != 0 {
-				t.Fatalf("unsafe cleanup: %+v", result)
-			}
-		})
-	}
-}
-
 func TestFolderRecoveryRetiresLinkedTaskBeforeCleanup(t *testing.T) {
 	svc, fake, generator, value := newMonitorScheduleTest(t)
 	tasks := directorySharedTasks(t, svc, generator, value)
@@ -338,7 +303,8 @@ func TestFolderRecoveryRetiresLinkedTaskBeforeCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	value.LastError = "failed"
+	value.Stage, value.LastError = "blocked", "旧批次执行失败"
+	value.BatchDirectoryID, value.BatchDirectoryName = "900", fake.createdNames[0]
 	value.TaskPending = false
 	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)

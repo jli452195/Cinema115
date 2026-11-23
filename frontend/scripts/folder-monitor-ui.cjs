@@ -11,7 +11,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     page.setDefaultTimeout(8000); page.on('pageerror', error => errors.push(error.message))
     let monitor = { id: 'one', accountId: 'main', sourceCID: '10', sourcePath: '/监控目录', stage: 'waiting', running: false, queued: false, hasBatch: false, lastError: '', enabled: false, intervalSeconds: 600, recentRuns: [], endedBatches: [] }
     let settings = { accountId: 'main', botId: 'fixture-bot', telegramEnabled: true, fixedSharePassword: 'test', reshareEnabled: true, reviewRetryEnabled: true, reviewRetryMinutes: 30, reviewRetryMax: 6, tgBatchWaitSeconds: 5, generation: { baseUrl: 'http://cinema.example:8080', outputDir: '.', videoExtensions: 'mkv,mp4', metadataExtensions: 'srt,ass', minSizeMB: 0, recursive: true, sharePath: '/电影' } }
-    let failSchedule = false, failGeneration = false, nextSchedule
+    let failSchedule = false, failGeneration = false, failGenerationRead = false, nextSchedule
     function holdNextSchedule() {
       let release, start
       const response = new Promise(resolve => { release = resolve }), started = new Promise(resolve => { start = resolve })
@@ -31,19 +31,24 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         if (method === 'POST') {
           if (failGeneration) { failGeneration = false; status = 409; data = { error: '模拟生成设置保存失败' } }
           else { settings = { ...settings, generation: { ...settings.generation, ...body.generation } }; data = { settings } }
-        } else data = { settings }
+        } else if (failGenerationRead) { status = 503; data = { error: '模拟生成设置无法读取' } }
+        else data = { settings }
       } else if (url.pathname === endpoint + '/one/schedule') {
         const held = nextSchedule; nextSchedule = undefined
         if (held) { held.start(); await held.response }
         if (failSchedule) { failSchedule = false; status = 409; data = { error: '模拟监控设置保存失败' } }
         else { Object.assign(monitor, { enabled: body.enabled, intervalSeconds: body.enabled ? body.intervalSeconds : 0, schedulePaused: '', scheduleMessage: '' }); data = monitor }
       } else if (url.pathname === endpoint + '/one/share') {
-        Object.assign(monitor, { stage: 'generating', running: true, queued: false, hasBatch: true, logTaskID: 'synthetic-run', batchCount: 2, batchMoved: 2, batchDirectoryName: 'synthetic-batch', shareUrl: 'https://115.com/s/synthetic' })
-        data = { accepted: true, taskId: 'synthetic-run' }
+        Object.assign(monitor, { stage: 'moving', running: true, queued: false, hasBatch: true, logTaskID: 'synthetic-run', batchCount: 2, batchMoved: 0, batchDirectoryName: 'Cinema115-临时-synthetic', shareUrl: '', generationTaskId: '' })
+        data = { accepted: true, taskId: monitor.logTaskID, monitorId: monitor.id, generationTaskId: '' }
       } else if (url.pathname === endpoint + '/one/recover') {
         Object.assign(monitor, { recoveryMessage: '模拟核对完成，未完成文件已保留。' }); data = monitor
       } else if (url.pathname === endpoint + '/one/end') {
-        Object.assign(monitor, { stage: 'ended', running: false, queued: false, hasBatch: false, lastError: '', enabled: false, intervalSeconds: 0, batchDirectoryName: '', recoveryMessage: '任务已结束，文件保留', recentRuns: [{ taskId: 'synthetic-run', status: 'ended', trigger: 'manual', message: '任务已结束，原文件位置见批次详情', time: '2026-10-30T10:00:00Z' }], endedBatches: [{ logTaskId: 'synthetic-run', accountId: 'main', directoryId: '99', directoryName: 'synthetic-retained-files', cleaned: false, endedAt: '2026-10-30T10:00:00Z' }] }); data = monitor
+        const taskId = monitor.logTaskID
+        assert.equal(body.taskId, taskId)
+        const archived = { logTaskId: taskId, accountId: 'main', directoryId: '99', directoryName: 'synthetic-retained-files', cleaned: false, endedAt: '2026-10-30T10:00:00Z' }
+        const ended = { taskId, status: 'ended', trigger: 'scheduled', message: '任务已结束，原文件位置见批次详情', time: archived.endedAt }
+        Object.assign(monitor, { stage: 'ended', running: false, queued: false, hasBatch: false, lastError: '', enabled: false, intervalSeconds: 0, batchDirectoryName: '', recoveryMessage: '任务已结束，文件保留', recentRuns: [ended, ...monitor.recentRuns], endedBatches: [archived] }); data = monitor
       } else if (url.pathname === '/api/admin/p115/share/output-directories') {
         const current = url.searchParams.get('path') || ''
         data = { path: current, displayPath: current ? `/strm/${current}` : '/strm', directories: current ? [] : [{ name: '影视', path: '影视', displayPath: '/strm/影视' }], truncated: false }
@@ -60,6 +65,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const toggle = () => page.getByRole('switch', { name: '自动监控', exact: true })
     const interval = () => page.getByRole('combobox', { name: '检查间隔', exact: true })
     const current = () => page.getByRole('heading', { name: '当前任务', exact: true })
+    const shareNow = () => page.getByRole('button', { name: '立即分享', exact: true })
     const dialog = () => page.getByRole('dialog', { name: '分享 STRM 生成设置', exact: true })
     const openSettings = () => page.getByRole('button', { name: '生成设置', exact: true }).click()
     const scheduleCalls = () => calls.filter(call => call.path.endsWith('/one/schedule'))
@@ -74,10 +80,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await toggle().isChecked(), false)
     assert.equal(await interval().isDisabled(), true)
     assert.equal(await page.getByRole('heading', { name: '最近记录', exact: true }).count(), 0)
-    assert.match(await page.locator('main').innerText(), /本批源文件.*115 回收站/)
-    assert.match(await page.locator('main').innerText(), /监控目录本身保留/)
+    assert.match(await page.locator('main').innerText(), /每批文件移入主网盘根目录的 Cinema115-临时-\* 文件夹，创建分享后保留在该文件夹/)
+    await page.getByText('STRM 输出目录（可选）', { exact: true }).waitFor()
     assert.equal(calls.some(call => call.method !== 'GET'), false, 'opening the page must not start a job or save settings')
-    passed.push('idle state, scope and source-file cleanup explanation')
+    passed.push('idle state, optional generation and file-retention explanation')
 
     failSchedule = true; await flip()
     await page.getByRole('alert').filter({ hasText: '模拟监控设置保存失败' }).waitFor()
@@ -126,15 +132,38 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.deepEqual(Object.keys(settingSaves().at(-1).body.generation).sort(), ['baseUrl', 'metadataExtensions', 'minSizeMB', 'outputDir', 'videoExtensions'])
     passed.push('generation dialog cancellation, failure draft retention and preservation of latest shared settings')
 
-    await page.getByRole('button', { name: '立即运行', exact: true }).click(); await current().waitFor()
+    failGenerationRead = true; await reload()
+    assert.equal(await shareNow().isEnabled(), true, 'generation settings read failures must not block sharing')
+    assert.equal(await interval().isEnabled(), true, 'generation settings read failures must not block schedule edits')
+    assert.equal(await page.getByRole('alert').filter({ hasText: '模拟生成设置无法读取' }).count(), 0)
+    await shareNow().click(); await current().waitFor()
+    await page.getByText('正在移动本批文件', { exact: true }).waitFor()
     assert.equal(await interval().isDisabled(), true)
     assert.equal(await toggle().isDisabled(), false, 'running jobs must still allow disabling future monitoring')
     await flip(); await page.waitForFunction(() => !document.querySelector('[role="switch"][aria-label="自动监控"]').checked)
     assert.equal(monitor.running, true, 'disabling monitoring must not cancel the current job')
     assert.equal(await current().count(), 1)
-    passed.push('manual execution, active task visibility and disabling future monitoring without cancelling the job')
+    passed.push('manual sharing without readable generation settings and disabling monitoring without cancelling the job')
 
-    Object.assign(monitor, { running: false, queued: false, stage: 'error', lastError: '模拟 STRM 写入失败', enabled: true, intervalSeconds: 600 })
+    failGenerationRead = false
+    const completed = { taskId: 'synthetic-run', status: 'completed', trigger: 'manual', message: '分享已创建，文件保留在临时目录', shareUrl: 'https://115.com/s/synthetic', directoryId: '98', directoryName: 'Cinema115-临时-synthetic', generationTaskId: 'synthetic-generation', time: '2026-10-30T09:50:00Z' }
+    Object.assign(monitor, { running: false, queued: false, hasBatch: false, stage: 'completed', shareUrl: completed.shareUrl, batchDirectoryName: '', recentRuns: [completed] })
+    await reload()
+    await page.getByText('已分享', { exact: true }).waitFor()
+    assert.equal(await current().count(), 0, 'completed shares belong in history while generation is separate')
+    assert.equal(await shareNow().isEnabled(), true)
+    const sharedRun = page.getByRole('listitem').filter({ hasText: completed.directoryName })
+    assert.equal(await sharedRun.getByRole('link', { name: '查看分享', exact: true }).getAttribute('href'), completed.shareUrl)
+    assert.equal(await sharedRun.getByRole('link', { name: '生成日志列表', exact: true }).getAttribute('href'), '/115/share/logs')
+    await sharedRun.getByText(/目录编号 98$/).waitFor()
+
+    Object.assign(monitor, { stage: 'waiting', queued: true, enabled: true, intervalSeconds: 600, logTaskID: 'synthetic-next-run', shareUrl: '' })
+    await reload(); await current().waitFor()
+    await page.getByText('已排队，等待后台处理', { exact: true }).waitFor()
+    await sharedRun.getByRole('link', { name: '查看分享', exact: true }).waitFor()
+    passed.push('next scheduled batch retains the completed share, directory and independent generation link in history')
+
+    Object.assign(monitor, { running: false, queued: false, hasBatch: true, stage: 'moving', lastError: '模拟文件移动失败', batchDirectoryName: 'Cinema115-临时-failed' })
     await reload(); await current().waitFor()
     await page.getByRole('button', { name: '核对残留', exact: true }).click()
     await page.getByText('模拟核对完成，未完成文件已保留。', { exact: true }).waitFor()
@@ -162,7 +191,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     passed.push('desktop, 390px, 320px and dark mode layout')
 
     monitor = undefined; await reload()
-    assert.equal(await page.getByRole('button', { name: '立即运行', exact: true }).isDisabled(), true)
+    assert.equal(await shareNow().isDisabled(), true)
     assert.equal(await toggle().isDisabled(), true)
     await openSettings(); await dialog().getByLabel('STRM 播放地址', { exact: true }).waitFor()
     await dialog().getByRole('button', { name: '取消', exact: true }).click()

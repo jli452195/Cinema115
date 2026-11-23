@@ -3,6 +3,18 @@ import { p115Request } from '../lib/p115-api'
 import type { P115Account } from '../types/p115Accounts'
 import type { STRMSettings } from '../utils/shareGeneration'
 
+interface DirectoryShareRun {
+  taskId: string
+  trigger: string
+  status: string
+  message: string
+  shareUrl?: string
+  directoryId?: string
+  directoryName?: string
+  generationTaskId?: string
+  time: string
+}
+
 export interface DirectoryShareConfig {
   id: string; accountId: string; sourceCID: string; sourcePath: string
   stage: string; running: boolean; queued: boolean; hasBatch: boolean
@@ -10,7 +22,7 @@ export interface DirectoryShareConfig {
   recoveryMessage?: string
   enabled?: boolean; intervalSeconds?: number; schedulePaused?: string; scheduleMessage?: string
   lastScanAt?: string; nextScanAt?: string; trigger?: string; batchCount?: number
-  recentRuns?: { taskId: string; trigger: string; status: string; message: string; shareUrl?: string; time: string }[]
+  recentRuns?: DirectoryShareRun[]
   shareUrl?: string; batchDirectoryName?: string; batchMoved?: number; cleanupIndex?: number
   endedBatches?: { logTaskId: string; directoryId?: string; directoryName?: string; shareUrl?: string; accountId: string; cleaned: boolean; endedAt: string }[]
 }
@@ -42,7 +54,7 @@ export function useDirectoryShare(token: string) {
     if (active.value) return '当前任务已提交，正在后台处理'
     return ''
   })
-  const label = computed(() => submitting.value ? '提交中…' : active.value ? '任务处理中' : monitor.value?.hasBatch ? '重试本次任务' : '立即运行')
+  const label = computed(() => submitting.value ? '提交中…' : active.value ? '任务处理中' : monitor.value?.hasBatch ? '重试本次任务' : '立即分享')
   const stageText = computed(() => {
     const value = monitor.value
     if (!value) return '尚未选择监控目录'
@@ -52,7 +64,11 @@ export function useDirectoryShare(token: string) {
     if (!value.queued && value.stage === 'waiting' && value.enabled) return value.scheduleMessage || '等待定时检查'
     if (value.stage === 'ended') return value.recoveryMessage || '上次任务已结束，可修改目录或重新发起分享'
     if (value.queued && ['waiting', 'empty', 'completed'].includes(value.stage)) return '已排队，等待后台处理'
-    const stages: Record<string, string> = { waiting: '等待处理', empty: '目录为空', moving: '正在准备本批文件', sharing: '正在创建分享', configuring: '正在配置分享', verifying: '正在校验分享文件', generating: '正在生成分享 STRM，详细进度见生成日志', cleaning: '正在将本批源文件移入 115 回收站', checking_share: '正在确认本批清理结果', completed: '分享及 STRM 生成完成', blocked: '需要人工核对', error: '任务未完成' }
+    if (['shared', 'verifying', 'generating', 'cleaning', 'checking_share'].includes(value.stage)) return '分享已创建，正在保存本批结果'
+    const stages: Record<string, string> = {
+      waiting: '等待处理', empty: '目录为空', moving: '正在移动本批文件', sharing: '正在创建分享',
+      configuring: '正在配置分享', completed: '分享已创建', blocked: '需要人工核对', error: '任务未完成',
+    }
     return stages[value.stage] || '任务处理中'
   })
 
@@ -60,18 +76,21 @@ export function useDirectoryShare(token: string) {
     const version = ++revision
     try {
       const signal = AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)])
-      const [data, settings, accounts] = await Promise.all([
+      void p115Request<{ settings: { generation?: STRMSettings } }>(token, 'share/automation-config', { signal })
+        .then(({ settings }) => {
+          if (!lifecycle.signal.aborted && version === revision) generation.value = settings?.generation
+        }, () => {
+          if (!lifecycle.signal.aborted && version === revision) generation.value = undefined
+        })
+      const [data, accounts] = await Promise.all([
         p115Request<{ monitors: DirectoryShareConfig[] }>(token, 'folder-monitors', { signal }),
-        p115Request<{ settings: { accountId: string; generation: STRMSettings } }>(token, 'share/automation-config', { signal }),
         p115Request<{ accounts: P115Account[] }>(token, 'accounts', { signal }),
       ])
       if (lifecycle.signal.aborted || version !== revision) return
       monitor.value = data.monitors.length === 1 ? data.monitors[0] : undefined
-      accountId.value = settings.settings.accountId || ''
-      generation.value = settings.settings.generation
-      const bound = monitor.value?.hasBatch ? monitor.value.accountId : accountId.value
-      const account = accounts.accounts.find(value => value.id === bound)
-      accountReady.value = !!account?.primary && !!account.configured
+      const primary = accounts.accounts.find(value => value.primary)
+      accountId.value = primary?.id || ''
+      accountReady.value = !!primary?.configured && (!monitor.value?.hasBatch || monitor.value.accountId === primary.id)
       error.value = ''
     } catch (reason) {
       if (!lifecycle.signal.aborted && version === revision) error.value = reason instanceof Error ? reason.message : '读取目录分享失败'

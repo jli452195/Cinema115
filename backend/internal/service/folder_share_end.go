@@ -92,14 +92,18 @@ func archiveFolderBatch(value *model.FolderMonitor) {
 		Cleaned: value.CleanupIndex > 0, EndedAt: time.Now().UTC(),
 	})
 	value.Stage, value.LastError, value.TaskPending = "ended", "", false
-	value.GenerationTaskID, value.GenerationSettings = "", nil
-	value.BatchIDs, value.BatchFingerprint = nil, ""
-	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchParentCID = "", "", ""
-	value.BatchCreationPending = false
-	value.BatchMoveIndex, value.CleanupIndex = 0, 0
-	value.StableFingerprint, value.StableScans = "", 0
-	value.ShareURL, value.SharePassword, value.ShareReviewing = "", "", false
+	clearFolderBatch(value)
+	value.GenerationTaskID, value.ShareURL = "", ""
 	value.Enabled, value.IntervalSeconds, value.NextScanAt = false, 0, time.Time{}
 	value.SchedulePaused, value.ScheduleMessage = "", ""
 	value.UpdatedAt = time.Now().UTC()
+}
+
+func clearFolderBatch(value *model.FolderMonitor) {
+	value.GenerationSettings = nil
+	value.BatchIDs = nil
+	value.BatchDirectoryID, value.BatchDirectoryName, value.BatchParentCID = "", "", ""
+	value.BatchCreationPending = false
+	value.BatchMoveIndex, value.CleanupIndex = 0, 0
+	value.SharePassword = ""
 }

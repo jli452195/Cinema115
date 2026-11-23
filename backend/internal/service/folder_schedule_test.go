@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -23,53 +24,56 @@ func scheduleCheck(t *testing.T, svc *FolderMonitorService, id string) model.Fol
 	return loadMonitor(t, svc, id)
 }
 
-func TestFolderScheduleStableRestartAndNextBatch(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+func TestFolderScheduleQueuedCheckSurvivesRestartAndProcessesNextBatch(t *testing.T) {
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.UpdateSchedule(ctx, value.ID, true, 300); err != nil {
 		t.Fatal(err)
 	}
-	first := scheduleCheck(t, svc, value.ID)
-	if delay := time.Until(first.NextScanAt); delay <= 0 || delay > 5*time.Second {
-		t.Fatalf("stability delay=%v", delay)
+	reads := 0
+	client.driveHook = func(_ context.Context, cid string, _ int, _ string) error {
+		if cid == value.SourceCID {
+			reads++
+		}
+		return nil
 	}
-	if delay := folderWakeDelay([]model.FolderMonitor{first}, time.Now()); delay <= 0 || delay > 5*time.Second {
-		t.Fatalf("wake delay=%v", delay)
+	queued := scheduleCheck(t, svc, value.ID)
+	if !queued.TaskPending || queued.TaskTrigger != "scheduled" || reads != 0 {
+		t.Fatalf("queued=%+v reads=%d", queued, reads)
 	}
-	if first.TaskPending || first.StableScans != 1 || len(client.moveCalls) != 0 {
-		t.Fatalf("first=%+v", first)
-	}
-	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, generator, svc.Root, nil)
-	second := scheduleCheck(t, svc, value.ID)
-	if !second.TaskPending || second.TaskTrigger != "scheduled" {
-		t.Fatalf("second=%+v", second)
-	}
+	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, svc.Root, nil)
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
 	completed := loadMonitor(t, svc, value.ID)
-	if completed.Stage != "completed" || !completed.Enabled || completed.NextScanAt.IsZero() || len(completed.RecentRuns) != 1 || completed.RecentRuns[0].Trigger != "scheduled" {
+	if completed.Stage != "completed" || !completed.Enabled || reads != 1 || len(completed.RecentRuns) != 1 {
 		t.Fatalf("completed=%+v", completed)
+	}
+	first := completed.RecentRuns[0]
+	if first.Trigger != "scheduled" || first.DirectoryID != "900" || first.DirectoryName != client.createdNames[0] || first.ShareURL == "" {
+		t.Fatalf("first=%+v", first)
 	}
 	if !scheduledFolderDue(completed, time.Now()) {
 		t.Fatal("completion deferred the next batch")
 	}
 	client.drive["100"] = []p115.ShareFile{{ID: "12", Name: "next.mkv", Size: 20}}
+	client.nextDirectoryID = "901"
 	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if generator.calls != 1 {
-		t.Fatal("duplicate generation")
-	}
 	next := loadMonitor(t, svc, value.ID)
-	if next.StableScans != 1 || next.TaskPending || next.SchedulePaused != "" {
+	if next.Stage != "completed" || next.TaskPending || next.SchedulePaused != "" || reads != 2 || len(next.RecentRuns) != 2 || next.RecentRuns[1] != first {
 		t.Fatalf("next=%+v", next)
+	}
+	if len(client.moveCalls) != 2 || len(client.shareCalls) != 2 || len(client.deleted) != 0 || len(client.drive["900"]) != 1 || len(client.drive["901"]) != 1 {
+		t.Fatal("scheduled batches were not shared independently")
 	}
 }
 
 func TestFolderScheduleUsesSavedOutputRoot(t *testing.T) {
 	svc, _, generator, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
+	tasks := directorySharedTasks(t, svc, generator, value)
 	settings := AutomationSettings{AccountID: value.AccountID, ParentCID: "0", Generation: svc.generationInput(value, "")}
 	settings.Generation.OutputDir = "."
 	svc.SetSharedSettings(func() AutomationSettings { return settings })
@@ -83,13 +87,18 @@ func TestFolderScheduleUsesSavedOutputRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	scheduleCheck(t, svc, value.ID)
-	scheduleCheck(t, svc, value.ID)
 	settings.Generation.OutputDir = "changed-after-submission"
 	if err := svc.runOne(ctx, value.ID); err != nil {
 		t.Fatal(err)
 	}
-	if generator.calls != 1 || loadMonitor(t, svc, value.ID).Stage != "completed" {
-		t.Fatal("root task did not complete")
+	if completed := loadMonitor(t, svc, value.ID); completed.Stage != "completed" || len(completed.RecentRuns) != 1 || completed.RecentRuns[0].GenerationTaskID == "" || generator.calls != 0 {
+		t.Fatalf("generation was not queued separately: %+v", completed)
+	}
+	if err := tasks.retryDue(ctx, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if generator.calls != 1 {
+		t.Fatalf("generation calls=%d", generator.calls)
 	}
 }
 
@@ -102,7 +111,6 @@ func TestFolderScheduleOrganizeNotificationHonorsSwitchAndScope(t *testing.T) {
 				t.Fatal(err)
 			}
 			value = loadMonitor(t, svc, value.ID)
-			value.StableFingerprint, value.StableScans = "old-observation", 1
 			accountID := value.AccountID
 			switch mode {
 			case "off":
@@ -122,7 +130,7 @@ func TestFolderScheduleOrganizeNotificationHonorsSwitchAndScope(t *testing.T) {
 			}
 			got := loadMonitor(t, svc, value.ID)
 			if mode == "ready" {
-				if !scheduledFolderDue(got, time.Now()) || got.StableScans != 0 || got.TaskPending || got.ScheduleVersion <= value.ScheduleVersion {
+				if !scheduledFolderDue(got, time.Now()) || got.TaskPending || got.ScheduleVersion <= value.ScheduleVersion {
 					t.Fatalf("not expedited: %+v", got)
 				}
 			} else if !got.NextScanAt.Equal(value.NextScanAt) || got.ScheduleVersion != value.ScheduleVersion || got.Enabled != value.Enabled {
@@ -141,39 +149,34 @@ func TestFolderScheduleEmptyAndBusyDoNotCreateJobs(t *testing.T) {
 	calls := 0
 	client.driveHook = func(context.Context, string, int, string) error { calls++; return nil }
 	client.drive["100"] = nil
-	empty := scheduleCheck(t, svc, value.ID)
-	if delay := time.Until(empty.NextScanAt); delay < 590*time.Second || delay > 600*time.Second {
-		t.Fatalf("empty directory must use normal interval, got %v", delay)
-	}
-	if calls != 1 || empty.LogTaskID != "" || empty.TaskPending || len(empty.RecentRuns) != 0 {
-		t.Fatalf("calls=%d empty=%+v", calls, empty)
-	}
-	svc.ReserveWork = func() (func(), error) { return nil, errors.New("organize busy") }
-	waiting := scheduleCheck(t, svc, value.ID)
-	if delay := time.Until(waiting.NextScanAt); delay <= 0 || delay > 5*time.Second {
-		t.Fatalf("busy check delayed %v", delay)
-	}
-	if calls != 1 || waiting.NextScanAt.IsZero() || waiting.ScheduleMessage == "" {
-		t.Fatalf("calls=%d waiting=%+v", calls, waiting)
-	}
-	if err := svc.ScanNow(ctx, value.ID); err != nil {
-		t.Fatal(err)
-	}
+	scheduleCheck(t, svc, value.ID)
 	if err := svc.runOne(ctx, value.ID); err != nil {
 		t.Fatal(err)
 	}
-	if !loadMonitor(t, svc, value.ID).TaskPending || len(client.createdNames) != 0 {
-		t.Fatal("busy writer did not retain queued task")
+	empty := loadMonitor(t, svc, value.ID)
+	if delay := time.Until(empty.NextScanAt); delay < 590*time.Second || delay > 600*time.Second {
+		t.Fatalf("empty directory must use normal interval, got %v", delay)
+	}
+	if calls != 1 || empty.Stage != "empty" || empty.LogTaskID != "" || empty.TaskPending || len(empty.RecentRuns) != 0 {
+		t.Fatalf("calls=%d empty=%+v", calls, empty)
+	}
+	svc.ReserveWork = func() (func(), error) { return nil, errors.New("organize busy") }
+	scheduleCheck(t, svc, value.ID)
+	if err := svc.runOne(ctx, value.ID); err != nil {
+		t.Fatal(err)
 	}
 	queued := loadMonitor(t, svc, value.ID)
+	if calls != 1 || !queued.TaskPending || queued.TaskTrigger != "scheduled" || queued.ScheduleMessage == "" || len(client.createdNames) != 0 {
+		t.Fatalf("busy writer did not retain queued task: calls=%d queued=%+v", calls, queued)
+	}
 	if delay := folderWakeDelay([]model.FolderMonitor{queued}, time.Now()); delay <= 0 || delay > 5*time.Second {
 		t.Fatalf("queued retry delayed %v", delay)
 	}
 	if monitorDue(queued, time.Now()) || !monitorDue(queued, queued.NextScanAt) {
 		t.Fatal("queued retry ignored deadline")
 	}
-	// A restart preserves the short retry deadline and the submitted task.
-	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, &folderMonitorGeneratorFake{}, svc.Root, nil)
+	// 重启后仍执行原已提交任务。
+	svc = NewFolderMonitorService(svc.Store, svc.Accounts, client, svc.Root, nil)
 	queued.NextScanAt = time.Now().Add(-time.Second)
 	if err := svc.Store.SaveFolderMonitor(ctx, queued); err != nil {
 		t.Fatal(err)
@@ -187,7 +190,7 @@ func TestFolderScheduleEmptyAndBusyDoNotCreateJobs(t *testing.T) {
 }
 
 func TestFolderScheduleBusyQueuedTaskContinuesWithScheduleOff(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if err := svc.ScanNow(ctx, value.ID); err != nil {
 		t.Fatal(err)
@@ -209,53 +212,58 @@ func TestFolderScheduleBusyQueuedTaskContinuesWithScheduleOff(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadMonitor(t, svc, value.ID)
-	if got.Stage != "completed" || !got.NextScanAt.IsZero() || got.Enabled || generator.calls != 1 || len(client.moveCalls) != 1 {
+	if got.Stage != "completed" || !got.NextScanAt.IsZero() || got.Enabled || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 {
 		t.Fatalf("off task did not complete: %+v", got)
 	}
 }
 
-func TestFolderScheduleDisableDuringInspection(t *testing.T) {
-	for _, second := range []bool{false, true} {
-		t.Run(map[bool]string{false: "first", true: "second"}[second], func(t *testing.T) {
+func TestFolderScheduleChecksCurrentScheduleBeforeEnqueue(t *testing.T) {
+	for _, mode := range []string{"disabled", "rescheduled"} {
+		t.Run(mode, func(t *testing.T) {
 			svc, client, _, value := newMonitorScheduleTest(t)
 			ctx := context.Background()
 			if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 				t.Fatal(err)
 			}
-			if second {
-				scheduleCheck(t, svc, value.ID)
+			due := loadMonitor(t, svc, value.ID)
+			due.NextScanAt = time.Now().Add(-time.Second)
+			if err := svc.Store.SaveFolderMonitor(ctx, due); err != nil {
+				t.Fatal(err)
+			}
+			enabled := mode == "rescheduled"
+			updated, err := svc.UpdateSchedule(ctx, value.ID, enabled, 1800)
+			if err != nil {
+				t.Fatal(err)
 			}
 			client.driveHook = func(context.Context, string, int, string) error {
-				client.driveHook = nil
-				_, err := svc.SetSchedule(ctx, value.ID, false)
-				return err
+				t.Fatal("schedule inspection read 115")
+				return nil
 			}
-			got := scheduleCheck(t, svc, value.ID)
-			if got.Enabled || got.TaskPending || !got.NextScanAt.IsZero() || got.SchedulePaused != "" {
-				t.Fatalf("disabled=%+v", got)
+			if err := svc.inspectScheduled(ctx, due.ID); err != nil {
+				t.Fatal(err)
 			}
-			if len(client.moveCalls) != 0 {
-				t.Fatal("moved files after disabling inspection")
+			got := loadMonitor(t, svc, value.ID)
+			if got.Enabled != enabled || got.TaskPending || !got.NextScanAt.Equal(updated.NextScanAt) || got.SchedulePaused != "" {
+				t.Fatalf("current schedule not respected: %+v", got)
 			}
 		})
 	}
 }
 
-func TestFolderScheduleChangesBeforeWorkerNeverMove(t *testing.T) {
+func TestFolderScheduleWorkerUsesCurrentContents(t *testing.T) {
 	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	scheduleCheck(t, svc, value.ID)
-	scheduleCheck(t, svc, value.ID)
 	client.drive["100"] = append(client.drive["100"], p115.ShareFile{ID: "12", Name: "later.mkv", Size: 20})
 	if err := svc.runOne(ctx, value.ID); err != nil {
 		t.Fatal(err)
 	}
 	got := loadMonitor(t, svc, value.ID)
-	if got.TaskPending || got.StableScans != 1 || got.NextScanAt.IsZero() || len(client.createdNames) != 0 {
-		t.Fatalf("changed=%+v", got)
+	if got.TaskPending || got.Stage != "completed" || len(client.moveCalls) != 1 || !slices.Equal(client.moveCalls[0], []string{"11", "12"}) {
+		t.Fatalf("current contents not picked up: moved=%v monitor=%+v", client.moveCalls, got)
 	}
 }
 
@@ -265,7 +273,6 @@ func TestFolderScheduleFailurePausesAndRetainsFiles(t *testing.T) {
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	scheduleCheck(t, svc, value.ID)
 	scheduleCheck(t, svc, value.ID)
 	client.configureErr = errors.New("share failure")
 	if err := svc.runOne(ctx, value.ID); err == nil {
@@ -293,7 +300,11 @@ func TestFolderScheduleReadFailurePersistsPause(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.driveHook = func(context.Context, string, int, string) error { return errors.New("directory missing") }
-	got := scheduleCheck(t, svc, value.ID)
+	scheduleCheck(t, svc, value.ID)
+	if err := svc.runOne(context.Background(), value.ID); err == nil {
+		t.Fatal("expected read failure")
+	}
+	got := loadMonitor(t, svc, value.ID)
 	if got.SchedulePaused == "" || !got.NextScanAt.IsZero() || got.TaskPending {
 		t.Fatalf("missing=%+v", got)
 	}
@@ -306,12 +317,11 @@ func TestFolderScheduleReadFailurePersistsPause(t *testing.T) {
 }
 
 func TestFolderScheduleDisablePreservesSubmittedBatch(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	scheduleCheck(t, svc, value.ID)
 	scheduleCheck(t, svc, value.ID)
 	if _, err := svc.SetSchedule(ctx, value.ID, false); err != nil {
 		t.Fatal(err)
@@ -320,18 +330,17 @@ func TestFolderScheduleDisablePreservesSubmittedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadMonitor(t, svc, value.ID)
-	if got.Stage != "completed" || got.Enabled || got.TaskPending || !got.NextScanAt.IsZero() || generator.calls != 1 || len(client.deleted) != 1 {
-		t.Fatalf("disabled queued=%+v calls=%d", got, generator.calls)
+	if got.Stage != "completed" || got.Enabled || got.TaskPending || !got.NextScanAt.IsZero() || len(client.shareCalls) != 1 || len(client.deleted) != 0 {
+		t.Fatalf("disabled queued=%+v", got)
 	}
 }
 
 func TestFolderScheduleSameAccountRefreshKeepsQueuedBatch(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	ctx := context.Background()
 	if _, err := svc.SetSchedule(ctx, value.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	scheduleCheck(t, svc, value.ID)
 	scheduleCheck(t, svc, value.ID)
 	account, err := svc.Accounts.Primary(value.AccountID)
 	if err != nil {
@@ -351,7 +360,7 @@ func TestFolderScheduleSameAccountRefreshKeepsQueuedBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := loadMonitor(t, svc, value.ID)
-	if got.Stage != "completed" || got.SchedulePaused != "" || len(client.createdNames) != 1 || generator.calls != 1 {
+	if got.Stage != "completed" || got.SchedulePaused != "" || len(client.createdNames) != 1 || len(client.shareCalls) != 1 {
 		t.Fatalf("same-account refresh stopped queued batch: %+v", got)
 	}
 }
@@ -381,14 +390,6 @@ func TestFolderRunningBatchKeepsCookieAndChecksOriginalAccount(t *testing.T) {
 				}
 				return nil
 			}
-			generated := 0
-			svc.Generator = generateFunc(func(ctx context.Context, _ GenerateInput) (*GenerationResult, error) {
-				generated++
-				if generationCookie(ctx, nil) != account.Cookie {
-					t.Fatal("generation switched credentials")
-				}
-				return &GenerationResult{Written: 1}, nil
-			})
 			ctx := context.Background()
 			if err := svc.ScanNow(ctx, value.ID); err != nil {
 				t.Fatal(err)
@@ -398,10 +399,10 @@ func TestFolderRunningBatchKeepsCookieAndChecksOriginalAccount(t *testing.T) {
 			}
 			got := loadMonitor(t, svc, value.ID)
 			if action == "refresh" {
-				if got.Stage != "completed" || generated != 1 || len(client.deleted) != 1 {
+				if got.Stage != "completed" || len(client.shareCalls) != 1 || len(client.deleted) != 0 {
 					t.Fatal("same-account refresh stopped running batch", got.Stage, got.LastError)
 				}
-			} else if got.LastError == "" || generated != 0 || len(client.deleted) != 0 || len(client.shareCalls) != 0 {
+			} else if got.LastError == "" || len(client.deleted) != 0 || len(client.shareCalls) != 0 {
 				t.Fatal("unavailable original account permitted another cloud write", got.Stage)
 			}
 		})
@@ -409,7 +410,7 @@ func TestFolderRunningBatchKeepsCookieAndChecksOriginalAccount(t *testing.T) {
 }
 
 func TestFolderMovingBatchCanResumeAfterSigningBackIntoSameAccount(t *testing.T) {
-	svc, client, generator, value := newMonitorScheduleTest(t)
+	svc, client, _, value := newMonitorScheduleTest(t)
 	account, err := svc.Accounts.Primary(value.AccountID)
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +453,7 @@ func TestFolderMovingBatchCanResumeAfterSigningBackIntoSameAccount(t *testing.T)
 		t.Fatal(err)
 	}
 	completed := loadMonitor(t, svc, value.ID)
-	if completed.Stage != "completed" || len(client.createdNames) != 1 || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 || len(client.deleted) != 1 || generator.calls != 1 {
+	if completed.Stage != "completed" || len(client.createdNames) != 1 || len(client.moveCalls) != 1 || len(client.shareCalls) != 1 || len(client.deleted) != 0 {
 		t.Fatal("resume repeated or skipped original work", completed.Stage)
 	}
 }

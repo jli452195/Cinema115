@@ -2,15 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"strm115/backend/internal/client/p115"
-	"strm115/backend/internal/model"
-	"strm115/backend/internal/storage"
 )
 
 type folderMonitorClientFake struct {
@@ -57,56 +52,20 @@ func (f *folderMonitorClientFake) MoveEntries(_ context.Context, ids []string, c
 	return nil
 }
 
-func TestFolderMonitorLegacyMoveFreezesRemainingSourceIDs(t *testing.T) {
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "monitor.db"))
-	if err != nil {
+func TestFolderMonitorMovingRequiresFrozenIDs(t *testing.T) {
+	svc, client, _, value := newMonitorScheduleTest(t)
+	ctx := context.Background()
+	value.Stage, value.BatchDirectoryID, value.BatchDirectoryName = "moving", "900", "Cinema115-临时-test"
+	value.TaskPending = true
+	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	secret, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
-	if err != nil {
+	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	accounts, err := newP115Accounts(secret, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountID, err := accounts.AddPrimary("monitor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	account, _ := accounts.Get(accountID)
-	cookie := "UID=42_A"
-	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {
-		t.Fatal(err)
-	}
-	client := &folderMonitorClientFake{drive: map[string][]p115.ShareFile{
-		"100": {{ID: "11", Name: "a.mkv", Size: 10}, {ID: "12", Name: "b.mkv", Size: 20}},
-		"900": {},
-	}, share: map[string][]p115.ShareFile{}}
-	svc := NewFolderMonitorService(db, accounts, client, &folderMonitorGeneratorFake{}, t.TempDir(), nil)
-	value := model.FolderMonitor{ID: "drain", Name: "monitor", AccountID: accountID, SourceCID: "100", SourcePath: "/inbox", OutputDir: "strm", BaseURL: "http://nas:3002", VideoExtensions: "mkv", MetadataExtensions: "srt", Recursive: true, Enabled: true, IntervalSeconds: 30, Stage: "moving", BatchDirectoryID: "900", BatchDirectoryName: "Cinema115-临时-test", BatchParentCID: "0", UpdatedAt: time.Now().UTC()}
-	if err := db.SaveFolderMonitor(context.Background(), value); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.moveBatch(context.Background(), &value, account); err != nil {
-		t.Fatal(err)
-	}
-	if value.Stage != "sharing" || value.BatchMoveIndex != 2 || len(value.BatchIDs) != 2 {
-		t.Fatalf("value=%+v", value)
-	}
-	if len(client.moveCalls) != 1 || len(client.moveCalls[0]) != 2 {
-		t.Fatalf("moveCalls=%v", client.moveCalls)
-	}
-	if len(client.drive["100"]) != 0 || len(client.drive["900"]) != 2 {
-		t.Fatalf("drive=%+v", client.drive)
-	}
-	saved, err := db.GetFolderMonitor(context.Background(), value.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !sameIDs(saved.BatchIDs, []string{"11", "12"}) {
-		t.Fatalf("source IDs were not frozen: %+v", saved.BatchIDs)
+	got := loadMonitor(t, svc, value.ID)
+	if got.Stage != "blocked" || got.BatchDirectoryID != "900" || len(client.moveCalls) != 0 {
+		t.Fatalf("没有本批范围时不应挪动来源: %+v, calls=%v", got, client.moveCalls)
 	}
 }
 
@@ -120,48 +79,28 @@ func TestBatchDirectoryNameUsesCinema115TemporaryPrefix(t *testing.T) {
 	}
 }
 
-func TestFolderMonitorSharesTemporaryDirectoryChildren(t *testing.T) {
-	db, err := storage.Open(context.Background(), filepath.Join(t.TempDir(), "monitor.db"))
-	if err != nil {
+func TestFolderMonitorSharesOnlySavedItems(t *testing.T) {
+	svc, client, _, value := newMonitorScheduleTest(t)
+	ctx := context.Background()
+	client.drive["900"] = []p115.ShareFile{
+		{ID: "21", Name: "show", Directory: true},
+		{ID: "22", Name: "movie.mkv", Size: 10},
+		{ID: "23", Name: "other.txt", Size: 20},
+	}
+	value.Stage, value.BatchDirectoryID, value.BatchDirectoryName = "sharing", "900", "Cinema115-临时-test"
+	value.BatchIDs, value.BatchMoveIndex, value.TaskPending = []string{"21", "22"}, 2, true
+	if err := svc.Store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	secret, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
-	if err != nil {
+	if err := svc.runDue(ctx); err != nil {
 		t.Fatal(err)
 	}
-	accounts, err := newP115Accounts(secret, "")
-	if err != nil {
-		t.Fatal(err)
+	got := loadMonitor(t, svc, value.ID)
+	if got.Stage != "completed" || len(client.shareCalls) != 1 || !sameIDs(client.shareCalls[0], []string{"21", "22"}) {
+		t.Fatalf("分享范围不等于本批范围: %+v, calls=%v", got, client.shareCalls)
 	}
-	accountID, err := accounts.AddPrimary("monitor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	account, _ := accounts.Get(accountID)
-	cookie := "UID=42_A"
-	if err := accounts.Update(accountID, account.Revision, account.Name, &cookie); err != nil {
-		t.Fatal(err)
-	}
-	configureErr := errors.New("stop after share")
-	client := &folderMonitorClientFake{
-		drive: map[string][]p115.ShareFile{
-			"900": {{ID: "21", Name: "show", Directory: true}, {ID: "22", Name: "movie.mkv", Size: 10}},
-			"21":  {},
-		},
-		share:        map[string][]p115.ShareFile{},
-		configureErr: configureErr,
-	}
-	svc := NewFolderMonitorService(db, accounts, client, &folderMonitorGeneratorFake{}, t.TempDir(), nil)
-	value := model.FolderMonitor{ID: "share", Name: "monitor", AccountID: accountID, SourceCID: "100", OutputDir: "strm", BaseURL: "http://nas:3002", VideoExtensions: "mkv", MetadataExtensions: "srt", Recursive: true, Enabled: true, IntervalSeconds: 30, Stage: "sharing", BatchDirectoryID: "900", BatchDirectoryName: "Cinema115-临时-test", BatchParentCID: "0", UpdatedAt: time.Now().UTC()}
-	if err := db.SaveFolderMonitor(context.Background(), value); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.resume(context.Background(), &value, account); err == nil || !strings.Contains(err.Error(), configureErr.Error()) {
-		t.Fatalf("resume error=%v", err)
-	}
-	if len(client.shareCalls) != 1 || !sameIDs(client.shareCalls[0], []string{"21", "22"}) {
-		t.Fatalf("share calls=%v", client.shareCalls)
+	if len(client.moveCalls) != 0 || len(client.deleted) != 0 {
+		t.Fatal("已搬运批次不应再次搬运或回收")
 	}
 }
 
@@ -275,26 +214,4 @@ func (f *folderMonitorGeneratorFake) Generate(ctx context.Context, input Generat
 		}
 	}
 	return &GenerationResult{Written: 1, Files: []GeneratedSTRM{{Path: "movie.strm"}}}, nil
-}
-
-func TestManifestFingerprintDirectorySizeCompatibility(t *testing.T) {
-	drive := []folderManifestEntry{
-		{Path: "show", ID: "11", Directory: true},
-		{Path: "show/episode.mkv", ID: "12", Size: 1234},
-	}
-	shared := []folderManifestEntry{
-		{Path: "show", ID: "11", Size: 1234, Directory: true},
-		{Path: "show/episode.mkv", ID: "12", Size: 1234},
-	}
-	if manifestFingerprint(drive) != manifestFingerprint(shared) {
-		t.Fatal("directory aggregate size must not change the normalized fingerprint")
-	}
-	legacyDriveFingerprint := manifestFingerprintHash(drive, true, false)
-	if !manifestMatchesFingerprint(shared, legacyDriveFingerprint) {
-		t.Fatal("share snapshot must resume a compatible pre-v2 drive checkpoint")
-	}
-	shared[1].Size++
-	if manifestMatchesFingerprint(shared, manifestFingerprint(drive)) || manifestMatchesFingerprint(shared, legacyDriveFingerprint) {
-		t.Fatal("file size changes must still fail snapshot verification")
-	}
 }

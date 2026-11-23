@@ -53,7 +53,7 @@ func folderMonitorView(value model.FolderMonitor) gin.H {
 		"logTaskID": value.LogTaskID, "logAttempt": value.LogAttempt, "generationTaskId": value.GenerationTaskID,
 		"hasBatch":        value.BatchDirectoryID != "" || value.BatchCreationPending,
 		"recoveryMessage": value.RecoveryMessage,
-		"stage":           value.Stage, "shareUrl": value.ShareURL, "shareReviewing": value.ShareReviewing, "stableScans": value.StableScans,
+		"stage":           value.Stage, "shareUrl": value.ShareURL,
 		"batchCount": batchCount, "batchMoved": value.BatchMoveIndex, "cleanupIndex": value.CleanupIndex,
 		"batchDirectoryName": value.BatchDirectoryName, "batchMoveIndex": value.BatchMoveIndex,
 		"lastScanAt": value.LastScanAt, "nextScanAt": value.NextScanAt,

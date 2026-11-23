@@ -15,8 +15,8 @@ func TestFolderMonitorCheckpointRoundTrip(t *testing.T) {
 		ID: "monitor-1", Name: "下载收件箱", AccountID: "account-1", SourceCID: "123",
 		SourcePath: "/待处理", OutputDir: "strm/inbox", BaseURL: "http://nas:3002",
 		VideoExtensions: "mkv,mp4", MetadataExtensions: "srt", Recursive: true,
-		Enabled: true, IntervalSeconds: 300, Stage: "waiting", StableScans: 1,
-		BatchIDs: []string{"11", "12"}, BatchFingerprint: "fingerprint", UpdatedAt: time.Now().UTC(),
+		Enabled: true, IntervalSeconds: 300, Stage: "moving",
+		BatchIDs: []string{"11", "12"}, BatchDirectoryID: "456", UpdatedAt: time.Now().UTC(),
 	}
 	if err := store.SaveFolderMonitor(ctx, value); err != nil {
 		t.Fatal(err)
@@ -25,7 +25,7 @@ func TestFolderMonitorCheckpointRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != value.ID || got.AccountID != value.AccountID || got.Stage != value.Stage || len(got.BatchIDs) != 2 || got.BatchFingerprint != value.BatchFingerprint {
+	if got.ID != value.ID || got.AccountID != value.AccountID || got.Stage != value.Stage || len(got.BatchIDs) != 2 || got.BatchDirectoryID != value.BatchDirectoryID {
 		t.Fatalf("got=%+v", got)
 	}
 	list, err := store.ListFolderMonitors(ctx)

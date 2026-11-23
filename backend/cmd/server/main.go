@@ -410,7 +410,7 @@ func main() {
 	shareTasks := &service.ShareTasks{Generator: loggedGenerator, Store: database, Settings: automation, Cookie: shareCookie, AccountCookie: primaryCookie}
 	shareTasks.OwnClient = shareAPI.Client
 	downloadOrganize.Shares = shareTasks
-	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, generator, shareAPI.OutputRoot, generationLogs)
+	folderMonitors := service.NewFolderMonitorService(database, accounts, shareAPI.Client, shareAPI.OutputRoot, generationLogs)
 	folderMonitors.SetSharedSettings(automation.Value)
 	folderMonitors.Tasks = shareTasks
 	folderMonitors.ReserveWork = organizeEngine.ReserveDirectoryWork
@@ -419,7 +419,6 @@ func main() {
 			generationLogs.Append("STRM", "目录监控", "目录监控", "ERROR", "整理完成后安排目录检查失败："+err.Error())
 		}
 	}
-	shareTasks.DirectoryPrepare = folderMonitors.VerifyGeneration
 	httpapi.RegisterFolderMonitors(admin, folderMonitors)
 	driveSTRM := service.NewDriveSTRMService(database, accounts, shareAPI.Client, shareAPI.OutputRoot)
 	embyService.DeepDeleteAccounts, embyService.DeepDeleteDrive = accounts, shareAPI.Client

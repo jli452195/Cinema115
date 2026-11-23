@@ -29,32 +29,29 @@ type ShareTaskStore interface {
 }
 
 type shareTaskRequest struct {
-	Download             *downloadShareRequest `json:"download,omitempty"`
-	DirectoryLogID       string                `json:"directoryLogId,omitempty"`
-	DirectoryFingerprint string                `json:"directoryFingerprint,omitempty"`
-	DirectoryID          string                `json:"directoryId,omitempty"`
-	DirectoryEnded       bool                  `json:"directoryEnded,omitempty"`
-	RetrySafe            bool                  `json:"retrySafe,omitempty"`
-	Merged               bool                  `json:"merged,omitempty"`
-	OwnShareCID          string                `json:"ownShareCID,omitempty"`
-	OwnRootIDs           []string              `json:"ownRootIDs,omitempty"`
-	Input                GenerateInput         `json:"input"`
-	Settings             AutomationSettings    `json:"settings"`
+	Download       *downloadShareRequest `json:"download,omitempty"`
+	DirectoryLogID string                `json:"directoryLogId,omitempty"`
+	DirectoryEnded bool                  `json:"directoryEnded,omitempty"`
+	RetrySafe      bool                  `json:"retrySafe,omitempty"`
+	Merged         bool                  `json:"merged,omitempty"`
+	OwnShareCID    string                `json:"ownShareCID,omitempty"`
+	OwnRootIDs     []string              `json:"ownRootIDs,omitempty"`
+	Input          GenerateInput         `json:"input"`
+	Settings       AutomationSettings    `json:"settings"`
 }
 
 // ShareTasks 为网页和 Bot 保存任务结果，审核等待不占用原请求连接。
 type ShareTasks struct {
-	OwnClient        downloadShareClient
-	enqueueMu        sync.Mutex
-	DirectoryPrepare func(context.Context, GenerateInput, string, string) error
-	RetryWake        chan struct{}
-	Generator        MediaGenerator
-	Store            ShareTaskStore
-	Settings         *AutomationStore
-	Cookie           func() string
-	AccountCookie    func(string) string
-	Notifier         ShareSuccessNotifier
-	Logs             *GenerationLogs
+	OwnClient     downloadShareClient
+	enqueueMu     sync.Mutex
+	RetryWake     chan struct{}
+	Generator     MediaGenerator
+	Store         ShareTaskStore
+	Settings      *AutomationStore
+	Cookie        func() string
+	AccountCookie func(string) string
+	Notifier      ShareSuccessNotifier
+	Logs          *GenerationLogs
 }
 
 func (s *ShareTasks) Generate(ctx context.Context, input GenerateInput) (*GenerationResult, error) {
@@ -75,9 +72,9 @@ func (s *ShareTasks) prepareTask(ctx context.Context, input GenerateInput) (*mod
 }
 
 func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput, id, status string) (*model.ShareTask, shareTaskRequest, error) {
-	settings := s.Settings.ShareValue()
-	if saved, ok := ctx.Value(automationContextKey{}).(AutomationSettings); ok {
-		settings = saved
+	settings, ok := ctx.Value(automationContextKey{}).(AutomationSettings)
+	if !ok {
+		settings = s.Settings.ShareValue()
 	}
 	mode := input.Mode
 	if mode == "" {
@@ -108,8 +105,6 @@ func (s *ShareTasks) prepareTaskRecord(ctx context.Context, input GenerateInput,
 	task := model.ShareTask{ID: id, Source: source, SourceURL: link, Mode: mode, Status: status, CreatedAt: now, UpdatedAt: now, MaxRetries: settings.ReviewRetryMax, RetryMinutes: settings.ReviewRetryMinutes}
 	req := shareTaskRequest{Input: input, Settings: settings}
 	req.DirectoryLogID, _ = ctx.Value(directoryGenerationKey{}).(string)
-	req.DirectoryFingerprint, _ = ctx.Value(directoryFingerprintKey{}).(string)
-	req.DirectoryID, _ = ctx.Value(directoryIDKey{}).(string)
 	if err := s.save(ctx, &task, req); err != nil {
 		return nil, shareTaskRequest{}, err
 	}
@@ -191,18 +186,12 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 		}
 	}
 	if req.DirectoryLogID != "" {
-		ctx = context.WithValue(ctx, directoryGenerationKey{}, req.DirectoryLogID)
 		cookie := generationCookie(ctx, s.Cookie)
 		ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: s.Logs, task: req.DirectoryLogID, source: "目录分享", redact: func(message string) string { return monitorLogDetail(message, cookie) }})
-		if s.DirectoryPrepare != nil {
-			if err := s.DirectoryPrepare(ctx, req.Input, req.DirectoryFingerprint, req.DirectoryID); err != nil {
-				return s.finish(ctx, task, req, nil, err, time.Since(started))
-			}
-		}
 	}
 	result, err := s.Generator.Generate(WithGenerationSource(ctx, task.Source), req.Input)
 	if (req.DirectoryLogID != "" || req.Download != nil) && err == nil && (result == nil || result.Written == 0 || result.Failed != 0 || result.MetadataFailed != 0) {
-		err = errors.New("STRM 或元数据未全部生成成功，目录批次保留，重试会复用当前分享")
+		err = errors.New("STRM 或元数据未全部生成成功，重试会复用当前分享")
 	}
 	if req.Download != nil && err == nil {
 		err = s.cleanupDownloadShare(ctx, task, &req, result)
@@ -217,7 +206,7 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 // 单条和合并执行共用审核重试判定及最终状态落盘。
 func (s *ShareTasks) finish(ctx context.Context, task *model.ShareTask, req shareTaskRequest, result *GenerationResult, err error, elapsed time.Duration) (*GenerationResult, error) {
 	if req.DirectoryLogID != "" && errors.Is(err, ErrNoMedia) {
-		err = fmt.Errorf("%w；当前重试沿用本批规则：视频后缀=%s，最小=%d MB，递归=%t。文件已变动或需要应用新设置时，请结束本次目录任务再重新分享", err, req.Input.VideoExtensions, req.Input.MinSizeMB, req.Input.Recursive)
+		err = fmt.Errorf("%w；当前重试沿用任务设置：视频后缀=%s，最小=%d MB，递归=%t。如需调整设置，可使用当前分享链接重新生成", err, req.Input.VideoExtensions, req.Input.MinSizeMB, req.Input.Recursive)
 	}
 	if result != nil && result.Mode == "direct" {
 		task.Mode, req.Input.Mode, req.Merged = "direct", "direct", false

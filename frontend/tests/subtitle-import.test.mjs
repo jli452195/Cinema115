@@ -94,6 +94,23 @@ test('confirmed target episodes match numeric subtitles independently of origina
   for (const name of ['SP01.ass', '01-02.ass', 'OVA01.ass', '01.5.ass']) assert.equal(analyzeSubtitle(name, videos, 1).videoId, '', name)
 })
 
+test('two digits attached to the current work title match the selected season', () => {
+  const videos = Array.from({ length: 8 }, (_, i) => ({ id: String(i + 1), name: `Arcana Famiglia ${i + 1}.mkv`, season: 1, episode: i + 1 }))
+  const options = { workTitles: ['魔力家族', 'Arcana Famiglia'] }
+  for (const target of videos) {
+    const name = `字幕包/魔力家族${String(target.episode).padStart(2, '0')}.ass`
+    assert.equal(analyzeSubtitle(name, videos, 1, 'tv', options).videoId, target.id, name)
+  }
+  assert.equal(analyzeSubtitle('ARCANA FAMIGLIA01.ass', videos, 1, 'tv', options).videoId, '1')
+  assert.equal(analyzeSubtitle('魔力家族01.ass', videos, 2, 'tv', options).videoId, '')
+  assert.equal(analyzeSubtitle('魔力家族01.ass', [...videos, { ...videos[0], id: 'duplicate' }], 1, 'tv', options).confidence, 'medium')
+  assert.equal(analyzeSubtitle('魔力家族01.ass', videos, 1).videoId, '')
+  for (const name of ['魔力家族00.ass', '魔力家族001.ass', '魔力家族01-02.ass', '魔力家族01v2.ass', '其他作品01.ass', '魔力家族01.mkv']) {
+    assert.equal(episodeNumber(name, options.workTitles), undefined, name)
+  }
+  assert.equal(episodeNumber('魔力家族01.ass', [...options.workTitles, '魔力家族01']), undefined)
+})
+
 test('space-separated release episodes accept complete technical suffixes without guessing metadata', () => {
   const names = [
     '[ReinForce] Shangri-La 01 (DVDRip 852x480 x264 FLAC).ass',

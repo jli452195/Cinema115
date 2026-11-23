@@ -34,6 +34,10 @@ func (s *FolderMonitorService) Recover(ctx context.Context, id, expectedTaskID s
 		s.mu.Unlock()
 		return value, generationInputError("任务已变化或正在执行，请稍后核对")
 	}
+	if configuredFolderShare(value.Stage) {
+		s.mu.Unlock()
+		return value, generationInputError("分享已创建，系统将保存本批结果")
+	}
 	if value.LastError == "" || (value.BatchDirectoryID == "" && !value.BatchCreationPending) {
 		s.mu.Unlock()
 		return value, nil
@@ -99,7 +103,7 @@ func (s *FolderMonitorService) Recover(ctx context.Context, id, expectedTaskID s
 		if !missing {
 			return value, generationInputError("目录可能已被移动，不能确认删除；保留批次")
 		}
-		recoveryMessage = "本批临时目录已确认不存在，已结束失败批次；未将任务标记为生成成功。"
+		recoveryMessage = "本批临时目录已确认不存在，已结束失败批次；未将任务标记为已分享。"
 	} else {
 		contents, err := s.listRootEntries(ctx, value.BatchDirectoryID, account.Cookie)
 		if err != nil {

@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// FolderMonitor stores one administrator-owned 115 inbox monitor. Record is
-// persisted by the storage layer as JSON so a batch checkpoint can evolve
-// without exposing cookies or relying on process memory.
+// FolderMonitor 保存管理员配置的 115 收件目录及批次检查点。
+// 存储层以 JSON 持久化记录，检查点不保存 Cookie，也不依赖进程内存。
 type FolderMonitor struct {
 	ID                   string             `json:"id"`
 	Name                 string             `json:"name"`
@@ -37,9 +36,7 @@ type FolderMonitor struct {
 	Stage                string             `json:"stage"`
 	ShareURL             string             `json:"shareURL,omitempty"`
 	SharePassword        string             `json:"sharePassword,omitempty"`
-	ShareReviewing       bool               `json:"shareReviewing,omitempty"`
 	BatchIDs             []string           `json:"batchIDs,omitempty"`
-	BatchFingerprint     string             `json:"batchFingerprint,omitempty"`
 	BatchDirectoryID     string             `json:"batchDirectoryID,omitempty"`
 	BatchDirectoryName   string             `json:"batchDirectoryName,omitempty"`
 	BatchCreationPending bool               `json:"batchCreationPending,omitempty"`
@@ -47,8 +44,6 @@ type FolderMonitor struct {
 	BatchMoveIndex       int                `json:"batchMoveIndex,omitempty"`
 	BatchParentCID       string             `json:"batchParentCID,omitempty"`
 	CleanupIndex         int                `json:"cleanupIndex,omitempty"`
-	StableFingerprint    string             `json:"stableFingerprint,omitempty"`
-	StableScans          int                `json:"stableScans,omitempty"`
 	LastScanAt           time.Time          `json:"lastScanAt,omitempty"`
 	NextScanAt           time.Time          `json:"nextScanAt,omitempty"`
 	LastError            string             `json:"lastError,omitempty"`
@@ -56,15 +51,18 @@ type FolderMonitor struct {
 }
 
 type FolderRun struct {
-	TaskID   string    `json:"taskId"`
-	Trigger  string    `json:"trigger"`
-	Status   string    `json:"status"`
-	Message  string    `json:"message"`
-	ShareURL string    `json:"shareUrl,omitempty"`
-	Time     time.Time `json:"time"`
+	TaskID           string    `json:"taskId"`
+	Trigger          string    `json:"trigger"`
+	Status           string    `json:"status"`
+	Message          string    `json:"message"`
+	ShareURL         string    `json:"shareUrl,omitempty"`
+	DirectoryID      string    `json:"directoryId,omitempty"`
+	DirectoryName    string    `json:"directoryName,omitempty"`
+	GenerationTaskID string    `json:"generationTaskId,omitempty"`
+	Time             time.Time `json:"time"`
 }
 
-// EndedFolderBatch retains recovery locations when the user releases a batch.
+// EndedFolderBatch 保存用户结束批次时的文件位置和恢复信息。
 type EndedFolderBatch struct {
 	LogTaskID        string    `json:"logTaskId"`
 	GenerationTaskID string    `json:"generationTaskId,omitempty"`
