@@ -326,16 +326,19 @@ func TestDirectoryShareCommonLogsKeepTaskAndRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	value = loadMonitor(t, svc, value.ID)
-	found := false
+	foundRedacted := false
 	for _, entry := range logs.Snapshot("ALL") {
-		if entry.TaskID != value.LogTaskID || strings.Contains(entry.Message, "42_A") {
-			t.Fatalf("incorrect log attribution or redaction: %+v", entry)
+		if strings.Contains(entry.Message, "42_A") {
+			t.Fatal("目录分享日志泄漏了测试凭据")
 		}
-		if entry.Source == "目录分享" {
-			found = true
+		if entry.TaskID != value.LogTaskID {
+			t.Fatalf("目录分享日志任务编号为 %q，预期 %q", entry.TaskID, value.LogTaskID)
+		}
+		if entry.Source == "目录分享" && entry.Level == "DEBUG" && entry.Message == "raw [凭据已隐藏]" {
+			foundRedacted = true
 		}
 	}
-	if !found {
-		t.Fatal("shared generation logs missing")
+	if !foundRedacted {
+		t.Fatal("缺少已脱敏的目录分享生成日志")
 	}
 }

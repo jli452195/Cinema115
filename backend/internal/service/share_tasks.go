@@ -186,6 +186,7 @@ func (s *ShareTasks) execute(ctx context.Context, task *model.ShareTask, req sha
 		}
 	}
 	if req.DirectoryLogID != "" {
+		ctx = context.WithValue(ctx, directoryGenerationKey{}, req.DirectoryLogID)
 		cookie := generationCookie(ctx, s.Cookie)
 		ctx = context.WithValue(ctx, generationLogKey{}, generationLogger{store: s.Logs, task: req.DirectoryLogID, source: "目录分享", redact: func(message string) string { return monitorLogDetail(message, cookie) }})
 	}
