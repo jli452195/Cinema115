@@ -20,6 +20,16 @@ type DriveHealthView struct {
 type driveHealthEntry struct {
 	fingerprint [32]byte
 	view        DriveHealthView
+	membership  DriveMembershipView
+}
+
+type DriveMembershipView struct {
+	VIP          string `json:"vip,omitempty"`
+	VIPCheckedAt string `json:"vipCheckedAt,omitempty"`
+}
+
+type driveMembershipQuerier interface {
+	QueryMembership(context.Context, string) (model.P115Summary, bool, error)
 }
 
 func driveHealthFingerprint(a P115Account) [32]byte {
@@ -51,14 +61,18 @@ func (s *MemberPlaybackService) DriveHealth(r model.MemberPlayback) DriveHealthV
 	if err != nil {
 		return DriveHealthView{State: "unavailable", Message: err.Error()}
 	}
+	return s.driveHealthSnapshot(a).view
+}
+
+func (s *MemberPlaybackService) driveHealthSnapshot(a P115Account) driveHealthEntry {
 	s.driveHealthMu.Lock()
 	entry, ok := s.driveHealth[a.ID]
 	s.driveHealthMu.Unlock()
 	if ok && entry.fingerprint == driveHealthFingerprint(a) {
-		return entry.view
+		return entry
 	}
 	s.requestHealthCheck()
-	return DriveHealthView{State: "pending", Message: "等待检查"}
+	return driveHealthEntry{view: DriveHealthView{State: "pending", Message: "等待检查"}}
 }
 
 // Manual refresh invalidates only health snapshots; it cannot write Emby policy.
@@ -112,17 +126,23 @@ func (s *MemberPlaybackService) refreshMissingDriveHealth(ctx context.Context) {
 		return
 	}
 	seen := make(map[string]bool)
+	check := func(a P115Account) {
+		if a.ID == "" || seen[a.ID] || ctx.Err() != nil {
+			return
+		}
+		seen[a.ID] = true
+		_ = s.refreshDriveHealth(ctx, a, false)
+	}
 	for _, r := range s.Records() {
 		if ctx.Err() != nil {
 			return
 		}
 		a, err := s.healthAccount(r)
-		if err != nil || seen[a.ID] {
-			continue
+		if err == nil {
+			check(a)
 		}
-		seen[a.ID] = true
-		if err := s.refreshDriveHealth(ctx, a, false); err != nil && ctx.Err() != nil {
-			return
+		if a := s.personalAccount(r); a.Cookie != "" {
+			check(a)
 		}
 	}
 	// Retain only existing configurations, bounding the runtime cache across replacements.
@@ -164,7 +184,6 @@ func (s *MemberPlaybackService) refreshDriveHealth(ctx context.Context, a P115Ac
 		return nil
 	}
 	probe, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
 	v := DriveHealthView{State: "ready", Message: "最近检查通过"}
 	valid, err := s.checker.CheckCookie(probe, a.Cookie)
 	switch {
@@ -177,18 +196,40 @@ func (s *MemberPlaybackService) refreshDriveHealth(ctx context.Context, a P115Ac
 			v.State, v.Message = "invalid_directory", "目录暂不可用，请检查目录及账号"
 		}
 	}
+	cancel()
+	v.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+	var membership DriveMembershipView
+	if reader, ok := s.checker.(driveMembershipQuerier); ok && a.Ownership == "member" && a.OwnerUserID != "" && valid && err == nil {
+		infoCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		summary, verified, queryErr := reader.QueryMembership(infoCtx, a.Cookie)
+		cancel()
+		membership.VIPCheckedAt = time.Now().UTC().Format(time.RFC3339)
+		if queryErr == nil && verified {
+			membership.VIP = summary.VIP
+			membership.VIPCheckedAt = summary.CheckedAt
+		}
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	v.CheckedAt = time.Now().UTC().Format(time.RFC3339)
 	current, err = s.accounts.Get(a.ID)
 	if err != nil || driveHealthFingerprint(current) != fingerprint {
 		return nil
 	}
 	s.driveHealthMu.Lock()
 	if s.driveHealthEpoch == epoch {
-		s.driveHealth[a.ID] = driveHealthEntry{fingerprint: fingerprint, view: v}
+		s.driveHealth[a.ID] = driveHealthEntry{fingerprint: fingerprint, view: v, membership: membership}
 	}
 	s.driveHealthMu.Unlock()
 	return nil
+}
+
+func (s *MemberPlaybackService) CheckPersonalDrive(ctx context.Context, id string) error {
+	a := s.personalAccount(s.record(id))
+	if a.Cookie == "" {
+		return nil
+	}
+	check, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+	return s.refreshDriveHealth(check, a, true)
 }

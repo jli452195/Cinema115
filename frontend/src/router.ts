@@ -130,11 +130,6 @@ export const router = createRouter({
     // Changing only the selected date should not jump the update grid back to the top.
     if (to.name === 'updates' && from.name === 'updates') return false
     if (savedPosition) return savedPosition
-    if (to.name === 'helper115' && to.hash === '#pool') {
-      const pool = document.getElementById('pool')
-      // 复用加载完后 scrollIntoView 所用的顶部留白，避开固定顶栏。
-      if (pool) return { el: pool, top: Number.parseFloat(getComputedStyle(pool).scrollMarginTop) || 0 }
-    }
     return { top: 0 }
   },
 })

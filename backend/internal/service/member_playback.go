@@ -474,6 +474,7 @@ func (s *MemberPlaybackService) ensure(ctx context.Context, id string) (model.Me
 }
 
 type MemberPlaybackView struct {
+	DriveMembershipView
 	AccountID                  string                  `json:"accountId"`
 	Revision                   uint64                  `json:"revision"`
 	DirectoryAccount           *MemberDirectoryAccount `json:"directoryAccount,omitempty"`
@@ -497,15 +498,19 @@ type MemberPlaybackView struct {
 func (s *MemberPlaybackService) View(id string) MemberPlaybackView {
 	r := s.record(id)
 	settings := s.Settings()
-	drive := s.personalDrive(r)
-	v := MemberPlaybackView{Enabled: settings.Enabled, Stage: r.Stage, Message: r.Message, UID: drive.UID, Connected: drive.Connected, DirectoryID: drive.DirectoryID, EmbyName: r.EmbyName, EmbyURL: settings.PublicURL, Suspended: r.Suspended}
+	a := s.personalAccount(r)
+	v := MemberPlaybackView{Enabled: settings.Enabled, Stage: r.Stage, Message: r.Message, UID: a.UID, Connected: a.Cookie != "", EmbyName: r.EmbyName, EmbyURL: settings.PublicURL, Suspended: r.Suspended}
 	v.AllowDownload = settings.AllowDownload
 	v.CanPreparePersonal = r.Source == "personal" || r.AllowPersonalSwitch
 	v.Source = r.Source
 	v.Provisioned = r.Provisioned
 	v.PendingDrive = r.PendingAccountID != ""
-	if a, err := s.accounts.Get(r.AccountID); err == nil && a.Ownership == "member" && a.OwnerUserID == id {
+	if a.ID != "" {
 		v.AccountID, v.Revision = a.ID, a.Revision
+		v.DirectoryID = r.DirectoryID
+	}
+	if v.Connected {
+		v.DriveMembershipView = s.driveHealthSnapshot(a).membership
 	}
 	v.DirectoryAccount = s.directoryAccountView(r)
 	v.NeedsDirectoryConfirmation = r.PendingAccountID != "" && r.PendingDirectoryStarted || r.DirectoryStarted && r.DirectoryID == ""

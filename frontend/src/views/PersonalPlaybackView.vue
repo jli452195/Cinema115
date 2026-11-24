@@ -9,13 +9,14 @@ import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import P115SidePanel from '../components/P115SidePanel.vue'
 import P115Icon from '../components/P115Icon.vue'
 import { p115LoginClients } from '../lib/p115-login-clients'
+import { p115MembershipLabel, type P115Membership } from '../types/p115Accounts'
 import { rememberedDashboardHome } from '../utils/dashboardPreferences'
 import '../styles/personal-playback.css'
 
 const props = defineProps<{ token: string }>()
 const emit = defineEmits<{ logout: [] }>()
 interface DirectoryAccount { accountId: string; revision: number; uid: string; directoryId: string; creationUncertain: boolean }
-interface Playback { accountId: string; revision: number; directoryAccount?: DirectoryAccount; needsDirectoryConfirmation: boolean; canPreparePersonal: boolean; pendingDrive: boolean; enabled: boolean; stage: string; message: string; uid: string; connected: boolean; directoryId: string; embyName: string; embyUrl: string; suspended: boolean; allowDownload: boolean; source: string }
+interface Playback extends P115Membership { accountId: string; revision: number; directoryAccount?: DirectoryAccount; needsDirectoryConfirmation: boolean; canPreparePersonal: boolean; pendingDrive: boolean; enabled: boolean; stage: string; message: string; uid: string; connected: boolean; directoryId: string; embyName: string; embyUrl: string; suspended: boolean; allowDownload: boolean; source: string }
 type Panel = '' | 'bind' | 'directory' | 'manage' | 'privacy' | 'help' | 'connection' | 'bound' | 'switch' | 'disconnect'
 const state = ref<Playback>(), error = ref(''), notice = ref(''), busy = ref(false), loading = ref(true)
 const panel = ref<Panel>(''), driveHeading = ref<HTMLElement>()
@@ -233,7 +234,20 @@ onBeforeUnmount(() => { lifecycle.abort(); stopQR() })
       <section v-if="state" class="pp-card">
         <div class="mb-5 flex items-center justify-between gap-3"><h2 ref="driveHeading" tabindex="-1" class="pp-title"><P115Icon name="drive" class="text-slate-400" />我的个人网盘</h2><span v-if="state.source === 'personal' && state.uid" class="pp-badge pp-badge-blue">当前来源</span></div>
         <template v-if="state.uid">
-          <div class="flex flex-wrap items-center gap-3"><div class="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300"><P115Icon name="drive" /></div><div class="min-w-0 flex-1"><h3 class="font-medium text-slate-900 dark:text-slate-100">115 个人网盘</h3><p class="pp-muted break-all">UID {{ state.uid }}</p></div><span class="pp-badge"><P115Icon name="key" class="!h-3 !w-3" />{{ state.connected ? '已保存凭据' : '未保存凭据' }}</span></div>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300"><P115Icon name="drive" /></div>
+            <div class="min-w-0 flex-1">
+              <div class="flex flex-wrap items-center gap-2">
+                <h3 class="font-medium text-slate-900 dark:text-slate-100">115 个人网盘</h3>
+                <span class="pp-badge" :class="{ 'pp-badge-blue': state.vip === 'vip', 'pp-badge-amber': state.vip === 'normal' }">{{ p115MembershipLabel(state.vip) }}</span>
+              </div>
+              <p class="pp-muted break-all">UID {{ state.uid }}</p>
+            </div>
+            <span class="pp-badge"><P115Icon name="key" class="!h-3 !w-3" />{{ state.connected ? '已保存凭据' : '未保存凭据' }}</span>
+          </div>
+          <p v-if="state.vipCheckedAt" class="pp-muted mt-2">会员状态查询于 <time :datetime="state.vipCheckedAt">{{ new Date(state.vipCheckedAt).toLocaleString('zh-CN') }}</time></p>
+          <p v-else-if="state.connected" class="pp-muted mt-2">可用「检查状态」查询会员信息。</p>
+          <p v-if="state.vip === 'normal'" class="pp-muted mt-2">若取链失败，请检查 115 会员权益。</p>
           <div class="mt-5 flex justify-between gap-4 text-sm"><span class="shrink-0 text-slate-500 dark:text-slate-400">用于本人当前播放</span><span class="text-right text-slate-700 dark:text-slate-200">{{ state.source === 'personal' ? '当前播放来源' : '未使用，当前来源由管理员提供' }}</span></div>
           <div class="pp-info mt-4"><div class="flex items-center justify-between gap-3"><span class="flex items-center gap-2"><P115Icon name="folder" />秒传保存目录</span><button v-if="canManage && state.directoryAccount && !state.pendingDrive" type="button" class="pp-link shrink-0" :disabled="busy" @click="openDirectoryPanel">更换秒传目录</button></div><p class="mt-2 break-all font-mono text-xs text-slate-500 dark:text-slate-400">{{ state.directoryId ? '目录编号 ' + state.directoryId : '尚未确认保存目录' }}</p></div>
         </template>

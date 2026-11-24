@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"strm115/backend/internal/client/emby"
+	"strm115/backend/internal/model"
 )
 
 type healthCheckerFunc func(context.Context, string) (bool, error)
@@ -200,5 +202,86 @@ func TestDriveHealthRefreshDuringProbeDiscardsResult(t *testing.T) {
 	s.refreshMissingDriveHealth(ctx)
 	if s.DriveHealth(s.record(owner)).State != "pending" {
 		t.Fatal("in-flight result overwrote explicit refresh")
+	}
+}
+
+type personalMembershipChecker struct {
+	healthCheckerFunc
+	query func(string) (model.P115Summary, bool, error)
+}
+
+func (c personalMembershipChecker) QueryMembership(_ context.Context, cookie string) (model.P115Summary, bool, error) {
+	return c.query(cookie)
+}
+
+func TestPersonalDriveStatusUsesBoundAccountAndIssuedTargets(t *testing.T) {
+	ctx := context.Background()
+	s, _, owner := memberFixture(t)
+	memberScan(t, s, owner)
+	if err := s.SetSource(ctx, owner, "assigned", ""); err != nil {
+		t.Fatal(err)
+	}
+	r := s.record(owner)
+	a, err := s.accounts.Get(r.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewed := "UID=" + a.UID + "_A; SEID=renewed"
+	query := func(cookie string) (model.P115Summary, bool, error) {
+		tier := "vip"
+		if cookie == renewed {
+			tier = "normal"
+		} else if cookie != a.Cookie {
+			t.Fatal("查询使用了非个人网盘凭据")
+		}
+		return model.P115Summary{VIP: tier, CheckedAt: "2026-11-24T00:00:00Z"}, true, nil
+	}
+	check := healthCheckerFunc(func(context.Context, string) (bool, error) { return true, nil })
+	s.checker = personalMembershipChecker{check, query}
+	now := time.Now()
+	target := model.UserPlaybackTarget{AccountID: a.ID, Source: "personal_shared"}
+	s.UserPlayback, err = NewUserPlayback(ctx, &memoryUserPlaybackStore{doc: model.UserPlaybackDocument{
+		Leases: map[string]model.UserPlaybackLease{
+			"child":     {UserID: "child", Issued: true, ExpiresAt: now.Add(time.Minute).UnixMilli(), Target: target},
+			"expired":   {Issued: true, ExpiresAt: now.Add(-time.Minute).UnixMilli(), Target: target},
+			"preparing": {ExpiresAt: now.Add(time.Minute).UnixMilli(), Target: target},
+			"other":     {UserID: owner, Issued: true, ExpiresAt: now.Add(time.Minute).UnixMilli(), Target: model.UserPlaybackTarget{AccountID: "pool"}},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.refreshMissingDriveHealth(ctx)
+	rows := s.PersonalDriveStatuses()
+	if view := s.View(owner); view.Source != "assigned" || view.VIP != "vip" || view.VIPCheckedAt == "" {
+		t.Fatalf("个人视图未显示绑定账号会员状态：%+v", view)
+	}
+	if len(rows) != 1 || rows[0].VIP != "vip" || rows[0].IssuedLinks != 1 || rows[0].DriveStatus.State != "ready" {
+		t.Fatalf("管理员快照与签发目标不一致：%+v", rows)
+	}
+	updated, err := s.accounts.BindMember(ctx, r, r.EmbyName, renewed, a.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.save(ctx, updated); err != nil {
+		t.Fatal(err)
+	}
+	if view := s.View(owner); view.VIP != "" || view.VIPCheckedAt != "" {
+		t.Fatal("续登后继续显示旧会员状态")
+	}
+	if err := s.CheckPersonalDrive(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if view := s.View(owner); view.VIP != "normal" {
+		t.Fatalf("未显示更新后的非会员状态：%+v", view)
+	}
+	s.checker = personalMembershipChecker{check, func(string) (model.P115Summary, bool, error) {
+		return model.P115Summary{}, false, errors.New("资料接口暂不可用")
+	}}
+	if err := s.CheckPersonalDrive(ctx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if row := s.PersonalDriveStatuses()[0]; row.VIP != "" || row.VIPCheckedAt == "" || row.DriveStatus.State != "ready" {
+		t.Fatalf("会员查询失败影响了健康状态：%+v", row)
 	}
 }

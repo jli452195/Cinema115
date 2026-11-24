@@ -43,7 +43,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
       await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
     })
-    await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/helper115')
+    await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/helper115#pool')
     await page.getByRole('button', { name: '添加共享小号', exact: true }).click()
     await page.getByRole('dialog').getByText('先登录，再设置秒传目录。完成目录设置后，才能分配用户使用。', { exact: true }).waitFor()
     await page.getByRole('button', { name: '关闭登录弹窗' }).click()
@@ -91,7 +91,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await card.getByRole('button', { name: '扫码登录', exact: true }).click()
     await page.getByRole('dialog').waitFor({ state: 'visible' })
     await page.getByRole('dialog').waitFor({ state: 'detached' })
-    await card.getByText('最近检查通过', { exact: true }).waitFor()
+    await card.getByText('检查通过', { exact: true }).waitFor()
     assert.equal(pool[0].playbackParentCid, '55')
     passed.push('same-account-relogin-keeps-directory')
     await page.getByRole('button', { name: '添加共享小号', exact: true }).click()

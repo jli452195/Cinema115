@@ -110,7 +110,7 @@ async function toggleMenu() {
 function outside(event: Event) { if (event.target instanceof Node && !menuContainer.value?.contains(event.target)) more.value = false }
 function escapeMenu(event: KeyboardEvent) { if (event.key !== 'Escape') return; tooltipsDismissed.value = true; if (more.value) { event.preventDefault(); more.value = false; menuTrigger.value?.focus() } }
 function openRules() { more.value = false; menuTrigger.value?.focus(); rules.value = true }
-defineExpose({ refresh: () => load(true) })
+defineExpose({ refresh: () => load(true), refreshing })
 onMounted(() => {
   void load()
   timer = setInterval(() => { if (!document.hidden) void load() }, 10000)
@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 })
 </script>
 <template>
-  <section id="pool" aria-label="共享小号池" class="scroll-mt-[calc(var(--workbench-header-height)_+_12px)]">
+  <section id="pool" aria-label="共享小号池">
     <div class="pool-dashboard">
       <header class="dashboard-heading">
         <div class="dashboard-heading-copy">

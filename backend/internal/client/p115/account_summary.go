@@ -95,7 +95,8 @@ func (a *AccountClient) summaryJSON(ctx context.Context, address, cookie string,
 	return nil
 }
 
-func (a *AccountClient) querySummary(ctx context.Context, cookie string) (model.P115Summary, bool, error) {
+// QueryMembership 只查询账号资料，核验 UID 后返回会员状态。
+func (a *AccountClient) QueryMembership(ctx context.Context, cookie string) (model.P115Summary, bool, error) {
 	var summary model.P115Summary
 	if CookieUserID(cookie) == "" || strings.ContainsAny(cookie, "\r\n") {
 		return summary, false, nil
@@ -128,6 +129,14 @@ func (a *AccountClient) querySummary(ctx context.Context, cookie string) (model.
 		summary.VIP = "normal"
 	}
 	summary.CheckedAt = time.Now().UTC().Format(time.RFC3339)
+	return summary, true, nil
+}
+
+func (a *AccountClient) querySummary(ctx context.Context, cookie string) (model.P115Summary, bool, error) {
+	summary, valid, err := a.QueryMembership(ctx, cookie)
+	if err != nil || !valid {
+		return summary, valid, err
+	}
 	var space struct {
 		State json.RawMessage `json:"state"`
 		Data  struct {

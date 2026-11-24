@@ -26,7 +26,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    else if(p==='/api/admin/member-playback/pool/pool/check'){checkWrites.push(p);pool[0].pool.state=checkState;data={accounts:pool}}
    await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
   })
-  await page.goto('http://127.0.0.1:5173/helper115')
+  await page.goto('http://127.0.0.1:5173/helper115#pool')
   await page.getByText('仅单 UID 调度中',{exact:true}).waitFor()
   const overview=page.getByLabel('动态池运行概览'), card=page.locator('article').filter({has:page.getByRole('heading',{name:'小号 A',exact:true})})
   await overview.getByText('80.0%',{exact:true}).waitFor()
@@ -100,7 +100,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   failRead=true
   await page.getByRole('button',{name:'刷新状态',exact:true}).click()
   await page.getByRole('alert').getByText(/状态刷新失败，显示上次成功更新的数据/).waitFor()
-  assert.equal(await page.locator('article').count(),3)
+  assert.equal(await page.getByRole('region',{name:'共享小号池',exact:true}).locator('article').count(),2)
   failRead=false
   await page.getByRole('button',{name:'重试',exact:true}).click()
   await page.getByRole('alert').filter({hasText:'状态刷新失败'}).waitFor({state:'detached'})

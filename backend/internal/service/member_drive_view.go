@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"slices"
 	"strings"
+	"time"
+
 	"strm115/backend/internal/client/emby"
 	"strm115/backend/internal/model"
-	"time"
 )
 
 // PersonalDriveView exposes ownership and credential presence, never credentials.
@@ -88,12 +90,58 @@ func (s *MemberPlaybackService) AdminMemberDirectory(ctx context.Context) ([]Mem
 	return out, nil
 }
 
-func (s *MemberPlaybackService) personalDrive(r model.MemberPlayback) PersonalDriveView {
-	a, err := s.accounts.Get(r.AccountID)
-	if err != nil || a.OwnerUserID != r.UserID || a.Ownership != "member" {
-		return PersonalDriveView{}
+func (s *MemberPlaybackService) personalAccount(r model.MemberPlayback) P115Account {
+	if s.accounts == nil || r.UserID == "" || r.PlaybackOnly || r.AccountID == "" || s.deletionBlocked(r.UserID) {
+		return P115Account{}
 	}
-	return PersonalDriveView{UID: a.UID, Connected: a.Cookie != "", DirectoryID: r.DirectoryID}
+	a, err := s.accounts.Get(r.AccountID)
+	if err != nil || a.Primary || a.OwnerUserID != r.UserID || a.Ownership != "member" {
+		return P115Account{}
+	}
+	return a
+}
+
+type PersonalDriveStatus struct {
+	UserID      string          `json:"userId"`
+	Username    string          `json:"username"`
+	Binding     string          `json:"binding"`
+	DriveStatus DriveHealthView `json:"driveStatus"`
+	IssuedLinks int             `json:"issuedLinks"`
+	DriveMembershipView
+}
+
+func (s *MemberPlaybackService) PersonalDriveStatuses() []PersonalDriveStatus {
+	counts := make(map[string]int)
+	if s.UserPlayback != nil {
+		for _, lease := range s.UserPlayback.List() {
+			if lease.Issued && lease.Target.AccountID != "" {
+				counts[lease.Target.AccountID]++
+			}
+		}
+	}
+	out := make([]PersonalDriveStatus, 0)
+	for _, r := range s.Records() {
+		a := s.personalAccount(r)
+		if a.ID == "" {
+			continue
+		}
+		snapshot := driveHealthEntry{view: DriveHealthView{State: "unavailable", Message: "未保存凭据"}}
+		if a.Cookie != "" {
+			snapshot = s.driveHealthSnapshot(a)
+		}
+		binding := strings.TrimPrefix(a.ID, "member_")
+		out = append(out, PersonalDriveStatus{
+			UserID: r.UserID, Username: r.EmbyName, Binding: binding[:min(8, len(binding))],
+			DriveStatus: snapshot.view, DriveMembershipView: snapshot.membership, IssuedLinks: counts[a.ID],
+		})
+	}
+	slices.SortFunc(out, func(a, b PersonalDriveStatus) int {
+		if byName := strings.Compare(a.Username, b.Username); byName != 0 {
+			return byName
+		}
+		return strings.Compare(a.UserID, b.UserID)
+	})
+	return out
 }
 
 func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
@@ -107,7 +155,7 @@ func (s *MemberPlaybackService) AdminMembers() []MemberPlaybackAdminView {
 		if r.PlaybackOnly {
 			ownerName = s.record(r.OwnerUserID).EmbyName
 		}
-		out = append(out, MemberPlaybackAdminView{DriveStatus: s.DriveHealth(r), OwnerName: ownerName, MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalDrive(r).Connected}, Username: r.EmbyName})
+		out = append(out, MemberPlaybackAdminView{DriveStatus: s.DriveHealth(r), OwnerName: ownerName, MemberPlayback: adminPlaybackRecord(r), PersonalDrive: PersonalDriveView{Connected: s.personalAccount(r).Cookie != ""}, Username: r.EmbyName})
 	}
 	return out
 }

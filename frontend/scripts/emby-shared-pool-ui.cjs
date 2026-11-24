@@ -67,6 +67,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(pool[0].playbackParentCid, '123')
     await page.goto(base + '/helper115')
     await page.getByRole('heading', { name: '主账号', exact: true }).waitFor()
+    await page.getByRole('navigation', { name: '115 助手导航' }).getByRole('link', { name: '小号池', exact: true }).click()
     await page.getByRole('heading', { name: '共享小号 A', exact: true }).waitFor()
     role = 'user'
     await page.goto(base + '/account/playback')

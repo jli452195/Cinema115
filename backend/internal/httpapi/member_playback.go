@@ -96,6 +96,8 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 			fail(c, err)
 			return
 		}
+		// 个人网盘诊断超时仍可返回本次播放状态和已有快照。
+		_ = s.CheckPersonalDrive(c.Request.Context(), userID(c))
 		c.JSON(200, s.View(userID(c)))
 	})
 	group.POST("/qrcode", func(c *gin.Context) {
@@ -211,6 +213,16 @@ func RegisterMemberPlayback(member, admin *gin.RouterGroup, s *service.MemberPla
 	})
 	manage.GET("/drive-status", func(c *gin.Context) {
 		c.JSON(200, gin.H{"members": s.DriveStatuses()})
+	})
+	manage.GET("/personal-drives", func(c *gin.Context) {
+		c.JSON(200, gin.H{"drives": s.PersonalDriveStatuses()})
+	})
+	manage.POST("/personal-drives/:id/check", func(c *gin.Context) {
+		if err := s.CheckPersonalDrive(c.Request.Context(), c.Param("id")); err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(200, gin.H{"drives": s.PersonalDriveStatuses()})
 	})
 	manage.GET("/settings", func(c *gin.Context) {
 		var proxy service.EmbyProxyStatus
