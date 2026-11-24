@@ -154,6 +154,10 @@ func (c *ShareClient) instantUploadPrepared(ctx context.Context, info *DownloadI
 		report("init", 0)
 		raw, err = c.instantRequest(ctx, http.MethodPost, "https://uplb.115.com/4.0/initupload.php?k_ec="+url.QueryEscape(token), cookie, body)
 		if err != nil {
+			var deferred *CloudRequestDeferredError
+			if errors.As(err, &deferred) {
+				return nil, err
+			}
 			return nil, instantFailure(stage, InstantUploadFailureReason(err), errors.Join(ErrInstantUncertain, err))
 		}
 		// initupload may append a non-block trailer (observed: 12 bytes).
@@ -277,6 +281,11 @@ func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cook
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	client := &http.Client{Transport: c.requestTransport(), Timeout: 25 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	lease, err := cloudRequestGateFrom(ctx).acquire(ctx, cookie)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.release()
 	resp, err := client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -286,8 +295,10 @@ func (c *ShareClient) instantRequest(ctx context.Context, method, endpoint, cook
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		ObserveRequestBudget(ctx, resp.StatusCode, retryAfter(resp.Header.Get("Retry-After")))
-		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		retry := retryAfter(resp.Header.Get("Retry-After"))
+		lease.observe(resp.StatusCode, retry)
+		ObserveRequestBudget(ctx, resp.StatusCode, retry)
+		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retry}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
 	if err != nil {

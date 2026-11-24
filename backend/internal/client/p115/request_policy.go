@@ -88,22 +88,40 @@ func retryAfter(value string) time.Duration {
 
 // metadataRequest 在客户端内串行限速；仅重试只读 GET，云端写操作不会自动重放。
 func (c *ShareClient) metadataRequest(ctx context.Context, method string, request func() ([]byte, error)) ([]byte, error) {
+	cloudGated := cloudRequestGateFrom(ctx) != nil
+	waitCtx := ctx
+	if cloudGated {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, cloudRequestWait)
+		defer cancel()
+	}
 	waitStarted := time.Now()
 	select {
 	case c.requestGate <- struct{}{}:
-	case <-ctx.Done():
+	case <-waitCtx.Done():
 		reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
+		if cloudGated {
+			return nil, cloudQueueDeferred(ctx, time.Time{})
+		}
 		return nil, errors.Join(ErrRateQueueFull, ctx.Err())
 	}
 	defer func() { <-c.requestGate }()
 	for attempt := 0; ; attempt++ {
-		if err := waitRequest(ctx, c.nextRequest); err != nil {
+		if err := waitRequest(waitCtx, c.nextRequest); err != nil {
 			reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
+			if cloudGated {
+				return nil, cloudQueueDeferred(ctx, c.nextRequest)
+			}
 			return nil, errors.Join(ErrRateQueueFull, err)
 		}
 		waited := time.Since(waitStarted)
 		requestStarted := time.Now()
 		data, err := request()
+		var deferred *CloudRequestDeferredError
+		if errors.As(err, &deferred) {
+			reportRequestTiming(ctx, RequestTiming{Wait: time.Since(waitStarted)})
+			return nil, err
+		}
 		retries := 0
 		if attempt > 0 {
 			retries = 1
@@ -121,7 +139,7 @@ func (c *ShareClient) metadataRequest(ctx context.Context, method string, reques
 		}
 		// 即使本次不再重试，也为后续任务保留冷却时间。
 		delay := 10 * time.Second
-		if attempt < len(c.ReadRetryDelays) {
+		if !cloudGated && attempt < len(c.ReadRetryDelays) {
 			delay = c.ReadRetryDelays[attempt]
 		}
 		if upstream.RetryAfter > delay {
@@ -131,7 +149,7 @@ func (c *ShareClient) metadataRequest(ctx context.Context, method string, reques
 			delay = c.RequestInterval
 		}
 		c.nextRequest = time.Now().Add(delay)
-		if method != http.MethodGet || attempt >= len(c.ReadRetryDelays) {
+		if cloudGated || method != http.MethodGet || attempt >= len(c.ReadRetryDelays) {
 			return nil, err
 		}
 		if report, ok := ctx.Value(requestProgressKey{}).(func(string)); ok {

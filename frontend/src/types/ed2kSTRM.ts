@@ -42,6 +42,7 @@ export interface ED2KSTRMState {
   primaryAccountId: string
   cacheReady?: boolean
   cacheSetupHint?: string
+  credentialPaused: number
   targets: ED2KSTRMTarget[]
   tasks: ED2KSTRMTask[]
   resources: ED2KSTRMResource[]

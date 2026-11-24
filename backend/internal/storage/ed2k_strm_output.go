@@ -97,6 +97,15 @@ func (s *Store) DeleteED2KSTRMTask(ctx context.Context, id string) error {
 
 // SaveED2KSTRMImport 同事务保存内容登记和输出请求，避免半批接收后重放遗漏输出。
 func (s *Store) SaveED2KSTRMImport(ctx context.Context, resources []model.ED2KSTRMResource, tasks []model.ED2KSTRMTask) error {
+	return s.saveED2KSTRMBatch(ctx, resources, tasks, false)
+}
+
+// SaveED2KSTRMResume 同时提交资源和原输出任务的恢复状态。
+func (s *Store) SaveED2KSTRMResume(ctx context.Context, resources []model.ED2KSTRMResource, tasks []model.ED2KSTRMTask) error {
+	return s.saveED2KSTRMBatch(ctx, resources, tasks, true)
+}
+
+func (s *Store) saveED2KSTRMBatch(ctx context.Context, resources []model.ED2KSTRMResource, tasks []model.ED2KSTRMTask, resume bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -111,12 +120,16 @@ func (s *Store) SaveED2KSTRMImport(ctx context.Context, resources []model.ED2KST
 			return err
 		}
 	}
+	taskSQL := `INSERT INTO ed2k_strm_tasks(id,status,updated_at,record) VALUES(?1,?2,?3,?4)`
+	if resume {
+		taskSQL = `UPDATE ed2k_strm_tasks SET status=?2,updated_at=?3,record=?4 WHERE id=?1`
+	}
 	for _, v := range tasks {
 		raw, err := encodeED2KSTRMTask(v)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO ed2k_strm_tasks(id,status,updated_at,record) VALUES(?,?,?,?)`, v.ID, v.Status, v.UpdatedAt.UTC().Format(time.RFC3339Nano), raw); err != nil {
+		if _, err := tx.ExecContext(ctx, taskSQL, v.ID, v.Status, v.UpdatedAt.UTC().Format(time.RFC3339Nano), raw); err != nil {
 			return fmt.Errorf("保存 ED2K 输出请求: %w", err)
 		}
 	}

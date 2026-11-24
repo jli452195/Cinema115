@@ -14,6 +14,7 @@ export function createED2KSTRMAPI(token: () => string, signal: AbortSignal) {
     imports: (input: { targetId: string; requestId: string; links: string[] }) => request<ED2KSTRMImportResult>('/imports', { method: 'POST', body: JSON.stringify(input) }),
     retryTask: (id: string) => request(`/tasks/${encodeURIComponent(id)}/retry`, { method: 'POST' }),
     deleteTask: (id: string) => request<void>(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    resumeCredentials: () => request<{ resumed: number }>('/resources/resume-credentials', { method: 'POST' }),
     resource: (resource: ED2KSTRMResource, action: 'check' | 'restore') => request(`/resources/${encodeURIComponent(resource.hash)}/${action}`, {
       method: 'POST', body: JSON.stringify({ size: resource.size }),
     }),

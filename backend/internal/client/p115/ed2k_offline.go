@@ -18,6 +18,17 @@ type ED2KTaskObservation struct {
 	State     string
 }
 
+// ED2KTaskRejection 仅公开经过解析的数字业务码。
+type ED2KTaskRejection struct {
+	Code int64
+}
+
+func (e *ED2KTaskRejection) Error() string {
+	return fmt.Sprintf("115 离线任务查询被拒绝（业务码 %d）", e.Code)
+}
+
+func (e *ED2KTaskRejection) Unwrap() error { return ErrAnimeOfflineResponse }
+
 func (c *CloudClient) InspectED2KTask(ctx context.Context, cookie, hash string) (ED2KTaskObservation, error) {
 	if normalized, ok := normalizeTaskHash(hash, "ed2k"); !ok || normalized != hash {
 		return ED2KTaskObservation{}, ErrCloudInput
@@ -38,6 +49,9 @@ func parseED2KTask(raw []byte, hash string) (ED2KTaskObservation, error) {
 	if !ok {
 		if code == 10021 && animeMissingTaskDefaults(m) {
 			return out, nil
+		}
+		if code != 0 {
+			return out, &ED2KTaskRejection{Code: code}
 		}
 		return out, ErrAnimeOfflineResponse
 	}

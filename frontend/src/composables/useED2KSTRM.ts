@@ -151,6 +151,15 @@ export function useED2KSTRM(token: () => string) {
       await refresh()
     })
   }
+  async function resumeCredentials() {
+    if (!state.value?.credentialPaused) return
+    await act('resume-credentials', async () => {
+      const { resumed } = await api.resumeCredentials()
+      if (lifecycle.signal.aborted) return
+      notice.value = resumed ? `已安排继续处理 ${resumed} 个暂停的资源。` : '当前没有需要继续处理的资源。'
+      await refresh()
+    })
+  }
   async function taskAction(task: ED2KSTRMTask, action: 'retry' | 'delete') {
     if (task.status !== 'failed') return
     await act(`${action}-task:${task.id}`, async () => {
@@ -162,5 +171,5 @@ export function useED2KSTRM(token: () => string) {
   async function visible() { window.clearTimeout(timer); if (!document.hidden) await refresh(); poll() }
   onMounted(async () => { document.addEventListener('visibilitychange', visible); await refresh(); poll() })
   onBeforeUnmount(() => { lifecycle.abort(); window.clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
-  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, strmPreview, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, clearCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, taskAction }
+  return { state, draft, loading, refreshing, busy, error, dialogError, notice, input, query, targetId, selectedTarget, targetOptions, editor, deleting, links, resources, settingsDirty, needsSettingsSave, settingsValid, strmPreview, cacheDirectoryInvalid, canStart, canRestore, canImport, canSaveTarget, refresh, saveSettings, resetSettings, selectCacheDirectory, clearCacheDirectory, editTarget, closeEditor, saveTarget, requestDelete, deleteTarget, importLinks, prepareResource, resourceAction, resumeCredentials, taskAction }
 }

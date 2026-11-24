@@ -25,7 +25,7 @@ func (s *ED2KSTRMService) ResolveURL(ctx context.Context, claim strm.ED2K, ua st
 	if known && (v.AccountID != a.ID || v.UID != a.UID) {
 		return "", generationInputError("此资源缓存不属于当前主账号")
 	}
-	key := DirectLinkKey("ed2k-primary-url", ed2kCredentialScope(a), strings.ToUpper(claim.SHA1), strconv.FormatInt(claim.Size, 10), ua)
+	key := DirectLinkKey("ed2k-primary-url", ed2kCredentialScope(a), strings.ToUpper(claim.SHA1), strconv.FormatInt(claim.Size, 10), v.FileID, v.PickCode, ua)
 	value, _, _, err := s.links.Get(ctx, key, 5*time.Minute, DirectLinkCacheEntry{}, func(ctx context.Context) (DirectLinkValue, error) {
 		if known && v.FileID != "" && v.PickCode != "" {
 			link, err := s.Client.VerifiedPlaybackURL(ctx, p115.DrivePlaybackFile{ID: v.FileID, PickCode: v.PickCode, SHA1: claim.SHA1, Size: claim.Size, Name: claim.Name}, a.Cookie, ua)

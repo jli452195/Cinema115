@@ -49,7 +49,18 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 		if cacheErr != nil {
 			cacheHint = cacheErr.Error()
 		}
-		c.JSON(http.StatusOK, gin.H{"settings": settings, "settingsSaved": saved, "primaryAccountId": s.Accounts.PrimaryID(), "accountReady": accountErr == nil && a.Cookie != "", "cacheReady": cacheErr == nil, "cacheSetupHint": cacheHint, "resources": s.List(), "targets": s.Targets(), "tasks": s.Tasks()})
+		c.JSON(http.StatusOK, gin.H{
+			"settings":         settings,
+			"settingsSaved":    saved,
+			"primaryAccountId": s.Accounts.PrimaryID(),
+			"accountReady":     accountErr == nil && a.Cookie != "",
+			"cacheReady":       cacheErr == nil,
+			"cacheSetupHint":   cacheHint,
+			"resources":        s.List(),
+			"targets":          s.Targets(),
+			"tasks":            s.Tasks(),
+			"credentialPaused": s.CredentialPausedCount(),
+		})
 	})
 	g.PUT("/settings", func(c *gin.Context) {
 		var in model.ED2KSTRMSettings
@@ -135,6 +146,14 @@ func RegisterED2KSTRM(admin *gin.RouterGroup, s *service.ED2KSTRMService, defaul
 			return
 		}
 		c.Status(http.StatusNoContent)
+	})
+	g.POST("/resources/resume-credentials", func(c *gin.Context) {
+		resumed, err := s.ResumeCredentials(c.Request.Context())
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"resumed": resumed})
 	})
 	for _, action := range []string{"check", "restore"} {
 		g.POST("/resources/:hash/"+action, func(c *gin.Context) {

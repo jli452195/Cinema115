@@ -193,6 +193,10 @@ func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account
 
 // 网络中断不能证明上游未执行操作，提示用户核对而非自动重试。
 func CloudDownloadUncertain(err error) bool {
+	var deferred *p115.CloudRequestDeferredError
+	if errors.As(err, &deferred) {
+		return false
+	}
 	var network net.Error
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &network)
 }

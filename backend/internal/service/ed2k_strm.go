@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"slices"
@@ -35,6 +36,7 @@ type ED2KSTRMStore interface {
 	SaveED2KSTRMTask(context.Context, model.ED2KSTRMTask) error
 	DeleteED2KSTRMTask(context.Context, string) error
 	SaveED2KSTRMImport(context.Context, []model.ED2KSTRMResource, []model.ED2KSTRMTask) error
+	SaveED2KSTRMResume(context.Context, []model.ED2KSTRMResource, []model.ED2KSTRMTask) error
 }
 
 type ED2KSTRMClient interface {
@@ -52,6 +54,11 @@ type ED2KSTRMClient interface {
 
 type ED2KTaskReader interface {
 	InspectED2KTask(context.Context, string, string) (p115.ED2KTaskObservation, error)
+}
+
+type ed2kRequestGate interface {
+	WithRequestGate(context.Context) context.Context
+	RequestCooldown(string) time.Time
 }
 
 // ED2KSTRMService 独立管理资源与可恢复缓存；读接口不提交离线任务。
@@ -260,6 +267,10 @@ func (s *ED2KSTRMService) requestLocked(ctx context.Context, hash string, size i
 	if a.ID != v.AccountID || a.UID != v.UID {
 		return v, generationInputError("主账号已变化，原资源不能自动转移到新账号")
 	}
+	return s.requestResourceLocked(ctx, key, v, a, check)
+}
+
+func (s *ED2KSTRMService) requestResourceLocked(ctx context.Context, key string, v model.ED2KSTRMResource, a P115Account, check bool) (model.ED2KSTRMResource, error) {
 	// 仅显式操作允许接受同一账号的新凭据；已经执行的未知写入仍只核对原结果。
 	v.AccountRevision, v.CredentialScope = a.Revision, ed2kCredentialScope(a)
 	if v.Stage != "submit_pending" && v.Stage != "upload_pending" && v.Stage != "waiting" {
@@ -284,7 +295,6 @@ func (s *ED2KSTRMService) requestLocked(ctx context.Context, hash string, size i
 		}
 	}
 	v.Status, v.Message, v.Attempts = "queued", "已安排检查缓存", 0
-	s.links.Clear()
 	v.NextRunAt = time.Time{}
 	v.UpdatedAt = time.Now().UTC()
 	if err := s.Store.SaveED2KSTRMResource(ctx, v); err != nil {
@@ -314,6 +324,7 @@ func (s *ED2KSTRMService) save(ctx context.Context, v model.ED2KSTRMResource) er
 func (s *ED2KSTRMService) Run(ctx context.Context) error {
 	timer := time.NewTicker(3 * time.Second)
 	defer timer.Stop()
+	gate, _ := s.Cloud.(ed2kRequestGate)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -323,24 +334,30 @@ func (s *ED2KSTRMService) Run(ctx context.Context) error {
 		} else if progress {
 			continue
 		}
-		v, ok := s.pick()
+		var until time.Time
+		if gate != nil {
+			if a, err := s.account(); err == nil {
+				until = gate.RequestCooldown(a.UID)
+			}
+		}
+		v, ok := s.pickBeforeCooldown(until)
 		if ok {
 			stepCtx, cancel := context.WithTimeout(ctx, 100*time.Second)
+			if gate != nil {
+				stepCtx = gate.WithRequestGate(stepCtx)
+			}
 			err := s.advance(stepCtx, &v)
 			cancel()
-			if err != nil && ctx.Err() == nil {
-				v.Attempts++
-				v.Message = ed2kPublicError(err)
-				v.NextRunAt = time.Now().UTC().Add(time.Duration(min(300, 5*(1<<min(v.Attempts, 5)))) * time.Second)
-				if v.Status != "blocked" && v.Status != "uncertain" {
-					v.Status = "recovering"
-				}
-				if v.Attempts >= 8 && v.Status != "blocked" {
-					v.Status = "failed"
-				}
-				if saveErr := s.save(ctx, v); saveErr != nil {
+			var deferred *p115.CloudRequestDeferredError
+			if err != nil && (ctx.Err() == nil || errors.As(err, &deferred)) {
+				s.scheduleCacheError(&v, err)
+				saveCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				saveErr := s.save(saveCtx, v)
+				finish()
+				if saveErr != nil {
 					return saveErr
 				}
+				s.logCacheProblem(v, err)
 			}
 			s.mu.Lock()
 			s.active = ""
@@ -357,6 +374,13 @@ func (s *ED2KSTRMService) Run(ctx context.Context) error {
 		case <-timer.C:
 		}
 	}
+}
+
+func (s *ED2KSTRMService) pickBeforeCooldown(until time.Time) (model.ED2KSTRMResource, bool) {
+	if time.Now().Before(until) {
+		return model.ED2KSTRMResource{}, false
+	}
+	return s.pick()
 }
 
 func (s *ED2KSTRMService) pick() (model.ED2KSTRMResource, bool) {
@@ -381,18 +405,27 @@ func (s *ED2KSTRMService) pick() (model.ED2KSTRMResource, bool) {
 }
 
 func ed2kPublicError(err error) string {
+	var deferred *p115.CloudRequestDeferredError
+	if errors.As(err, &deferred) {
+		return "115 请求已延后，等待同账号的请求冷却或排队"
+	}
+	var h *p115.HTTPError
+	if errors.As(err, &h) {
+		return fmt.Sprintf("115 请求暂不可用（HTTP %d）", h.Status)
+	}
 	if errors.Is(err, errED2KDirectoryPending) {
 		return errED2KDirectoryPending.Error()
+	}
+	for _, known := range []error{errED2KNoMaterial, errED2KCloudPending, errED2KUploadPending, errED2KCloudFailed, errED2KResultMissing, errED2KSubmitAfterRemoval} {
+		if errors.Is(err, known) {
+			return known.Error()
+		}
 	}
 	if errors.Is(err, p115.ErrInstantUncertain) || CloudDownloadUncertain(err) {
 		return "115 处理结果尚未确认，将先核对原操作，请勿重复提交"
 	}
 	if errors.Is(err, p115.ErrDriveFileMissing) {
 		return "缓存文件已不存在"
-	}
-	var h *p115.HTTPError
-	if errors.As(err, &h) {
-		return fmt.Sprintf("115 请求暂不可用（HTTP %d），稍后重试", h.Status)
 	}
 	if errors.Is(err, ErrGenerationInput) {
 		return err.Error()
@@ -409,11 +442,18 @@ func (s *ED2KSTRMService) taskAccount(v *model.ED2KSTRMResource) (P115Account, e
 	current, err := s.account()
 	if err != nil {
 		v.Status = "blocked"
+		if s.Accounts.PrimaryID() == v.AccountID {
+			return current, errED2KCredentialPaused
+		}
 		return current, err
 	}
-	if current.ID != v.AccountID || current.UID != v.UID || current.Revision != v.AccountRevision || ed2kCredentialScope(current) != v.CredentialScope {
+	if current.ID != v.AccountID || current.UID != v.UID {
 		v.Status = "blocked"
-		return current, generationInputError("账号或凭据已变化，任务已暂停，请明确重新检查原账号资源")
+		return current, generationInputError("主账号已变化，原资源不能自动转移到新账号")
+	}
+	if !sameED2KCredential(*v, current) {
+		v.Status = "blocked"
+		return current, errED2KCredentialPaused
 	}
 	if !ok {
 		a = current
@@ -427,7 +467,7 @@ func (s *ED2KSTRMService) taskAccount(v *model.ED2KSTRMResource) (P115Account, e
 func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource) error {
 	a, err := s.taskAccount(v)
 	if err != nil {
-		return err
+		return ed2kStepFailure("校验主账号", err)
 	}
 	if v.Stage == "waiting" || v.Stage == "submit_pending" {
 		return s.observe(ctx, v, a)
@@ -435,14 +475,14 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 	if v.Stage == "check" && v.SHA1 == "" {
 		task, err := s.Cloud.InspectED2KTask(ctx, a.Cookie, v.Hash)
 		if err != nil {
-			return err
+			return ed2kStepFailure("查询原离线任务", err)
 		}
 		if task.Present && v.CacheCID != "" {
-			return s.observe(ctx, v, a)
+			return s.observeTask(ctx, v, a, task)
 		}
 		v.Status, v.Message = "failed", "尚无可核验的落盘资料，检查不会重新提交云下载；需要时请手动恢复"
 		v.NextRunAt = time.Time{}
-		return s.save(ctx, *v)
+		return s.saveCacheProblem(ctx, *v, ed2kStepFailure("核验缓存", errED2KNoMaterial))
 	}
 	if v.SHA1 != "" {
 		file, err := s.findCurrent(ctx, *v, a)
@@ -450,7 +490,7 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 			if errors.Is(err, ErrGenerationInput) {
 				v.Status = "blocked"
 			}
-			return err
+			return ed2kStepFailure("查询已有缓存", err)
 		}
 		if file != nil {
 			return s.ready(ctx, v, a, *file)
@@ -464,20 +504,23 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 		}
 		if v.Stage == "upload_pending" {
 			v.Status = "uncertain"
-			v.NextRunAt = time.Now().UTC().Add(time.Minute)
-			v.Message = "秒传结果尚未确认，继续按 SHA1 核对；不会自动重复写入"
-			return s.save(ctx, *v)
+			err := ed2kStepFailure("核对秒传结果", errED2KUploadPending)
+			s.scheduleCacheError(v, err)
+			return s.saveCacheProblem(ctx, *v, err)
 		}
 	}
 	if err := s.ensureDirectory(ctx, v, a); err != nil {
 		if errors.Is(err, ErrGenerationInput) {
 			v.Status = "blocked"
 		}
-		return err
+		return ed2kStepFailure("准备缓存目录", err)
 	}
 	if v.SHA1 != "" && s.Playback != nil {
 		if handled, err := s.restoreInstant(ctx, v, a); handled || err != nil {
-			return err
+			if err != nil {
+				return ed2kStepFailure("秒传恢复缓存", err)
+			}
+			return nil
 		}
 	}
 	// 提交意图先落盘，重启或回执丢失后只查询原任务，不再次调用手动重提入口。
@@ -489,20 +532,34 @@ func (s *ED2KSTRMService) advance(ctx context.Context, v *model.ED2KSTRMResource
 	if v.CacheTargetPath != "" {
 		targetPath = path.Join(v.CacheTargetPath, "ed2k-"+v.Hash+"-"+strconv.FormatInt(v.Size, 10))
 	}
-	_, err = s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: a.ID, TargetCID: v.CacheCID, TargetPath: targetPath}, a, ed2kLink(*v))
+	receipt, err := s.Downloads.submitSnapshot(ctx, CloudDownloadConfig{AccountID: a.ID, TargetCID: v.CacheCID, TargetPath: targetPath}, a, ed2kLink(*v))
 	if err != nil {
+		var deferred *p115.CloudRequestDeferredError
+		var upstream *p115.HTTPError
+		stepErr := ed2kStepFailure("提交云下载", err)
+		if errors.As(err, &deferred) || errors.As(err, &upstream) && upstream.Method == http.MethodGet && !p115.CloudRequestRetryAt(err).IsZero() {
+			// 本次尚未提交。已删除旧任务时由管理员决定是否重开流程。
+			v.Stage = "locate"
+			if receipt.RemovedOldTask {
+				v.Status, v.Message, v.NextRunAt = "failed", errED2KSubmitAfterRemoval.Error(), time.Time{}
+				saveCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer finish()
+				return s.saveCacheProblem(saveCtx, *v, ed2kStepFailure("提交云下载", errED2KSubmitAfterRemoval))
+			}
+			return stepErr
+		}
 		if CloudDownloadUncertain(err) {
 			v.Status = "uncertain"
-			return err
+			return stepErr
 		}
 		v.Status = "failed"
 		v.Stage = "locate"
 		v.Message = ed2kPublicError(err)
-		return s.save(ctx, *v)
+		return s.saveCacheProblem(ctx, *v, stepErr)
 	}
 	v.Stage = "waiting"
 	v.Message = "115 云下载中，等待核验文件资料"
-	v.NextRunAt = time.Now().UTC().Add(5 * time.Second)
+	v.NextRunAt = time.Now().UTC().Add(15 * time.Second)
 	return s.save(ctx, *v)
 }
 
@@ -536,6 +593,11 @@ func (s *ED2KSTRMService) restoreInstant(ctx context.Context, v *model.ED2KSTRMR
 		}
 		return true, s.ready(ctx, v, a, file)
 	}
+	var deferred *p115.CloudRequestDeferredError
+	if errors.As(uploadErr, &deferred) {
+		v.Stage = "locate"
+		return true, uploadErr
+	}
 	if errors.Is(uploadErr, p115.ErrInstantUncertain) || CloudDownloadUncertain(uploadErr) {
 		v.Status = "uncertain"
 		return true, uploadErr
@@ -545,7 +607,7 @@ func (s *ED2KSTRMService) restoreInstant(ctx context.Context, v *model.ED2KSTRMR
 	}
 	v.Status, v.Stage = "failed", "locate"
 	v.Message = "秒传未完成，未自动提交离线，请检查后重新恢复"
-	return true, s.save(ctx, *v)
+	return true, s.saveCacheProblem(ctx, *v, ed2kStepFailure("秒传恢复缓存", uploadErr))
 }
 
 func ed2kLink(v model.ED2KSTRMResource) string {

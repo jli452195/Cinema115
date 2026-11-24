@@ -82,10 +82,11 @@ type CloudSign struct {
 // by Cinema115. It accepts a cookie per call so an operation is always bound
 // to one explicitly selected account.
 type CloudClient struct {
-	HTTP    *http.Client
-	BaseURL string
-	SignURL string
-	WebAPI  string
+	HTTP        *http.Client
+	BaseURL     string
+	SignURL     string
+	WebAPI      string
+	requestGate cloudRequestGate
 }
 
 func NewCloudClient() *CloudClient {
@@ -433,13 +434,21 @@ func (c *CloudClient) webRequest(ctx context.Context, cookie string, method stri
 		copy.Transport = netproxy.DirectTransport()
 		client = &copy
 	}
+	waitStarted := time.Now()
+	lease, err := c.requestGate.acquire(ctx, cookie)
+	waited := time.Since(waitStarted)
+	if err != nil {
+		reportRequestTiming(ctx, RequestTiming{Wait: waited})
+		return nil, err
+	}
+	defer lease.release()
 	started := time.Now()
 	writes := 0
 	if method != http.MethodGet {
 		writes = 1
 	}
 	defer func() {
-		reportRequestTiming(ctx, RequestTiming{Requests: 1, Writes: writes, HTTP: time.Since(started)})
+		reportRequestTiming(ctx, RequestTiming{Requests: 1, Writes: writes, Wait: waited, HTTP: time.Since(started)})
 	}()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -450,7 +459,9 @@ func (c *CloudClient) webRequest(ctx context.Context, cookie string, method stri
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		retry := retryAfter(resp.Header.Get("Retry-After"))
+		lease.observe(resp.StatusCode, retry)
+		return nil, &HTTPError{Status: resp.StatusCode, Method: method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retry}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil {

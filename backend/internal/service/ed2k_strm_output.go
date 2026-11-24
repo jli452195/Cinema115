@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"os"
@@ -18,6 +19,8 @@ import (
 )
 
 const ed2kOutputReceiptTTL = 7 * 24 * time.Hour
+
+const ed2kExportMissingMaterial = "首次文件资料尚未就绪，请检查资源缓存后重试"
 
 // Tasks 只展示当前与失败输出；完成收据不再保存输出路径，也不参与文件监控。
 func (s *ED2KSTRMService) Tasks() []model.ED2KSTRMTask {
@@ -122,6 +125,9 @@ func (s *ED2KSTRMService) advanceExport(ctx context.Context) (bool, error) {
 			continue
 		}
 		v, ok := s.resources[ed2kResourceKey(t.Hash, t.Size)]
+		if ok && v.SHA1 == "" && ed2kCredentialPaused(v) {
+			continue
+		}
 		if t.Status == "waiting" && ok && v.SHA1 == "" && v.Status != "failed" && v.Status != "blocked" {
 			continue
 		}
@@ -135,14 +141,14 @@ func (s *ED2KSTRMService) advanceExport(ctx context.Context) (bool, error) {
 	}
 	if resource.Hash == "" {
 		task.Status, task.Message = "failed", "资源资料不存在，请重新导入 ED2K"
-		return true, s.saveExport(ctx, task)
+		return true, s.saveExportFailure(ctx, task)
 	}
 	if resource.SHA1 == "" {
 		if resource.Status == "blocked" || resource.Status == "failed" {
-			task.Status, task.Message = "failed", "首次文件资料尚未就绪，请检查资源缓存后重试"
-		} else {
-			task.Status, task.Message = "waiting", "等待首次文件资料核验"
+			task.Status, task.Message = "failed", ed2kExportMissingMaterial
+			return true, s.saveExportFailure(ctx, task)
 		}
+		task.Status, task.Message = "waiting", "等待首次文件资料核验"
 		return true, s.saveExport(ctx, task)
 	}
 	reconcileOnly := task.Status == "writing"
@@ -158,15 +164,23 @@ func (s *ED2KSTRMService) advanceExport(ctx context.Context) (bool, error) {
 		if errors.Is(err, ErrGenerationInput) {
 			task.Message = err.Error()
 		}
-		return true, s.saveExport(ctx, task)
+		return true, s.saveExportFailure(ctx, task)
 	}
 	if err := s.saveExport(ctx, completedED2KTask(task)); err != nil {
 		return false, err
 	}
 	if s.Logs != nil {
-		s.Logs.Append("STRM", "ED2K输出", "ED2K STRM", "INFO", "已投递到目录："+task.TargetName+" / "+safeSTRMName(task.Name))
+		s.Logs.Append("STRM", task.ID, "ED2K STRM", "INFO", "已投递到目录："+task.TargetName+" / "+safeSTRMName(task.Name))
 	}
 	return true, nil
+}
+
+func (s *ED2KSTRMService) saveExportFailure(ctx context.Context, task model.ED2KSTRMTask) error {
+	if err := s.saveExport(ctx, task); err != nil {
+		return fmt.Errorf("保存 ED2K STRM 输出失败状态: %w", err)
+	}
+	s.Logs.Append("STRM", task.ID, "ED2K STRM", "ERROR", "本地生成："+task.Message)
+	return nil
 }
 
 func (s *ED2KSTRMService) writeExport(ctx context.Context, t model.ED2KSTRMTask, v model.ED2KSTRMResource, reconcileOnly bool) error {

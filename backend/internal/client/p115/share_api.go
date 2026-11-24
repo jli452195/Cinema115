@@ -111,6 +111,11 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
+	lease, err := cloudRequestGateFrom(ctx).acquire(ctx, cookie)
+	if err != nil {
+		return nil, err
+	}
+	defer lease.release()
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -120,8 +125,10 @@ func (c *ShareClient) requestEnvelopeWithUA(ctx context.Context, method, endpoin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		ObserveRequestBudget(ctx, resp.StatusCode, retryAfter(resp.Header.Get("Retry-After")))
-		return nil, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
+		retry := retryAfter(resp.Header.Get("Retry-After"))
+		lease.observe(resp.StatusCode, retry)
+		ObserveRequestBudget(ctx, resp.StatusCode, retry)
+		return nil, &HTTPError{Status: resp.StatusCode, Method: req.Method, Endpoint: req.URL.Host + req.URL.Path, RetryAfter: retry}
 	}
 	var envelope shareResponse
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))

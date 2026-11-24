@@ -40,6 +40,9 @@ func (s *ED2KSTRMService) cacheDirectoryPending(ctx context.Context, v model.ED2
 func (s *ED2KSTRMService) selectedCacheDirectory(ctx context.Context, cid string, a P115Account, requireRoot bool) (model.ED2KSTRMCache, error) {
 	dir, err := s.Client.ReadDirectory(ctx, cid, a.Cookie)
 	if err != nil {
+		if !p115.CloudRequestRetryAt(err).IsZero() {
+			return model.ED2KSTRMCache{}, err
+		}
 		missing, checkErr := s.Client.DirectoryMissing(ctx, cid, a.Cookie)
 		if checkErr != nil {
 			return model.ED2KSTRMCache{}, checkErr
@@ -109,6 +112,9 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 					return generationInputError("主缓存目录归属或位置已变化")
 				}
 			} else {
+				if !p115.CloudRequestRetryAt(err).IsZero() {
+					return err
+				}
 				missing, checkErr := s.Client.DirectoryMissing(ctx, cache.CID, a.Cookie)
 				if checkErr != nil {
 					return checkErr
@@ -138,15 +144,26 @@ func (s *ED2KSTRMService) ensureDirectory(ctx context.Context, v *model.ED2KSTRM
 				v.Status = "uncertain"
 				return errED2KDirectoryPending
 			} else {
+				if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
+					return err
+				}
 				cache.Pending = true
 				if err := s.Store.SaveED2KSTRMCache(ctx, cache); err != nil {
 					return err
 				}
-				if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
-					return err
-				}
 				cid, err = s.Client.CreateDirectory(ctx, "0", cache.Name, a.Cookie)
 				if err != nil {
+					var deferred *p115.CloudRequestDeferredError
+					if errors.As(err, &deferred) {
+						cache.Pending = false
+						saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+						saveErr := s.Store.SaveED2KSTRMCache(saveCtx, cache)
+						cancel()
+						if saveErr != nil {
+							return fmt.Errorf("撤销未发送的缓存根目录创建意图: %w", saveErr)
+						}
+						return err
+					}
 					v.Status = "uncertain"
 					return err
 				}
@@ -195,6 +212,8 @@ func (s *ED2KSTRMService) ensureResourceCacheDirectory(ctx context.Context, v *m
 			if v.CacheParentCID != "" {
 				return generationInputError("资源缓存目录位置已变化")
 			}
+		} else if !p115.CloudRequestRetryAt(err).IsZero() {
+			return err
 		} else if !historical {
 			missing, checkErr := s.Client.DirectoryMissing(ctx, v.CacheCID, a.Cookie)
 			if checkErr != nil {
@@ -215,15 +234,20 @@ func (s *ED2KSTRMService) ensureResourceCacheDirectory(ctx context.Context, v *m
 			}
 		}
 	}
+	if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
+		return err
+	}
 	v.CacheCID, v.CacheParentCID, v.DirectoryPending = "", parent, true
 	if err := s.save(ctx, *v); err != nil {
 		return err
 	}
-	if err := s.Accounts.ValidatePrimary(a.ID); err != nil {
-		return err
-	}
 	cid, err := s.Client.CreateDirectory(ctx, parent, name, a.Cookie)
 	if err != nil {
+		var deferred *p115.CloudRequestDeferredError
+		if errors.As(err, &deferred) {
+			v.DirectoryPending = false
+			return err
+		}
 		v.Status = "uncertain"
 		return err
 	}
@@ -255,30 +279,42 @@ func (s *ED2KSTRMService) confirmResourceCacheDirectory(ctx context.Context, v *
 func (s *ED2KSTRMService) observe(ctx context.Context, v *model.ED2KSTRMResource, a P115Account) error {
 	task, err := s.Cloud.InspectED2KTask(ctx, a.Cookie, v.Hash)
 	if err != nil {
-		return err
+		return ed2kStepFailure("查询原离线任务", err)
 	}
+	return s.observeTask(ctx, v, a, task)
+}
+
+func (s *ED2KSTRMService) observeTask(ctx context.Context, v *model.ED2KSTRMResource, a P115Account, task p115.ED2KTaskObservation) error {
 	if !task.Present {
 		v.Status = "uncertain"
-		v.Message = "未找到可确认的原云任务，不会自动重复提交；请检查 115 云下载"
-		v.NextRunAt = time.Now().UTC().Add(time.Minute)
-		return s.save(ctx, *v)
+		err := ed2kStepFailure("核对原离线任务", errED2KCloudPending)
+		s.scheduleCacheError(v, err)
+		return s.saveCacheProblem(ctx, *v, err)
 	}
 	if task.Hash != v.Hash || task.TargetCID != "" && task.TargetCID != v.CacheCID {
 		v.Status = "blocked"
-		return generationInputError("ED2K 任务的资源或缓存目录与原请求不一致")
+		return ed2kStepFailure("核对原离线任务", generationInputError("ED2K 任务的资源或缓存目录与原请求不一致"))
 	}
 	if task.State == "failed" {
 		v.Status, v.Stage, v.Message = "failed", "locate", "115 云下载失败或已停止，可稍后手动恢复"
-		return s.save(ctx, *v)
+		v.NextRunAt = time.Time{}
+		return s.saveCacheProblem(ctx, *v, ed2kStepFailure("核对原离线任务", errED2KCloudFailed))
 	}
 	if task.State != "completed" {
+		if task.State != "downloading" {
+			v.Status = "uncertain"
+			err := ed2kStepFailure("核对原离线任务", p115.ErrAnimeOfflineResponse)
+			s.scheduleCacheError(v, err)
+			return s.saveCacheProblem(ctx, *v, err)
+		}
 		v.Stage, v.Status, v.Message = "waiting", "downloading", "115 云下载中，等待文件完成并进入缓存目录"
-		v.NextRunAt = time.Now().UTC().Add(10 * time.Second)
+		v.Attempts = 0
+		v.NextRunAt = time.Now().UTC().Add(30 * time.Second)
 		return s.save(ctx, *v)
 	}
 	files, err := s.resultFiles(ctx, v.CacheCID, a.Cookie, 0)
 	if err != nil {
-		return err
+		return ed2kStepFailure("读取离线结果目录", err)
 	}
 	var chosen *p115.ShareFile
 	resultFound := task.ResultID == v.CacheCID
@@ -310,20 +346,20 @@ func (s *ED2KSTRMService) observe(ctx context.Context, v *model.ED2KSTRMResource
 		}
 		if chosen != nil {
 			v.Status = "blocked"
-			return generationInputError("缓存中有多个相同大小的文件，无法唯一核验结果")
+			return ed2kStepFailure("匹配落盘缓存文件", generationInputError("缓存中有多个相同大小的文件，无法唯一核验结果"))
 		}
 		chosen = f
 	}
 	if !resultFound || chosen == nil {
-		return fmt.Errorf("离线完成，但缓存文件资料尚未就绪")
+		return ed2kStepFailure("匹配落盘缓存文件", errED2KResultMissing)
 	}
 	info, err := s.Client.PickCodeInstantInfo(ctx, chosen.PickCode, a.Cookie)
 	if err != nil {
-		return err
+		return ed2kStepFailure("核验落盘文件资料", err)
 	}
 	if info.FileID != chosen.ID || info.Size != v.Size || !strings.EqualFold(info.SHA1, chosen.SHA1) {
 		v.Status = "blocked"
-		return generationInputError("离线文件身份核验失败")
+		return ed2kStepFailure("核验落盘文件资料", generationInputError("离线文件身份核验失败"))
 	}
 	return s.ready(ctx, v, a, p115.DrivePlaybackFile{ID: chosen.ID, CID: v.CacheCID, PickCode: chosen.PickCode, SHA1: chosen.SHA1, Size: chosen.Size, Name: chosen.Name})
 }
@@ -416,11 +452,18 @@ func (s *ED2KSTRMService) requestSourceRestore(ctx context.Context, claim strm.E
 		return generationInputError("目标账号未命中且无已登记恢复来源，请先导入原 ED2K")
 	}
 	if allow {
-		if v.AccountRevision != a.Revision || v.CredentialScope != ed2kCredentialScope(a) {
+		key := ed2kResourceKey(claim.Hash, claim.Size)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		v = s.resources[key]
+		if !sameED2KCredential(v, a) {
 			return generationInputError("来源凭据已变化，请在 ED2K STRM 页面重新检查")
 		}
-		if _, err := s.Request(ctx, claim.Hash, claim.Size, false); err != nil {
-			return err
+		// 播放最多安排一次新恢复，既有任务保持退避和执行阶段。
+		if v.Status == "ready" && s.active != key {
+			if _, err := s.requestResourceLocked(ctx, key, v, a, false); err != nil {
+				return err
+			}
 		}
 	}
 	return &PlaybackPendingError{RetryAt: time.Now().UTC().Add(5 * time.Second), Reason: "ED2K 缓存尚未就绪，请在资源页面查看恢复进度"}

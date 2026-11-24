@@ -10,6 +10,7 @@ import {
   IconFolder,
   IconLink,
   IconLoader2,
+  IconPlayerPlay,
   IconPlus,
   IconRefresh,
   IconSearch,
@@ -87,6 +88,7 @@ const {
   importLinks,
   prepareResource,
   resourceAction,
+  resumeCredentials,
   taskAction,
 } = useED2KSTRM(() => props.token)
 
@@ -205,6 +207,7 @@ onMounted(() => {
     @logout="$emit('logout')"
   >
     <template #actions>
+      <RouterLink class="es-text-button" :to="{ path: '/logs', query: { module: 'STRM', level: 'ALL' } }">查看日志</RouterLink>
       <button type="button" class="es-button" :disabled="refreshing || !!busy" @click="refresh">
         <IconRefresh :size="17" aria-hidden="true" :class="{ 'es-spin': refreshing }" />
         {{ refreshing ? '刷新中…' : '刷新状态' }}
@@ -224,6 +227,18 @@ onMounted(() => {
     <p v-if="loading" role="status" class="es-empty">正在读取 ED2K STRM 配置…</p>
 
     <template v-else-if="state && draft">
+      <div v-if="state.credentialPaused > 0" class="es-setup-banner" role="region" aria-label="暂停任务继续">
+        <div class="es-setup-text">
+          <IconAlertTriangle :size="17" aria-hidden="true" />
+          <span>当前登录的是原主账号，可继续处理 {{ state.credentialPaused }} 个暂停的资源。</span>
+        </div>
+        <button type="button" class="es-button es-secondary" :disabled="!!busy" @click="resumeCredentials">
+          <IconLoader2 v-if="busy === 'resume-credentials'" class="es-spin" :size="15" aria-hidden="true" />
+          <IconPlayerPlay v-else :size="15" aria-hidden="true" />
+          {{ busy === 'resume-credentials' ? '提交中…' : '继续暂停任务' }}
+        </button>
+      </div>
+
       <!-- 顶部模块页签导航：对齐 115 分享 STRM 页签风格 -->
       <nav class="es-tabs" aria-label="ED2K STRM 功能视图">
         <button
