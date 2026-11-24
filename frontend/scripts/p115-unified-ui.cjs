@@ -25,7 +25,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const accountsPath = '/api/admin/p115/accounts', poolPath = '/api/admin/member-playback/pool', drivesPath = '/api/admin/member-playback/personal-drives'
     const sectionReads = () => reads.filter(p => [accountsPath, poolPath, drivesPath].includes(p))
     const drives = [{ userId: 'viewer', username: '测试用户', binding: 'test-id', driveStatus: { state: 'ready', message: '最近检查通过' }, vip: 'vip', issuedLinks: 2 }]
-    let rejectCookie = true, rejectDelete = false, rejectPool = false, rejectStatus = false
+    let rejectCookie = true, rejectDelete = false, rejectPool = false, rejectAccounts = false, statusResult = 'ready'
     await page.route('**/api/**', async route => {
       const req = route.request(), p = new URL(req.url()).pathname, method = req.method()
       const body = req.postData() ? req.postDataJSON() : null
@@ -41,10 +41,14 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           if (body.primary) primary = { id: 'created-main', name: '主账号', primary: true, configured: false, uid: '', revision: 1, loginClient: '' }
           else pool.push({ ...pool[0], id: 'added-pool', name: body.name, configured: false, uid: '', playbackParentCid: '', users: [], userCount: 0 })
         }
-        data = { accounts: [...(primary ? [primary] : []), ...pool] }
-      } else if (p.endsWith('/status')) {
-        if (rejectStatus) { status = 502; data = { error: '暂时无法验证 Cookie，请重试' } }
-        else data = { connected: true, configured: true, loginClient: primary.loginClient }
+        if (rejectAccounts && method === 'GET') { status = 502; data = { error: '读取主账号失败' } }
+        else data = { accounts: [...(primary ? [primary] : []), ...pool] }
+      } else if (p.endsWith('/qrcode') && method === 'POST') {
+        data = { qrId: 'mock-id', sessionId: 'mock-session', qrcode: 'mock-qr', expiresAt: new Date(Date.now() + 60000).toISOString() }
+      } else if (p.endsWith('/replacement') && method === 'DELETE') { status = 204 }
+      else if (p.endsWith('/status')) {
+        if (statusResult === 'unavailable') { status = 502; data = { error: '暂时无法验证 Cookie，请重试' } }
+        else data = { connected: statusResult === 'ready', configured: true, loginClient: primary.loginClient }
       }
       else if (method === 'PUT') {
         if (rejectCookie) { status = 422; data = { error: 'Cookie 无效，原配置未修改' } }
@@ -52,7 +56,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           primary = { ...primary, id: 'rotated-main', uid: '999', revision: primary.revision + 1, loginClient: '', configured: true, summary: {vip:'normal',spaceKnown:true,remainingBytes:0,checkedAt:'2026-10-01T00:00:00Z'} }
           data = { status: 'success', connected: true, configured: true }
         }
-      } else if (method === 'DELETE' && p.endsWith('/login')) { primary.configured = false; primary.revision++; primary.loginClient = ''; status = 204 }
+      } else if (method === 'DELETE' && p.endsWith('/login')) { primary.configured = false; primary.revision++; primary.loginClient = ''; primary.uid = ''; status = 204 }
       else if (method === 'DELETE') {
         if (rejectDelete) { status = 500; data = { error: '删除失败，请重试' } } else primary = undefined
       }
@@ -65,6 +69,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const navigation = page.getByRole('navigation', { name: '115 助手导航' })
     const tab = name => navigation.getByRole('link', { name, exact: true })
     const refresh = page.getByRole('button', { name: '刷新状态', exact: true })
+    const profile = main.getByRole('region', { name: '账号资料' })
+    const connection = main.getByRole('status').filter({ has: page.locator('.primary-status') })
+    const checkButton = main.getByRole('button', { name: '检测可用性', exact: true })
+    const loginButton = main.getByRole('button', { name: '扫码登录', exact: true })
     async function active(name) {
       await page.locator('.p115-tabs [aria-current="page"]').filter({ hasText: name }).waitFor()
       assert.equal(await navigation.locator('[aria-current="page"]').count(), 1)
@@ -82,27 +90,33 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await main.getByRole('heading', { name: '主账号', exact: true }).waitFor()
     await active('主账号')
     assert.deepEqual(sectionReads(), [accountsPath])
-    await refreshOnly(accountsPath)
-    await main.getByText('VIP', {exact:true}).waitFor()
-    await main.locator('.primary-space').getByText('1 TB', { exact: true }).waitFor()
+    assert.equal(await refresh.count(), 0)
+    await profile.getByText('VIP', {exact:true}).waitFor()
+    await profile.getByText('1 TB', { exact: true }).waitFor()
+    assert.equal(await profile.locator('time').getAttribute('datetime'), primary.summary.checkedAt)
     assert.equal(reads.filter(p=>p.endsWith('/status')).length,0)
     assert.equal(await shared.count(), 0)
     assert.equal(await personal.count(), 0)
     assert.equal(await main.locator('select,input').count(), 0)
     assert.equal(await main.getByText(/秒传目录/).count(), 0)
     assert.equal(await main.getByRole('button', { name: /人使用/ }).count(), 0)
-    await main.getByRole('button', { name: '检测可用性' }).click()
-    await main.getByText('最近检查通过', { exact: true }).waitFor()
-    assert.equal(await main.getByText('账号可用').count(), 0)
-    rejectStatus = true
-    await main.getByRole('button', { name: '检测可用性' }).click()
+    await checkButton.click()
+    await connection.getByText('本次检测通过', { exact: true }).waitFor()
+    assert.equal(await connection.locator('time').count(), 1)
+    statusResult = 'unavailable'
+    await checkButton.click()
     await main.getByRole('alert').getByText('暂时无法验证 Cookie，请重试').waitFor()
-    assert.equal(await main.getByText('最近检查通过', { exact: true }).count(), 0)
-    await main.getByText('登录信息已保存', { exact: true }).waitFor()
-    rejectStatus = false
-    await main.getByRole('button', { name: '检测可用性' }).click()
-    await main.getByText('最近检查通过', { exact: true }).waitFor()
-    passed.push('failed-recheck-does-not-retain-connected-status')
+    await connection.getByText('暂时无法验证', { exact: true }).waitFor()
+    assert.equal(await connection.locator('time').count(), 0)
+    assert(await checkButton.evaluate(el => el.classList.contains('primary-button-accent')))
+    statusResult = 'invalid'
+    await checkButton.click()
+    await connection.getByText('登录失效', { exact: true }).waitFor()
+    assert(await loginButton.evaluate(el => el.classList.contains('primary-button-accent')))
+    statusResult = 'ready'
+    await checkButton.click()
+    await connection.getByText('本次检测通过', { exact: true }).waitFor()
+    passed.push('probe-results-control-recovery-action-and-timestamp')
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 900 })
       for (const dark of [false, true]) {
@@ -111,6 +125,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         assert(await navigation.evaluate(el => el.scrollWidth <= el.clientWidth + 1), '三个标签应同时可见')
         const icon = tab('主账号').locator('svg')
         assert.equal(await icon.evaluate(el => getComputedStyle(el).width), '16px')
+        assert((await main.boundingBox()).width <= 768)
         await page.screenshot({ path: path.join(os.tmpdir(), `cinema115-unified-${width}-${dark}.png`), fullPage: true })
       }
     }
@@ -149,8 +164,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await tab('主账号').click()
     await active('主账号')
     passed.push('three-visible-tabs-and-scoped-refresh')
-    await main.getByRole('button', { name: '更多操作' }).click()
-    await main.getByRole('button', { name: '手动配置 Cookie' }).click()
+    await loginButton.click()
+    await page.getByRole('button', { name: '改用手动 Cookie 登录' }).click()
     await page.getByRole('dialog').getByText(/重新登录同一 UID/).waitFor()
     await page.getByLabel('Cookie', { exact: true }).fill('UID=999_A; SEID=mock')
     await page.getByRole('button', { name: '验证并继续' }).click()
@@ -159,29 +174,28 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     rejectCookie = false
     await page.getByRole('button', { name: '验证并继续' }).click()
     await page.getByRole('dialog').waitFor({ state: 'detached' })
-    await main.getByText(/UID：999/).waitFor()
-    await main.getByText('普通用户',{exact:true}).waitFor()
-    await main.locator('.primary-space').getByText('0 B', { exact: true }).waitFor()
-    await main.getByRole('button', { name: '检测可用性' }).click()
-    await main.getByText('最近检查通过', { exact: true }).waitFor()
+    await profile.getByText('999', { exact: true }).waitFor()
+    await profile.getByText('普通用户',{exact:true}).waitFor()
+    await profile.getByText('0 B', { exact: true }).waitFor()
+    await checkButton.click()
+    await connection.getByText('本次检测通过', { exact: true }).waitFor()
     assert(reads.includes('/api/admin/p115/accounts/rotated-main/status'))
     assert.equal(pool[0].uid, '1218430')
     passed.push('cookie-failure-preserves-account-and-uid-change-refreshes-id')
-    await main.getByRole('button', { name: '更多操作' }).click()
+    assert.equal(await main.locator('details').getAttribute('open'), null)
+    await main.getByText('高级操作', { exact: true }).click()
     await main.getByRole('button', { name: '清除登录信息' }).click()
     const before = writes.length
     await page.getByRole('dialog').getByText(/资源管理与使用主网盘/).waitFor()
     await page.getByRole('button', { name: '取消', exact: true }).click()
     assert.equal(writes.length, before)
-    await main.getByRole('button', { name: '更多操作' }).click()
     await main.getByRole('button', { name: '清除登录信息' }).click()
     await page.getByRole('button', { name: '确认清除' }).click()
-    await main.locator('.primary-status').getByText('未登录', { exact: true }).waitFor()
-    await main.getByText('会员未知',{exact:true}).waitFor()
-    await main.getByText('剩余空间未知',{exact:true}).waitFor()
+    await connection.getByText('未登录', { exact: true }).waitFor()
+    assert.equal(await profile.getByText('未知', {exact:true}).count(), 2)
+    assert.equal(await checkButton.count(), 0)
     assert(pool.every(a => a.configured))
-    await main.getByRole('button', { name: '更多操作' }).click()
-    await main.getByRole('button', { name: '删除配置' }).click()
+    await main.getByRole('button', { name: '删除主账号配置' }).click()
     rejectDelete = true
     await page.getByRole('button', { name: '确认删除' }).click()
     await page.getByRole('dialog').getByText('删除失败，请重试', { exact: true }).waitFor()
@@ -212,7 +226,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     assert.equal(await main.count(), 0)
     assert.equal(await page.getByText(/尚未添加共享小号/).count(), 0)
     assert.equal(await page.getByRole('button', { name: '添加共享小号' }).isDisabled(), true)
+    rejectAccounts = true
     await tab('主账号').click()
+    await main.getByRole('alert').getByText('读取主账号失败', { exact: true }).waitFor()
+    rejectAccounts = false
+    await main.getByRole('button', { name: '重试', exact: true }).click()
     await main.getByRole('heading', { name: '主账号', exact: true }).waitFor()
     passed.push('direct-links-and-independent-load-errors')
     assert.deepEqual(errors, [])

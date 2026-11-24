@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { createDialogLifecycle } from '../lib/dialog-lifecycle'
 import SelectMenu from './SelectMenu.vue'
-import { onBeforeUnmount, onMounted, onUnmounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, onUnmounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import { p115LoginClients } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
@@ -13,7 +13,9 @@ const snapshot = { ...props }
 interface Replacement { sessionId: string; oldUid: string; newUid: string; expiresAt: string }
 interface Result { status: string; connected: boolean; loginClient?: string; replacement?: Replacement }
 const client = ref(snapshot.clientType)
+const loginMode = ref(snapshot.mode)
 const dialog = ref<HTMLDialogElement>()
+const title = ref<HTMLElement>()
 const qrImage = ref(''), cookie = ref(''), message = ref(''), error = ref('')
 const phase = ref<'loading' | 'waiting' | 'scanned' | 'failed' | 'success' | 'directory' | 'saving' | 'cookie'>('loading')
 const replacement = ref<Replacement>(), selecting = ref(false), directory = ref<{ id: string; path: string }>()
@@ -42,7 +44,7 @@ function failed(reason: unknown, current: number) {
   const status = (reason as { status?: number })?.status
   if (status === 409 || status === 404) {
     stop(); clearSession(); replacement.value = undefined; selecting.value = false; phase.value = 'failed'; emit('changed')
-  } else if (!replacement.value) { stop(); clearSession(); phase.value = snapshot.mode === 'cookie' ? 'cookie' : 'failed'; qrImage.value = '' }
+  } else if (!replacement.value) { stop(); clearSession(); phase.value = loginMode.value === 'cookie' ? 'cookie' : 'failed'; qrImage.value = '' }
 }
 function expire(at: string, current: number) {
   window.clearTimeout(expiryTimer)
@@ -51,7 +53,7 @@ function expire(at: string, current: number) {
   expiryTimer = window.setTimeout(() => {
     if (generation !== current) return
     stop(); clearSession(); qrImage.value = ''; replacement.value = undefined; selecting.value = false
-    phase.value = snapshot.mode === 'cookie' ? 'cookie' : 'failed'; error.value = '登录会话已过期，请重新登录'
+    phase.value = loginMode.value === 'cookie' ? 'cookie' : 'failed'; error.value = '登录会话已过期，请重新登录'
   }, remaining)
 }
 function accept(data: Result, current: number) {
@@ -85,6 +87,20 @@ async function createQRCode() {
     qrImage.value = image; phase.value = 'waiting'; message.value = '等待扫码'
     timer = window.setTimeout(() => poll(data.qrId, current), 1500)
   } catch (reason) { failed(reason, current) }
+}
+async function switchLoginMode() {
+  if (phase.value === 'saving' || phase.value === 'success' || replacement.value) return
+  if (loginMode.value === 'qr') {
+    stop(); clearSession()
+    qrImage.value = ''; message.value = ''; error.value = ''
+    loginMode.value = 'cookie'; phase.value = 'cookie'
+  } else {
+    cookie.value = ''
+    loginMode.value = 'qr'
+    void createQRCode()
+  }
+  await nextTick()
+  title.value?.focus()
 }
 async function poll(qrId: string, current: number) {
   if (current !== generation) return
@@ -126,7 +142,7 @@ async function confirm() {
 }
 onMounted(() => {
   dialogLifecycle.acquire(); dialog.value?.showModal()
-  if (snapshot.mode === 'cookie') { phase.value = 'cookie'; controller = new AbortController() } else void createQRCode()
+  if (loginMode.value === 'cookie') phase.value = 'cookie'; else void createQRCode()
 })
 onBeforeUnmount(() => { stop(); clearSession(); cookie.value = ''; dialog.value?.close() })
 onUnmounted(() => { dialogLifecycle.release() })
@@ -136,7 +152,7 @@ onUnmounted(() => { dialogLifecycle.release() })
   <Teleport to="body">
     <dialog ref="dialog" aria-labelledby="p115-qr-title" class="m-auto max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-md overflow-y-auto rounded-2xl border-0 bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-950/50 dark:bg-slate-900 dark:text-slate-300" @cancel.prevent="close">
       <header class="relative border-b border-slate-100 px-12 py-4 text-center dark:border-slate-800">
-        <h2 id="p115-qr-title" class="text-lg font-semibold text-slate-900 dark:text-slate-100">{{ replacement ? '选择新网盘目录' : mode === 'cookie' ? '手动登录' : '115 扫码登录' }}</h2>
+        <h2 id="p115-qr-title" ref="title" tabindex="-1" class="text-lg font-semibold text-slate-900 dark:text-slate-100">{{ replacement ? '选择新网盘目录' : loginMode === 'cookie' ? '手动登录' : '115 扫码登录' }}</h2>
         <p class="mt-1 text-xs text-slate-500">{{ accountName }}</p>
         <button type="button" aria-label="关闭登录弹窗" class="absolute right-3 top-3 rounded-lg p-3 text-slate-500" @click="close"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg></button>
       </header>
@@ -150,7 +166,7 @@ onUnmounted(() => { dialogLifecycle.release() })
           <div class="flex justify-end gap-3"><button type="button" class="px-4 py-2 text-sm" @click="close">取消</button><button type="button" :disabled="!directory || phase === 'saving'" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="confirm">{{ phase === 'saving' ? '验证并保存中…' : '确认更换' }}</button></div>
         </template>
         <p v-else-if="phase === 'success'" role="status" class="flex items-center justify-center gap-2 py-8 text-emerald-600"><svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>{{ message }}</p>
-        <form v-else-if="mode === 'cookie'" class="space-y-4" @submit.prevent="saveCookie">
+        <form v-else-if="loginMode === 'cookie'" class="space-y-4" @submit.prevent="saveCookie">
           <label class="block text-sm">Cookie<input v-model="cookie" type="password" autocomplete="off" :disabled="phase === 'saving'" class="mt-2 block w-full rounded-xl border border-slate-200 bg-transparent px-3 py-3 dark:border-slate-700" placeholder="UID=…; CID=…; SEID=…" /></label>
           <p class="text-xs text-slate-500">{{ primary ? '新 Cookie 验证通过后保存，失败保留原配置。' : '验证后保存；换成其他账号时，需要先选择新网盘目录。' }}</p>
           <button :disabled="!cookie.trim() || phase === 'saving'" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40">{{ phase === 'saving' ? '验证中…' : '验证并继续' }}</button>
@@ -166,6 +182,9 @@ onUnmounted(() => { dialogLifecycle.release() })
           <div class="text-center"><button type="button" :disabled="phase === 'loading'" class="rounded-lg bg-blue-600 px-6 py-2 text-sm text-white disabled:opacity-40" @click="createQRCode">{{ phase === 'failed' ? '重新获取二维码' : '刷新二维码' }}</button></div>
         </template>
         <p v-if="error" role="alert" class="text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+        <div v-if="primary && !replacement && phase !== 'success'" class="border-t border-slate-100 pt-1 text-center dark:border-slate-800">
+          <button type="button" :disabled="phase === 'saving'" class="min-h-11 rounded-md px-2 text-sm text-blue-700 enabled:hover:underline disabled:opacity-50 dark:text-blue-300" @click="switchLoginMode">{{ loginMode === 'cookie' ? '返回扫码登录' : '改用手动 Cookie 登录' }}</button>
+        </div>
       </div>
     </dialog>
   </Teleport>

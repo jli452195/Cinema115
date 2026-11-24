@@ -29,8 +29,7 @@ const lifecycle = new AbortController()
 const primaryRead = shallowRef<AbortController>()
 const refreshing = computed(() => {
   if (activeTab.value === 'pool') return !!poolSection.value?.refreshing
-  if (activeTab.value === 'personal') return !!personalDrives.value?.busy
-  return !!primaryRead.value
+  return !!personalDrives.value?.busy
 })
 
 async function loadPrimary() {
@@ -87,19 +86,22 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <template>
   <ManagementLayout title="115 助手" description="主账号负责资源管理与默认播放；共享小号用于用户播放和秒传。" :parent="{ label: '115 网盘', to: '/115' }" @logout="$emit('logout')">
-    <template #actions><button :disabled="refreshing || adding" class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300" @click="refresh"><P115Icon name="refresh" />{{ refreshing ? '刷新中…' : '刷新状态' }}</button></template>
+    <template v-if="activeTab !== 'primary'" #actions><button type="button" :disabled="refreshing || adding" class="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300" @click="refresh"><P115Icon name="refresh" />{{ refreshing ? '刷新中…' : '刷新状态' }}</button></template>
     <RouteTabs class="p115-tabs mb-3" label="115 助手导航" :active="activeTab" :tabs="tabs" fill-on-mobile>
       <template #icon="{ tab }"><P115Icon :name="tab.name === 'primary' ? 'drive' : tab.name === 'pool' ? 'pool' : 'user'" class="!h-4 !w-4" /></template>
     </RouteTabs>
     <p v-if="actionError" role="alert" class="mb-5 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ actionError }}</p>
-    <section v-if="activeTab === 'primary'" aria-label="主账号配置">
-      <p v-if="primaryError" role="alert" class="mb-3 text-sm text-red-600">{{ primaryError }}</p>
+    <section v-if="activeTab === 'primary'" aria-label="主账号配置" class="max-w-3xl pt-3">
+      <div v-if="primaryError" class="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-red-200 px-4 py-2 text-sm dark:border-red-900/70">
+        <p role="alert" class="text-red-700 dark:text-red-300">{{ primaryError }}</p>
+        <button type="button" :disabled="!!primaryRead" class="min-h-10 text-blue-700 hover:underline disabled:opacity-50 dark:text-blue-300" @click="loadPrimary">{{ primaryRead ? '读取中…' : '重试' }}</button>
+      </div>
       <p v-if="!primaryLoaded" role="status" class="py-8 text-sm text-slate-500">正在读取主账号…</p>
-      <P115ManagedAccountCard v-else-if="primary" :key="primary.id" :account="primary" :token="token" @changed="refresh" />
-      <div v-else-if="!primaryError" class="rounded-2xl border border-dashed border-slate-300 p-5 dark:border-slate-700">
+      <P115ManagedAccountCard v-else-if="primary" :key="primary.id" :account="primary" :token="token" @changed="loadPrimary" />
+      <div v-else-if="!primaryError" class="rounded-xl border border-slate-200 px-5 py-6 dark:border-slate-700">
         <h2 class="font-semibold text-slate-900 dark:text-slate-100">主账号未配置</h2>
-        <p class="my-3 text-sm leading-6 text-slate-500">配置主账号后，可使用资源管理与默认播放。主账号需单独创建。</p>
-        <button :disabled="adding" class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-40" @click="add(true)">配置主账号</button>
+        <p class="mb-4 mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">创建主账号并登录后，即可使用资源管理与默认播放。</p>
+        <button type="button" :disabled="adding" class="min-h-11 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40" @click="add(true)">{{ adding ? '正在配置…' : '配置主账号' }}</button>
       </div>
     </section>
     <DynamicPoolSection v-else-if="activeTab === 'pool'" ref="poolSection" :token="token" :adding="adding" :login-account-id="loginAccountID" @add="add(false)" @login-started="loginAccountID = ''" @accounts-changed="poolCount = $event.length" />

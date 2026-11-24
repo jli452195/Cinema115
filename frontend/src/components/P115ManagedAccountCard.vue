@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import SelectMenu from './SelectMenu.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
-import { IconCopy, IconPencil, IconSitemap } from '@tabler/icons-vue'
+import { IconChevronDown, IconCopy, IconPencil, IconSitemap } from '@tabler/icons-vue'
 import type { P115Account } from '../types/p115Accounts'
 import { loginClientLabel } from '../lib/p115-login-clients'
 import { p115Request } from '../lib/p115-api'
@@ -16,16 +16,22 @@ const props = defineProps<{ account: P115Account; token: string; startLogin?: bo
 const emit = defineEmits<{ changed: []; loginStarted: []; interaction: [editing: boolean]; poolMode: [mode: string, revision: number]; poolCheck: [] }>()
 const accountName = computed(() => props.account.primary ? '主账号' : props.account.name)
 const needsDirectory = computed(() => !props.account.primary && !props.account.playbackParentCid)
-const statusLabel = computed(() => !props.account.configured ? '未登录' : needsDirectory.value ? '待设置目录'
-  : !props.account.primary ? poolHealthLabel(props.account.pool?.state)
-    : checked.value ? connected.value ? '最近检查通过' : '登录失效' : '登录信息已保存')
+const primaryCheck = ref<{ state: 'checking' | 'ready' | 'invalid' | 'unavailable'; at?: Date }>()
+const primaryStatus = computed(() => {
+  if (!props.account.configured) return '未登录'
+  if (!primaryCheck.value) return '登录信息已保存'
+  return { checking: '正在检测…', ready: '本次检测通过', invalid: '登录失效', unavailable: '暂时无法验证' }[primaryCheck.value.state]
+})
+const loginNeeded = computed(() => !props.account.configured || primaryCheck.value?.state === 'invalid')
+const statusLabel = computed(() => !props.account.configured ? '未登录' : needsDirectory.value ? '待设置目录' : poolHealthLabel(props.account.pool?.state))
 const statusTone = computed(() => ['登录失效', '目录失效', '待设置目录'].includes(statusLabel.value) ? 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400'
   : statusLabel.value === '最近检查通过' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
     : ['限流冷却', '故障冷却', '等待复查'].includes(statusLabel.value) ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/30 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400')
 const disabled = computed(() => busy.value || props.poolBusy)
 const overCapacity = computed(() => props.maxSessions !== undefined && (props.account.pool?.sessions || 0) > props.maxSessions)
-const infoOpen = ref(false), poolDisable = ref<number>(), primaryCheckedAt = ref(0)
-const summaryTitle = computed(() => props.account.summary?.checkedAt ? '更新于 ' + new Date(props.account.summary.checkedAt).toLocaleString() + '；检测可用性可更新' : '登录或检测可用性后更新')
+const infoOpen = ref(false), poolDisable = ref<number>()
+const summaryUpdatedAt = computed(() => props.account.summary?.checkedAt ? new Date(props.account.summary.checkedAt).toLocaleString() : '')
+const summaryTitle = computed(() => summaryUpdatedAt.value ? '更新于 ' + summaryUpdatedAt.value + '；检测可用性可更新' : '登录或检测可用性后更新')
 function remainingSpace(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   let value = bytes, unit = 0
@@ -38,7 +44,7 @@ const more = ref(false), details = ref<'' | 'rename'>('')
 const menu = ref<HTMLElement>(), menuTrigger = ref<HTMLButtonElement>(), menuContainer = ref<HTMLElement>()
 const menuID = useId(), copied = ref(false), uidCopied = ref(false)
 const login = ref<'' | 'qr' | 'cookie'>(''), selecting = ref(false), busy = ref(false)
-const checked = ref(false), connected = ref(false), error = ref(''), notice = ref('')
+const error = ref(''), notice = ref('')
 const directorySnapshot = ref<{ id: string; revision: number }>()
 const lifecycle = new AbortController()
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
@@ -62,15 +68,19 @@ function check() {
   if (!props.account.primary && props.maxSessions !== undefined) { emit('poolCheck'); return }
   void work(async () => {
     clearTimeout(noticeTimer); notice.value = ''
-    checked.value = false; connected.value = false
+    primaryCheck.value = { state: 'checking' }
     const revision = props.account.revision
-    const data = await request<{ connected: boolean; clientMessage?: string }>('/status')
-    if (revision !== props.account.revision) return
-    checked.value = true; connected.value = data.connected
-    primaryCheckedAt.value = Date.now()
-    if (!data.connected) error.value = '登录已失效，请重新登录'
-    else if (data.clientMessage) notify(data.clientMessage)
-    emit('changed')
+    try {
+      const data = await request<{ connected: boolean; clientMessage?: string }>('/status')
+      if (lifecycle.signal.aborted || revision !== props.account.revision) return
+      primaryCheck.value = { state: data.connected ? 'ready' : 'invalid', at: new Date() }
+      if (data.connected && data.clientMessage) notify(data.clientMessage)
+      emit('changed')
+    } catch (reason) {
+      if (lifecycle.signal.aborted || revision !== props.account.revision) return
+      primaryCheck.value = { state: 'unavailable' }
+      throw reason
+    }
   })
 }
 function changeMode(value: string) {
@@ -134,14 +144,14 @@ function applyMutation() {
   if (!snapshot || !action) return
   void work(async () => {
     await p115Request(props.token, 'accounts/' + encodeURIComponent(snapshot.id) + (action === 'clear' ? '/login' : ''), { method: 'DELETE', body: JSON.stringify({ revision: snapshot.revision }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(35000)]) })
-    confirmation.value = ''; checked.value = false; emit('changed')
+    confirmation.value = ''; primaryCheck.value = undefined; emit('changed')
   })
 }
 function openLogin(mode: 'qr' | 'cookie') { if (more.value) menuTrigger.value?.focus(); closeMenu(); error.value = ''; login.value = mode }
 function loggedIn() {
   login.value = ''; loginRevision = props.account.revision + 1
   directoryAfterLogin = needsDirectory.value
-  checked.value = true; connected.value = true; emit('changed')
+  primaryCheck.value = undefined; emit('changed')
   notify(needsDirectory.value ? '登录成功，请设置秒传目录' : '登录信息已保存')
 }
 watch([login, selecting], () => emit('interaction', !!login.value || selecting.value), { flush: 'sync' })
@@ -150,8 +160,8 @@ watch(() => props.startLogin, (start) => {
 }, { immediate: true })
 watch(() => props.account, async (next, previous) => {
   if (next.revision !== previous.revision) {
-    login.value = ''; selecting.value = false; confirmation.value = ''; details.value = ''; poolDisable.value = undefined; checked.value = next.revision === loginRevision; primaryCheckedAt.value = 0
-    const continueSetup = directoryAfterLogin && checked.value && next.configured && !next.playbackParentCid
+    login.value = ''; selecting.value = false; confirmation.value = ''; details.value = ''; poolDisable.value = undefined; primaryCheck.value = undefined
+    const continueSetup = directoryAfterLogin && next.revision === loginRevision && next.configured && !next.playbackParentCid
     directoryAfterLogin = false
     // Wait for the login dialog to unmount and restore focus/scroll before opening the next dialog.
     await nextTick()
@@ -163,22 +173,68 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 </script>
 
 <template>
-  <article class="account-card relative min-w-0 rounded-xl border border-slate-200 bg-white p-5 focus-within:z-10 dark:border-slate-700 dark:bg-slate-900" :class="account.primary ? 'primary-card' : 'pool-card'">
-    <header class="account-heading flex min-w-0 items-center gap-2" :class="!account.primary ? 'pr-10' : ''">
-      <div v-if="account.primary" class="primary-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200/80 bg-slate-100/60 text-slate-600 dark:border-slate-600/50 dark:bg-slate-700/30 dark:text-slate-300"><P115Icon name="drive" /></div>
-      <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="min-w-0 truncate font-semibold text-slate-900 dark:text-slate-100" :title="accountName">{{ accountName }}</h2><span v-if="account.primary" class="primary-status rounded-md text-[11px]" :class="statusTone">{{ statusLabel }}</span><div v-else class="pool-badges"><span>{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</span><span :title="'登录客户端：' + (loginClientLabel(account.loginClient || '') || '待识别')">{{ account.configured ? loginClientLabel(account.loginClient || '') || '待识别' : '未登录' }}</span></div></div><p v-if="account.primary" class="mt-1 text-xs text-slate-500 dark:text-slate-400">资源管理与默认播放</p></div>
-      <span v-if="!account.primary" class="pool-status shrink-0 text-[11px]" :class="statusTone" :title="statusLabel"><svg aria-hidden="true" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="currentColor" /></svg><span>{{ statusLabel === '最近检查通过' ? '检查通过' : statusLabel }}</span></span>
-    </header>
-    <div v-if="account.primary" class="account-meta min-w-0 text-xs text-slate-500 dark:text-slate-400">
-      <dl class="primary-metadata">
-        <div class="primary-meta-field"><dt>UID：</dt><dd class="tabular-nums">{{ account.uid || '未登录' }}</dd></div>
-        <div class="primary-meta-field"><dt>客户端：</dt><dd>{{ account.configured ? loginClientLabel(account.loginClient || '') || (checked ? '未识别' : '待识别') : '未登录' }}</dd></div>
-        <div :title="summaryTitle"><dt class="sr-only">会员</dt><dd class="primary-vip">{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</dd></div>
-        <div :title="summaryTitle"><dt class="sr-only">剩余空间</dt><dd class="primary-space"><template v-if="account.configured && account.summary?.spaceKnown"><strong class="font-semibold tabular-nums text-slate-700 dark:text-slate-200">{{ remainingSpace(account.summary.remainingBytes) }}</strong><span>可用</span></template><span v-else>剩余空间未知</span></dd></div>
-      </dl>
-      <p v-if="account.primary && primaryCheckedAt" class="mt-1 text-[11px]">上次检查 {{ new Date(primaryCheckedAt).toLocaleTimeString() }}</p>
+  <article v-if="account.primary" class="space-y-6">
+    <div class="primary-panel px-4 py-4 sm:px-5">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex min-w-0 items-center gap-3">
+          <span class="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><P115Icon name="drive" /></span>
+          <div class="min-w-0">
+            <h2 class="font-semibold">主账号</h2>
+            <p role="status" class="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs">
+              <span class="primary-status inline-flex items-center gap-1.5" :data-state="account.configured ? primaryCheck?.state : undefined">
+                <span aria-hidden="true" class="h-1.5 w-1.5 shrink-0 rounded-full bg-current"></span>{{ primaryStatus }}
+              </span>
+              <time v-if="account.configured && primaryCheck?.at" :datetime="primaryCheck.at.toISOString()" class="text-slate-500 dark:text-slate-400">{{ primaryCheck.at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</time>
+            </p>
+          </div>
+        </div>
+        <div class="primary-actions">
+          <button type="button" :disabled="disabled" class="primary-button" :class="loginNeeded ? 'primary-button-accent' : 'primary-button-secondary'" @click="openLogin('qr')"><P115Icon name="qr" />扫码登录</button>
+          <button v-if="account.configured" type="button" :disabled="disabled" :aria-busy="primaryCheck?.state === 'checking'" class="primary-button" :class="loginNeeded ? 'primary-button-secondary' : 'primary-button-accent'" @click="check">
+            <P115Icon name="refresh" :class="{ 'motion-safe:animate-spin': primaryCheck?.state === 'checking' }" />{{ primaryCheck?.state === 'checking' ? '检测中…' : '检测可用性' }}
+          </button>
+        </div>
+      </div>
+      <p v-if="account.configured && primaryCheck?.state === 'invalid'" class="mt-3 text-xs leading-5 text-red-700 dark:text-red-300">请重新登录以恢复资源管理和主网盘的新播放。</p>
+      <p v-if="notice" role="status" class="mt-3 text-xs leading-5 text-slate-600 dark:text-slate-300">{{ notice }}</p>
+      <p v-if="error && !confirmation" role="alert" class="mt-3 text-xs leading-5" :class="primaryCheck?.state === 'unavailable' ? 'text-amber-700 dark:text-amber-300' : 'text-red-600 dark:text-red-400'">{{ error }}</p>
     </div>
-    <template v-if="!account.primary">
+
+    <section aria-label="账号资料">
+      <header class="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 class="text-sm font-semibold text-slate-900 dark:text-slate-100">账号资料</h3>
+        <p v-if="account.configured && summaryUpdatedAt" class="text-xs text-slate-500 dark:text-slate-400">资料更新于 <time :datetime="account.summary?.checkedAt">{{ summaryUpdatedAt }}</time></p>
+      </header>
+      <dl class="primary-panel divide-y divide-slate-100 dark:divide-slate-800">
+        <div class="primary-field"><dt>115 UID</dt><dd class="break-all font-mono">{{ account.uid || '—' }}</dd></div>
+        <div class="primary-field"><dt>登录客户端</dt><dd>{{ account.configured ? loginClientLabel(account.loginClient || '') || (primaryCheck?.state === 'ready' ? '未识别' : '待识别') : '—' }}</dd></div>
+        <div class="primary-field"><dt>115 会员</dt><dd>{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '未知' }}</dd></div>
+        <div class="primary-field"><dt>剩余空间</dt><dd class="tabular-nums">{{ account.configured && account.summary?.spaceKnown ? remainingSpace(account.summary.remainingBytes) : '未知' }}</dd></div>
+      </dl>
+      <button type="button" class="primary-text-button mt-1" @click="infoOpen = true">账号详情<IconChevronDown class="h-4 w-4 -rotate-90" aria-hidden="true" /></button>
+    </section>
+
+    <details class="primary-panel primary-advanced">
+      <summary class="flex min-h-11 cursor-pointer items-center justify-between gap-3 rounded-xl px-4 text-sm font-medium sm:px-5">
+        高级操作<IconChevronDown class="h-4 w-4 text-slate-500" aria-hidden="true" />
+      </summary>
+      <div class="divide-y divide-slate-100 border-t border-slate-100 px-4 dark:divide-slate-800 dark:border-slate-800 sm:px-5">
+        <div class="primary-advanced-row">
+          <p class="text-xs leading-5 text-slate-500 dark:text-slate-400">暂停资源管理与主网盘的新播放，重新登录后恢复。</p>
+          <button type="button" :disabled="disabled || !account.configured" class="primary-text-button primary-danger" @click="disconnect">清除登录信息</button>
+        </div>
+        <div class="primary-advanced-row">
+          <p class="text-xs leading-5 text-slate-500 dark:text-slate-400">移除主账号配置，恢复使用时需重新创建并配置目录。</p>
+          <button type="button" :disabled="disabled" class="primary-text-button primary-danger" @click="remove">删除主账号配置</button>
+        </div>
+      </div>
+    </details>
+  </article>
+  <article v-else class="account-card pool-card relative min-w-0 rounded-xl border border-slate-200 bg-white p-5 focus-within:z-10 dark:border-slate-700 dark:bg-slate-900">
+    <header class="account-heading flex min-w-0 items-center gap-2 pr-10">
+      <div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><h2 class="min-w-0 truncate font-semibold text-slate-900 dark:text-slate-100" :title="accountName">{{ accountName }}</h2><div class="pool-badges"><span>{{ account.configured && account.summary?.vip === 'vip' ? 'VIP' : account.configured && account.summary?.vip === 'normal' ? '普通用户' : '会员未知' }}</span><span :title="'登录客户端：' + (loginClientLabel(account.loginClient || '') || '待识别')">{{ account.configured ? loginClientLabel(account.loginClient || '') || '待识别' : '未登录' }}</span></div></div></div>
+      <span class="pool-status shrink-0 text-[11px]" :class="statusTone" :title="statusLabel"><svg aria-hidden="true" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3" fill="currentColor" /></svg><span>{{ statusLabel === '最近检查通过' ? '检查通过' : statusLabel }}</span></span>
+    </header>
       <div class="pool-stats" :class="maxSessions === undefined ? 'pool-stats-single' : ''">
         <div class="pool-stat" :title="summaryTitle">
           <template v-if="account.configured && account.summary?.spaceKnown"><p class="pool-stat-value text-slate-900 dark:text-slate-100">{{ remainingSpace(account.summary.remainingBytes).split(' ')[0] }}</p><p class="pool-stat-label">{{ remainingSpace(account.summary.remainingBytes).split(' ')[1] }} 剩余可用</p></template>
@@ -202,13 +258,8 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
       </div>
       <div v-if="maxSessions !== undefined" class="pool-mode-row"><IconSitemap aria-hidden="true" /><SelectMenu :model-value="account.pool?.mode || 'enabled'" :disabled="disabled" :label="account.name + ' 调度状态'" @change="changeMode" :options="[{ value: 'enabled', label: '参与调度' }, { value: 'draining', label: '停止新分配' }, { value: 'disabled', label: '禁用' }]" /></div>
       <p v-if="account.pool?.retryAt" class="mt-1 text-[11px] leading-5 text-amber-700 dark:text-amber-300">最早复查：{{ new Date(account.pool.retryAt).toLocaleString() }}</p>
-    </template>
     <div class="account-controls flex min-w-0 items-center gap-2">
-      <div v-if="account.primary" class="account-actions flex flex-wrap items-center gap-2">
-        <button :disabled="disabled || !account.configured || (!account.primary && maxSessions !== undefined && needsDirectory)" class="account-button border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300" @click="check"><P115Icon name="refresh" />{{ poolWorking ? '处理中…' : busy ? '处理中…' : account.primary ? '检测可用性' : '重新检查' }}</button>
-        <button :disabled="disabled" class="account-button border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300" :class="!account.configured ? '!border-blue-600 !bg-blue-600 !text-white' : ''" @click="openLogin('qr')"><P115Icon name="qr" />扫码登录</button>
-      </div>
-      <div v-else class="pool-footer">
+      <div class="pool-footer">
         <div class="pool-update"><time v-if="account.pool?.checkedAt" :datetime="new Date(account.pool.checkedAt).toISOString()" :title="'上次检查 ' + new Date(account.pool.checkedAt).toLocaleString()">{{ new Date(account.pool.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }} 更新</time><span v-else>尚未检查</span><button :disabled="disabled || !account.configured || (maxSessions !== undefined && needsDirectory)" aria-label="重新检查" :aria-busy="!!poolWorking || busy" :title="poolWorking || busy ? '正在重新检查' : '重新检查'" class="pool-icon-button pool-refresh" @click="check"><P115Icon name="refresh" :class="poolWorking || busy ? 'animate-spin' : ''" /></button></div>
         <button :disabled="disabled" class="account-button pool-login border border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-300" :class="!account.configured ? '!border-blue-600 !bg-blue-600 !text-white' : ''" @click="openLogin('qr')"><P115Icon name="qr" />扫码登录</button>
       </div>
@@ -216,7 +267,7 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
         <button ref="menuTrigger" aria-label="更多操作" :aria-controls="menuID" class="account-menu-trigger flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" :aria-expanded="more" @click="toggleMenu"><P115Icon name="more" /></button>
         <div v-if="more" :id="menuID" ref="menu" role="group" aria-label="账号操作" class="absolute right-0 top-full z-20 mt-1 w-44 rounded-xl border border-slate-200 bg-white p-1.5 text-sm shadow-xl dark:border-slate-700 dark:bg-slate-900">
           <button class="pool-action" @click="closeMenu(); menuTrigger?.focus(); infoOpen = true">账号详情</button>
-          <button v-if="!account.primary" :disabled="disabled" class="pool-action" @click="openDetails('rename')">修改名称</button>
+          <button :disabled="disabled" class="pool-action" @click="openDetails('rename')">修改名称</button>
           <button :disabled="disabled" class="pool-action" @click="openLogin('cookie')">手动配置 Cookie</button>
           <div class="my-1 border-t border-slate-100 dark:border-slate-800"></div>
           <button :disabled="disabled || !account.configured" class="pool-action text-red-600 dark:text-red-400" @click="disconnect">清除登录信息</button>
@@ -251,7 +302,6 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .pool-action { display: block; width: 100%; border-radius: 0.5rem; padding: 0.625rem 0.75rem; text-align: left; }
 .pool-action:hover, .pool-action:focus-visible { background: rgb(148 163 184 / 12%); }
 .pool-action:disabled { opacity: 0.4; }
-.account-meta { margin-top:10px; }
 .account-button { display:inline-flex; min-height:38px; align-items:center; justify-content:center; gap:6px; border-radius:8px; padding:8px 11px; font-size:12px; }
 .account-button:disabled { opacity:.4; }
 .account-button:hover:not(:disabled) { background:rgb(148 163 184 / 8%); }
@@ -298,43 +348,25 @@ onBeforeUnmount(() => { emit('interaction', false); lifecycle.abort(); clearTime
 .dark .pool-icon-button, .dark .pool-card .account-menu-trigger, .dark .pool-card .pool-login { border-color:rgb(var(--color-slate-700)); background:rgb(var(--color-slate-800) / 55%); }
 .dark .pool-icon-button { color:rgb(var(--color-slate-400)); }
 .dark .pool-icon-button:hover:not(:disabled) { background:rgb(var(--color-slate-700)); color:rgb(var(--color-slate-200)); }
-.primary-card { display:flex; flex-wrap:wrap; align-items:center; gap:24px; min-height:104px; padding:20px 24px; }
-.account-card.primary-card { border-color:var(--glass-edge); background:var(--glass-panel-background); box-shadow:var(--glass-card-shadow); -webkit-backdrop-filter:var(--glass-panel-filter); backdrop-filter:var(--glass-panel-filter); }
-.primary-card .account-heading { flex:none; gap:14px; }
-.primary-icon { box-shadow:inset 0 1px 0 rgb(255 255 255 / 50%); }
-.primary-card .primary-status { padding:2px 6px; background:transparent; line-height:18px; box-shadow:inset 0 0 0 1px rgb(148 163 184 / 18%); }
-.primary-card .account-meta { flex:1; min-width:208px; margin-top:0; padding-left:24px; border-left:1px solid rgb(148 163 184 / 20%); }
-.primary-metadata { display:grid; grid-template-columns:max-content minmax(0, max-content); align-items:center; gap:8px 24px; }
-.primary-meta-field { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; line-height:18px; }
-.primary-meta-field dt { color:rgb(var(--color-slate-500)); }
-.primary-vip { display:inline-flex; align-items:center; min-height:22px; border:1px solid rgb(148 163 184 / 25%); border-radius:5px; padding:0 7px; background:rgb(148 163 184 / 8%); color:rgb(var(--color-slate-600)); font-size:10px; font-weight:500; letter-spacing:.03em; }
-.primary-space { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; line-height:22px; }
-.primary-space strong { font-size:14px; }
-.primary-card .account-controls { flex:none; margin-left:auto; }
-.primary-card .account-actions { flex-wrap:nowrap; }
-.primary-card .account-button { min-height:40px; padding:9px 12px; background:transparent; border-color:rgb(148 163 184 / 30%); white-space:nowrap; }
-.primary-card .account-menu-trigger { width:36px; height:40px; }
-.primary-card .account-button, .primary-card .account-menu-trigger { transition:background-color 150ms ease, border-color 150ms ease, color 150ms ease; }
-.primary-card .account-button:hover:not(:disabled), .primary-card .account-menu-trigger:hover { background:rgb(148 163 184 / 10%); }
-.primary-card .account-button:focus-visible, .account-menu-trigger:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:3px; }
-.primary-card .account-feedback { flex-basis:100%; margin-top:0; }
-.dark .primary-icon { box-shadow:inset 0 1px 0 rgb(255 255 255 / 4%); }
-.dark .primary-meta-field dt { color:rgb(var(--color-slate-400)); }
-.dark .primary-vip { background:rgb(var(--color-slate-700) / 30%); border-color:rgb(var(--color-slate-500) / 35%); color:rgb(var(--color-slate-300)); }
-@media(max-width:767px) {
-  .primary-card { gap:18px; padding:18px; }
-  .primary-card .account-heading { flex-basis:100%; min-width:0; }
-  .primary-card .account-meta { flex-basis:100%; min-width:0; padding-left:0; border-left:0; }
-  .primary-card .primary-metadata { column-gap:28px; }
-  .primary-card .account-controls { flex-basis:100%; margin-left:0; padding-top:14px; border-top:1px solid rgb(148 163 184 / 16%); }
-  .primary-card .account-actions { flex:1; min-width:0; }
-  .primary-card .account-button { flex:1; min-width:0; }
-}
-@media(max-width:380px) {
-  .primary-card { padding:16px; }
-  .primary-card .account-button { gap:5px; padding:9px 8px; font-size:11px; }
-  .primary-card .account-button :deep(svg) { width:16px; height:16px; }
-  .primary-card .account-menu-trigger { width:32px; }
-}
-@media(prefers-reduced-motion:reduce) { .primary-card .account-button, .primary-card .account-menu-trigger { transition:none; } }
+.account-menu-trigger:focus-visible { outline:2px solid rgb(59 130 246); outline-offset:3px; }
+.primary-panel { @apply rounded-xl border border-slate-200 bg-white text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100; }
+.primary-status { @apply text-slate-600 dark:text-slate-300; }
+.primary-status[data-state="checking"] { @apply text-blue-700 dark:text-blue-300; }
+.primary-status[data-state="ready"] { @apply text-emerald-700 dark:text-emerald-400; }
+.primary-status[data-state="invalid"] { @apply text-red-700 dark:text-red-400; }
+.primary-status[data-state="unavailable"] { @apply text-amber-700 dark:text-amber-300; }
+.primary-actions { @apply flex flex-wrap gap-2; }
+.primary-button { @apply inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg border px-2.5 text-sm font-medium disabled:opacity-50 sm:flex-none sm:px-3; }
+.primary-button-accent { @apply border-blue-600 bg-blue-600 text-white enabled:hover:bg-blue-700; }
+.primary-button-secondary { @apply border-slate-200 text-slate-700 enabled:hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:enabled:hover:bg-slate-800; }
+.primary-field { @apply grid min-h-11 grid-cols-[auto_minmax(0,1fr)] items-center gap-4 px-4 py-2 text-sm sm:px-5; }
+.primary-field dt { @apply text-slate-500 dark:text-slate-400; }
+.primary-field dd { @apply text-right font-medium; }
+.primary-text-button { @apply inline-flex min-h-11 items-center gap-1 rounded-md text-sm text-blue-700 enabled:hover:underline disabled:opacity-50 dark:text-blue-300; }
+.primary-text-button.primary-danger { @apply shrink-0 self-start text-red-700 dark:text-red-300 sm:self-auto; }
+.primary-advanced summary { list-style:none; }
+.primary-advanced summary::-webkit-details-marker { display:none; }
+.primary-advanced[open] summary > :deep(svg) { transform:rotate(180deg); }
+.primary-advanced-row { @apply flex flex-col items-start gap-x-6 px-0 py-2 sm:flex-row sm:items-center sm:justify-between sm:py-0; }
+.primary-button:focus-visible, .primary-text-button:focus-visible, .primary-advanced summary:focus-visible { outline:2px solid rgb(var(--focus)); outline-offset:2px; }
 </style>
