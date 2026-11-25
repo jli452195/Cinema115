@@ -32,7 +32,7 @@ type Telegram struct {
 	OnStatus                   func(bool, string)
 	Logs                       *service.GenerationLogs
 	ShareEnabled               bool
-	CloudDownloads             CloudDownloadSubmitter
+	CloudDownloads             CloudDownloadPreparer
 	ShareTransfers             ShareLinkTransferer
 	ED2KSTRM                   ED2KSTRMImporter
 	ED2KSTRMTargets            []model.ED2KSTRMTarget
@@ -77,12 +77,13 @@ func NewTelegram(token, chats, dataDir string, generator ShareGenerator, setting
 }
 
 type telegramMessage struct {
-	ID              int64            `json:"message_id"`
-	ThreadID        int64            `json:"message_thread_id"`
-	Text            string           `json:"text"`
-	Caption         string           `json:"caption"`
-	Entities        []telegramEntity `json:"entities"`
-	CaptionEntities []telegramEntity `json:"caption_entities"`
+	ID              int64                 `json:"message_id"`
+	ThreadID        int64                 `json:"message_thread_id"`
+	Text            string                `json:"text"`
+	Caption         string                `json:"caption"`
+	Entities        []telegramEntity      `json:"entities"`
+	CaptionEntities []telegramEntity      `json:"caption_entities"`
+	Document        *telegramTextDocument `json:"document,omitempty"`
 	From            struct {
 		ID    int64 `json:"id"`
 		IsBot bool  `json:"is_bot"`
@@ -181,6 +182,7 @@ func telegramPhotoBadRequest(description string) error {
 }
 
 type telegramState struct {
+	TextDocuments      []*pendingTextDocument      `json:"textDocuments,omitempty"`
 	ResourceSelections []*pendingResourceSelection `json:"resourceSelections,omitempty"`
 	CallbackAnswers    []*pendingCallbackAnswer    `json:"callbackAnswers,omitempty"`
 	Replies            []*pendingReply             `json:"replies,omitempty"`
@@ -306,6 +308,11 @@ func (b *Telegram) Run(ctx context.Context) error {
 	for _, batch := range state.Queue {
 		if batch == nil || len(batch.Items) == 0 || batch.Next != 0 {
 			return fmt.Errorf("Telegram 等待队列无效")
+		}
+	}
+	for _, document := range state.TextDocuments {
+		if document == nil || !document.Message.Document.isText() || document.Message.Document.FileID == "" {
+			return fmt.Errorf("Telegram TXT 附件队列无效")
 		}
 	}
 	for _, reply := range state.Replies {
@@ -443,7 +450,14 @@ func (b *Telegram) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		if b.startReadyBatch(&state, time.Now()) {
+		now := time.Now()
+		if b.processReadyTextDocument(ctx, &state, now) {
+			if err := b.save(state); err != nil {
+				return fmt.Errorf("保存 Telegram TXT 处理状态: %w", err)
+			}
+			continue
+		}
+		if b.startReadyBatch(&state, now) {
 			if err := b.save(state); err != nil {
 				return fmt.Errorf("保存 Telegram 批次开始状态: %w", err)
 			}

@@ -111,6 +111,30 @@ type CloudPath struct {
 
 var ErrCloudInput = errors.New("云下载链接或目录无效")
 var ErrCloudTaskMissing = errors.New("115 云下载任务不存在")
+var ErrCloudSubmissionRejected = errors.New("115 拒绝提交")
+var ErrCloudSubmissionUncertain = errors.New("115 提交结果未确认")
+
+// CloudSubmissionRejection 只保留 115 返回的数字错误码。
+type CloudSubmissionRejection struct {
+	Code int64
+}
+
+func (e *CloudSubmissionRejection) Error() string {
+	if e.Code != 0 {
+		return fmt.Sprintf("%s（错误码 %d）", ErrCloudSubmissionRejected, e.Code)
+	}
+	return ErrCloudSubmissionRejected.Error()
+}
+
+func (e *CloudSubmissionRejection) Unwrap() error { return ErrCloudSubmissionRejected }
+
+// CloudURLAddResult 保存 Cookie 批量接口返回的链接和任务标识，调用方按内容匹配。
+type CloudURLAddResult struct {
+	URL       string
+	InfoHash  string
+	Rejected  bool
+	Confirmed bool
+}
 
 type CloudResource struct {
 	Protocol string
@@ -183,22 +207,104 @@ func ParseCloudResource(raw string) (CloudResource, error) {
 }
 
 func (c *CloudClient) AddURL(ctx context.Context, cookie, rawURL, targetCID string) (json.RawMessage, error) {
+	raw, err := c.sendCloudURL(ctx, cookie, rawURL, targetCID)
+	if err != nil {
+		return nil, err
+	}
+	return unwrapCloudData(raw)
+}
+
+// SubmitURL 用于普通云下载，只核验提交接口本次返回的结果。
+func (c *CloudClient) SubmitURL(ctx context.Context, cookie, rawURL, targetCID string) error {
+	raw, err := c.sendCloudURL(ctx, cookie, rawURL, targetCID)
+	if err != nil {
+		return cloudSubmissionResponseError(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ErrCloudSubmissionUncertain
+	}
+	if cloudExplicitlyRejected(envelope) {
+		return cloudSubmissionRejection(envelope)
+	}
+	fields := envelope
+	if data := envelope["data"]; len(data) > 0 && string(data) != "null" {
+		fields, err = decodeCloudSubmissionObject(data)
+		if err != nil {
+			return err
+		}
+	}
+	if cloudExplicitlyRejected(fields) {
+		return cloudSubmissionRejection(fields)
+	}
+	for _, state := range []json.RawMessage{envelope["state"], fields["state"]} {
+		if len(state) > 0 && !upstreamOK(state) {
+			return ErrCloudSubmissionUncertain
+		}
+	}
+	if upstreamOK(envelope["state"]) || upstreamOK(fields["state"]) {
+		return nil
+	}
+	resource, err := ParseCloudResource(rawURL)
+	if err == nil && (resource.MatchesTaskHash(firstString(fields, "info_hash")) || resource.MatchesTaskHash(firstString(envelope, "info_hash"))) {
+		return nil
+	}
+	return ErrCloudSubmissionUncertain
+}
+
+func (c *CloudClient) sendCloudURL(ctx context.Context, cookie, rawURL, targetCID string) (json.RawMessage, error) {
 	rawURL, err := ValidateCloudURL(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	form := url.Values{"url": {rawURL}}
-	if strings.TrimSpace(targetCID) != "" {
-		if _, err := strconv.ParseUint(strings.TrimSpace(targetCID), 10, 64); err != nil {
-			return nil, fmt.Errorf("%w：目标目录编号无效", ErrCloudInput)
-		}
-		form.Set("wp_path_id", strings.TrimSpace(targetCID))
-	}
-	raw, err := c.sspRequest(ctx, cookie, "add_task_url", form)
-	if err != nil {
+	if err := setCloudTarget(form, targetCID); err != nil {
 		return nil, err
 	}
-	return unwrapCloudData(raw)
+	return c.sspRequest(ctx, cookie, "add_task_url", form)
+}
+
+// AddURLs 在同一个目标目录直接提交一组链接，只读取提交请求本身的回执。
+func (c *CloudClient) AddURLs(ctx context.Context, cookie string, urls []string, targetCID string) ([]CloudURLAddResult, error) {
+	if len(urls) == 0 {
+		return nil, ErrCloudInput
+	}
+	form := make(url.Values, len(urls)+1)
+	if err := setCloudTarget(form, targetCID); err != nil {
+		return nil, err
+	}
+	for i, input := range urls {
+		link, err := ValidateCloudURL(input)
+		if err != nil {
+			return nil, fmt.Errorf("第 %d 条链接: %w", i+1, err)
+		}
+		form.Set("url["+strconv.Itoa(i)+"]", link)
+	}
+	raw, err := c.sspRequest(ctx, cookie, "add_task_urls", form)
+	if err != nil {
+		return nil, cloudSubmissionResponseError(err)
+	}
+	return parseCloudURLAddResults(raw)
+}
+
+func cloudSubmissionResponseError(err error) error {
+	var responseError *cloudResponseError
+	if errors.As(err, &responseError) {
+		return fmt.Errorf("%w: %w", ErrCloudSubmissionUncertain, err)
+	}
+	return err
+}
+
+func setCloudTarget(form url.Values, cid string) error {
+	cid = strings.TrimSpace(cid)
+	if cid == "" {
+		return nil
+	}
+	if _, err := strconv.ParseUint(cid, 10, 64); err != nil {
+		return fmt.Errorf("%w：目标目录编号无效", ErrCloudInput)
+	}
+	form.Set("wp_path_id", cid)
+	return nil
 }
 
 // AddBT adds a torrent by info hash. wanted is an optional comma-separated
@@ -217,11 +323,8 @@ func (c *CloudClient) AddBT(ctx context.Context, cookie, infoHash, targetCID, wa
 	if strings.TrimSpace(wanted) != "" {
 		form.Set("wanted", strings.TrimSpace(wanted))
 	}
-	if strings.TrimSpace(targetCID) != "" {
-		if _, err := strconv.ParseUint(strings.TrimSpace(targetCID), 10, 64); err != nil {
-			return nil, fmt.Errorf("%w：目标目录编号无效", ErrCloudInput)
-		}
-		form.Set("wp_path_id", strings.TrimSpace(targetCID))
+	if err := setCloudTarget(form, targetCID); err != nil {
+		return nil, err
 	}
 	raw, err := c.sspRequest(ctx, cookie, "add_task_bt", form)
 	if err != nil {
@@ -465,17 +568,22 @@ func (c *CloudClient) webRequest(ctx context.Context, cookie string, method stri
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 	if err != nil {
-		return nil, fmt.Errorf("读取 115 云下载响应: %w", err)
+		return nil, &cloudResponseError{fmt.Errorf("读取 115 云下载响应: %w", err)}
 	}
 	if len(raw) > 4<<20 {
-		return nil, fmt.Errorf("115 云下载响应过大")
+		return nil, &cloudResponseError{errors.New("115 云下载响应过大")}
 	}
 	var envelope json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("解析 115 云下载响应: %w", err)
+		return nil, &cloudResponseError{fmt.Errorf("解析 115 云下载响应: %w", err)}
 	}
 	return envelope, nil
 }
+
+// cloudResponseError 表明请求已发出，客户端未能读取完整响应。
+type cloudResponseError struct{ error }
+
+func (e *cloudResponseError) Unwrap() error { return e.error }
 
 func (c *CloudClient) sspRequest(ctx context.Context, cookie, action string, form url.Values) (json.RawMessage, error) {
 	payload := make(map[string]string, len(form)+2)
@@ -553,6 +661,86 @@ func parseCloudTask(raw json.RawMessage) (CloudTask, error) {
 // p115 client package.
 func ParseCloudTask(raw json.RawMessage) (CloudTask, error) {
 	return parseCloudTask(raw)
+}
+
+func parseCloudURLAddResults(raw json.RawMessage) ([]CloudURLAddResult, error) {
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return nil, ErrCloudSubmissionUncertain
+	}
+	fields := envelope
+	if data := envelope["data"]; envelope["result"] == nil && len(data) > 0 && string(data) != "null" {
+		var err error
+		fields, err = decodeCloudSubmissionObject(data)
+		if err != nil {
+			if cloudExplicitlyRejected(envelope) {
+				return nil, cloudSubmissionRejection(envelope)
+			}
+			return nil, err
+		}
+	}
+	var rows []json.RawMessage
+	if rawRows := fields["result"]; rawRows != nil {
+		if err := json.Unmarshal(rawRows, &rows); err != nil {
+			return nil, ErrCloudSubmissionUncertain
+		}
+	}
+	if len(rows) == 0 {
+		for _, response := range []map[string]json.RawMessage{fields, envelope} {
+			if cloudExplicitlyRejected(response) {
+				return nil, cloudSubmissionRejection(response)
+			}
+		}
+		return nil, ErrCloudSubmissionUncertain
+	}
+	results := make([]CloudURLAddResult, 0, len(rows))
+	for _, row := range rows {
+		var item map[string]json.RawMessage
+		if err := json.Unmarshal(row, &item); err != nil {
+			continue
+		}
+		result := CloudURLAddResult{URL: firstString(item, "url"), InfoHash: firstString(item, "info_hash")}
+		if result.URL == "" && result.InfoHash == "" {
+			continue
+		}
+		result.Rejected = cloudExplicitlyRejected(item) || (result.InfoHash == "" && firstInt64(item, "code") != 0)
+		result.Confirmed = upstreamOK(item["state"])
+		results = append(results, result)
+	}
+	if len(results) == 0 {
+		return nil, ErrCloudSubmissionUncertain
+	}
+	return results, nil
+}
+
+func decodeCloudSubmissionObject(data json.RawMessage) (map[string]json.RawMessage, error) {
+	var encoded string
+	if json.Unmarshal(data, &encoded) == nil {
+		decrypted, err := RSADecrypt(encoded)
+		if err != nil {
+			return nil, ErrCloudSubmissionUncertain
+		}
+		data = decrypted
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return nil, ErrCloudSubmissionUncertain
+	}
+	return fields, nil
+}
+
+func cloudSubmissionRejection(fields map[string]json.RawMessage) error {
+	for _, key := range []string{"errno", "errcode", "code"} {
+		if code := firstInt64(fields, key); code != 0 {
+			return &CloudSubmissionRejection{Code: code}
+		}
+	}
+	return &CloudSubmissionRejection{}
+}
+
+func cloudExplicitlyRejected(fields map[string]json.RawMessage) bool {
+	state := string(fields["state"])
+	return state == "false" || state == "0" || firstInt64(fields, "errno") != 0 || firstInt64(fields, "errcode") != 0
 }
 
 func unwrapCloudData(raw json.RawMessage) (json.RawMessage, error) {

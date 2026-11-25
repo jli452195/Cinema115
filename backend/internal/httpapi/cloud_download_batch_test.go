@@ -17,21 +17,23 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 	client := &cloudSubmitAPIFake{}
 	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
 	link := "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)
+	otherLink := "ed2k://|file|example.mkv|100|" + strings.Repeat("b", 32) + "|/"
 	for _, tc := range []struct {
-		name, body    string
-		status, steps int
+		name, body, step, eventOrder string
+		status                       int
 	}{
-		{"valid", `{"urls":["` + link + `"],"targetCID":"99"}`, 200, 2},
-		{"invalid-second", `{"urls":["` + link + `","invalid"],"targetCID":"99"}`, 400, 0},
-		{"empty", `{"urls":[],"targetCID":"99"}`, 400, 0},
-		{"missing-directory", `{"urls":["` + link + `"]}`, 400, 0},
-		{"body-too-large", `{"urls":["` + link + `&dn=` + strings.Repeat("x", 256<<10) + `"],"targetCID":"99"}`, http.StatusRequestEntityTooLarge, 0},
+		{name: "single", body: `{"urls":["` + link + `"],"targetCID":"99"}`, step: "add", eventOrder: "ready,start,result,done", status: 200},
+		{name: "batch", body: `{"urls":["` + link + `","` + otherLink + `"],"targetCID":"99"}`, step: "batch", eventOrder: "ready,start,start,result,result,done", status: 200},
+		{name: "invalid-second", body: `{"urls":["` + link + `","invalid"],"targetCID":"99"}`, status: 400},
+		{name: "empty", body: `{"urls":[],"targetCID":"99"}`, status: 400},
+		{name: "missing-directory", body: `{"urls":["` + link + `"]}`, status: 400},
+		{name: "body-too-large", body: `{"urls":["` + link + `&dn=` + strings.Repeat("x", 256<<10) + `"],"targetCID":"99"}`, status: http.StatusRequestEntityTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client.steps = nil
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks/batch?accountId="+id, strings.NewReader(tc.body)))
-			if w.Code != tc.status || len(client.steps) != tc.steps {
+			if w.Code != tc.status || strings.Join(client.steps, ",") != tc.step {
 				t.Fatalf("status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
 			}
 			if strings.Contains(w.Body.String(), "UID=") {
@@ -46,16 +48,23 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 			if !w.Flushed || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/x-ndjson") || w.Header().Get("X-Accel-Buffering") != "no" {
 				t.Fatal("stream not flushed")
 			}
-			var events []service.CloudDownloadBatchEvent
+			var eventTypes []string
+			resultIndex := 0
 			for _, line := range strings.Split(strings.TrimSpace(w.Body.String()), "\n") {
 				var event service.CloudDownloadBatchEvent
 				if err := json.Unmarshal([]byte(line), &event); err != nil {
 					t.Fatal(err)
 				}
-				events = append(events, event)
+				eventTypes = append(eventTypes, event.Type)
+				if event.Type == "result" {
+					if !event.Accepted || event.Index != resultIndex {
+						t.Fatalf("unexpected result: %+v", event)
+					}
+					resultIndex++
+				}
 			}
-			if len(events) != 4 || events[0].Type != "ready" || !events[2].Accepted || events[3].Type != "done" || client.cid != "99" {
-				t.Fatalf("events=%+v cid=%s", events, client.cid)
+			if strings.Join(eventTypes, ",") != tc.eventOrder || client.cid != "99" {
+				t.Fatalf("events=%v cid=%s", eventTypes, client.cid)
 			}
 		})
 	}

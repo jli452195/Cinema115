@@ -23,23 +23,37 @@ type telegramEntity struct {
 }
 
 type telegramResources struct {
-	CloudLinks []string
-	Shares     []messageShare
-	HasMagnet  bool
+	CloudLinks          []string
+	Shares              []messageShare
+	HasMagnet           bool
+	Duplicates          int
+	InvalidDocumentLine int
 }
 
-// 整条消息只展开一次真实链接，再统一识别资源，避免各入口重复解析或静默丢弃混合输入。
-func parseTelegramResources(message *telegramMessage) telegramResources {
+// 说明和附件分别匹配相邻提取码，再对整条消息的资源去重。
+func parseTelegramResources(message *telegramMessage, document ...string) telegramResources {
 	text, entities := message.Text, message.Entities
 	if text == "" {
 		text, entities = message.Caption, message.CaptionEntities
 	}
-	text = expandTelegramLinkTargets(text, entities)
+	texts := append([]string{expandTelegramLinkTargets(text, entities)}, document...)
+	resources := telegramResources{Shares: []messageShare{}}
+	seenCloud := make(map[string]bool)
+	seenShares := make(map[messageShareKey]bool)
+	for i, source := range texts {
+		resources.appendText(source, i > 0, seenCloud, seenShares)
+	}
+	return resources
+}
+
+func (resources *telegramResources) appendText(text string, document bool, seenCloud map[string]bool, seenShares map[messageShareKey]bool) {
 	positions := append(magnetLinkPattern.FindAllStringIndex(text, -1), ed2kLinkPattern.FindAllStringIndex(text, -1)...)
 	positions = append(positions, shareLinkPattern.FindAllStringIndex(text, -1)...)
+	if document {
+		// 完整链接在同一位置先匹配，余下的前缀用于定位截断或无法解析的链接。
+		positions = append(positions, documentCloudPrefix.FindAllStringIndex(text, -1)...)
+	}
 	sort.SliceStable(positions, func(i, j int) bool { return positions[i][0] < positions[j][0] })
-	resources := telegramResources{CloudLinks: make([]string, 0, len(positions))}
-	seen := make(map[string]bool, len(positions))
 	var shareText strings.Builder
 	shareText.Grow(len(text))
 	lastEnd, lastCloudEnd := 0, 0
@@ -55,16 +69,20 @@ func parseTelegramResources(message *telegramMessage) telegramResources {
 		}
 		normalized, err := p115.ValidateCloudURL(link)
 		if err != nil {
+			if document && resources.InvalidDocumentLine == 0 {
+				resources.InvalidDocumentLine = strings.Count(text[:position[0]], "\n") + 1
+			}
 			continue
 		}
 		lastEnd = position[1]
 		shareText.WriteString(text[lastCloudEnd:position[0]])
 		shareText.WriteByte(' ')
 		lastCloudEnd = position[1]
-		if seen[normalized] {
+		if seenCloud[normalized] {
+			resources.Duplicates++
 			continue
 		}
-		seen[normalized] = true
+		seenCloud[normalized] = true
 		resources.CloudLinks = append(resources.CloudLinks, normalized)
 		if strings.EqualFold(normalized[:7], "magnet:") {
 			resources.HasMagnet = true
@@ -72,12 +90,14 @@ func parseTelegramResources(message *telegramMessage) telegramResources {
 	}
 	// 屏蔽云下载链接后复用分享提取码的相邻匹配与去重规则。
 	shareText.WriteString(text[lastCloudEnd:])
-	resources.Shares = ParseMessages(shareText.String())
-	return resources
+	shares, repeated := parseMessageShares(shareText.String(), seenShares)
+	resources.Shares = append(resources.Shares, shares...)
+	resources.Duplicates += repeated
 }
 
-var magnetLinkPattern = regexp.MustCompile(`(?i)magnet:\?xt=urn:btih:[A-Z0-9]{32,40}(?:&[^\s<>"，。；、（）\[\]{},;]+)*`)
+var magnetLinkPattern = regexp.MustCompile(`(?i)magnet:\?xt=urn:btih:[A-Z0-9]+(?:&[^\s<>"，。；、（）\[\]{},;]+)*`)
 var ed2kLinkPattern = regexp.MustCompile(`(?i)ed2k://\|file\|[^\r\n<>]+?\|/`)
+var documentCloudPrefix = regexp.MustCompile(`(?i)magnet:\?xt=urn:btih:|ed2k://\|file\|`)
 
 func telegramMessageText(message *telegramMessage) string {
 	if message.Text != "" {
@@ -172,10 +192,16 @@ var sharePasswordPattern = regexp.MustCompile(`(?:提取码|访问码|密码)\s*
 
 // ParseMessages 按出现顺序提取全部链接；独立提取码只作用于相邻链接，重复分享仅保留一次。
 func ParseMessages(text string) []messageShare {
+	shares, _ := parseMessageShares(text, make(map[messageShareKey]bool))
+	return shares
+}
+
+type messageShareKey struct{ code, password string }
+
+func parseMessageShares(text string, seen map[messageShareKey]bool) ([]messageShare, int) {
 	positions := shareLinkPattern.FindAllStringIndex(text, -1)
 	shares := make([]messageShare, 0, len(positions))
-	type shareKey struct{ code, password string }
-	seen := make(map[shareKey]bool, len(positions))
+	repeated := 0
 	for i, position := range positions {
 		link := strings.TrimRight(text[position[0]:position[1]], ").,;]}")
 		end := len(text)
@@ -202,7 +228,7 @@ func ParseMessages(text string) []messageShare {
 				password = match[1]
 			}
 		}
-		key := shareKey{code: link, password: password}
+		key := messageShareKey{code: link, password: password}
 		if share, err := p115.ParseShareURL(link); err == nil {
 			key.code = share.Code
 			if password == "" {
@@ -210,10 +236,11 @@ func ParseMessages(text string) []messageShare {
 			}
 		}
 		if seen[key] {
+			repeated++
 			continue
 		}
 		seen[key] = true
 		shares = append(shares, messageShare{URL: link, Password: password})
 	}
-	return shares
+	return shares, repeated
 }

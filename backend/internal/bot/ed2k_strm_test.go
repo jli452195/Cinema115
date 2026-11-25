@@ -87,13 +87,18 @@ func TestED2KSTRMCommandRequiresAssignedTargetAndValidLinkCount(t *testing.T) {
 	if len(state.Queue) != 0 || len(state.ResourceSelections) != 0 || len(state.Replies) != 1 {
 		t.Fatalf("其他协议错误进入导入：%+v", state)
 	}
-	links := make([]string, 0, 51)
-	for i := 0; i < 51; i++ {
+	links := make([]string, 0, maxMessageResourceLinks+1)
+	for i := range maxMessageResourceLinks + 1 {
 		links = append(links, fmt.Sprintf("ed2k://|file|movie%d.mkv|123|%032x|/", i, i+1))
 	}
 	state = telegramState{}
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(4, 42, "private", "/ed2k_strm "+strings.Join(links[:maxMessageResourceLinks], "\n"))}, time.Now())
+	if len(state.Queue) != 1 || len(state.Queue[0].Items) != maxMessageResourceLinks || len(state.Replies) != 0 {
+		t.Fatalf("正文上限内的链接没有完整入队：%+v", state)
+	}
+	state = telegramState{}
 	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(4, 42, "private", "/ed2k_strm "+strings.Join(links, "\n"))}, time.Now())
-	if len(state.Queue) != 0 || len(state.Replies) != 1 || !strings.Contains(state.Replies[0].Text, "50") {
+	if len(state.Queue) != 0 || len(state.Replies) != 1 || !strings.Contains(state.Replies[0].Text, fmt.Sprint(maxMessageResourceLinks)) {
 		t.Fatalf("超量输入未完整拒绝：%+v", state)
 	}
 }

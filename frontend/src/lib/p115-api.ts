@@ -12,6 +12,6 @@ export async function p115Request<T>(token: string, path: string, init: RequestI
     const message = response.status === 401 ? '管理员登录已过期，请返回首页重新登录' : data?.error ?? `请求失败（HTTP ${response.status}）`
     throw Object.assign(new Error(message), { status: response.status, responseData: data })
   }
-  if (!data) throw new Error('接口未返回有效数据，请检查后端服务')
+  if (!data) throw Object.assign(new Error('接口未返回有效数据，请检查后端服务'), { status: response.status })
   return data as T
 }

@@ -79,7 +79,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     const organize = calls.find(call => call.endpoint.endsWith('/download-organize/files')).body
     assert.deepEqual(organize, { source: 'dmhy', title: '幽游白书 资源 1 [1080p]', fansub: '测试组', providerId: '1', magnet: item(1).magnet })
     await rows.first().getByRole('button', { name: '115 云下载', exact: true }).click()
-    await page.getByText('已提交到 115 云下载：/下载。提交成功不代表下载已完成。', { exact: true }).waitFor()
+    await page.getByText('已提交 1 条（/下载）', { exact: true }).waitFor()
     assert.equal(calls.filter(call => call.endpoint.endsWith('/cloud-download/tasks')).length, 1)
     passed.push('下一页去重并保留批量选择；整理 source 为 dmhy；普通离线复用现有主账号流程')
 

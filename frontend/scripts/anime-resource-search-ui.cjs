@@ -28,7 +28,14 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
       else if(endpoint.endsWith('/cloud-download/config')) data={accountId:'primary',targetCID:'123',targetPath:'/下载'}
       else if(endpoint.endsWith('/cloud-download/tasks')) data={accepted:true}
       else if(endpoint.endsWith('/cloud-download/tasks/batch')) {
-        const lines = [{type:'ready',total:body.urls.length},...body.urls.flatMap((_,index)=>[{type:'start',index,total:body.urls.length},{type:'result',index,total:body.urls.length,accepted:true}]),{type:'done',total:body.urls.length,stopped:false}]
+        const total = body.urls.length
+        const lines = [{type:'ready',total}]
+        for(let start=0;start<total;start+=100) {
+          const end = Math.min(start+100,total)
+          for(let index=start;index<end;index++) lines.push({type:'start',index,total})
+          for(let index=start;index<end;index++) lines.push({type:'result',index,total,accepted:true})
+        }
+        lines.push({type:'done',total})
         return route.fulfill({contentType:'application/x-ndjson',body:lines.map(v=>JSON.stringify(v)).join('\n')+'\n'})
       } else if(endpoint.includes('/notifications')) data={items:[],unread:0}
       else if(endpoint.includes('/emby/media/')) data={media:{state:'unknown',items:[]},baseUrl:'',serverId:''}
@@ -74,7 +81,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     assert.equal(selected.group,'dmhy_f776');assert.equal(selected.groupName,'测试组')
     passed.push('aggregated search without source selector; distinct same-name publisher identities; failed filter retains previous rows')
     await page.getByRole('button',{name:'115 云下载',exact:true}).first().click()
-    await page.getByText('已提交到 115 云下载：/下载。提交成功不代表下载已完成。',{exact:true}).waitFor()
+    await page.getByText('已提交 1 条（/下载）',{exact:true}).waitFor()
     assert.equal(calls.filter(c=>c.endpoint.endsWith('/cloud-download/tasks')).length,1)
     await page.keyboard.press('Escape');await page.locator('dialog').waitFor({state:'detached'})
     assert.equal(await page.getByRole('button',{name:'Garden 搜索',exact:true}).evaluate(el=>el===document.activeElement),true)
@@ -82,7 +89,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.getByRole('list',{name:'蜜柑资源列表'}).waitFor()
     assert.equal(await page.getByRole('navigation',{name:'Garden 来源站'}).count(),0)
     await page.getByRole('button',{name:'115 云下载',exact:true}).first().click()
-    await page.getByText('已提交到 115 云下载：/下载。提交成功不代表下载已完成。',{exact:true}).waitFor()
+    await page.getByText('已提交 1 条（/下载）',{exact:true}).waitFor()
     assert.equal(calls.filter(c=>c.endpoint.endsWith('/cloud-download/tasks')).length,2)
     await page.keyboard.press('Escape')
     passed.push('single cloud download uses existing main-account config; Escape restores focus; Mikan uses independent API')
@@ -90,7 +97,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     await page.getByRole('button',{name:'批量选择',exact:true}).click()
     await page.getByLabel('全选当前筛选').check()
     await page.getByRole('button',{name:'提交到 115（2）',exact:true}).click()
-    await page.getByText('已提交 2，失败 0，待核对 0。下载进度请到 115 查看。',{exact:true}).waitFor()
+    await page.getByText('已提交 2 条',{exact:true}).waitFor()
     assert.equal(calls.filter(c=>c.endpoint.endsWith('/cloud-download/tasks/batch')).length,1)
     await page.keyboard.press('Escape')
     passed.push('batch cloud download reuses bounded request/receipt workflow')
@@ -109,8 +116,15 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
     state.fail=false
     await page.getByRole('button',{name:'读取更多搜索结果'}).click();await rows.nth(100).waitFor()
     assert.equal(await rows.count(),101)
+    await page.getByRole('button',{name:'批量选择',exact:true}).click()
+    await page.getByLabel('全选当前筛选').check()
+    await page.getByRole('button',{name:'批量整理（101）',exact:true}).click()
+    await page.getByText('每批最多整理 100 项，请减少选择。',{exact:true}).waitFor()
+    await page.getByRole('button',{name:'提交到 115（101）',exact:true}).click()
+    await page.getByText('已提交 101 条',{exact:true}).waitFor()
+    assert.equal(calls.filter(c=>c.endpoint.endsWith('/cloud-download/tasks/batch')).at(-1).body.urls.length,101)
     await page.keyboard.press('Escape');state.large=false
-    passed.push('100-row local display before remote pagination, dimension labels and failed pagination retry')
+    passed.push('100-row local display, pagination retry, 101-resource cloud submission and 100-resource organize limit')
     await page.setViewportSize({width:320,height:740})
     await page.getByRole('button',{name:'Garden 搜索',exact:true}).click();await rows.first().waitFor()
     await fs.mkdir('test-results',{recursive:true})

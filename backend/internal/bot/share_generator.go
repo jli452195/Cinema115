@@ -21,18 +21,20 @@ type telegramGenerationPreparer interface {
 	PrepareTelegramGeneration(service.AutomationSettings) (func(context.Context) context.Context, error)
 }
 
-// 只有选择完成且配置相同的分享 STRM 消息才能进入同一等待窗口。
-func (b *Telegram) enqueueShareSTRMBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, settings service.AutomationSettings, now time.Time) {
+// 正文仅在配置相同的情况下共享等待窗口，TXT 清单始终独立入队。
+func (b *Telegram) enqueueShareSTRMBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, settings service.AutomationSettings, textDocument bool, now time.Time) {
 	mode := "direct"
 	wait := time.Duration(0)
 	if settings.ReshareEnabled {
 		mode = "reshare"
-		wait = time.Duration(settings.TGBatchWaitSeconds) * time.Second
+		if !textDocument {
+			wait = time.Duration(settings.TGBatchWaitSeconds) * time.Second
+		}
 	}
 	var target *messageBatch
 	if wait > 0 {
 		for _, queued := range state.Queue {
-			if queued.ChatID == message.Chat.ID && queued.ThreadID == message.ThreadID && queued.Mode == mode &&
+			if !queued.TextDocument && queued.ChatID == message.Chat.ID && queued.ThreadID == message.ThreadID && queued.Mode == mode &&
 				queued.ShareSettings != nil && *queued.ShareSettings == settings && now.Before(queued.ReadyAt) {
 				target = queued
 				break
@@ -41,7 +43,7 @@ func (b *Telegram) enqueueShareSTRMBatch(state *telegramState, updateID int64, m
 	}
 	if target == nil {
 		target = &messageBatch{UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
-			Mode: mode, ReadyAt: now.Add(wait), ShareSettings: &settings}
+			Mode: mode, ReadyAt: now.Add(wait), ShareSettings: &settings, TextDocument: textDocument}
 		state.Queue = append(state.Queue, target)
 	}
 	for _, item := range items {

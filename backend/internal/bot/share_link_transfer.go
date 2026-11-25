@@ -14,6 +14,9 @@ func (b *Telegram) processShareLinkTransfer(ctx context.Context, state *telegram
 	}
 	execution, err := b.shareBatchExecution(batch)
 	if err != nil {
+		if batch.TextDocument {
+			return b.stopTextBatch(state, "115 分享转存", err)
+		}
 		remaining := len(batch.Items) - batch.Next
 		batch.Next = len(batch.Items)
 		state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID,
@@ -25,21 +28,24 @@ func (b *Telegram) processShareLinkTransfer(ctx context.Context, state *telegram
 	}
 	index := batch.Next
 	item := batch.Items[index]
-	batch.Next++
-	state.Pending = &pendingReply{
-		UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID,
-		Text: "115 分享链接正在提交到指定目录。若 Bot 或服务中断，本条不会自动重试；恢复前请检查目标目录。",
-	}
-	state.Pending.EditMessageID = batch.StatusMessageID
-	if index < len(batch.SourceMessageIDs) && batch.SourceMessageIDs[index] > 0 {
-		state.Pending.MessageID = batch.SourceMessageIDs[index]
-	}
-	if err := b.save(*state); err != nil {
+	interrupted := "115 分享链接正在提交到指定目录。若 Bot 或服务中断，本条不会自动重试；恢复前请检查目标目录。"
+	if err := b.saveBatchCheckpoint(state, index+1, interrupted); err != nil {
 		return fmt.Errorf("保存 Telegram 分享转存进度: %w", err)
 	}
 	taskCtx, cancel := context.WithTimeout(ctx, service.ShareGenerationTimeout)
 	receipt, err := execution(taskCtx, item.URL, item.Password)
 	cancel()
+	if batch.TextDocument {
+		if canceled := ctx.Err(); canceled != nil {
+			return canceled
+		}
+		partial := ""
+		if err != nil && receipt.AcceptedItems > 0 {
+			partial = fmt.Sprintf("已确认提交 %d 个顶层条目", receipt.AcceptedItems)
+		}
+		b.recordTextBatchResult(batch, "115 分享转存", index, err, partial)
+		return b.saveTextBatchProgress(state, "115 分享转存")
+	}
 	state.Pending.Text = formatShareLinkTransferReply(receipt, err)
 	level := "INFO"
 	if err != nil {

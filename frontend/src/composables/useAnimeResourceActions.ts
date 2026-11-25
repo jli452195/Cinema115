@@ -20,6 +20,8 @@ interface AnimeResourceActionOptions {
   confirmOrganizeAction: ConfirmOrganizeAction
 }
 
+const ORGANIZE_RESOURCE_LIMIT = 100
+
 export function useAnimeResourceActions(options: AnimeResourceActionOptions, signal: AbortSignal, batch: ReturnType<typeof useCloudDownloadBatch>) {
   const { selected: batchSelected, count: batchCount } = batch
   const preparing = ref<{ id: string; kind: 'files' | 'magnet' }>()
@@ -123,6 +125,10 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
     const draftScope = organizeScope(), draftKey = organizeSelectionKey(selected)
     const entries = selected.filter(canSelect).map(item => organizeEntry(item))
     if (!entries.length) return
+    if (entries.length > ORGANIZE_RESOURCE_LIMIT) {
+      batch.notice.value = `每批最多整理 ${ORGANIZE_RESOURCE_LIMIT} 项，请减少选择。`
+      return
+    }
     const replacing = organizeEntries.value.length > 0, hiddenCount = hiddenSelectionCount.value
     const returnFocus = event.currentTarget as HTMLElement
     if (replacing && !await options.confirmOrganizeAction('replace')) return

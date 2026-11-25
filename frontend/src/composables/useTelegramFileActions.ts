@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 import { useCloudDownloadAction } from './useCloudDownloadAction'
 import { cloudDownloadNotice, loadCloudDownloadConfig } from '../lib/cloud-download'
-import { readCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
+import { submitCloudBatch, trackCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
 import { createED2KSTRMAPI } from '../lib/ed2k-strm-api'
 import { ed2kRequestID } from '../utils/ed2kSTRM'
 import type { TelegramFile } from '../utils/telegramFiles'
@@ -53,47 +53,48 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
     running.value = true; cloudBatchRunning.value = true
     controller = new AbortController()
     const signal = AbortSignal.any([lifecycle, controller.signal])
-    const completed = new Set<number>()
-    let dispatched = false, receivedDone = false, active: number | undefined, accepted = 0
+    const receipts = trackCloudBatch(rows.length)
+    let dispatched = false, accepted = 0, failed = 0, uncertain = 0
     try {
       const config = await loadCloudDownloadConfig(token, signal)
       if (!config.accountId || !config.targetCID) throw Object.assign(new Error('请先在 115 云下载保存主账号和下载目录'), { beforeStart: true })
       // 整批交给现有批量接口，在后端固定账号与目录，不逐文件重新读取配置。
       const onEvent = (event: CloudBatchEvent) => {
-        if (event.total !== rows.length) throw new Error('批量云下载回执数量异常')
-        if (event.type === 'ready') return
-        if (event.type === 'done') {
-          if (active !== undefined || (!event.stopped && completed.size !== rows.length)) throw new Error('批量云下载缺少文件回执')
-          receivedDone = true; return
-        }
-        const file = rows[event.index]
-        if (!file || completed.has(event.index)) throw new Error('批量云下载回执编号异常')
+        receipts.accept(event)
+        if (event.type === 'ready' || event.type === 'done') return
+        const file = rows[event.index]!
         if (event.type === 'start') {
-          if (active !== undefined) throw new Error('批量云下载回执顺序异常')
-          active = event.index; cloud.statuses.value[file.id] = { busy: true }; return
+          cloud.statuses.value[file.id] = { busy: true }
+          return
         }
-        if (active !== event.index) throw new Error('批量云下载回执顺序异常')
-        active = undefined; completed.add(event.index)
         if (event.accepted) {
           accepted++
-          cloud.statuses.value[file.id] = { success: true, message: cloudDownloadNotice({ accepted: true, removedOldTask: event.removedOldTask }, config.targetPath) }
-        } else cloud.statuses.value[file.id] = { uncertain: event.outcomeUncertain, message: event.error || '提交失败' }
+          cloud.statuses.value[file.id] = { success: true, message: cloudDownloadNotice(config.targetPath) }
+        } else {
+          if (event.outcomeUncertain) uncertain++
+          else failed++
+          cloud.statuses.value[file.id] = { uncertain: event.outcomeUncertain, message: event.error || '提交失败' }
+        }
       }
       dispatched = true
-      const response = await fetch(`/api/admin/p115/cloud-download/tasks/batch?accountId=${encodeURIComponent(config.accountId)}`, {
-        method: 'POST', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: rows.map(file => file.url), targetCID: config.targetCID }), signal,
-      })
-      await readCloudBatch(response, onEvent)
-      notice.value = `已提交 ${accepted} / ${rows.length} 个文件；下载进度请到 115 查看。`
+      await submitCloudBatch(token, config.accountId, config.targetCID, rows.map(file => file.url), signal, onEvent)
+      const counts = [`已提交 ${accepted} 条`]
+      if (failed) counts.push(`失败 ${failed} 条`)
+      if (uncertain) counts.push(`待核对 ${uncertain} 条`)
+      const remaining = rows.length - receipts.completed.size
+      if (remaining) counts.push(`已停止后续提交，其余 ${remaining} 条未提交`)
+      notice.value = counts.join('，')
     } catch (reason) {
       const error = reason as Error & { beforeStart?: boolean }
-      if (dispatched && !receivedDone && !error.beforeStart) {
-        for (let i = 0; i < rows.length; i++) if (!completed.has(i)) {
+      if (dispatched && !receipts.done && !error.beforeStart) {
+        for (let i = 0; i < rows.length; i++) if (!receipts.completed.has(i)) {
           cloud.statuses.value[rows[i]!.id] = { uncertain: true, message: '接收结果尚未确认，请先到 115 云下载核对。' }
         }
       }
-      if (!lifecycle.aborted) notice.value = signal.aborted ? '已停止后续提交，未取得回执的文件请先核对。' : error.message || '批量云下载失败'
+      if (!lifecycle.aborted) {
+        const detail = signal.aborted ? '已停止后续提交，未取得回执的文件请先核对。' : error.message || '批量云下载失败'
+        notice.value = `已提交 ${accepted} 条。${detail}`
+      }
     } finally { running.value = false; cloudBatchRunning.value = false; controller = undefined }
   }
 

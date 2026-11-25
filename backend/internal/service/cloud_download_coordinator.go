@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"strm115/backend/internal/client/p115"
 )
 
 var ErrCloudCoordinationInput = errors.New("invalid cloud download coordination identity")
@@ -60,12 +62,22 @@ func cloudCoordinationIdentity(uid, protocol, hash string) (string, cloudResourc
 // The returned release must cover lookup/write/result inspection, but must not
 // span a download's lifetime or a database transaction waiting on network I/O.
 func (c *CloudDownloadCoordinator) Acquire(ctx context.Context, uid, protocol, hash string) (release func(), err error) {
-	if c == nil {
+	return c.acquireResources(ctx, uid, []p115.CloudResource{{Protocol: protocol, Hash: hash}})
+}
+
+// 一次预留本批资源及 UID 执行名额，避免同一批逐条取得名额时自锁。
+func (c *CloudDownloadCoordinator) acquireResources(ctx context.Context, uid string, resources []p115.CloudResource) (release func(), err error) {
+	if c == nil || len(resources) == 0 {
 		return nil, ErrCloudCoordinationInput
 	}
-	uid, key, err := cloudCoordinationIdentity(uid, protocol, hash)
-	if err != nil {
-		return nil, err
+	keys := make([]cloudResourceKey, 0, len(resources))
+	for _, resource := range resources {
+		normalized, key, err := cloudCoordinationIdentity(uid, resource.Protocol, resource.Hash)
+		if err != nil {
+			return nil, err
+		}
+		uid = normalized
+		keys = append(keys, key)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -73,22 +85,26 @@ func (c *CloudDownloadCoordinator) Acquire(ctx context.Context, uid, protocol, h
 	c.mu.Lock()
 	work := c.uids[uid]
 	if work == nil {
-		work = &cloudUIDWork{gate: make(chan struct{}, 1), resources: make(map[cloudResourceKey]struct{}, 1)}
+		work = &cloudUIDWork{gate: make(chan struct{}, 1), resources: make(map[cloudResourceKey]struct{}, len(keys))}
 		if c.uids == nil {
 			c.uids = make(map[string]*cloudUIDWork)
 		}
 		c.uids[uid] = work
 	}
-	if _, exists := work.resources[key]; exists {
-		c.mu.Unlock()
-		return nil, ErrCloudTaskBusy
+	for _, key := range keys {
+		if _, exists := work.resources[key]; exists {
+			c.mu.Unlock()
+			return nil, ErrCloudTaskBusy
+		}
 	}
-	work.resources[key] = struct{}{}
+	for _, key := range keys {
+		work.resources[key] = struct{}{}
+	}
 	c.mu.Unlock()
 	select {
 	case <-ctx.Done():
 		c.mu.Lock()
-		c.removeLocked(uid, work, key)
+		c.removeLocked(uid, work, keys)
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	case work.gate <- struct{}{}:
@@ -98,7 +114,7 @@ func (c *CloudDownloadCoordinator) Acquire(ctx context.Context, uid, protocol, h
 		once.Do(func() {
 			c.mu.Lock()
 			<-work.gate
-			c.removeLocked(uid, work, key)
+			c.removeLocked(uid, work, keys)
 			c.mu.Unlock()
 		})
 	}
@@ -109,8 +125,10 @@ func (c *CloudDownloadCoordinator) Acquire(ctx context.Context, uid, protocol, h
 	return release, nil
 }
 
-func (c *CloudDownloadCoordinator) removeLocked(uid string, work *cloudUIDWork, key cloudResourceKey) {
-	delete(work.resources, key)
+func (c *CloudDownloadCoordinator) removeLocked(uid string, work *cloudUIDWork, keys []cloudResourceKey) {
+	for _, key := range keys {
+		delete(work.resources, key)
+	}
 	if len(work.resources) == 0 {
 		delete(c.uids, uid)
 	}

@@ -141,6 +141,66 @@ func enqueueResourceSelection(t *testing.T, b *Telegram, now time.Time) telegram
 	return state
 }
 
+func TestTextDocumentSelectionKeepsFullBatchAfterRestart(t *testing.T) {
+	b, _ := newResourceSelectionTestBot(t)
+	now := time.Now()
+	update := cloudUpdate(10, 42, "private", "")
+	items := make([]messageShare, maxDocumentResourceLinks+1)
+	for i := range items {
+		items[i].URL = fmt.Sprintf("ed2k://|file|movie%d.mkv|123|%032x|/", i, i+1)
+	}
+	state := telegramState{}
+	b.enqueueResourceMessage(context.Background(), &state, update, update.Message, items, "", true, now)
+	if len(state.Queue) != 0 || len(state.ResourceSelections) != 0 || len(state.Replies) != 1 ||
+		!strings.Contains(state.Replies[0].Text, fmt.Sprint(maxDocumentResourceLinks)) {
+		t.Fatalf("超过 TXT 上限时产生了部分队列或待选择项：%+v", state)
+	}
+
+	state = telegramState{}
+	items = items[:maxDocumentResourceLinks]
+	b.enqueueResourceMessage(context.Background(), &state, update, update.Message, items, "", true, now)
+	if len(state.Queue) != 0 || len(state.ResourceSelections) != 1 || len(state.Replies) != 1 {
+		t.Fatalf("TXT 没有先等待一次目标选择：%+v", state)
+	}
+	state.ResourceSelections[0].PromptMessageID = 500
+	if err := b.save(state); err != nil {
+		t.Fatal(err)
+	}
+	state = readED2KSTRMBotState(t, b.StatePath)
+	callback := resourceTestCallback(update.ID, update.Message.From.ID, 500, "0")
+	b.enqueueResourceCallback(context.Background(), &state, callback, now)
+	if len(state.Queue) != 1 || len(state.ResourceSelections) != 0 {
+		t.Fatalf("恢复后的 TXT 选择未进入任务队列：%+v", state)
+	}
+	batch := state.Queue[0]
+	if !batch.TextDocument || batch.Mode != "ed2k_strm" || batch.MessageID != update.Message.ID ||
+		!reflect.DeepEqual(batch.Items, items) {
+		t.Fatal("TXT 批次在选择或恢复后丢失来源或链接")
+	}
+}
+
+func TestTextDocumentShareSTRMDoesNotJoinMessageWindow(t *testing.T) {
+	b := newBatchTestBot(t, nil)
+	now := time.Now()
+	settings := b.Settings.Value()
+	settings.ReshareEnabled, settings.TGBatchWaitSeconds = true, 5
+	state := telegramState{}
+	b.enqueueShareSTRMBatch(&state, 1, cloudUpdate(1, 42, "private", "").Message,
+		resourceTestItems("https://115.com/s/first"), settings, false, now)
+	b.enqueueShareSTRMBatch(&state, 2, cloudUpdate(2, 42, "private", "").Message,
+		resourceTestItems("https://115.com/s/attachment"), settings, true, now.Add(time.Second))
+	b.enqueueShareSTRMBatch(&state, 3, cloudUpdate(3, 42, "private", "").Message,
+		resourceTestItems("https://115.com/s/second"), settings, false, now.Add(2*time.Second))
+	if len(state.Queue) != 2 || state.Queue[0].TextDocument || !state.Queue[1].TextDocument {
+		t.Fatalf("分享 STRM 正文与 TXT 批次混合：%+v", state.Queue)
+	}
+	if !reflect.DeepEqual(state.Queue[0].Items, resourceTestItems("https://115.com/s/first", "https://115.com/s/second")) ||
+		!reflect.DeepEqual(state.Queue[1].Items, resourceTestItems("https://115.com/s/attachment")) ||
+		!state.Queue[1].ReadyAt.Equal(now.Add(time.Second)) {
+		t.Fatal("TXT 干扰正文合并结果，或未作为完整清单立即入队")
+	}
+}
+
 func resourceKeyboard(t *testing.T, markup any) [][]map[string]string {
 	t.Helper()
 	data, err := json.Marshal(markup)
@@ -718,7 +778,7 @@ func TestResourceMagnetMessagesUseCloudSelectionForEntireBatch(t *testing.T) {
 				if err := b.processBatchLink(context.Background(), &state); err != nil {
 					t.Fatal(err)
 				}
-				if cloud.calls != len(links) || cloud.config.TargetPath != b.CloudDownloadTargets[1].TargetPath || ready.imports != 0 || ready.checks != 0 {
+				if cloud.calls != 1 || cloud.submitted != len(links) || cloud.config.TargetPath != b.CloudDownloadTargets[1].TargetPath || ready.imports != 0 || ready.checks != 0 {
 					t.Fatalf("批次执行没有固定普通转存用途和目录：cloud=%+v ready=%+v", cloud, ready)
 				}
 			})
@@ -799,7 +859,7 @@ func TestResourceED2KBareChoiceAppliesToEveryLinkInMessage(t *testing.T) {
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if cloud.calls != 2 || cloud.config.TargetPath != b.CloudDownloadTargets[0].TargetPath || cloud.url != second {
+	if cloud.calls != 1 || cloud.submitted != 2 || cloud.config.TargetPath != b.CloudDownloadTargets[0].TargetPath || cloud.url != second {
 		t.Fatalf("选择没有应用到每个链接：%+v", cloud)
 	}
 }

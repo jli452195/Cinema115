@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,23 +14,33 @@ import (
 )
 
 type preparedCloudSubmitter struct {
-	cloudSubmitterStub
 	prepares int
 	version  int
 	used     []int
+	sizes    []int
 	after    func()
 }
 
-func (s *preparedCloudSubmitter) PrepareSubmission(config service.CloudDownloadConfig) (service.CloudDownloadSubmission, error) {
+func (s *preparedCloudSubmitter) PrepareBatch(_ service.CloudDownloadConfig, urls []string) (service.CloudDownloadBatchExecution, error) {
 	s.prepares++
 	version := s.version
-	return func(_ context.Context, _ string) (service.CloudDownloadReceipt, error) {
+	return cloudBatchFunc(func(_ context.Context, start int) ([]service.CloudDownloadBatchEvent, bool) {
+		end := min(start+service.CloudDownloadBatchSize, len(urls))
 		s.used = append(s.used, version)
+		s.sizes = append(s.sizes, end-start)
 		if s.after != nil {
 			s.after()
 		}
-		return service.CloudDownloadReceipt{TargetPath: config.TargetPath}, nil
-	}, nil
+		return acceptedCloudChunk(start, end), false
+	}), nil
+}
+
+func cloudItemsForTwoChunks() []messageShare {
+	items := make([]messageShare, service.CloudDownloadBatchSize+1)
+	for i := range items {
+		items[i].URL = fmt.Sprintf("magnet:?xt=urn:btih:%040x", i+1)
+	}
+	return items
 }
 
 type preparedShareTransferer struct {
@@ -79,12 +90,14 @@ func TestCloudBatchPinsOneExecutionForAllLinks(t *testing.T) {
 	b.CloudDownloads = submit
 	state := telegramState{Batch: &messageBatch{Mode: "cloud", UpdateID: 1, ChatID: 42,
 		CloudTarget: service.CloudDownloadConfig{AccountID: "primary", TargetCID: "88", TargetPath: "/下载"},
-		Items:       []messageShare{{URL: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}, {URL: "ed2k://|file|movie.mkv|123|0123456789abcdef0123456789abcdef|/"}}}}
-	if err := b.processBatchLink(context.Background(), &state); err != nil {
-		t.Fatal(err)
+		Items:       cloudItemsForTwoChunks()}}
+	for range 2 {
+		if err := b.processBatchLink(context.Background(), &state); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if submit.prepares != 1 || submit.calls != 0 || !reflect.DeepEqual(submit.used, []int{1, 1}) {
-		t.Fatalf("credentials changed within one Telegram batch: prepares=%d fallback=%d versions=%v", submit.prepares, submit.calls, submit.used)
+	if submit.prepares != 1 || !reflect.DeepEqual(submit.used, []int{1, 1}) || !reflect.DeepEqual(submit.sizes, []int{service.CloudDownloadBatchSize, 1}) {
+		t.Fatalf("云下载分组或凭据快照错误：%+v", submit)
 	}
 }
 
@@ -186,11 +199,11 @@ func TestCloudBatchCancellationKeepsRemainingItemsUnstarted(t *testing.T) {
 	submit.after = cancel
 	b.CloudDownloads = submit
 	state := telegramState{Batch: &messageBatch{Mode: "cloud", UpdateID: 1, ChatID: 42,
-		Items: []messageShare{{URL: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}, {URL: "ed2k://|file|movie.mkv|123|0123456789abcdef0123456789abcdef|/"}}}}
+		Items: cloudItemsForTwoChunks()}}
 	if err := b.processBatchLink(ctx, &state); !errors.Is(err, context.Canceled) {
 		t.Fatalf("want canceled context, got %v", err)
 	}
-	if state.Batch.Next != 1 || len(submit.used) != 1 {
+	if state.Batch.Next != service.CloudDownloadBatchSize || len(submit.used) != 1 {
 		t.Fatalf("shutdown consumed unstarted links: next=%d versions=%v", state.Batch.Next, submit.used)
 	}
 	data, err := json.Marshal(state)
@@ -206,7 +219,8 @@ func TestCloudBatchCancellationKeepsRemainingItemsUnstarted(t *testing.T) {
 	if err := b.processBatchLink(context.Background(), &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.Batch.Next != 2 || len(submit.used) != 1 || !strings.Contains(restored.Pending.Text, "快照已丢失") {
+	if restored.Batch.Next != len(state.Batch.Items) || len(submit.used) != 1 || !strings.Contains(restored.Pending.Text, "快照已失效") ||
+		!strings.Contains(restored.Pending.Text, "已提交 100 条") || !strings.Contains(restored.Pending.Text, "尚未开始 1 条") {
 		t.Fatalf("resumed cloud batch reread credentials: next=%d versions=%v pending=%+v", restored.Batch.Next, submit.used, restored.Pending)
 	}
 }

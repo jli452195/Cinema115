@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,10 +11,10 @@ import (
 )
 
 type cloudSubmitterStub struct {
-	config  service.CloudDownloadConfig
-	url     string
-	calls   int
-	removed bool
+	config    service.CloudDownloadConfig
+	url       string
+	calls     int
+	submitted int
 }
 
 type shareTransferSubmitterStub struct {
@@ -29,10 +30,32 @@ func (s *shareTransferSubmitterStub) Transfer(_ context.Context, target service.
 	return service.ShareLinkTransferReceipt{TargetPath: target.TargetPath, AcceptedItems: 1, ItemCount: 1, BatchCount: 1}, nil
 }
 
-func (s *cloudSubmitterStub) Submit(_ context.Context, config service.CloudDownloadConfig, rawURL string) (service.CloudDownloadReceipt, error) {
-	s.config, s.url = config, rawURL
-	s.calls++
-	return service.CloudDownloadReceipt{AccountName: "家庭账号", TargetPath: "/下载", RemovedOldTask: s.removed}, nil
+type cloudBatchFunc func(context.Context, int) ([]service.CloudDownloadBatchEvent, bool)
+
+func (f cloudBatchFunc) SubmitChunk(ctx context.Context, start int) ([]service.CloudDownloadBatchEvent, bool) {
+	return f(ctx, start)
+}
+
+func (f cloudBatchFunc) Run(context.Context, func(service.CloudDownloadBatchEvent) error) error {
+	return errors.New("Bot 测试不使用 HTTP 流入口")
+}
+
+func acceptedCloudChunk(start, end int) []service.CloudDownloadBatchEvent {
+	events := make([]service.CloudDownloadBatchEvent, 0, end-start)
+	for i := start; i < end; i++ {
+		events = append(events, service.CloudDownloadBatchEvent{Type: "result", Index: i, Accepted: true})
+	}
+	return events
+}
+
+func (s *cloudSubmitterStub) PrepareBatch(config service.CloudDownloadConfig, urls []string) (service.CloudDownloadBatchExecution, error) {
+	return cloudBatchFunc(func(_ context.Context, start int) ([]service.CloudDownloadBatchEvent, bool) {
+		end := min(start+service.CloudDownloadBatchSize, len(urls))
+		s.config, s.url = config, urls[end-1]
+		s.calls++
+		s.submitted += end - start
+		return acceptedCloudChunk(start, end), false
+	}), nil
 }
 
 func cloudUpdate(id, chat int64, chatType, text string) telegramUpdate {
@@ -102,22 +125,22 @@ func TestCloudDownloadBatchUsesProfileSnapshotAndDoesNotEchoLink(t *testing.T) {
 	if stub.calls != 1 || stub.config.AccountID != "fixed-account" || stub.config.TargetCID != "99" || stub.url != link {
 		t.Fatalf("提交未使用 Bot 功能配置快照：%+v", stub)
 	}
-	if strings.Contains(state.Pending.Text, link) || !strings.Contains(state.Pending.Text, "已提交到 115 云下载") {
+	if strings.Contains(state.Pending.Text, link) || !strings.Contains(state.Pending.Text, "已提交 1 条到 115 云下载") {
 		t.Fatalf("回复泄露链接或没有报告提交结果：%s", state.Pending.Text)
 	}
 }
 
-func TestCloudDownloadCommandUsesSafeResubmitAndOneBatchReply(t *testing.T) {
+func TestCloudDownloadCommandSubmitsOneGroupAndRepliesOnce(t *testing.T) {
 	b := newBatchTestBot(t, nil)
-	stub := &cloudSubmitterStub{removed: true}
+	stub := &cloudSubmitterStub{}
 	b.CloudDownloads = stub
 	b.CloudDownloadTargets = []TelegramTransferTarget{testCloudTarget("target-1", "转存电影", "/电影")}
 	first := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	second := "ed2k://|file|movie.mkv|123|0123456789abcdef0123456789abcdef|/"
 	state := telegramState{}
-	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(7, 42, "private", "/cloud redo "+first+"\n"+second)}, time.Now())
+	b.enqueueUpdates(context.Background(), &state, []telegramUpdate{cloudUpdate(7, 42, "private", "/cloud "+first+"\n"+second)}, time.Now())
 	if len(state.Queue) != 1 || len(state.Queue[0].Items) != 2 {
-		t.Fatalf("redo 命令没有应用到整条消息：%+v", state.Queue)
+		t.Fatalf("云下载命令没有应用到整条消息：%+v", state.Queue)
 	}
 	if !b.startReadyBatch(&state, time.Now()) || state.Pending != nil {
 		t.Fatal("云下载批次错误发送了开始消息")
@@ -125,21 +148,21 @@ func TestCloudDownloadCommandUsesSafeResubmitAndOneBatchReply(t *testing.T) {
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if stub.calls != 2 || state.Pending == nil || !strings.Contains(state.Pending.Text, "已重新提交：2 个") {
-		t.Fatalf("没有生成单条 redo 汇总：stub=%+v pending=%+v", stub, state.Pending)
+	if stub.calls != 1 || stub.submitted != 2 || state.Pending == nil || !strings.Contains(state.Pending.Text, "已提交 2 条到 115 云下载") {
+		t.Fatalf("没有一次提交整组并汇总：stub=%+v pending=%+v", stub, state.Pending)
 	}
 }
 
-func TestCloudDownloadLegacyBatchAlsoUsesDefaultResubmit(t *testing.T) {
+func TestUnstartedCloudBatchUsesDirectSubmission(t *testing.T) {
 	b := newBatchTestBot(t, nil)
-	stub := &cloudSubmitterStub{removed: true}
+	stub := &cloudSubmitterStub{}
 	b.CloudDownloads = stub
 	b.CloudDownloadTargets = []TelegramTransferTarget{testCloudTarget("target-1", "转存电影", "/电影")}
 	state := telegramState{Batch: &messageBatch{Mode: "cloud", UpdateID: 7, ChatID: 42, Items: []messageShare{{URL: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}}}}
 	if err := b.processBatchLink(context.Background(), &state); err != nil {
 		t.Fatal(err)
 	}
-	if stub.calls != 1 || !strings.Contains(state.Pending.Text, "已重新提交到 115 云下载") || !strings.Contains(state.Pending.Text, "网盘文件已保留") {
+	if stub.calls != 1 || !strings.Contains(state.Pending.Text, "已提交 1 条到 115 云下载") {
 		t.Fatal("旧批次未使用统一入口")
 	}
 }

@@ -7,11 +7,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   try {
-    const context = await browser.newContext({ serviceWorkers: 'block' })
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: 'block' })
     await context.addInitScript(() => localStorage.setItem('admin_token', 'mock'))
     const page = await context.newPage()
     page.setDefaultTimeout(10000)
-    const errors = [], calls = [], passed = []
+    const errors = [], calls = [], batches = [], passed = []
+    let taskReads = 0, configWrites = 0
     page.on('pageerror', err => errors.push(err.message))
     page.on('console', message => { if (message.text().includes('[Vue warn]')) errors.push(message.text()) })
     const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40)
@@ -19,9 +20,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const targets = { 'cloud-download': [], 'share-transfer': [] }
     let rejectSave = false, rejectDelete = false
     const failures = {
-      running: '相同任务仍在 115 中运行或等待，未删除或重新提交',
-      failed: '旧任务记录已移除，但重新提交失败；原有网盘文件已保留。提交被拒绝',
-      uncertain: '旧任务记录已移除，但重新提交结果尚未确认；原有网盘文件已保留。请先检查 115 任务列表再决定是否重试',
+      failed: '115 拒绝提交',
+      uncertain: '115 提交结果未确认',
     }
     await page.route('**/api/**', async route => {
       const url = new URL(route.request().url())
@@ -46,14 +46,41 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       if (url.pathname === '/api/auth/me') data = { user: { id: 'mock', role: 'admin', username: 'mock', disabled: false } }
       else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '主账号', primary: true, configured: true, revision: 1 }] }
       else if (url.pathname.endsWith('/cloud-download/paths')) data = { cid: '0', directories: [], count: 0, hasMore: false }
-      else if (url.pathname.endsWith('/cloud-download/config')) data = { accountId, targetCID: '987', targetPath: '/测试目标' }
+      else if (url.pathname.endsWith('/cloud-download/config')) {
+        if (route.request().method() === 'PUT') configWrites++
+        data = { accountId, targetCID: '987', targetPath: '/测试目标' }
+      }
       else if (url.pathname.endsWith('/cloud-download/tasks')) {
+        if (route.request().method() === 'GET') {
+          taskReads++
+          return route.fulfill({ json: { tasks: [] } })
+        }
         calls.push({ accountId: url.searchParams.get('accountId'), ...route.request().postDataJSON() })
         if (scenario === 'gateway') return route.fulfill({ status: 504, contentType: 'text/html', body: '<html>Gateway Timeout</html>' })
-        if (failures[scenario]) { status = scenario === 'running' ? 409 : scenario === 'uncertain' ? 504 : 502; data = { accepted: false, removedOldTask: scenario !== 'running', outcomeUncertain: scenario === 'uncertain', error: failures[scenario] } }
-        else { status = 202; data = { accepted: true, removedOldTask: scenario === 'redo' } }
+        if (failures[scenario]) { status = scenario === 'uncertain' ? 504 : 502; data = { accepted: false, outcomeUncertain: scenario === 'uncertain', error: failures[scenario] } }
+        else { status = 202; data = { accepted: true } }
       }
-      else if (url.pathname.includes('/tmdb/detail/')) data = { id: 65942, kind: 'tv', title: '测试动漫', originalTitle: 'テスト', imdbId: '', genres: [{ id: 16, name: '动画' }], countries: ['JP'], cast: [], seasons: [], overview: '', posterUrl: '', backdropUrl: '' }
+      else if (url.pathname.endsWith('/cloud-download/tasks/batch')) {
+        const body = route.request().postDataJSON()
+        batches.push({ accountId: url.searchParams.get('accountId'), ...body })
+        const total = body.urls.length
+        const events = [{ type: 'ready', total }]
+        for (let start = 0; start < total; start += 100) {
+          const end = Math.min(start + 100, total)
+          for (let index = start; index < end; index++) events.push({ type: 'start', total, index })
+          for (let index = start; index < end; index++) {
+            events.push({
+              type: 'result', total, index,
+              accepted: index < 100,
+              outcomeUncertain: index === 101,
+              error: index === 100 ? '115 拒绝提交' : '',
+            })
+          }
+        }
+        events.push({ type: 'done', total })
+        return route.fulfill({ contentType: 'application/x-ndjson', body: events.map(event => JSON.stringify(event)).join('\n') + '\n' })
+      }
+      else if (url.pathname.includes('/tmdb/detail/')) data = { id: 65942, kind: 'tv', title: '测试动漫', originalTitle: 'テスト', imdbId: '', date: '2003-04-03', genres: [{ id: 16, name: '动画' }], countries: ['JP'], cast: [], seasons: [], overview: '', posterUrl: '', backdropUrl: '' }
       else if (url.pathname.endsWith('/gying/config')) data = { configured: true, hasSession: true, resourceTypes: [], resourceOrder: ['magnet'] }
       else if (url.pathname.endsWith('/gying/search')) data = { query: 'テスト', matchedBy: 'title', total: 1, cached: false, attempts: [], items: [{ id: 'ac:one', title: '测试条目', mediaType: 'anime', links: [{ type: 'magnet', typeLabel: '磁力', category: 'torrent', url: magnet }] }] }
       else if (url.pathname.endsWith('/mikan/search')) data = { query: '测试动漫', items: [{ id: 'one', title: '测试资源', magnet, size: '1 GB', updatedAt: '2026/09/19', resolution: '1080P', url: '', torrentUrl: '' }], groups: [], bangumis: [], attempts: [], fetchedAt: new Date().toISOString(), expiresAt: new Date().toISOString() }
@@ -111,7 +138,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       return
     }
     for (const source of ['web', 'gying', 'mikan']) {
-      for (const mode of ['new', 'redo', 'running', 'failed', 'uncertain', 'gateway', 'unconfigured']) {
+      for (const mode of ['new', 'failed', 'uncertain', 'gateway', 'unconfigured']) {
         scenario = mode
         accountId = mode === 'unconfigured' ? '' : 'selected-account'
         const before = calls.length
@@ -119,31 +146,46 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
         if (source === 'web') {
           await page.getByRole('textbox').fill(magnet)
           if (mode === 'unconfigured') {
-            assert.equal(await page.getByRole('button', { name: '开始云下载', exact: true }).isDisabled(), true)
+            assert.equal(await page.getByRole('button', { name: '提交', exact: true }).isDisabled(), true)
             assert.equal(calls.length, before)
             passed.push(source + ':' + mode)
             continue
           }
-          await page.getByRole('button', { name: '开始云下载', exact: true }).click()
+          await page.getByRole('button', { name: '提交', exact: true }).click()
         } else {
-          await page.getByRole('button', { name: source === 'gying' ? /观影\s*搜索/ : /Mikan\s*搜索/ }).click()
+          const button = page.getByRole('button', { name: source === 'gying' ? /观影\s*搜索/ : /Mikan\s*搜索/ })
+          try { await button.click() }
+          catch (error) { throw new Error(`${source}:${mode}: ${await page.locator('main').innerText()}\n${errors.join('\n')}\n${error.message}`) }
           await page.getByRole('button', { name: '115 云下载', exact: true }).click()
         }
         if (mode === 'unconfigured') {
           await page.getByText(/请先.*(?:选择|配置).*账号|请先在.*选择账号/).first().waitFor()
           assert.equal(calls.length, before)
         } else {
-          const text = mode === 'new' ? /已提交到 115 云下载：\/测试目标/ : mode === 'redo' ? /已重新提交到 115 云下载：\/测试目标.*原有网盘文件已保留/ : mode === 'gateway' ? '处理结果尚未确认，请先到 115 云下载核对；不要立即重复提交' : failures[mode]
+          const text = mode === 'new' ? '已提交 1 条（/测试目标）' : mode === 'gateway' ? /处理结果尚未确认，请先到 115 云下载核对/ : failures[mode]
           try { await page.getByText(text, { exact: false }).first().waitFor() }
           catch (error) { throw new Error(`${source}:${mode}: ${await page.locator('[role="alert"], [role="status"]').allTextContents()}\n${error.message}`) }
           assert.equal(calls.length, before + 1)
           assert.deepEqual(calls.at(-1), { accountId: 'selected-account', url: magnet, targetCID: '987' })
-          if (mode === 'new' || mode === 'redo') await page.getByText(/提交成功不代表下载已完成/).waitFor()
           if (mode === 'uncertain') assert.equal(await page.getByRole('link', { name: '前往配置' }).count(), 0)
         }
         passed.push(source + ':' + mode)
       }
     }
+    accountId = 'selected-account'
+    await page.goto(origin + '/115/cloud-download')
+    const textbox = page.getByRole('textbox', { name: '磁力或 ED2K 链接' })
+    const urls = Array.from({ length: 101 }, (_, index) => 'magnet:?xt=urn:btih:' + index.toString(16).padStart(40, '0'))
+    urls.push('ed2k://|file|sample.mkv|1024|' + 'a'.repeat(32) + '|/')
+    await textbox.fill(urls.join('\n\n'))
+    await page.getByRole('button', { name: '提交', exact: true }).click()
+    await page.getByText('已提交 100 条', { exact: true }).waitFor()
+    await page.getByRole('alert').filter({ hasText: '1 条提交结果待核对' }).filter({ hasText: '1 条提交失败' }).waitFor()
+    assert.deepEqual(batches, [{ accountId: 'selected-account', targetCID: '987', urls }])
+    assert.equal(await textbox.inputValue(), urls[100])
+    assert.equal(taskReads, 0)
+    assert.equal(configWrites, 0)
+    passed.push('web:multiple-links')
     assert.deepEqual(errors, [])
     console.log(JSON.stringify({ passed, submissions: calls.length, pageErrors: errors }))
   } finally { await browser.close() }

@@ -193,12 +193,12 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			c.JSON(400, gin.H{"error": "请先选择主账号的下载目录"})
 			return
 		}
-		receipt, err := downloads.Submit(ctx, service.CloudDownloadConfig{AccountID: value.ID, TargetCID: targetCID, TargetPath: targetPath}, input.URL)
+		err := downloads.Submit(ctx, service.CloudDownloadConfig{AccountID: value.ID, TargetCID: targetCID, TargetPath: targetPath}, input.URL)
 		if err != nil {
 			status := http.StatusBadGateway
 			var upstream *p115.HTTPError
 			switch {
-			case errors.Is(err, service.ErrCloudTaskBusy), errors.Is(err, service.ErrCloudTaskRunning), errors.Is(err, service.ErrCloudTaskUnclear):
+			case errors.Is(err, service.ErrCloudTaskBusy):
 				status = http.StatusConflict
 			case errors.Is(err, p115.ErrCloudInput), errors.Is(err, service.ErrGenerationInput), errors.Is(err, service.ErrAccountInput):
 				status = http.StatusBadRequest
@@ -209,19 +209,10 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			case errors.As(err, &upstream) && (upstream.Status == http.StatusUnauthorized || upstream.Status == http.StatusForbidden):
 				status = http.StatusConflict
 			}
-			message := service.CloudDownloadErrorMessage(err)
-			if receipt.RemovedOldTask {
-				prefix := "旧任务记录已移除，但重新提交失败；原有网盘文件已保留。"
-				if service.CloudDownloadUncertain(err) {
-					prefix = "旧任务记录已移除，但重新提交结果尚未确认；原有网盘文件已保留。"
-				}
-				message = prefix + message
-			}
-			c.JSON(status, gin.H{"accepted": false, "error": message, "removedOldTask": receipt.RemovedOldTask, "outcomeUncertain": service.CloudDownloadUncertain(err)})
+			c.JSON(status, gin.H{"accepted": false, "error": service.CloudDownloadErrorMessage(err), "outcomeUncertain": service.CloudDownloadUncertain(err)})
 			return
 		}
-		// 只返回稳定字段；已接受不代表下载完成，不暴露上游原始响应。
-		c.JSON(http.StatusAccepted, gin.H{"accepted": true, "removedOldTask": receipt.RemovedOldTask, "task": taskView(receipt.Task)})
+		c.JSON(http.StatusAccepted, gin.H{"accepted": true})
 	})
 
 	group.POST("/tasks/batch", func(c *gin.Context) {

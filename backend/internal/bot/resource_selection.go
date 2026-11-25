@@ -11,8 +11,20 @@ import (
 	"strm115/backend/internal/service"
 )
 
-const selectionLifetime = 10 * time.Minute
-const maxPendingSelections = 50
+const (
+	selectionLifetime        = 10 * time.Minute
+	maxPendingSelections     = 50
+	maxQueuedResourceBatches = 100
+	maxMessageResourceLinks  = 100
+	maxDocumentResourceLinks = 1000
+)
+
+func resourceLinkLimit(textDocument bool) int {
+	if textDocument {
+		return maxDocumentResourceLinks
+	}
+	return maxMessageResourceLinks
+}
 
 // 选择只保留链接和已分配目标的快照，不包含凭据，也不在选择前建立业务任务。
 type pendingResourceSelection struct {
@@ -22,6 +34,7 @@ type pendingResourceSelection struct {
 	MessageID       int64            `json:"messageID"`
 	PromptMessageID int64            `json:"promptMessageID"`
 	ThreadID        int64            `json:"threadID,omitempty"`
+	TextDocument    bool             `json:"textDocument,omitempty"`
 	Expires         time.Time        `json:"expires"`
 	Items           []messageShare   `json:"items"`
 	Choices         []resourceChoice `json:"choices"`
@@ -162,27 +175,32 @@ func (choice resourceChoice) label() string {
 	return label
 }
 
-func (b *Telegram) enqueueResourceMessage(ctx context.Context, state *telegramState, update telegramUpdate, message *telegramMessage, items []messageShare, kind string, now time.Time) {
+func (b *Telegram) enqueueResourceMessage(ctx context.Context, state *telegramState, update telegramUpdate, message *telegramMessage, items []messageShare, kind string, textDocument bool, now time.Time) {
 	// 仅分享 STRM 的群聊保持原接收方式，多用途与普通转存须在私聊明确选择。
 	if message.Chat.Type != "private" && !(kind == "share" && b.ShareEnabled && len(b.ShareTransferTargets) == 0) {
 		b.queueTextReply(state, update, message, "请在 Bot 私聊中直接发送链接，选择用途与目录；群聊不自动选择处理方式。")
 		return
 	}
+	limit := resourceLinkLimit(textDocument)
 	if len(items) == 0 {
-		text := "请直接发送 magnet 磁力或 ED2K 文件链接，每条消息最多 50 个。"
+		text := "请直接发送 magnet 磁力或 ED2K 文件链接"
 		if kind == "share" {
-			text = "请直接发送 115 分享链接及提取码，每条消息最多 50 个。"
+			text = "请直接发送 115 分享链接及提取码"
 		} else if kind == "ed2k_strm" {
-			text = "请直接发送 ED2K 文件链接，每条消息最多 50 个。"
+			text = "请直接发送 ED2K 文件链接"
 		}
-		b.queueTextReply(state, update, message, text)
+		b.queueTextReply(state, update, message, fmt.Sprintf("%s，每条消息最多 %d 个，也可以上传 TXT 清单。", text, maxMessageResourceLinks))
 		return
 	}
-	if len(items) > 50 {
-		b.queueTextReply(state, update, message, "每条消息最多接收 50 个链接，请拆分后发送。")
+	if len(items) > limit {
+		if textDocument {
+			b.queueTextReply(state, update, message, fmt.Sprintf("每份 TXT 最多接收 %d 个链接，请拆分清单后重新发送。本份清单未入队。", limit))
+		} else {
+			b.queueTextReply(state, update, message, fmt.Sprintf("每条消息最多接收 %d 个链接，请上传 TXT 清单或拆分后发送。本条消息未入队。", limit))
+		}
 		return
 	}
-	if len(state.Queue) >= 100 {
+	if len(state.Queue) >= maxQueuedResourceBatches {
 		b.queueTextReply(state, update, message, "Bot 任务队列已满，请稍后重新发送。")
 		return
 	}
@@ -231,7 +249,7 @@ func (b *Telegram) enqueueResourceMessage(ctx context.Context, state *telegramSt
 		return
 	}
 	if len(choices) == 1 {
-		b.enqueueResourceBatch(state, update.ID, message, items, choices[0], now)
+		b.enqueueResourceBatch(state, update.ID, message, items, choices[0], textDocument, now)
 		return
 	}
 	state.ResourceSelections = pruneResourceSelections(state.ResourceSelections, now)
@@ -241,7 +259,7 @@ func (b *Telegram) enqueueResourceMessage(ctx context.Context, state *telegramSt
 	}
 	state.ResourceSelections = append(state.ResourceSelections, &pendingResourceSelection{
 		UpdateID: update.ID, ChatID: message.Chat.ID, UserID: message.From.ID, MessageID: message.ID, ThreadID: message.ThreadID,
-		Expires: now.Add(selectionLifetime), Items: append([]messageShare(nil), items...), Choices: choices,
+		Expires: now.Add(selectionLifetime), Items: append([]messageShare(nil), items...), Choices: choices, TextDocument: textDocument,
 	})
 	keyboard := make([][]map[string]string, 0, len(choices)+1)
 	for i, choice := range choices {
@@ -259,22 +277,16 @@ func (b *Telegram) enqueueResourceMessage(ctx context.Context, state *telegramSt
 	})
 }
 
-func (b *Telegram) enqueueResourceBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, choice resourceChoice, now time.Time) {
+func (b *Telegram) enqueueResourceBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, choice resourceChoice, textDocument bool, now time.Time) {
 	switch {
 	case choice.Kind == "share_strm" && choice.ShareSettings != nil:
-		b.enqueueShareSTRMBatch(state, updateID, message, items, *choice.ShareSettings, now)
+		b.enqueueShareSTRMBatch(state, updateID, message, items, *choice.ShareSettings, textDocument, now)
 	case choice.Kind == "share_transfer" && choice.ShareTarget != nil:
-		b.enqueueShareTransferBatch(state, updateID, message, items, *choice.ShareTarget, now)
-	default:
-		links := make([]string, len(items))
-		for i, item := range items {
-			links[i] = item.URL
-		}
-		if choice.Kind == "ed2k_strm" && choice.STRMTarget != nil {
-			b.enqueueED2KSTRMBatch(state, updateID, message, links, *choice.STRMTarget, now)
-		} else if choice.Kind == "cloud" && choice.CloudTarget != nil {
-			b.enqueueCloudBatch(state, updateID, message, links, *choice.CloudTarget, now)
-		}
+		b.enqueueShareTransferBatch(state, updateID, message, items, *choice.ShareTarget, textDocument, now)
+	case choice.Kind == "ed2k_strm" && choice.STRMTarget != nil:
+		b.enqueueED2KSTRMBatch(state, updateID, message, items, *choice.STRMTarget, textDocument, now)
+	case choice.Kind == "cloud" && choice.CloudTarget != nil:
+		b.enqueueCloudBatch(state, updateID, message, items, *choice.CloudTarget, textDocument, now)
 	}
 }
 
@@ -353,17 +365,17 @@ func (b *Telegram) enqueueResourceCallback(ctx context.Context, state *telegramS
 		finish(hint + "，本条消息未提交任务，请重新发送链接")
 		return
 	}
-	if len(state.Queue) >= 100 {
+	if len(state.Queue) >= maxQueuedResourceBatches {
 		answer("Bot 任务队列已满，请稍后重新选择")
 		return
 	}
-	if len(selection.Items) == 0 || len(selection.Items) > 50 {
+	if len(selection.Items) == 0 || len(selection.Items) > resourceLinkLimit(selection.TextDocument) {
 		finish("保存的链接已失效，请重新发送链接")
 		return
 	}
 	message := &telegramMessage{ID: selection.MessageID, ThreadID: selection.ThreadID}
 	message.Chat.ID, message.Chat.Type = selection.ChatID, "private"
-	b.enqueueResourceBatch(state, selection.UpdateID, message, selection.Items, choice, now)
+	b.enqueueResourceBatch(state, selection.UpdateID, message, selection.Items, choice, selection.TextDocument, now)
 	finish("已选择：" + choice.label() + "，任务已加入队列")
 }
 

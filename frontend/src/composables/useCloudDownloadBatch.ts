@@ -1,7 +1,6 @@
 import { computed, ref } from 'vue'
-import { p115Request } from '../lib/p115-api'
-import { cloudDownloadNotice } from '../lib/cloud-download'
-import { CLOUD_BATCH_LIMIT, magnetKey, readCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
+import { cloudDownloadNotice, loadCloudDownloadConfig } from '../lib/cloud-download'
+import { magnetKey, submitCloudBatch, trackCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
 
 export interface BatchResource { id: string; title: string; magnet: string }
 export interface BatchStatus { busy?: boolean; success?: boolean; uncertain?: boolean; message?: string; needsConfig?: boolean }
@@ -25,7 +24,6 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
     const key = magnetKey(item.magnet)
     if (selected.value.has(key)) { selected.value.delete(key); return }
     if (!eligible(item)) return
-    if (count.value >= CLOUD_BATCH_LIMIT) { notice.value = '每批最多选择 100 项，请分批提交。'; return }
     selected.value.set(key, { ...item })
   }
   function selectAll(items: BatchResource[]) {
@@ -39,7 +37,6 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
     for (const item of available) {
       const key = magnetKey(item.magnet)
       if (selected.value.has(key)) continue
-      if (count.value >= CLOUD_BATCH_LIMIT) { notice.value = '每批最多选择 100 项，已保留当前选择。'; break }
       selected.value.set(key, { ...item })
     }
   }
@@ -61,30 +58,22 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
     total.value = rows.length; processed.value = 0; accepted.value = 0; failed.value = 0; uncertain.value = 0
     controller = new AbortController()
     const signal = AbortSignal.any([lifecycle, controller.signal])
-    let dispatched = false, activeIndex: number | undefined
-    const completed = new Set<number>()
-    let receivedDone = false
+    let dispatched = false
+    const receipts = trackCloudBatch(rows.length)
     try {
-      const config = await p115Request<{ accountId: string; targetCID: string; targetPath: string }>(token, 'cloud-download/config', { signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]) })
+      const config = await loadCloudDownloadConfig(token, signal)
       if (!config.accountId || !config.targetCID) throw Object.assign(new Error('请先在 115 云下载配置主账号和下载目录'), { beforeStart: true, needsConfig: true })
       const onEvent = (event: CloudBatchEvent) => {
-        if (event.total !== rows.length) throw new Error('批量提交回执数量异常')
-        if (event.type === 'ready') return
-        if (event.type === 'done') {
-          if (activeIndex !== undefined || (!event.stopped && completed.size !== rows.length)) throw new Error('批量提交缺少资源回执')
-          receivedDone = true; return
-        }
-        const item = rows[event.index]
-        if (!item || completed.has(event.index)) throw new Error('批量提交回执编号异常')
-        const key = magnetKey(item.magnet)
+        receipts.accept(event)
+        if (event.type === 'ready' || event.type === 'done') return
+        const key = magnetKey(rows[event.index]!.magnet)
         if (event.type === 'start') {
-          if (activeIndex !== undefined) throw new Error('批量提交回执顺序异常')
-          activeIndex = event.index; statuses.value[key] = { busy: true }; return
+          statuses.value[key] = { busy: true }
+          return
         }
-        if (activeIndex !== event.index) throw new Error('批量提交回执顺序异常')
-        completed.add(event.index); activeIndex = undefined; processed.value++
+        processed.value++
         if (event.accepted) {
-          statuses.value[key] = { success: true, message: cloudDownloadNotice({ accepted: true, removedOldTask: event.removedOldTask }, config.targetPath) }
+          statuses.value[key] = { success: true, message: cloudDownloadNotice(config.targetPath) }
           selected.value.delete(key); accepted.value++
         } else {
           statuses.value[key] = { uncertain: event.outcomeUncertain, message: event.error || '提交失败' }
@@ -92,19 +81,17 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
         }
       }
       dispatched = true
-      const response = await fetch(`/api/admin/p115/cloud-download/tasks/batch?accountId=${encodeURIComponent(config.accountId)}`, {
-        method: 'POST', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls: rows.map(item => item.magnet), targetCID: config.targetCID }), signal,
-      })
-      await readCloudBatch(response, onEvent)
-      if (processed.value === total.value) notice.value = `已提交 ${accepted.value}，失败 ${failed.value}，待核对 ${uncertain.value}。下载进度请到 115 查看。`
-      else notice.value = `已停止后续提交：成功 ${accepted.value}，失败 ${failed.value}，待核对 ${uncertain.value}；其余 ${total.value - processed.value} 项保留选择。`
+      await submitCloudBatch(token, config.accountId, config.targetCID, rows.map(item => item.magnet), signal, onEvent)
+      const counts = [`已提交 ${accepted.value} 条`]
+      if (failed.value) counts.push(`失败 ${failed.value} 条`)
+      if (uncertain.value) counts.push(`待核对 ${uncertain.value} 条`)
+      if (processed.value < total.value) counts.push(`已停止后续提交，其余 ${total.value - processed.value} 条保留选择`)
+      notice.value = counts.join('，')
     } catch (reason) {
       const error = reason as Error & { beforeStart?: boolean; needsConfig?: boolean }
-      // Without a start receipt the stream may have been buffered: every
-      // unacknowledged row could have reached the server, so none is auto-retried.
-      if (dispatched && !error.beforeStart && !receivedDone) {
-        const unknown = rows.map((_, index) => index).filter(index => !completed.has(index))
+      // 回执可能被缓冲，连接中断后所有未确认的资源都需核对。
+      if (dispatched && !error.beforeStart && !receipts.done) {
+        const unknown = rows.map((_, index) => index).filter(index => !receipts.completed.has(index))
         for (const index of unknown) {
           const key = magnetKey(rows[index].magnet)
           statuses.value[key] = { uncertain: true, message: '提交结果尚未确认，请先到 115 云下载核对。' }
@@ -112,7 +99,10 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
         }
       }
       needsConfig.value = !!error.needsConfig || /配置|凭据|登录/.test(error.message)
-      notice.value = signal.aborted ? dispatched ? `已停止提交。成功 ${accepted.value}，其余 ${uncertain.value} 项接收情况需先核对。` : '已停止，资源尚未提交，已保留选择。' : error.message || '批量提交失败'
+      const detail = signal.aborted
+        ? dispatched ? `已停止提交，待核对 ${uncertain.value} 条` : '已停止，已保留选择'
+        : error.message || '批量提交失败'
+      notice.value = `已提交 ${accepted.value} 条。${detail}`
     } finally {
       running.value = false; controller = undefined
     }

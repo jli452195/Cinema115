@@ -5,10 +5,8 @@ import ts from 'typescript'
 import { computed, ref } from 'vue'
 
 const code = ts.transpileModule(readFileSync(new URL('../src/composables/useTelegramFileActions.ts', import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
-const batchModule = { exports: {} }
 const batchCode = ts.transpileModule(readFileSync(new URL('../src/lib/cloud-download-batch.ts', import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
-new Function('module', 'exports', batchCode)(batchModule, batchModule.exports)
-const { readCloudBatch } = batchModule.exports
+const loadBatchModule = new Function('module', 'exports', 'fetch', batchCode)
 const files = [{ id: 'file-a', url: 'ed2k://a' }, { id: 'file-b', url: 'ed2k://b' }]
 const manyFiles = (total = 545) => Array.from({ length: total }, (_, index) => ({ id: `file-${String(index).padStart(4, '0')}`, url: `ed2k://|file|Show.S01E${String(index + 1).padStart(3, '0')}.mkv|1000|${index.toString(16).padStart(32, '0')}|/` }))
 
@@ -16,27 +14,34 @@ function harness(options = {}) {
   const module = { exports: {} }, statuses = ref({}), writes = [], imports = []
   let configReads = 0, requestNumber = 0
   const state = { primaryAccountId: 'main', accountReady: true, settingsSaved: true, settings: { baseUrl: 'http://nas' }, targets: [{ id: 'tv', name: '剧集', outputDir: 'ed2k/剧集' }, { id: 'movie', name: '电影', outputDir: 'ed2k/电影' }] }
-  const dependencies = {
-    vue: { computed, ref },
-    './useCloudDownloadAction': { useCloudDownloadAction: () => ({ statuses, busy: computed(() => Object.values(statuses.value).some(status => status.busy)), submit: async () => { throw new Error('此测试不走单文件接口') } }) },
-    '../lib/cloud-download': { loadCloudDownloadConfig: async () => { configReads++; return { accountId: 'main', targetCID: '123', targetPath: '/Downloads' } }, cloudDownloadNotice: () => '已提交' },
-    '../lib/cloud-download-batch': { readCloudBatch: async (response, onEvent) => options.receipts ? options.receipts(onEvent, writes.at(-1).body.urls.length) : readCloudBatch(response, onEvent) },
-    '../lib/ed2k-strm-api': { createED2KSTRMAPI: () => ({ state: async () => state, imports: async input => { imports.push(input); if (options.imports) return options.imports(input, imports.length) } }) },
-    '../utils/ed2kSTRM': { ed2kRequestID: () => `request-${++requestNumber}` },
-  }
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body)
     writes.push({ url, body })
     if (options.fetch) return options.fetch(url, init)
     const total = body.urls.length, events = [{ type: 'ready', total }]
-    for (let index = 0; index < total; index++) events.push({ type: 'start', index, total }, { type: 'result', index, total, accepted: true })
+    for (let start = 0; start < total; start += 100) {
+      const end = Math.min(start + 100, total)
+      for (let index = start; index < end; index++) events.push({ type: 'start', index, total })
+      for (let index = start; index < end; index++) events.push({ type: 'result', index, total, accepted: true })
+    }
     events.push({ type: 'done', total })
     return new Response(events.map(event => JSON.stringify(event)).join('\n') + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } })
   }
-  new Function('module', 'exports', 'require', 'fetch', code)(module, module.exports, name => {
+  const batchModule = { exports: {} }
+  loadBatchModule(batchModule, batchModule.exports, fetch)
+  const { submitCloudBatch, trackCloudBatch } = batchModule.exports
+  const dependencies = {
+    vue: { computed, ref },
+    './useCloudDownloadAction': { useCloudDownloadAction: () => ({ statuses, busy: computed(() => Object.values(statuses.value).some(status => status.busy)), submit: async () => { throw new Error('此测试不走单文件接口') } }) },
+    '../lib/cloud-download': { loadCloudDownloadConfig: async () => { configReads++; return { accountId: 'main', targetCID: '123', targetPath: '/Downloads' } }, cloudDownloadNotice: () => '已提交' },
+    '../lib/cloud-download-batch': { trackCloudBatch, submitCloudBatch: async (token, accountId, cid, urls, signal, onEvent) => options.receipts ? options.receipts(onEvent, urls.length) : submitCloudBatch(token, accountId, cid, urls, signal, onEvent) },
+    '../lib/ed2k-strm-api': { createED2KSTRMAPI: () => ({ state: async () => state, imports: async input => { imports.push(input); if (options.imports) return options.imports(input, imports.length) } }) },
+    '../utils/ed2kSTRM': { ed2kRequestID: () => `request-${++requestNumber}` },
+  }
+  new Function('module', 'exports', 'require', code)(module, module.exports, name => {
     assert.ok(name in dependencies, `未模拟的依赖 ${name}`)
     return dependencies[name]
-  }, fetch)
+  })
   const lifecycle = new AbortController()
   const actions = module.exports.useTelegramFileActions('mock-token', lifecycle.signal)
   return { actions, statuses, writes, imports, state, lifecycle, configReads: () => configReads }
@@ -56,8 +61,8 @@ test('批量云下载一次读取目录并一次提交整批，按文件保存�
 test('流中断保留已确认成功，未获回执的文件阻止直接重试', async () => {
   const context = harness({ receipts: (onEvent, total) => {
     onEvent({ type: 'start', index: 0, total })
-    onEvent({ type: 'result', index: 0, total, accepted: true })
     onEvent({ type: 'start', index: 1, total })
+    onEvent({ type: 'result', index: 0, total, accepted: true })
     throw new Error('连接中断')
   } })
   await context.actions.download(files)
@@ -65,6 +70,7 @@ test('流中断保留已确认成功，未获回执的文件阻止直接重试',
   assert.equal(context.actions.cloudStatus(files[1]).uncertain, true)
   assert.equal(context.actions.cloudEligible(files[1]), false)
   assert.equal(context.actions.busy.value, false)
+  assert.match(context.actions.notice.value, /已提交 1 条/)
 })
 
 test('明确接收前拒绝保留可重试状态，错误回执总数不伪装完成', async () => {
@@ -139,7 +145,7 @@ test('545 个云下载文件整包提交一次并逐条取得成功回执，不�
     assert.equal(context.actions.cloudStatus(file).success, true)
     assert.equal(context.actions.cloudEligible(file), false)
   }
-  assert.match(context.actions.notice.value, /已提交 545 \/ 545 个文件/)
+  assert.match(context.actions.notice.value, /已提交 545 条/)
   assert.equal(context.actions.busy.value, false)
 })
 

@@ -120,7 +120,7 @@ async function cloudDownload(item: GyingSearchItem, link: GyingResourceLink) {
   if (!status || lifecycle.signal.aborted) return
   const key = `cloud:${cloudResourceID(item, link)}`
   if (status.success) {
-    toast.success(status.message || '已提交到 115 云下载，提交成功不代表下载已完成。', {
+    toast.success(status.message || '已提交 1 条', {
       title: '已提交云下载', key,
       action: { label: '查看云下载', onClick: event => openTask('/115/cloud-download', event) },
     })

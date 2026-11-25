@@ -17,9 +17,10 @@ import (
 )
 
 type cloudWorkflowStub struct {
-	lookup func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error)
-	remove func(context.Context, string, string) error
-	add    func(context.Context, string, string, string) (json.RawMessage, error)
+	lookup  func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error)
+	remove  func(context.Context, string, string) error
+	add     func(context.Context, string, string, string) (json.RawMessage, error)
+	addURLs func(context.Context, string, []string, string) ([]p115.CloudURLAddResult, error)
 }
 
 func (s *cloudWorkflowStub) LookupTask(ctx context.Context, cookie string, resource p115.CloudResource) (p115.CloudTask, bool, error) {
@@ -30,6 +31,13 @@ func (s *cloudWorkflowStub) DeleteTaskKeepFiles(ctx context.Context, cookie, has
 }
 func (s *cloudWorkflowStub) AddURL(ctx context.Context, cookie, rawURL, cid string) (json.RawMessage, error) {
 	return s.add(ctx, cookie, rawURL, cid)
+}
+func (s *cloudWorkflowStub) SubmitURL(ctx context.Context, cookie, rawURL, cid string) error {
+	_, err := s.add(ctx, cookie, rawURL, cid)
+	return err
+}
+func (s *cloudWorkflowStub) AddURLs(ctx context.Context, cookie string, urls []string, cid string) ([]p115.CloudURLAddResult, error) {
+	return s.addURLs(ctx, cookie, urls, cid)
 }
 
 func cloudWorkflowAccounts(t *testing.T) (*P115Accounts, CloudDownloadConfig) {
@@ -57,7 +65,15 @@ func cloudWorkflowAccounts(t *testing.T) (*P115Accounts, CloudDownloadConfig) {
 	return accounts, CloudDownloadConfig{AccountID: id, TargetCID: "9", TargetPath: "/新目录"}
 }
 
-func TestCloudSubmitAccountChangesBeforeWrites(t *testing.T) {
+func submitCloudWorkflowForTest(service *CloudDownloadService, ctx context.Context, config CloudDownloadConfig, rawURL string) (CloudDownloadReceipt, error) {
+	account, err := service.snapshot(config)
+	if err != nil {
+		return CloudDownloadReceipt{}, err
+	}
+	return service.submitSnapshot(ctx, config, account, rawURL)
+}
+
+func TestCloudRedoAccountChangesBeforeWrites(t *testing.T) {
 	for _, phase := range []string{"lookup", "remove"} {
 		for _, action := range []string{"rename", "refresh", "clear", "replace", "delete"} {
 			t.Run(phase+"/"+action, func(t *testing.T) {
@@ -107,7 +123,7 @@ func TestCloudSubmitAccountChangesBeforeWrites(t *testing.T) {
 					},
 				}
 				s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-				receipt, err := s.Submit(context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
+				receipt, err := submitCloudWorkflowForTest(s, context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
 				allowed := action == "rename" || action == "refresh"
 				if allowed && (err != nil || writes != 1) || !allowed && (err == nil || writes != 0) {
 					t.Fatalf("account change %s: writes=%d err=%v", action, writes, err)
@@ -120,7 +136,7 @@ func TestCloudSubmitAccountChangesBeforeWrites(t *testing.T) {
 	}
 }
 
-func TestCloudSubmitDefaultWorkflow(t *testing.T) {
+func TestCloudRedoWorkflow(t *testing.T) {
 	const hash = "0123456789abcdef0123456789abcdef01234567"
 	const link = "magnet:?xt=urn:btih:" + hash
 	upstreamErr := errors.New("上游拒绝")
@@ -176,7 +192,7 @@ func TestCloudSubmitDefaultWorkflow(t *testing.T) {
 				},
 			}
 			s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-			receipt, err := s.Submit(context.Background(), config, link)
+			receipt, err := submitCloudWorkflowForTest(s, context.Background(), config, link)
 			if !errors.Is(err, tc.wantErr) || receipt.RemovedOldTask != tc.removed || !reflect.DeepEqual(steps, tc.steps) {
 				t.Fatalf("err=%v removed=%v steps=%v", err, receipt.RemovedOldTask, steps)
 			}
@@ -199,37 +215,34 @@ func TestCloudSubmitDeduplicatesConcurrentEntrances(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan error, 1)
 	client := &cloudWorkflowStub{
-		lookup: func(ctx context.Context, _ string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+		add: func(ctx context.Context, _, _, _ string) (json.RawMessage, error) {
 			close(entered)
 			select {
 			case <-release:
-				return p115.CloudTask{}, false, nil
+				return json.RawMessage(`{}`), nil
 			case <-ctx.Done():
-				return p115.CloudTask{}, false, ctx.Err()
+				return nil, ctx.Err()
 			}
-		},
-		add: func(context.Context, string, string, string) (json.RawMessage, error) {
-			return json.RawMessage(`{}`), nil
 		},
 	}
 	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-	go func() { _, err := s.Submit(ctx, config, "magnet:?xt=urn:btih:"+hash); finished <- err }()
+	go func() { finished <- s.Submit(ctx, config, "magnet:?xt=urn:btih:"+hash) }()
 	defer func() { cancel(); <-finished }()
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
-		t.Fatal("查询未开始")
+		t.Fatal("提交未开始")
 	}
 	otherDirectory := config
 	otherDirectory.TargetCID = "88"
-	_, err = s.Redo(context.Background(), otherDirectory, "magnet:?xt=urn:btih:"+base32Hash+"&dn=another-name")
+	_, err = submitCloudWorkflowForTest(s, context.Background(), otherDirectory, "magnet:?xt=urn:btih:"+base32Hash+"&dn=another-name")
 	if !errors.Is(err, ErrCloudTaskBusy) {
 		t.Fatalf("另一入口未阻止重复处理: %v", err)
 	}
 	close(release)
 }
 
-func TestCloudSubmitSnapshotsCredentialsAndSupportsED2K(t *testing.T) {
+func TestCloudRedoSnapshotsCredentialsAndSupportsED2K(t *testing.T) {
 	accounts, config := cloudWorkflowAccounts(t)
 	hash := strings.Repeat("a", 32)
 	var cookies []string
@@ -265,7 +278,7 @@ func TestCloudSubmitSnapshotsCredentialsAndSupportsED2K(t *testing.T) {
 		},
 	}
 	s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-	receipt, err := s.Submit(context.Background(), config, "ed2k://|file|movie.mkv|123|"+hash+"|/")
+	receipt, err := submitCloudWorkflowForTest(s, context.Background(), config, "ed2k://|file|movie.mkv|123|"+hash+"|/")
 	if err != nil || !receipt.RemovedOldTask || len(cookies) != 3 {
 		t.Fatal("ED2K 重提失败", err)
 	}
@@ -293,31 +306,31 @@ func TestCloudSubmitCoordinatesActualUIDAcrossConfigurationAndDevice(t *testing.
 	c := &CloudDownloadCoordinator{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	entered := make(chan struct{})
-	client := &cloudWorkflowStub{lookup: func(ctx context.Context, cookie string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+	client := &cloudWorkflowStub{add: func(ctx context.Context, cookie, _, _ string) (json.RawMessage, error) {
 		if cookie != "UID=123_A; CID=original" {
-			return p115.CloudTask{}, false, errors.New("credential changed")
+			return nil, errors.New("credential changed")
 		}
 		close(entered)
 		<-ctx.Done()
-		return p115.CloudTask{}, false, ctx.Err()
+		return nil, ctx.Err()
 	}}
 	first := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: c}
 	done := make(chan struct{})
 	link := "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)
-	go func() { defer close(done); _, _ = first.Submit(ctx, config, link) }()
+	go func() { defer close(done); _ = first.Submit(ctx, config, link) }()
 	defer func() { cancel(); <-done }()
 	select {
 	case <-entered:
 	case <-ctx.Done():
-		t.Fatal("first lookup not started")
+		t.Fatal("first submission not started")
 	}
-	var reads atomic.Int32
-	secondClient := &cloudWorkflowStub{lookup: func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
-		reads.Add(1)
-		return p115.CloudTask{}, false, nil
+	var writes atomic.Int32
+	secondClient := &cloudWorkflowStub{add: func(context.Context, string, string, string) (json.RawMessage, error) {
+		writes.Add(1)
+		return json.RawMessage(`{}`), nil
 	}}
 	second := &CloudDownloadService{Accounts: otherAccounts, Client: secondClient, Coordinator: c}
-	if _, err := second.Submit(ctx, otherConfig, link); !errors.Is(err, ErrCloudTaskBusy) || reads.Load() != 0 {
+	if err := second.Submit(ctx, otherConfig, link); !errors.Is(err, ErrCloudTaskBusy) || writes.Load() != 0 {
 		t.Fatal("configuration ID/device suffix bypassed UID coordination", err)
 	}
 	cancel()
@@ -329,9 +342,9 @@ func TestCloudSubmitRequiresSharedCoordinatorAndVerifiedUID(t *testing.T) {
 	for _, mode := range []string{"missing coordinator", "invalid UID", "conflicting UID"} {
 		t.Run(mode, func(t *testing.T) {
 			accounts, config := cloudWorkflowAccounts(t)
-			client := &cloudWorkflowStub{lookup: func(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
+			client := &cloudWorkflowStub{add: func(context.Context, string, string, string) (json.RawMessage, error) {
 				t.Fatal("invalid identity reached upstream")
-				return p115.CloudTask{}, false, nil
+				return nil, nil
 			}}
 			s := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 			switch mode {
@@ -351,7 +364,7 @@ func TestCloudSubmitRequiresSharedCoordinatorAndVerifiedUID(t *testing.T) {
 				accounts.value.Accounts[0].UID = "999"
 				accounts.mu.Unlock()
 			}
-			_, err := s.Submit(context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
+			err := s.Submit(context.Background(), config, "magnet:?xt=urn:btih:"+strings.Repeat("a", 40))
 			if !errors.Is(err, ErrGenerationInput) || strings.Contains(err.Error(), "SEID=") {
 				t.Fatal("invalid identity was not rejected safely", err)
 			}

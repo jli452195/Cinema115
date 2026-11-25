@@ -28,14 +28,14 @@ test('normalizes hex/base32 magnets and rejects unrelated URLs', () => {
   assert.equal(magnetKey('magnet:?xt=urn:btih:' + 'a'.repeat(40) + '&dn=中文 [HEVC] 文件'), 'a'.repeat(40))
 })
 
-test('selection deduplicates resources, includes hidden rows and caps batches', () => {
+test('selection deduplicates resources and includes rows beyond one upstream batch', () => {
   const b = useCloudDownloadBatch('test', new AbortController().signal)
   b.toggle(resource(1)); b.toggle({ ...resource(1), id: 'same-magnet' })
   assert.equal(b.count.value, 0)
   b.selectAll(Array.from({ length: 110 }, (_, n) => resource(n + 1)))
-  assert.equal(b.count.value, 100)
+  assert.equal(b.count.value, 110)
   b.selectAll([resource(1), resource(2)])
-  assert.equal(b.count.value, 98)
+  assert.equal(b.count.value, 108)
   b.clear(); assert.equal(b.count.value, 0)
 })
 
@@ -46,7 +46,7 @@ test('partial batch receipts remove accepted/uncertain rows and preserve definit
     posts++
     const body = JSON.parse(init.body)
     assert.equal(body.targetCID, '99'); assert.equal(new URL(url, 'http://test').searchParams.get('accountId'), 'fixed-main')
-    return response([event('ready'), event('start'), event('result', 0, { accepted: true }), event('start', 1), event('result', 1, { error: '拒绝' }), event('start', 2), event('result', 2, { error: '中断', outcomeUncertain: true }), event('done', 0, { stopped: true })])
+    return response([event('ready'), event('start'), event('start', 1), event('start', 2), event('result', 0, { accepted: true }), event('result', 1, { error: '拒绝' }), event('result', 2, { error: '中断', outcomeUncertain: true }), event('done', 0, { stopped: true })])
   })
   const b = useCloudDownloadBatch('test', new AbortController().signal)
   b.selectAll([resource(1), resource(2), resource(3)])
@@ -58,10 +58,11 @@ test('partial batch receipts remove accepted/uncertain rows and preserve definit
 })
 
 test('truncated/buffered streams never allow unacknowledged links to retry automatically', async t => {
-  mock(t, async url => url.endsWith('/config') ? Response.json(config) : response([event('ready'), event('start'), event('result', 0, { accepted: true })]))
+  mock(t, async url => url.endsWith('/config') ? Response.json(config) : response([event('ready'), event('start'), event('start', 1), event('result', 0, { accepted: true })]))
   const b = useCloudDownloadBatch('test', new AbortController().signal)
   b.selectAll([resource(1), resource(2), resource(3)]); await b.submit()
   assert.equal(b.accepted.value, 1); assert.equal(b.uncertain.value, 2); assert.equal(b.count.value, 0)
+  assert.match(b.notice.value, /已提交 1 条/)
   assert.equal(b.running.value, false)
 })
 
@@ -152,4 +153,5 @@ test('stop aborts network work and marks unknown receipts for review', async t =
   const b = useCloudDownloadBatch('test', new AbortController().signal)
   b.toggle(resource(1)); const task = b.submit(); await started; b.stop(); await task
   assert.equal(b.running.value, false); assert.equal(b.uncertain.value, 1); assert.equal(b.count.value, 0)
+  assert.match(b.notice.value, /已提交 0 条/)
 })

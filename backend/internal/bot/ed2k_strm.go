@@ -54,14 +54,10 @@ func sameED2KSTRMTarget(a, b model.ED2KSTRMTarget) bool {
 	return a.ID == b.ID && a.Name == b.Name && a.OutputDir == b.OutputDir && a.AssignedBotID == b.AssignedBotID
 }
 
-func (b *Telegram) enqueueED2KSTRMBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target model.ED2KSTRMTarget, now time.Time) {
-	items := make([]messageShare, 0, len(links))
-	for _, link := range links {
-		items = append(items, messageShare{URL: link})
-	}
+func (b *Telegram) enqueueED2KSTRMBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, target model.ED2KSTRMTarget, textDocument bool, now time.Time) {
 	state.Queue = append(state.Queue, &messageBatch{
 		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
-		Mode: "ed2k_strm", ReadyAt: now, Items: items, ED2KSTRMTarget: target, ED2KRequestID: b.ed2kSTRMRequestID(updateID, target.ID),
+		Mode: "ed2k_strm", ReadyAt: now, TextDocument: textDocument, Items: items, ED2KSTRMTarget: target, ED2KRequestID: b.ed2kSTRMRequestID(updateID, target.ID),
 	})
 	b.Logs.Append("Telegram", fmt.Sprintf("消息-%d", message.ID), "ED2K STRM", "INFO", fmt.Sprintf("收到 ED2K STRM 导入请求，识别 %d 个链接并加入输出目录队列", len(items)))
 }

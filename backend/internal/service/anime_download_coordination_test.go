@@ -90,19 +90,31 @@ func TestAnimeAndManualDownloadUseTheSameResourceGate(t *testing.T) {
 			f, _, session, job := animeCoordinationFixture(t)
 			entered, finish := make(chan struct{}), make(chan struct{})
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			var reads atomic.Int32
+			var calls atomic.Int32
+			awaitUpstream := func(ctx context.Context) error {
+				if calls.Add(1) != 1 {
+					return errors.New("second entry reached upstream")
+				}
+				close(entered)
+				select {
+				case <-finish:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
 			client := &cloudWorkflowStub{
 				lookup: func(ctx context.Context, _ string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
-					if reads.Add(1) != 1 {
-						return p115.CloudTask{}, false, errors.New("second entry reached upstream")
+					return p115.CloudTask{InfoHash: job.Snapshot.InfoHash, DisplayStatus: "running"}, true, awaitUpstream(ctx)
+				},
+				add: func(ctx context.Context, _, _, _ string) (json.RawMessage, error) {
+					return json.RawMessage(`{}`), awaitUpstream(ctx)
+				},
+				addURLs: func(ctx context.Context, _ string, urls []string, _ string) ([]p115.CloudURLAddResult, error) {
+					if len(urls) != 2 {
+						return nil, errors.New("batch was not submitted together")
 					}
-					close(entered)
-					select {
-					case <-finish:
-						return p115.CloudTask{InfoHash: job.Snapshot.InfoHash, DisplayStatus: "running"}, true, nil
-					case <-ctx.Done():
-						return p115.CloudTask{}, false, ctx.Err()
-					}
+					return nil, awaitUpstream(ctx)
 				},
 			}
 			f.service.Offline = client
@@ -116,10 +128,10 @@ func TestAnimeAndManualDownloadUseTheSameResourceGate(t *testing.T) {
 				case "automatic":
 					_, _, err = f.service.LookupDownload(ctx, session, job.ID)
 				case "manual":
-					_, err = manual.Submit(ctx, config, link)
+					err = manual.Submit(ctx, config, link)
 				case "batch":
-					var batch *CloudDownloadBatch
-					batch, err = manual.PrepareBatch(config, []string{link})
+					var batch CloudDownloadBatchExecution
+					batch, err = manual.PrepareBatch(config, []string{"magnet:?xt=urn:btih:" + strings.Repeat("f", 40), link})
 					if err == nil {
 						err = batch.Run(ctx, func(CloudDownloadBatchEvent) error { return nil })
 					}
@@ -134,12 +146,12 @@ func TestAnimeAndManualDownloadUseTheSameResourceGate(t *testing.T) {
 			}
 			var err error
 			if first == "automatic" {
-				_, err = manual.Redo(ctx, config, link)
+				err = manual.Submit(ctx, config, link)
 			} else {
 				_, _, err = f.service.LookupDownload(ctx, session, job.ID)
 			}
-			if !errors.Is(err, ErrCloudTaskBusy) || reads.Load() != 1 {
-				t.Fatal("manual/automatic mutual exclusion failed", err, reads.Load())
+			if !errors.Is(err, ErrCloudTaskBusy) || calls.Load() != 1 {
+				t.Fatal("manual/automatic mutual exclusion failed", err, calls.Load())
 			}
 			close(finish)
 		})

@@ -121,7 +121,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const body = req.postDataJSON(); writes.push({ path: endpoint, body })
     assert.equal(url.searchParams.get('accountId'), 'main'); assert.equal(body.targetCID, '123')
     const events = [{ type: 'ready', index: 0, total: body.urls.length }]
-    body.urls.forEach((_value, index) => events.push({ type: 'start', index, total: body.urls.length }, { type: 'result', index, total: body.urls.length, accepted: true }))
+    for (let start = 0; start < body.urls.length; start += 100) {
+     const end = Math.min(start + 100, body.urls.length)
+     for (let index = start; index < end; index++) events.push({ type: 'start', index, total: body.urls.length })
+     for (let index = start; index < end; index++) events.push({ type: 'result', index, total: body.urls.length, accepted: true })
+    }
     events.push({ type: 'done', index: body.urls.length, total: body.urls.length })
     return route.fulfill({ contentType: 'application/x-ndjson', body: events.map(event => JSON.stringify(event)).join('\n') + '\n' })
    }
@@ -488,7 +492,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.deepEqual([...bulkImport[0].links].sort(), selectionLinks.map(link => link.url).sort())
   assert.equal(await dialog.locator('.ed-file').getByRole('button', { name: '已接收', exact: true }).count(), 545, '整包STRM成功后每个文件显示已接收')
   await dialog.getByRole('button', { name: '云下载所选', exact: true }).click()
-  await dialog.locator('.ed-notice').filter({ hasText: '已提交 545 / 545 个文件' }).waitFor()
+  await dialog.locator('.ed-notice').filter({ hasText: '已提交 545 条' }).waitFor()
   const bulkCloud = writes.slice(selectionWrites).filter(write => write.path.endsWith('/cloud-download/tasks/batch'))
   assert.equal(bulkCloud.length, 1, '545个文件通过单次云下载请求完整提交')
   assert.deepEqual([...bulkCloud[0].body.urls].sort(), selectionLinks.map(link => link.url).sort())

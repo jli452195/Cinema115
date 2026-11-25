@@ -17,71 +17,83 @@ import (
 )
 
 type cloudSubmitAPIFake struct {
-	task              p115.CloudTask
-	found             bool
-	removeErr, addErr error
-	steps             []string
-	cid               string
-	budget            time.Duration
+	addErr error
+	steps  []string
+	cid    string
+	budget time.Duration
 }
 
-func (f *cloudSubmitAPIFake) LookupTask(ctx context.Context, _ string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
+func (f *cloudSubmitAPIFake) LookupTask(context.Context, string, p115.CloudResource) (p115.CloudTask, bool, error) {
 	f.steps = append(f.steps, "lookup")
-	if deadline, ok := ctx.Deadline(); ok {
-		f.budget = time.Until(deadline)
-	}
-	return f.task, f.found, nil
+	return p115.CloudTask{}, false, nil
 }
 func (f *cloudSubmitAPIFake) DeleteTaskKeepFiles(_ context.Context, _, hash string) error {
 	f.steps = append(f.steps, "delete:"+hash)
-	return f.removeErr
+	return nil
 }
-func (f *cloudSubmitAPIFake) AddURL(_ context.Context, _, _, cid string) (json.RawMessage, error) {
+func (f *cloudSubmitAPIFake) AddURL(ctx context.Context, _, raw, cid string) (json.RawMessage, error) {
 	f.steps = append(f.steps, "add")
 	f.cid = cid
-	return json.RawMessage(`{"info_hash":"0123456789abcdef0123456789abcdef01234567"}`), f.addErr
+	if deadline, ok := ctx.Deadline(); ok {
+		f.budget = time.Until(deadline)
+	}
+	resource, err := p115.ParseCloudResource(raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(`{"info_hash":"` + resource.Hash + `"}`), f.addErr
+}
+func (f *cloudSubmitAPIFake) SubmitURL(ctx context.Context, cookie, raw, cid string) error {
+	_, err := f.AddURL(ctx, cookie, raw, cid)
+	return err
+}
+func (f *cloudSubmitAPIFake) AddURLs(_ context.Context, _ string, urls []string, cid string) ([]p115.CloudURLAddResult, error) {
+	f.steps = append(f.steps, "batch")
+	f.cid = cid
+	items := make([]p115.CloudURLAddResult, 0, len(urls))
+	for _, raw := range urls {
+		resource, err := p115.ParseCloudResource(raw)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, p115.CloudURLAddResult{URL: raw, InfoHash: resource.Hash})
+	}
+	return items, f.addErr
 }
 
-func TestCloudDownloadPOSTDefaultsToSafeResubmit(t *testing.T) {
+func TestCloudDownloadPOSTSubmitsDirectly(t *testing.T) {
 	const hash = "0123456789abcdef0123456789abcdef01234567"
 	for _, tc := range []struct {
-		name, display, errorText string
-		found                    bool
-		removeErr, addErr        error
-		status                   int
-		removed, uncertain       bool
-		steps                    int
+		name, errorText string
+		addErr          error
+		status          int
+		uncertain       bool
 	}{
-		{name: "新任务", status: 202, steps: 2},
-		{name: "网页默认删除重提", found: true, display: "finished", status: 202, removed: true, steps: 3},
-		{name: "运行任务不动", found: true, display: "running", status: 409, steps: 1, errorText: "未删除或重新提交"},
-		{name: "未知任务不动", found: true, status: 409, steps: 1, errorText: "未执行删除"},
-		{name: "删除失败不提交", found: true, display: "finished", removeErr: errors.New("删除被拒绝"), status: 502, steps: 2, errorText: "删除被拒绝"},
-		{name: "删除后提交失败", found: true, display: "finished", addErr: errors.New("提交被拒绝"), status: 502, removed: true, steps: 3, errorText: "旧任务记录已移除，但重新提交失败"},
-		{name: "删除后超时", found: true, display: "finished", addErr: context.DeadlineExceeded, status: 504, removed: true, uncertain: true, steps: 3, errorText: "重新提交结果尚未确认"},
+		{name: "提交成功", status: 202},
+		{name: "提交被拒绝", addErr: errors.New("提交被拒绝"), status: 502, errorText: "拒绝提交"},
+		{name: "提交超时", addErr: context.DeadlineExceeded, status: 504, uncertain: true, errorText: "结果未确认"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, accounts, id := setupAccountsAPI(t, nil, nil)
 			settings := testCloudDownloadSettings(t, accounts)
-			client := &cloudSubmitAPIFake{task: p115.CloudTask{InfoHash: hash, DisplayStatus: tc.display}, found: tc.found, removeErr: tc.removeErr, addErr: tc.addErr}
+			client := &cloudSubmitAPIFake{addErr: tc.addErr}
 			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
 			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId="+id, strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
 			response := httptest.NewRecorder()
 			r.ServeHTTP(response, request)
 			var body struct {
 				Accepted         bool
-				RemovedOldTask   bool
 				OutcomeUncertain bool
 				Error            string
 			}
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatal(err)
 			}
-			if response.Code != tc.status || body.Accepted != (tc.status == 202) || body.RemovedOldTask != tc.removed || body.OutcomeUncertain != tc.uncertain || !strings.Contains(body.Error, tc.errorText) || len(client.steps) != tc.steps {
+			if response.Code != tc.status || body.Accepted != (tc.status == 202) || body.OutcomeUncertain != tc.uncertain || !strings.Contains(body.Error, tc.errorText) || strings.Join(client.steps, ",") != "add" {
 				t.Fatalf("status=%d body=%s steps=%v", response.Code, response.Body.String(), client.steps)
 			}
-			if tc.removed && tc.status != 202 && !strings.Contains(body.Error, "网盘文件已保留") {
-				t.Fatal("未报告文件保留")
+			if body.Accepted && response.Body.String() != `{"accepted":true}` {
+				t.Fatal("成功响应包含多余字段", response.Body.String())
 			}
 			if tc.status == 202 && client.cid != "99" {
 				t.Fatal("未提交到本次指定目录")

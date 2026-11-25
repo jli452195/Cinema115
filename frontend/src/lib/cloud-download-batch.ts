@@ -1,13 +1,38 @@
-export const CLOUD_BATCH_LIMIT = 100
 export interface CloudBatchEvent {
   type: 'ready' | 'start' | 'result' | 'done'
   index: number
   total: number
   accepted?: boolean
-  removedOldTask?: boolean
   outcomeUncertain?: boolean
   error?: string
   stopped?: boolean
+}
+
+export function trackCloudBatch(total: number) {
+  const active = new Set<number>()
+  const completed = new Set<number>()
+  let done = false
+
+  function accept(event: CloudBatchEvent) {
+    if (event.total !== total) throw new Error('批量提交回执数量异常')
+    if (done) throw new Error('批量提交回执顺序异常')
+    if (event.type === 'ready') return
+    if (event.type === 'done') {
+      if (active.size || (!event.stopped && completed.size !== total)) throw new Error('批量提交缺少资源回执')
+      done = true
+      return
+    }
+    if (event.index < 0 || event.index >= total || completed.has(event.index)) throw new Error('批量提交回执编号异常')
+    if (event.type === 'start') {
+      if (active.has(event.index)) throw new Error('批量提交回执顺序异常')
+      active.add(event.index)
+      return
+    }
+    if (!active.delete(event.index)) throw new Error('批量提交回执顺序异常')
+    completed.add(event.index)
+  }
+
+  return { accept, completed, get done() { return done } }
 }
 
 export function magnetKey(raw: string): string {
@@ -27,6 +52,14 @@ export function magnetKey(raw: string): string {
     }
     return hex
   } catch { return '' }
+}
+
+export async function submitCloudBatch(token: string, accountId: string, targetCID: string, urls: string[], signal: AbortSignal, onEvent: (event: CloudBatchEvent) => void): Promise<void> {
+  const response = await fetch(`/api/admin/p115/cloud-download/tasks/batch?accountId=${encodeURIComponent(accountId)}`, {
+    method: 'POST', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ urls, targetCID }), signal,
+  })
+  await readCloudBatch(response, onEvent)
 }
 
 // 处理数据块边界并要求最终回执，断流后未确认的资源不能直接作为安全重试候选。

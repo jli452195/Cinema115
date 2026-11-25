@@ -34,6 +34,13 @@ func (s *cloudAdderStub) AddURL(_ context.Context, cookie, rawURL, targetCID str
 	s.cookie, s.url, s.cid = cookie, rawURL, targetCID
 	return json.RawMessage(`{"state":1,"info_hash":"abc","name":"测试任务"}`), nil
 }
+func (s *cloudAdderStub) SubmitURL(ctx context.Context, cookie, rawURL, targetCID string) error {
+	_, err := s.AddURL(ctx, cookie, rawURL, targetCID)
+	return err
+}
+func (s *cloudAdderStub) AddURLs(context.Context, string, []string, string) ([]p115.CloudURLAddResult, error) {
+	panic("unexpected batch submit")
+}
 
 func TestCloudDownloadServiceUsesOnlyPrimary(t *testing.T) {
 	store, err := NewSessionStore(filepath.Join(t.TempDir(), "accounts.enc"), "secret")
@@ -59,14 +66,14 @@ func TestCloudDownloadServiceUsesOnlyPrimary(t *testing.T) {
 	client := &cloudAdderStub{}
 	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
-	receipt, err := downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: secondID, TargetCID: "88", TargetPath: "/电影"}, link)
+	err = downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: secondID, TargetCID: "88", TargetPath: "/电影"}, link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.cookie != secondCookie || client.cid != "88" || client.url != link || receipt.AccountName != "账号二" || receipt.TargetPath != "/电影" {
-		t.Fatalf("云下载没有固定使用明确账号和目录：%+v %#v", receipt, client)
+	if client.cookie != secondCookie || client.cid != "88" || client.url != link {
+		t.Fatal("云下载没有使用指定主账号和目录")
 	}
-	if _, err := downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: firstID, TargetCID: "0", TargetPath: "/"}, link); err == nil || client.cookie != secondCookie {
+	if err := downloads.Submit(context.Background(), CloudDownloadConfig{AccountID: firstID, TargetCID: "0", TargetPath: "/"}, link); err == nil || client.cookie != secondCookie {
 		t.Fatal("空账号错误回退，或在校验失败后调用了上游")
 	}
 }
@@ -89,7 +96,7 @@ func TestCloudDownloadRedoDeletesOnlyVerifiedTerminalTaskAndKeepsFiles(t *testin
 	link := "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
 	client := &cloudAdderStub{found: true, task: p115.CloudTask{InfoHash: "0123456789ABCDEF0123456789ABCDEF01234567", Status: 2, StatusKnown: true}}
 	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-	receipt, err := downloads.Redo(context.Background(), CloudDownloadConfig{AccountID: id, TargetCID: "9", TargetPath: "/重下"}, link)
+	receipt, err := submitCloudWorkflowForTest(downloads, context.Background(), CloudDownloadConfig{AccountID: id, TargetCID: "9", TargetPath: "/重下"}, link)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +128,7 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &cloudAdderStub{found: true, task: tc.task}
 			downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-			_, err := downloads.Redo(context.Background(), CloudDownloadConfig{AccountID: "default", TargetCID: "0", TargetPath: "/"}, link)
+			_, err := submitCloudWorkflowForTest(downloads, context.Background(), CloudDownloadConfig{AccountID: "default", TargetCID: "0", TargetPath: "/"}, link)
 			if !errors.Is(err, tc.want) || client.deleted != "" || client.url != "" {
 				t.Fatalf("未阻止不安全删除：err=%v client=%+v", err, client)
 			}
@@ -129,52 +136,24 @@ func TestCloudDownloadRedoNeverDeletesRunningOrUnknownTask(t *testing.T) {
 	}
 }
 
-func TestCloudDownloadPreparedSubmissionKeepsCredentialsAndDestination(t *testing.T) {
+func TestCloudDownloadDirectSubmissionUsesOnlySubmitURL(t *testing.T) {
 	accounts, config := cloudWorkflowAccounts(t)
-	var cookies, directories []string
+	const link = "ed2k://|file|movie.mkv|128|0123456789abcdef0123456789abcdef|/"
+	calls := 0
 	client := &cloudWorkflowStub{
-		lookup: func(_ context.Context, cookie string, _ p115.CloudResource) (p115.CloudTask, bool, error) {
-			cookies = append(cookies, cookie)
-			return p115.CloudTask{}, false, nil
-		},
-		add: func(_ context.Context, cookie, _ string, cid string) (json.RawMessage, error) {
-			cookies = append(cookies, cookie)
-			directories = append(directories, cid)
+		add: func(_ context.Context, cookie, gotURL, cid string) (json.RawMessage, error) {
+			calls++
+			if cookie != "UID=123_A; CID=original" || cid != "9" || gotURL != link {
+				t.Fatal("单条提交没有使用指定凭据、链接和目录")
+			}
 			return json.RawMessage(`{}`), nil
 		},
 	}
 	downloads := &CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &CloudDownloadCoordinator{}}
-	submit, err := downloads.PrepareSubmission(config)
-	if err != nil {
+	if err := downloads.Submit(context.Background(), config, link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := submit(context.Background(), "magnet:?xt=urn:btih:"+strings.Repeat("a", 40)); err != nil {
-		t.Fatal(err)
-	}
-	account, err := accounts.Get(config.AccountID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replacement := "UID=123_B; CID=refreshed"
-	if err := accounts.Update(account.ID, account.Revision, account.Name, &replacement); err != nil {
-		t.Fatal(err)
-	}
-	config.TargetCID, config.TargetPath = "99", "/新的目录"
-	receipt, err := submit(context.Background(), "magnet:?xt=urn:btih:"+strings.Repeat("b", 40))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if receipt.TargetPath != "/新目录" || len(directories) != 2 {
-		t.Fatalf("prepared task changed destination: receipt=%+v directories=%v", receipt, directories)
-	}
-	for _, cookie := range cookies {
-		if cookie != "UID=123_A; CID=original" {
-			t.Fatal("prepared task changed credentials")
-		}
-	}
-	for _, cid := range directories {
-		if cid != "9" {
-			t.Fatal("prepared task changed directory")
-		}
+	if calls != 1 {
+		t.Fatalf("单条提交请求数为 %d", calls)
 	}
 }

@@ -26,39 +26,48 @@ func (b *Telegram) enqueueUpdates(ctx context.Context, state *telegramState, upd
 		if m == nil || m.From.IsBot || !b.AllowedChats[m.Chat.ID] {
 			continue
 		}
-		resources := parseTelegramResources(m)
-		kind := ""
-		if isED2KSTRMCommand(telegramMessageText(m)) {
-			kind = "ed2k_strm"
-		} else if isCloudCommand(telegramMessageText(m)) {
-			kind = "cloud"
-		}
-		if len(resources.Shares) > 0 && (len(resources.CloudLinks) > 0 || kind != "") {
-			b.queueTextReply(state, update, m, "115 分享链接与磁力、ED2K 请分开发送，本条消息尚未提交任务。")
+		if m.Document.isText() {
+			b.enqueueTextDocument(state, update, now)
 			continue
 		}
-		if kind == "ed2k_strm" && resources.HasMagnet {
-			b.queueTextReply(state, update, m, "ED2K STRM 仅支持 ED2K 文件链接，磁力不能生成 ED2K STRM，本条消息尚未提交任务。")
-			continue
-		}
-		if resources.HasMagnet {
-			// 磁力和 ED2K 可共用一批云下载，不将其中部分链接拆出生成 STRM。
-			kind = "cloud"
-		}
-		if len(resources.CloudLinks) > 0 || kind != "" {
-			items := make([]messageShare, len(resources.CloudLinks))
-			for i, link := range resources.CloudLinks {
-				items[i] = messageShare{URL: link}
-			}
-			b.enqueueResourceMessage(ctx, state, update, m, items, kind, now)
-			continue
-		}
-		if len(resources.Shares) > 0 && (b.ShareEnabled || len(b.ShareTransferTargets) > 0) {
-			b.enqueueResourceMessage(ctx, state, update, m, resources.Shares, "share", now)
-		}
+		b.enqueueResourceInput(ctx, state, update, parseTelegramResources(m), false, now)
 	}
 	// 先让本轮过期回调清除原键盘，再清理其余已过期的选择记录。
 	state.ResourceSelections = pruneResourceSelections(state.ResourceSelections, now)
+}
+
+func (b *Telegram) enqueueResourceInput(ctx context.Context, state *telegramState, update telegramUpdate, resources telegramResources, textDocument bool, now time.Time) {
+	m := update.Message
+	command := telegramMessageText(m)
+	kind := ""
+	if isED2KSTRMCommand(command) {
+		kind = "ed2k_strm"
+	} else if isCloudCommand(command) {
+		kind = "cloud"
+	}
+	if len(resources.Shares) > 0 && (len(resources.CloudLinks) > 0 || kind != "") {
+		b.queueTextReply(state, update, m, "115 分享链接与磁力、ED2K 请分开发送，本条消息尚未提交任务。")
+		return
+	}
+	if kind == "ed2k_strm" && resources.HasMagnet {
+		b.queueTextReply(state, update, m, "ED2K STRM 仅支持 ED2K 文件链接，磁力不能生成 ED2K STRM，本条消息尚未提交任务。")
+		return
+	}
+	if resources.HasMagnet {
+		// 磁力和 ED2K 共用一批云下载。
+		kind = "cloud"
+	}
+	if len(resources.CloudLinks) > 0 || kind != "" {
+		items := make([]messageShare, len(resources.CloudLinks))
+		for i, link := range resources.CloudLinks {
+			items[i] = messageShare{URL: link}
+		}
+		b.enqueueResourceMessage(ctx, state, update, m, items, kind, textDocument, now)
+		return
+	}
+	if len(resources.Shares) > 0 && (textDocument || b.ShareEnabled || len(b.ShareTransferTargets) > 0) {
+		b.enqueueResourceMessage(ctx, state, update, m, resources.Shares, "share", textDocument, now)
+	}
 }
 
 // 普通分享可越过尚未到期的转存批次，执行中的云端操作仍保持串行。
@@ -102,10 +111,15 @@ func (b *Telegram) collectUpdates(ctx context.Context, state *telegramState) err
 			deadline = batch.ReadyAt
 		}
 	}
+	for _, document := range state.TextDocuments {
+		if document.ReadyAt.Before(deadline) {
+			deadline = document.ReadyAt
+		}
+	}
 	pollCtx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	// 队列过长时停止继续确认新消息，让 Telegram 暂存，避免本地无限积压。
-	if len(state.Queue) >= 100 {
+	if len(state.Queue) >= maxQueuedResourceBatches {
 		<-pollCtx.Done()
 		return nil
 	}

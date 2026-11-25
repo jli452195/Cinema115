@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -25,6 +26,12 @@ type CloudURLAdder interface {
 	DeleteTaskKeepFiles(context.Context, string, string) error
 }
 
+type cloudDownloadClient interface {
+	CloudURLAdder
+	SubmitURL(context.Context, string, string, string) error
+	AddURLs(context.Context, string, []string, string) ([]p115.CloudURLAddResult, error)
+}
+
 var (
 	ErrCloudTaskRunning = errors.New("相同云下载任务仍在运行")
 	ErrCloudTaskUnclear = errors.New("无法安全确认云下载任务状态")
@@ -40,16 +47,12 @@ type CloudDownloadReceipt struct {
 	RemovedOldTask bool
 }
 
-// CloudDownloadSubmission pins the credentials and destination of one task in
-// memory. It must never be persisted as part of a resumable task record.
-type CloudDownloadSubmission func(context.Context, string) (CloudDownloadReceipt, error)
-
 // CloudDownloadService is shared by the administrator page and Telegram.
 // Each call resolves one explicit account and snapshots its cookie before the
 // upstream request; it never falls back to another account.
 type CloudDownloadService struct {
 	Accounts    *P115Accounts
-	Client      CloudURLAdder
+	Client      cloudDownloadClient
 	Coordinator *CloudDownloadCoordinator
 }
 
@@ -69,29 +72,47 @@ func (s *CloudDownloadService) ValidateConfig(config CloudDownloadConfig) error 
 	return nil
 }
 
-// 保留旧调用入口，所有入口默认使用同一套安全重提流程。
-func (s *CloudDownloadService) Redo(ctx context.Context, config CloudDownloadConfig, rawURL string) (CloudDownloadReceipt, error) {
-	return s.Submit(ctx, config, rawURL)
-}
-
-// 先精确查询；仅删除已结束的任务记录，始终保留文件，不自动循环重试。
-func (s *CloudDownloadService) Submit(ctx context.Context, config CloudDownloadConfig, rawURL string) (CloudDownloadReceipt, error) {
-	submit, err := s.PrepareSubmission(config)
-	if err != nil {
-		return CloudDownloadReceipt{}, err
-	}
-	return submit(ctx, rawURL)
-}
-
-// PrepareSubmission fixes the account once for all links in a Telegram task.
-func (s *CloudDownloadService) PrepareSubmission(config CloudDownloadConfig) (CloudDownloadSubmission, error) {
+// Submit 直接新增普通云下载任务，只使用提交接口本次返回的结果。
+func (s *CloudDownloadService) Submit(ctx context.Context, config CloudDownloadConfig, rawURL string) error {
 	account, err := s.snapshot(config)
 	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, CloudDownloadTimeout)
+	defer cancel()
+	resource, err := p115.ParseCloudResource(rawURL)
+	if err != nil {
+		return err
+	}
+	release, err := s.acquireDirectResources(ctx, account, []p115.CloudResource{resource})
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.addDirectURL(ctx, account.Cookie, rawURL, strings.TrimSpace(config.TargetCID))
+}
+
+func (s *CloudDownloadService) acquireDirectResources(ctx context.Context, account P115Account, resources []p115.CloudResource) (func(), error) {
+	release, err := s.Coordinator.acquireResources(ctx, p115.CookieUserID(account.Cookie), resources)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, &cloudDirectSubmitError{cause: err, message: "提交取消或等待超时，请求未发送"}
+		}
 		return nil, err
 	}
-	return func(ctx context.Context, rawURL string) (CloudDownloadReceipt, error) {
-		return s.submitSnapshot(ctx, config, account, rawURL)
-	}, nil
+	if err := s.Accounts.ValidatePrimary(account.ID); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+// 调用方已预留同 UID 和资源名额。旧任务核对只留在 submitSnapshot。
+func (s *CloudDownloadService) addDirectURL(ctx context.Context, cookie, rawURL, cid string) error {
+	if err := s.Client.SubmitURL(ctx, cookie, rawURL, cid); err != nil {
+		return directCloudSubmitError(err)
+	}
+	return nil
 }
 
 func (s *CloudDownloadService) submitSnapshot(ctx context.Context, config CloudDownloadConfig, account P115Account, rawURL string) (CloudDownloadReceipt, error) {
@@ -193,15 +214,52 @@ func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account
 
 // 网络中断不能证明上游未执行操作，提示用户核对而非自动重试。
 func CloudDownloadUncertain(err error) bool {
+	var direct *cloudDirectSubmitError
+	if errors.As(err, &direct) {
+		return direct.uncertain
+	}
 	var deferred *p115.CloudRequestDeferredError
 	if errors.As(err, &deferred) {
 		return false
 	}
 	var network net.Error
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &network)
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, p115.ErrCloudSubmissionUncertain) || errors.As(err, &network)
+}
+
+// 直接提交对外只显示安全错误类别，底层原因仅用于分类。
+type cloudDirectSubmitError struct {
+	cause     error
+	message   string
+	uncertain bool
+}
+
+func (e *cloudDirectSubmitError) Error() string { return e.message }
+func (e *cloudDirectSubmitError) Unwrap() error { return e.cause }
+
+func directCloudSubmitError(err error) error {
+	var upstream *p115.HTTPError
+	var syntax *json.SyntaxError
+	var invalidType *json.UnmarshalTypeError
+	var deferred *p115.CloudRequestDeferredError
+	if errors.As(err, &deferred) {
+		return &cloudDirectSubmitError{cause: err, message: "115 请求已限速延后，本次请求未发送"}
+	}
+	isHTTP := errors.As(err, &upstream)
+	if CloudDownloadUncertain(err) || isHTTP && upstream.Status >= http.StatusInternalServerError || errors.As(err, &syntax) || errors.As(err, &invalidType) {
+		return &cloudDirectSubmitError{cause: err, message: "115 提交结果未确认", uncertain: true}
+	}
+	if isHTTP {
+		return &cloudDirectSubmitError{cause: err, message: fmt.Sprintf("115 拒绝提交（HTTP %d）", upstream.Status)}
+	}
+	var rejection *p115.CloudSubmissionRejection
+	if errors.As(err, &rejection) {
+		return &cloudDirectSubmitError{cause: err, message: rejection.Error()}
+	}
+	return &cloudDirectSubmitError{cause: err, message: "115 拒绝提交"}
 }
 
 func CloudDownloadErrorMessage(err error) string {
+	var direct *cloudDirectSubmitError
 	switch {
 	case errors.Is(err, p115.ErrCloudInput):
 		return "链接格式无效，请发送完整的 magnet 或 ED2K 链接"
@@ -211,6 +269,8 @@ func CloudDownloadErrorMessage(err error) string {
 		return "无法安全确认旧任务状态，未执行删除"
 	case errors.Is(err, ErrCloudTaskBusy):
 		return ErrCloudTaskBusy.Error()
+	case errors.As(err, &direct):
+		return direct.message
 	case CloudDownloadUncertain(err):
 		return "连接 115 超时或中断，处理结果尚未确认，请先检查 115 任务列表再决定是否重试"
 	case errors.Is(err, ErrGenerationInput):

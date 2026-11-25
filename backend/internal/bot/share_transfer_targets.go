@@ -5,10 +5,10 @@ import (
 	"time"
 )
 
-func (b *Telegram) enqueueShareTransferBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, target TelegramTransferTarget, now time.Time) {
+func (b *Telegram) enqueueShareTransferBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, target TelegramTransferTarget, textDocument bool, now time.Time) {
 	batch := &messageBatch{
 		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
-		Mode: "share_transfer", ReadyAt: now,
+		Mode: "share_transfer", ReadyAt: now, TextDocument: textDocument,
 		ShareTarget: service.ShareTransferTarget{
 			ID: target.ID, Name: target.Name, AccountID: target.AccountID, TargetCID: target.TargetCID,
 			TargetPath: target.TargetPath, AssignedBotID: target.AssignedBotID,

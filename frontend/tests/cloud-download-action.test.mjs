@@ -64,13 +64,15 @@ test('同磁力只提交一次，提交期间改配置不改变本次目标或�
   assert.equal(posts[1].targetCID, '100')
 })
 
-for (const failure of ['structured', 'network']) {
+for (const failure of ['structured', 'network', 'truncated', 'malformed']) {
   test(`${failure} 未知回执阻止原磁力和别名自动重发`, async t => {
     let reads = 0, posts = 0
     mockFetch(t, async url => {
       if (url.endsWith('/config')) { reads++; return Response.json(config) }
       posts++
       if (failure === 'network') throw new TypeError('连接中断')
+      if (failure === 'truncated') return new Response('{"accepted":', { status: 202 })
+      if (failure === 'malformed') return Response.json({ accepted: 'true' }, { status: 202 })
       return Response.json({ error: '115 接收结果未知，请核对', outcomeUncertain: true }, { status: 504 })
     })
     const action = useCloudDownloadAction('test', new AbortController().signal)

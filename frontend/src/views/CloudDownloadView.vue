@@ -8,6 +8,7 @@ import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
 import P115TransferTargetSettings from '../components/P115TransferTargetSettings.vue'
 import { p115Request } from '../lib/p115-api'
 import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
+import { submitCloudBatch, trackCloudBatch } from '../lib/cloud-download-batch'
 import type { P115Account } from '../types/p115Accounts'
 
 type TransferTab = 'magnet' | 'share'
@@ -61,9 +62,23 @@ function openDirectoryDialog() {
 
 async function selectDirectory(value: { id: string; path: string }) {
   directoryDialogOpen.value = false
-  targetCID.value = value.id
-  targetPath.value = value.path
-  await saveConfig()
+  if (!primaryAccount.value?.configured || submitting.value) return
+  applyingConfig.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    await p115Request(props.token, 'cloud-download/config', {
+      method: 'PUT', body: JSON.stringify({ accountId: accountId.value, targetCID: value.id, targetPath: value.path }),
+      signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
+    })
+    targetCID.value = value.id
+    targetPath.value = value.path
+    notice.value = '下载目录已保存。'
+  } catch (reason) {
+    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存云下载配置失败'
+  } finally {
+    applyingConfig.value = false
+  }
 }
 
 async function submit() {
@@ -72,12 +87,15 @@ async function submit() {
   error.value = ''
   notice.value = ''
   const snapshot = { accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
-  const rawURL = url.value.trim()
+  const urls = url.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   try {
-    await p115Request(props.token, 'cloud-download/config', { method: 'PUT', body: JSON.stringify(snapshot), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
-    const receipt = await submitCloudDownload(props.token, snapshot.accountId, rawURL, snapshot.targetCID, lifecycle.signal)
-    notice.value = cloudDownloadNotice(receipt, snapshot.targetPath)
-    if (url.value.trim() === rawURL) url.value = ''
+    if (urls.length === 1) {
+      await submitCloudDownload(props.token, snapshot.accountId, urls[0]!, snapshot.targetCID, lifecycle.signal)
+      notice.value = cloudDownloadNotice(snapshot.targetPath)
+      url.value = ''
+    } else {
+      await submitBatch(urls, snapshot)
+    }
   } catch (reason) {
     if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '提交云下载失败'
   } finally {
@@ -85,21 +103,41 @@ async function submit() {
   }
 }
 
-async function saveConfig() {
-  if (!primaryAccount.value?.configured) {
-    error.value = '请先在 115 助手中登录主账号'
-    return
-  }
-  applyingConfig.value = true
-  error.value = ''
+async function submitBatch(urls: string[], target: { accountId: string; targetCID: string }) {
+  const receipts = trackCloudBatch(urls.length)
+  const rejected = new Set<number>()
+  let accepted = 0
+  let uncertain = 0
+  let firstFailure = ''
   try {
-    await p115Request(props.token, 'cloud-download/config', { method: 'PUT', body: JSON.stringify({ accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
-    notice.value = '下载目录已保存。'
+    await submitCloudBatch(props.token, target.accountId, target.targetCID, urls, lifecycle.signal, event => {
+      receipts.accept(event)
+      if (event.type !== 'result') return
+      if (event.accepted) accepted++
+      else if (event.outcomeUncertain) uncertain++
+      else {
+        rejected.add(event.index)
+        firstFailure ||= event.error || '提交失败'
+      }
+    })
   } catch (reason) {
-    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存云下载配置失败'
-  } finally {
-    applyingConfig.value = false
+    if (lifecycle.signal.aborted) throw reason
+    if ((reason as { beforeStart?: boolean })?.beforeStart) {
+      notice.value = '已提交 0 条'
+      throw reason
+    }
+    if (!receipts.done) uncertain += urls.length - receipts.completed.size
   }
+  // 已接收和接收结果不明的链接从输入框移除，保留明确失败或尚未提交的链接。
+  const retryable = urls.filter((_, index) => rejected.has(index) || (receipts.done && !receipts.completed.has(index)))
+  if (uncertain) {
+    error.value = `${uncertain} 条提交结果待核对，请先到 115 云下载核对。`
+  }
+  if (rejected.size) error.value += `${rejected.size} 条提交失败。首条错误为「${firstFailure}」。`
+  const unsent = receipts.done ? urls.length - receipts.completed.size : 0
+  if (unsent) error.value += `${unsent} 条尚未提交。`
+  url.value = retryable.join('\n')
+  notice.value = `已提交 ${accepted} 条`
 }
 
 async function refresh() {
@@ -131,13 +169,13 @@ onBeforeUnmount(() => lifecycle.abort())
 
       <section v-if="activeTab === 'magnet'" id="magnet-panel" role="tabpanel" aria-labelledby="magnet-tab" class="space-y-5 pt-5">
         <section class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:p-6">
-          <div class="flex items-start gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconCloudDownload :size="19" aria-hidden="true" /></span><div><h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">手动提交磁力或 ED2K</h2><p class="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">相同的已结束任务会删除任务记录后重新提交，网盘文件保留；运行中的任务不会删除。</p></div></div>
+          <div class="flex items-start gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconCloudDownload :size="19" aria-hidden="true" /></span><h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">手动提交磁力或 ED2K</h2></div>
           <P115PrimaryStatus v-if="accountsLoaded" :accounts="accounts" class="mt-4" />
-          <label class="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-300">磁力或 ED2K 链接<textarea v-model="url" rows="3" maxlength="8192" placeholder="magnet:?xt=urn:btih:… 或 ed2k://|file|…" class="mt-2 block w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" /></label>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><div class="min-w-0"><p class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</p><p class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{{ currentName }}（{{ targetCID || '未选择' }}）</p></div><button type="button" :disabled="!accountId || applyingConfig" class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800" @click="openDirectoryDialog">选择目录</button></div>
+          <label class="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-300">磁力或 ED2K 链接<textarea v-model="url" rows="3" :readonly="submitting" placeholder="每行一条链接" class="mt-2 block w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" /></label>
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><div class="min-w-0"><p class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</p><p class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{{ currentName }}（{{ targetCID || '未选择' }}）</p></div><button type="button" :disabled="!accountId || applyingConfig || submitting" class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800" @click="openDirectoryDialog">选择目录</button></div>
           <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}</p>
           <p v-if="notice" role="status" class="mt-4 rounded-lg bg-emerald-50 p-3 text-sm leading-6 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{{ notice }}</p>
-          <div class="mt-4 flex justify-end"><button type="button" :disabled="!canSubmit" class="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="submit"><IconCloudDownload :size="17" aria-hidden="true" />{{ submitting ? '正在提交…' : '开始云下载' }}</button></div>
+          <div class="mt-4 flex justify-end"><button type="button" :disabled="!canSubmit" class="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="submit"><IconCloudDownload :size="17" aria-hidden="true" />{{ submitting ? '正在提交…' : '提交' }}</button></div>
         </section>
         <P115TransferTargetSettings :token="token" endpoint="cloud-download/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" title="Bot 磁力/ED2K 转存目录" description="每个目录是一个独立 Bot 功能。一个 Bot 可分配多个目录，私聊时由发送者选择。" empty-text="还没有 Bot 磁力/ED2K 转存目录" />
       </section>

@@ -3,28 +3,36 @@ package bot
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"strm115/backend/internal/client/p115"
 	"strm115/backend/internal/service"
 )
 
-type CloudDownloadSubmitter interface {
-	Submit(context.Context, service.CloudDownloadConfig, string) (service.CloudDownloadReceipt, error)
+type CloudDownloadPreparer interface {
+	PrepareBatch(service.CloudDownloadConfig, []string) (service.CloudDownloadBatchExecution, error)
 }
 
-func (b *Telegram) enqueueCloudBatch(state *telegramState, updateID int64, message *telegramMessage, links []string, target TelegramTransferTarget, now time.Time) {
-	batch := &messageBatch{
+func (b *Telegram) enqueueCloudBatch(state *telegramState, updateID int64, message *telegramMessage, items []messageShare, target TelegramTransferTarget, textDocument bool, now time.Time) {
+	// 普通云下载按任务身份去重，同一 Hash 的不同链接别名只提交一次。
+	seen := make(map[p115.CloudResource]struct{}, len(items))
+	links := make([]messageShare, 0, len(items))
+	for _, item := range items {
+		resource, err := p115.ParseCloudResource(item.URL)
+		if err == nil {
+			if _, exists := seen[resource]; exists {
+				continue
+			}
+			seen[resource] = struct{}{}
+		}
+		links = append(links, item)
+	}
+	state.Queue = append(state.Queue, &messageBatch{
 		UpdateID: updateID, ChatID: message.Chat.ID, MessageID: message.ID, ThreadID: message.ThreadID,
 		Mode: "cloud", ReadyAt: now, CloudTargetID: target.ID, CloudTargetName: target.Name,
 		CloudTarget: service.CloudDownloadConfig{AccountID: target.AccountID, TargetCID: target.TargetCID, TargetPath: target.TargetPath},
-		Items:       make([]messageShare, 0, len(links)),
-	}
-	for _, link := range links {
-		batch.Items = append(batch.Items, messageShare{URL: link})
-	}
-	state.Queue = append(state.Queue, batch)
+		Items:       links, TextDocument: textDocument,
+	})
 }
 
 func sameCloudTarget(a, b TelegramTransferTarget) bool {
@@ -43,141 +51,54 @@ func (b *Telegram) currentCloudTarget(id string) (TelegramTransferTarget, bool) 
 	return TelegramTransferTarget{}, false
 }
 
-type cloudBatchOutcome struct {
-	label   string
-	removed bool
-	err     error
-}
-
-// processCloudDownload handles one Telegram input message as one batch and
-// creates exactly one normal reply. Before every upstream mutation it advances
-// and persists the item checkpoint, so a restart never repeats an uncertain
-// deletion or submission.
+// 每组在写入前保存游标，提交后直接汇总本次回执。
 func (b *Telegram) processCloudDownload(ctx context.Context, state *telegramState) error {
+	const operation = "115 云下载"
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	batch := state.Batch
-	submission, err := b.cloudBatchSubmission(batch)
+	execution, err := b.cloudBatchExecution(batch)
 	if err != nil {
-		remaining := len(batch.Items) - batch.Next
-		batch.Next = len(batch.Items)
-		state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID,
-			Text: fmt.Sprintf("115 云下载批次已停止，%d 个尚未开始的链接未提交。\n原因：%s", remaining, cloudDownloadError(err))}
-		if err := b.save(*state); err != nil {
-			return fmt.Errorf("保存 Telegram 云下载停止状态: %w", err)
-		}
-		return nil
+		return b.stopTextBatch(state, operation, err)
 	}
-	outcomes := make([]cloudBatchOutcome, 0, len(batch.Items)-batch.Next)
-	for batch.Next < len(batch.Items) {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		index := batch.Next
-		item := batch.Items[index]
-		batch.Next++
-		state.Pending = &pendingReply{
-			UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID,
-			Text: "⚠️ 115 云下载提交过程被中断。为避免重复删除或重复提交，本批次不会自动重做已经开始的链接。",
-		}
-		if err := b.save(*state); err != nil {
-			return fmt.Errorf("记录 Telegram 云下载任务: %w", err)
-		}
-
-		taskCtx, cancel := context.WithTimeout(ctx, service.CloudDownloadTimeout)
-		// 所有入口统一使用默认安全重提，批次固定本次准备的账号和目录。
-		receipt, err := submission(taskCtx, item.URL)
-		cancel()
-		outcomes = append(outcomes, cloudBatchOutcome{label: cloudResourceLabel(item.URL), removed: receipt.RemovedOldTask, err: err})
-		if err != nil {
-			b.Logs.Append("Telegram", fmt.Sprintf("云下载-%d", batch.UpdateID), "云下载", "ERROR", fmt.Sprintf("第 %d/%d 个任务提交失败：%s", index+1, len(batch.Items), cloudDownloadError(err)))
-		} else {
-			operation := "提交"
-			if receipt.RemovedOldTask {
-				operation = "重新提交"
-			}
-			b.Logs.Append("Telegram", fmt.Sprintf("云下载-%d", batch.UpdateID), "云下载", "INFO", fmt.Sprintf("第 %d/%d 个任务已%s到 115", index+1, len(batch.Items), operation))
-		}
+	start := batch.Next
+	end := min(start+service.CloudDownloadBatchSize, len(batch.Items))
+	if err := b.saveBatchCheckpoint(state, end, ""); err != nil {
+		return fmt.Errorf("保存 Telegram 云下载提交进度: %w", err)
 	}
-	result := formatCloudBatchReply(outcomes, batch.CloudTarget.TargetPath)
-	if batch.CloudTargetName != "" {
-		result = "转存目标：" + batch.CloudTargetName + "\n" + result
+	results, stopped := execution.SubmitChunk(ctx, start)
+	for _, event := range results {
+		b.recordCloudBatchResult(batch, operation, event)
 	}
-	state.Pending = &pendingReply{UpdateID: batch.UpdateID, ChatID: batch.ChatID, MessageID: batch.MessageID, ThreadID: batch.ThreadID, Text: result}
-	if err := b.save(*state); err != nil {
-		return fmt.Errorf("保存 Telegram 云下载结果: %w", err)
+	// 即使服务此刻停止，也先保存已经收到的提交结果。
+	if ctx.Err() == nil && stopped && end < len(batch.Items) {
+		return b.stopTextBatch(state, operation, nil)
 	}
-	return nil
+	if err := b.saveTextBatchProgress(state, operation); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
-func cloudResourceLabel(rawURL string) string {
-	resource, err := p115.ParseCloudResource(rawURL)
-	if err != nil {
-		return "未知资源"
+func (b *Telegram) recordCloudBatchResult(batch *messageBatch, operation string, event service.CloudDownloadBatchEvent) {
+	result := batch.summary()
+	if event.Accepted {
+		result.Succeeded++
+		return
 	}
-	name := "BT"
-	if resource.Protocol == "ed2k" {
-		name = "ED2K"
-	}
-	hash := resource.Hash
-	if len(hash) > 8 {
-		hash = hash[len(hash)-8:]
-	}
-	return name + " …" + hash
-}
-
-func formatCloudBatchReply(outcomes []cloudBatchOutcome, targetPath string) string {
-	if len(outcomes) == 1 {
-		outcome := outcomes[0]
-		if outcome.err != nil {
-			prefix := "❌ 115 云下载提交失败"
-			if outcome.removed {
-				prefix = "❌ 旧任务记录已移除，但重新提交失败\n已下载文件没有被删除"
-				if service.CloudDownloadUncertain(outcome.err) {
-					prefix = "⚠️ 旧任务记录已移除，但重新提交结果尚未确认\n已下载文件没有被删除"
-				}
-			}
-			return prefix + "\n资源：" + outcome.label + "\n原因：" + cloudDownloadError(outcome.err)
+	reason, level := event.Error, "ERROR"
+	if event.OutcomeUncertain {
+		result.Uncertain++
+		level = "WARNING"
+		if reason == "" {
+			reason = "提交结果未确认"
 		}
-		if outcome.removed {
-			return "✅ 已重新提交到 115 云下载\n资源：" + outcome.label + "\n目录：" + targetPath + "\n旧任务记录已移除，原有网盘文件已保留"
-		}
-		return "✅ 已提交到 115 云下载\n资源：" + outcome.label + "\n目录：" + targetPath
-	}
-
-	submitted, redone := 0, 0
-	failures := make([]string, 0, len(outcomes))
-	for _, outcome := range outcomes {
-		if outcome.err != nil {
-			detail := outcome.label + "：" + cloudDownloadError(outcome.err)
-			if outcome.removed {
-				detail += "（旧任务已移除，文件保留）"
-			}
-			failures = append(failures, detail)
-		} else if outcome.removed {
-			redone++
-		} else {
-			submitted++
+	} else {
+		result.Failed++
+		if reason == "" {
+			reason = "未提交"
 		}
 	}
-	var text strings.Builder
-	text.WriteString("☁️ 115 云下载提交完成")
-	if submitted > 0 {
-		fmt.Fprintf(&text, "\n✅ 已提交：%d 个", submitted)
-	}
-	if redone > 0 {
-		fmt.Fprintf(&text, "\n♻️ 已重新提交：%d 个", redone)
-	}
-	if len(failures) > 0 {
-		fmt.Fprintf(&text, "\n❌ 失败：%d 个\n\n失败明细：", len(failures))
-		for _, failure := range failures {
-			text.WriteString("\n• ")
-			text.WriteString(failure)
-		}
-	}
-	text.WriteString("\n目录：")
-	text.WriteString(targetPath)
-	return text.String()
-}
-
-func cloudDownloadError(err error) string {
-	return service.CloudDownloadErrorMessage(err)
+	b.recordTextBatchIssue(batch, operation, event.Index, reason, level)
 }

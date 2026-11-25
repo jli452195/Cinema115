@@ -23,9 +23,9 @@ export function useCloudDownloadAction(token: string, signal: AbortSignal, statu
       const { accountId, targetCID, targetPath } = await loadCloudDownloadConfig(token, signal)
       if (signal.aborted) return
       if (!accountId || !targetCID) throw Object.assign(new Error('请先配置主账号，并在“115 云下载”保存下载目录'), { needsConfig: true })
-      const receipt = await submitCloudDownload(token, accountId, url, targetCID, signal)
+      await submitCloudDownload(token, accountId, url, targetCID, signal)
       if (signal.aborted) return
-      return statuses.value[key] = { success: true, message: cloudDownloadNotice(receipt, targetPath) }
+      return statuses.value[key] = { success: true, message: cloudDownloadNotice(targetPath) }
     } catch (reason) {
       if (signal.aborted) return
       const error = reason as { outcomeUncertain?: boolean; needsConfig?: boolean; responseData?: { outcomeUncertain?: boolean } } | null
