@@ -85,7 +85,7 @@ func (r *Renderer) Render(data Data) (Result, error) {
 	}
 	directories := make([]string, 0, len(r.template.Directories))
 	for i, layer := range r.template.Directories {
-		name := renderLayer(layer, data)
+		name, _, _ := renderLayer(layer, data)
 		if name == "" { // An entirely unknown optional directory adds no path level.
 			continue
 		}
@@ -94,41 +94,29 @@ func (r *Renderer) Render(data Data) (Result, error) {
 		}
 		directories = append(directories, name)
 	}
-	stem := renderLayer(r.template.Filename, data)
+	filename := r.template.Filename
+	stem, largest, largestBytes := renderLayer(filename, data)
 	if stem == "" {
 		return Result{}, fmt.Errorf("%w：文件名为空，请补充模板字段或文件信息", ErrInput)
 	}
-	filename := r.template.Filename
 	if len(stem)+len(extension) > maxComponentBytes && cleanText(data.Values[Title]) != "" {
 		// 仅在完整文件名超长时，将原语种名称回退为作品名称，保留模板格式。
 		for i, block := range filename {
 			if block.Field == OriginalTitle {
 				filename = slices.Clone(filename)
 				filename[i].Field = Title
-				stem = renderLayer(filename, data)
+				stem, largest, largestBytes = renderLayer(filename, data)
 				break
 			}
 		}
 	}
 	if len(stem)+len(extension) > maxComponentBytes {
-		return Result{}, filenameLengthError(filename, data, len(stem)+len(extension))
+		field, _ := definition(largest)
+		return Result{}, fmt.Errorf("%w：目标文件名为 %d 个 UTF-8 字节，超过 %d 字节；其中「%s」占 %d 字节，请缩短模板或字段", ErrInput, len(stem)+len(extension), maxComponentBytes, field.Label, largestBytes)
 	}
 	out := Result{Directory: strings.Join(directories, "/"), Stem: stem, Extension: extension, Name: stem + extension}
 	out.RelativePath = path.Join(out.Directory, out.Name)
 	return out, nil
-}
-
-// 超限针对生成后的完整文件名，标明实际字节数及最大字段，避免误以为原文件名过长。
-func filenameLengthError(layer []Block, data Data, byteLength int) error {
-	var largest Field
-	largestBytes := 0
-	for _, block := range layer {
-		if size := len(cleanText(fieldValue(block, data))); size > largestBytes {
-			largest, largestBytes = block.Field, size
-		}
-	}
-	field, _ := definition(largest)
-	return fmt.Errorf("%w：目标文件名为 %d 个 UTF-8 字节，超过 %d 字节；其中「%s」占 %d 字节，请缩短模板或字段", ErrInput, byteLength, maxComponentBytes, field.Label, largestBytes)
 }
 
 func validateData(kind Kind, data Data) error {
@@ -161,12 +149,48 @@ func validateData(kind Kind, data Data) error {
 	return nil
 }
 
-func renderLayer(layer []Block, data Data) string {
+func renderLayer(layer []Block, data Data) (name string, largest Field, largestBytes int) {
 	var out strings.Builder
+	var titles []string
+	primaryTitle := true
+	selected := func(field Field) bool {
+		return slices.ContainsFunc(layer, func(block Block) bool { return block.Field == field })
+	}
 	for _, block := range layer {
 		value := cleanText(fieldValue(block, data))
+		switch block.Field {
+		case Title, OriginalTitle, EnglishTitle:
+			// 只有本层第一个标题可以回退，后续标题仅显示不同的实际名称。
+			if primaryTitle && value == "" {
+				value = cleanText(data.Values[Title])
+			}
+			primaryTitle = false
+			title := strings.Join(strings.Fields(value), " ")
+			if value == "" || slices.ContainsFunc(titles, func(previous string) bool { return strings.EqualFold(previous, title) }) {
+				continue
+			}
+			titles = append(titles, title)
+		case SourceMedium, SourceModifier:
+			if selected(Source) {
+				if containsLabel(data.Values[Source], value) {
+					continue
+				}
+			} else if block.Field == SourceMedium && value == "" {
+				// 旧快照只有组合来源时才回退。拆分值显式为空也可能表示冲突。
+				if _, supplied := data.Values[SourceMedium]; !supplied && data.Values[SourceModifier] == "" {
+					value = cleanText(data.Values[Source])
+				}
+			}
+		case HDRBaseLayer:
+			if selected(DynamicRange) && containsLabel(data.Values[DynamicRange], value) {
+				continue
+			}
+		}
 		if value == "" {
 			continue
+		}
+		if len(value) > largestBytes {
+			largest, largestBytes = block.Field, len(value)
 		}
 		if out.Len() > 0 {
 			out.WriteString(block.Separator)
@@ -175,23 +199,20 @@ func renderLayer(layer []Block, data Data) string {
 		out.WriteString(value)
 		out.WriteString(block.Suffix)
 	}
-	name := strings.Trim(strings.TrimSpace(out.String()), ". ")
+	name = strings.Trim(strings.TrimSpace(out.String()), ". ")
 	if reservedName(name) {
 		name = "_" + name
 	}
-	return name
+	return name, largest, largestBytes
+}
+
+func containsLabel(text, label string) bool {
+	return label != "" && slices.ContainsFunc(strings.Fields(cleanText(text)), func(part string) bool {
+		return strings.EqualFold(part, label)
+	})
 }
 
 func fieldValue(block Block, data Data) string {
-	if data.TitleOnly && block.Field == Container {
-		return ""
-	}
-	value := data.Values[block.Field]
-	// 新字段加入默认模板后，旧任务快照仍可能只保存 source。保留来源回退，
-	// 让旧整理记录在新模板下继续得到原来的来源标记。
-	if value == "" && block.Field == SourceMedium {
-		value = data.Values[Source]
-	}
 	switch block.Field {
 	case Season:
 		return number(*data.Season, block.Pad)
@@ -208,19 +229,8 @@ func fieldValue(block Block, data Data) string {
 			return data.OriginalName
 		}
 		return strings.TrimSuffix(data.OriginalName, path.Ext(data.OriginalName))
-	case EnglishTitle, OriginalTitle:
-		if value := strings.TrimSpace(data.Values[block.Field]); value != "" {
-			return value
-		}
-		return data.Values[Title]
-	case HDRBaseLayer:
-		value = strings.TrimSpace(value)
-		if value != "" && slices.Contains(strings.Fields(data.Values[DynamicRange]), value) {
-			return ""
-		}
-		return value
 	default:
-		return value
+		return data.Values[block.Field]
 	}
 }
 

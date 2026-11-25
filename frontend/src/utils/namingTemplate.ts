@@ -20,8 +20,8 @@ export function namingSample(kind: NamingKind, sample: string): NamingData {
   if (sample !== 'minimal') Object.assign(values, {
     originalTitle: 'Original Title', englishTitle: 'Example Title',
     resolution: '2160p', source: 'BluRay REMUX', sourceMedium: 'BluRay', sourceModifier: 'REMUX', videoCodec: 'HEVC', bitDepth: '10bit',
-    dynamicRange: 'DV HDR10', dvProfile: 'P7', dvLayer: 'FEL', hdrBaseLayer: 'HDR10', dvMetadata: 'RPU', frameRate: '23.976fps', scanType: 'Progressive', frameRateMode: 'CFR', container: 'MKV', audioCodec: 'TrueHD', channels: '7.1', audioEffect: 'Atmos',
-    languages: 'zh-CN+zh-TW', subtitleMode: 'softsub', releaseGroup: '发布组', edition: '特别版',
+    dynamicRange: 'DV HDR10', dvProfile: 'P7', dvLayer: 'FEL', hdrBaseLayer: 'HDR10', dvMetadata: 'RPU', frameRate: '23.976fps', scanType: 'Progressive', frameRateMode: 'CFR', audioCodec: 'TrueHD', channels: '7.1', audioEffect: 'Atmos',
+    languages: 'zh-CN+zh-TW', subtitleMode: 'softsub', releaseGroup: '发布组',
   })
   if (kind === 'tv') values.episodeTitle = '示例集名'
   return {

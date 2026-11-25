@@ -365,7 +365,7 @@ async function loadingModels(browser) {
         data.entries[0].file.season = 0
         data.entries[0].file.episode = 1
         data.entries[0].file.sourcePath = 'long-source-directory/'.repeat(12) + item.name
-        data.entries[0].file.namingValues = { resolution: '2160p', source: 'WEB-DL', platform: '', videoCodec: 'HEVC', audioCodec: 'DDP', channels: '2.0', languages: 'zh-CN+zh-TW', subtitleMode: 'softsub', edition: ' ' }
+        data.entries[0].file.namingValues = { resolution: '2160p', source: 'WEB-DL', platform: '', videoCodec: 'HEVC', audioCodec: 'DDP', channels: '2.0', languages: 'zh-CN+zh-TW', subtitleMode: 'softsub' }
         data.entries[0].p115Move = { phase: 'moving' }
         data.entries[0].message = 'Position requires confirmation'
         if (completedMain) { data.entries[0].status = 'done'; delete data.entries[0].p115Move; data.entries[0].message = '' }

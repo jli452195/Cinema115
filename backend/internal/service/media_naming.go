@@ -146,7 +146,10 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 		}
 	}
 	for field, value := range file.NamingValues {
-		values[field] = value
+		// 旧整理记录可能仍然保存已退役的字段。
+		if field != "container" && field != "edition" {
+			values[field] = value
+		}
 	}
 	if file.NamingValues != nil {
 		mediafacts.NormalizeVideoSubtitleValues(values)

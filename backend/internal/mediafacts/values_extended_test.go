@@ -23,7 +23,6 @@ func TestValuesRecognizesExtendedNamingFields(t *testing.T) {
 		naming.FrameRate:      "23.976fps",
 		naming.ScanType:       "Progressive",
 		naming.FrameRateMode:  "CFR",
-		naming.Container:      "MKV",
 		naming.AudioCodec:     "TRUEHD",
 		naming.Channels:       "7.1",
 		naming.AudioEffect:    "Atmos",
@@ -51,10 +50,10 @@ func TestValuesRejectsConflictingScalarFields(t *testing.T) {
 	}
 }
 
-func TestValuesPreservesCombinedSourceAndDoesNotReadExtensionAsContainer(t *testing.T) {
+func TestValuesPreservesCombinedSource(t *testing.T) {
 	values := Values("Title.2160p.BluRay.REMUX.HEVC.mkv", releaseparse.Spec{}, "")
-	if values[naming.Source] != "BluRay REMUX" || values[naming.Container] != "" {
-		t.Fatalf("source/container = %+v", values)
+	if values[naming.Source] != "BluRay REMUX" {
+		t.Fatalf("source = %q", values[naming.Source])
 	}
 }
 
@@ -80,15 +79,15 @@ func TestValuesNormalizesLegacyVideoCodecNames(t *testing.T) {
 }
 
 func TestValuesUsesParsedReleaseSpecification(t *testing.T) {
-	values := Values("Title.2160p.strm", releaseparse.Spec{Codec: "h265", BitDepth: "10", Container: "mkv"}, "")
-	if values[naming.VideoCodec] != "HEVC" || values[naming.BitDepth] != "10bit" || values[naming.Container] != "MKV" {
+	values := Values("Title.2160p.MKV.strm", releaseparse.Spec{Codec: "h265", BitDepth: "10", Container: "mkv"}, "")
+	if _, exists := values[naming.Field("container")]; values[naming.VideoCodec] != "HEVC" || values[naming.BitDepth] != "10bit" || exists {
 		t.Fatalf("release specification fields = %+v", values)
 	}
 }
 
 func TestValuesRejectsConflictingReleaseSpecification(t *testing.T) {
 	values := Values("Title.H264.12bit.MP4.strm", releaseparse.Spec{Codec: "h265", BitDepth: "10", Container: "mkv"}, "")
-	for _, field := range []naming.Field{naming.VideoCodec, naming.BitDepth, naming.Container} {
+	for _, field := range []naming.Field{naming.VideoCodec, naming.BitDepth} {
 		if values[field] != "" {
 			t.Errorf("conflicting release specification %s = %q", field, values[field])
 		}
@@ -105,9 +104,21 @@ func TestValuesRequiresDVMarkerForBareEnhancementLayer(t *testing.T) {
 }
 
 func TestValuesRecognizesDolbyVisionAliases(t *testing.T) {
-	for _, name := range []string{"Title.Dolby.Vision.P8.1.strm", "Title.DoVi.HDR10Plus.strm"} {
-		if values := Values(name, releaseparse.Spec{}, ""); values[naming.DynamicRange] == "" {
-			t.Fatalf("dynamic range missing for %q: %+v", name, values)
+	for _, tt := range []struct{ name, dynamicRange, profile string }{
+		{"Title.Dolby.Vision.P8.1.strm", "DV", "P8.1"},
+		{"Title.DoVi.HDR10Plus.strm", "DV HDR10+", ""},
+		{"Title.2160p.HDR10 Plus.strm", "HDR10+", ""},
+		{"Title.2160p.HDR10+.strm", "HDR10+", ""},
+		{"Title.DV.P8.4.HLG.strm", "DV HLG", "P8.4"},
+		{"Title.DV.Profile 8.4.mkv", "DV", "P8.4"},
+		{"Title.2160p.WEB-DL.strm", "", ""},
+		{"Title.P7.RPU.FEL.strm", "", ""},
+		{"Title.HDR10.RPU.strm", "HDR10", ""},
+	} {
+		values := Values(tt.name, releaseparse.Spec{}, "")
+		if values[naming.DynamicRange] != tt.dynamicRange || values[naming.DVProfile] != tt.profile ||
+			tt.profile == "" && (values[naming.DVLayer] != "" || values[naming.DVMetadata] != "") {
+			t.Errorf("%q: 动态范围或 DV 字段错误：%+v", tt.name, values)
 		}
 	}
 }

@@ -19,12 +19,10 @@ export const mediaSpecificationLabels: Record<string, string> = {
   audioCodec: '音频编码',
   channels: '声道',
   audioEffect: '音效',
-  container: '容器',
   languages: '字幕语言',
   subtitleMode: '字幕形式',
   platform: '平台',
   releaseGroup: '发布组',
-  edition: '版本',
 }
 
 const subtitleModes = new Map([['softsub', '内封'], ['hardsub', '内嵌'], ['external', '外挂']])

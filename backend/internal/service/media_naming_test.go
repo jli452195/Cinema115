@@ -236,13 +236,13 @@ func TestMediaNamingEnglishTitleEnrichment(t *testing.T) {
 func TestMediaNamingPreviewSharesRendererAndIsolatesRows(t *testing.T) {
 	template, _ := naming.Default(naming.TV)
 	template.Directories = nil
-	template.Filename = []naming.Block{{Field: naming.OriginalTitle}, {Field: naming.SeasonEpisode, Separator: "."}, {Field: naming.Resolution, Separator: "."}, {Field: naming.Edition, Separator: "."}}
+	template.Filename = []naming.Block{{Field: naming.OriginalTitle}, {Field: naming.SeasonEpisode, Separator: "."}, {Field: naming.Resolution, Separator: "."}}
 	templates := &mediaNamingTemplates{record: naming.Snapshot{Revision: 7, Template: template}}
 	metadata := &mediaNamingMetadata{}
 	s := MediaNaming{Templates: templates, Metadata: metadata}
 	input := MediaNamingInput{Kind: "tv", TMDBID: 42, Files: []MediaNamingFile{
 		{OrganizeSelection: OrganizeSelection{ID: "one", Season: 1, Episode: 13}, Name: "Show.S01E13-E14.720p.MKV"},
-		{OrganizeSelection: OrganizeSelection{ID: "two", Season: 0, Episode: 2}, Name: "Show.1080p.mp4"},
+		{OrganizeSelection: OrganizeSelection{ID: "two", Season: 0, Episode: 2}, Name: "Show.1080p.mp4", NamingValues: map[naming.Field]string{naming.Resolution: "1080p", "edition": "特别版"}},
 		{OrganizeSelection: OrganizeSelection{ID: "bad", Season: 1, Episode: -1}, Name: "Unknown.mkv"},
 		{OrganizeSelection: OrganizeSelection{ID: "zero", Season: 2, Episode: 0}, Name: "Show.strm"},
 	}, Subtitles: []OrganizeSubtitle{{File: OrganizeFile{ShareFile: shareFile("sub", "Show.zh-TW.default.ASS")}, VideoID: "one", Tail: ".zh-TW.default"}}}

@@ -7,14 +7,14 @@ const copy = value => JSON.parse(JSON.stringify(value))
 const fields = [
   ['title', '作品名称', 'work'], ['originalTitle', '原语种名称', 'work'], ['englishTitle', '英文名称', 'work'], ['originalName', '原文件名', 'work'], ['year', '年份', 'work'], ['tmdbId', 'TMDB ID', 'work'],
   ['season', '季号', 'episode', true], ['episode', '集号', 'episode', true], ['seasonEpisode', '季集编号', 'episode'], ['episodeTitle', '集名', 'episode'],
-  ['resolution', '分辨率', 'video'], ['source', '资源来源', 'video'], ['sourceMedium', '来源介质', 'video'], ['sourceModifier', '来源修饰', 'video'], ['platform', '发布平台', 'video'], ['videoCodec', '视频编码', 'video'], ['encoder', '编码器', 'video'], ['bitDepth', '位深', 'video'], ['dynamicRange', '动态范围', 'video'], ['dvProfile', 'DV Profile', 'video'], ['dvLayer', 'DV 层', 'video'], ['hdrBaseLayer', 'HDR 基础层', 'video'], ['dvMetadata', 'DV 元数据', 'video'], ['frameRate', '帧率', 'video'], ['scanType', '扫描方式', 'video'], ['frameRateMode', '帧率模式', 'video'], ['container', '容器格式', 'video'],
-  ['audioCodec', '音频编码', 'audio'], ['channels', '声道', 'audio'], ['audioEffect', '音频制式', 'audio'], ['languages', '字幕语言', 'release'], ['subtitleMode', '字幕形式', 'release'], ['releaseGroup', '字幕组或发布组', 'release'], ['edition', '版本', 'release'],
+  ['resolution', '分辨率', 'video'], ['source', '资源来源', 'video'], ['sourceMedium', '来源介质', 'video'], ['sourceModifier', '来源修饰', 'video'], ['platform', '发布平台', 'video'], ['videoCodec', '视频编码', 'video'], ['encoder', '编码器', 'video'], ['bitDepth', '位深', 'video'], ['dynamicRange', '动态范围', 'video'], ['dvProfile', 'DV Profile', 'video'], ['dvLayer', 'DV 层', 'video'], ['hdrBaseLayer', 'HDR 基础层', 'video'], ['dvMetadata', 'DV 元数据', 'video'], ['frameRate', '帧率', 'video'], ['scanType', '扫描方式', 'video'], ['frameRateMode', '帧率模式', 'video'],
+  ['audioCodec', '音频编码', 'audio'], ['channels', '声道', 'audio'], ['audioEffect', '音频制式', 'audio'], ['languages', '字幕语言', 'release'], ['subtitleMode', '字幕形式', 'release'], ['releaseGroup', '字幕组或发布组', 'release'],
 ].map(([id, label, group, numeric]) => ({ id, label, group, ...(numeric ? { numeric } : {}) }))
 const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
   const year = { field: 'year', separator: ' ', prefix: '(', suffix: ')' }
   return [kind, { kind, directories: [[{ field: 'title' }, year, { field: 'tmdbId', separator: ' ', prefix: '{tmdb-', suffix: '}' }], ...(kind === 'tv' ? [[{ field: 'season', prefix: 'Season ', pad: 2 }]] : [])], filename: [
     { field: 'title' }, kind === 'tv' ? { field: 'seasonEpisode', separator: '.' } : year,
-    ...['resolution', 'sourceMedium', 'sourceModifier', 'platform', 'videoCodec', 'encoder', 'bitDepth', 'dynamicRange', 'hdrBaseLayer', 'dvProfile', 'dvLayer', 'dvMetadata', 'frameRate', 'scanType', 'frameRateMode', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode', 'edition'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
+    ...['resolution', 'sourceMedium', 'sourceModifier', 'platform', 'videoCodec', 'encoder', 'bitDepth', 'dynamicRange', 'hdrBaseLayer', 'dvProfile', 'dvLayer', 'dvMetadata', 'frameRate', 'scanType', 'frameRateMode', 'audioCodec', 'channels', 'audioEffect', 'languages', 'subtitleMode'].map(field => ({ field, separator: '.', ...(field === 'languages' ? { prefix: '[', suffix: ']' } : {}) })),
     { field: 'releaseGroup', separator: '-' },
   ] }]
 }))
@@ -39,7 +39,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
       if (gate) await gate
       if (rejected) { status = 400; data = { error: '无效命名模板：模板字段无效' } }
       else {
-        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.BluRay.REMUX.HEVC.10bit.DV HDR10.P7.FEL.23.976fps.TrueHD.7.1.Atmos.[zh-CN+zh-TW].softsub.特别版-发布组`
+        const tv = body.template.kind === 'tv', stem = `示例${tv ? '剧集.S01E13-E14' : '电影 (2026)'}.2160p.BluRay.REMUX.HEVC.10bit.DV HDR10.P7.FEL.23.976fps.TrueHD.7.1.Atmos.[zh-CN+zh-TW].softsub-发布组`
         data = { items: [{ result: { directory: '示例作品 (2026) {tmdb-123456}', stem, extension: '.mkv', name: `${stem}.mkv`, relativePath: `示例作品 (2026) {tmdb-123456}/${tv ? 'Season 01/' : ''}${stem}.mkv [预览${number}]` } }] }
       }
     } else if (/^\/api\/admin\/naming\/(movie|tv)$/.test(endpoint)) {
@@ -93,6 +93,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.equal(sample.languages, 'zh-CN+zh-TW')
     assert.equal(sample.subtitleMode, 'softsub')
     assert.equal(Object.hasOwn(sample, 'custom'), false)
+    assert.equal(Object.hasOwn(sample, 'edition'), false)
     assert.equal(await page.locator('[data-field="custom"]').count(), 0)
     const restingSize = await title().boundingBox()
     await title().hover(); await page.waitForTimeout(180)
@@ -208,10 +209,10 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.deepEqual(previewCalls().at(-1).body.template.directories[2], [{ field: 'year', separator: ' ', prefix: '(', suffix: ')' }])
     await page.getByRole('button', { name: '删除目录层 3', exact: true }).click(); await settled()
     await filename.locator('[data-field="englishTitle"]').press('Delete'); await settled()
-    const lastChip = filename.locator('[data-field="edition"]')
+    const lastChip = filename.locator('[data-field="subtitleMode"]')
     assert.ok((await lastChip.boundingBox()).y > (await title().boundingBox()).y)
     await drag(lastChip, title()); await settled()
-    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'edition')
+    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'subtitleMode')
     await drag(lastChip, filename.locator('[data-field="releaseGroup"]'), true); await settled()
     assert.equal(await lastChip.count(), 1)
     passed.push('字段库复制不丢失来源；目标去重；空目录插入保留默认格式；跨行排序可用')
@@ -294,7 +295,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.ok(await phone.evaluate(() => scrollY) > scrollBefore)
     assert.equal(await phone.locator('.drag-list-fallback').count(), 0)
     await mobileFilename.locator('.nt-chips').evaluate(el => el.scrollIntoView({ block: 'center' }))
-    const lastMobileChip = await mobileFilename.locator('[data-field="edition"]').boundingBox(), firstMobileChip = await mobileResolution.boundingBox()
+    const lastMobileChip = await mobileFilename.locator('[data-field="releaseGroup"]').boundingBox(), firstMobileChip = await mobileResolution.boundingBox()
     assert.ok(lastMobileChip.y > firstMobileChip.y)
     const verticalPreview = previewCalls().length, verticalScroll = await phone.evaluate(() => scrollY)
     const verticalStart = { x: lastMobileChip.x + lastMobileChip.width * .7, y: lastMobileChip.y + lastMobileChip.height / 2 }
@@ -310,7 +311,7 @@ const defaults = Object.fromEntries(['movie', 'tv'].map(kind => {
     assert.equal(await phone.evaluate(() => scrollY), verticalScroll)
     await touchAt('touchEnd'); await phone.locator('.drag-list-fallback').waitFor({ state: 'detached' })
     await phone.waitForFunction(() => document.querySelector('.ns-preview')?.getAttribute('aria-busy') === 'false')
-    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'edition')
+    assert.equal(previewCalls().at(-1).body.template.filename[0].field, 'releaseGroup')
     assert.equal(previewCalls().length, verticalPreview + 1)
     assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
     await phone.screenshot({ path: 'test-results/naming-mobile-after-drag.png', fullPage: true })

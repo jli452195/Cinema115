@@ -45,14 +45,12 @@ const (
 	FrameRate      Field = "frameRate"
 	ScanType       Field = "scanType"
 	FrameRateMode  Field = "frameRateMode"
-	Container      Field = "container"
 	AudioCodec     Field = "audioCodec"
 	Channels       Field = "channels"
 	AudioEffect    Field = "audioEffect"
 	Languages      Field = "languages"
 	SubtitleMode   Field = "subtitleMode"
 	ReleaseGroup   Field = "releaseGroup"
-	Edition        Field = "edition"
 )
 
 // FieldDefinition is also the field library for the visual editor. A supported
@@ -92,14 +90,12 @@ var fields = [...]FieldDefinition{
 	{FrameRate, "帧率", "video", false, false},
 	{ScanType, "扫描方式", "video", false, false},
 	{FrameRateMode, "帧率模式", "video", false, false},
-	{Container, "容器格式", "video", false, false},
 	{AudioCodec, "音频编码", "audio", false, false},
 	{Channels, "声道", "audio", false, false},
 	{AudioEffect, "音频制式", "audio", false, false},
 	{Languages, "字幕语言", "release", false, false},
 	{SubtitleMode, "字幕形式", "release", false, false},
 	{ReleaseGroup, "字幕组或发布组", "release", false, false},
-	{Edition, "版本", "release", false, false},
 }
 
 // Block's decorations belong to its value: an empty value omits the whole block.
@@ -126,7 +122,9 @@ type Snapshot struct {
 
 // DropRetiredFields 清理刚解码的旧模板，保留其他字段、装饰和层级顺序。
 func (t *Template) DropRetiredFields() {
-	retired := func(block Block) bool { return block.Field == "custom" }
+	retired := func(block Block) bool {
+		return block.Field == "custom" || block.Field == "container" || block.Field == "edition"
+	}
 	directories := t.Directories[:0]
 	for _, layer := range t.Directories {
 		cleaned := slices.DeleteFunc(layer, retired)
@@ -138,7 +136,7 @@ func (t *Template) DropRetiredFields() {
 	t.Directories = directories
 	if cleaned := slices.DeleteFunc(t.Filename, retired); len(t.Filename) != len(cleaned) {
 		t.Filename = cleaned
-		// 旧电影模板可以只使用自定义标记，删除后使用作品名称。
+		// 旧电影模板只使用已退役字段时，改用作品名称。
 		if len(cleaned) == 0 && t.Kind == Movie {
 			t.Filename = []Block{{Field: Title}}
 		}
@@ -258,7 +256,7 @@ func Default(kind Kind) (Template, error) {
 	} else {
 		template.Filename = append(template.Filename, year)
 	}
-	for _, field := range []Field{Resolution, SourceMedium, SourceModifier, Platform, VideoCodec, Encoder, BitDepth, DynamicRange, HDRBaseLayer, DVProfile, DVLayer, DVMetadata, FrameRate, ScanType, FrameRateMode, AudioCodec, Channels, AudioEffect, Languages, SubtitleMode, Edition} {
+	for _, field := range []Field{Resolution, SourceMedium, SourceModifier, Platform, VideoCodec, Encoder, BitDepth, DynamicRange, HDRBaseLayer, DVProfile, DVLayer, DVMetadata, FrameRate, ScanType, FrameRateMode, AudioCodec, Channels, AudioEffect, Languages, SubtitleMode} {
 		block := Block{Field: field, Separator: "."}
 		if field == Languages {
 			block.Prefix, block.Suffix = "[", "]"

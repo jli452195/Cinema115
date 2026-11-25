@@ -39,7 +39,7 @@ func ValuesWithRecognizedRelease(name string, hint releaseparse.Spec, recognized
 	return values
 }
 
-var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ ._-]?(?:bit|b)|profile[ ._-]?[578](?:[ ._-]?1)?|p(?:5|7|8(?:[ ._-]?1)?)|fel|mel|el|rpu|hdr10\+|hdr10plus|hdr10|dolby[ ._-]?vision|dovi|dv|hdr|hlg|sdr|progressive|interlaced|cfr|vfr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ ._-]?ac[ ._-]?3|ac[ ._-]?3|aac|flac|opus|atmos|mkv|mp4|m2ts|ts|webm|mov|iso|[12567]\.1|2\.0|(?:[0-9]{1,2}(?:\.[0-9]+)?(?:fps|[pi])|[0-9]{2,3}(?:\.[0-9]+)?fps))`)
+var mediaFactTokens = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(web[ .-]?dl|webrip|blu[ .-]?ray|bdrip|remux|hdtv|dvdrip|nf|netflix|amzn|dsnp|atvp|hmax|bilibili|h[ ._-]?26[45]|x26[45]|avc|hevc|av1|vp9|(?:8|10|12)[ ._-]?(?:bit|b)|(?:profile[ ._-]?|p)(?:[57]|8(?:[ ._-]?[14])?)|fel|mel|el|rpu|hdr10(?:\+|[ ._-]?plus)?|dolby[ ._-]?vision|dovi|dv|hdr|hlg|sdr|progressive|interlaced|cfr|vfr|truehd|dts[ .-]?hd[ .-]?ma|dts[ .-]?x|dts|ddp|dd|e[ ._-]?ac[ ._-]?3|ac[ ._-]?3|aac|flac|opus|atmos|[12567]\.1|2\.0|(?:[0-9]{1,2}(?:\.[0-9]+)?(?:fps|[pi])|[0-9]{2,3}(?:\.[0-9]+)?fps))`)
 var mediaFactCanonical = strings.NewReplacer(" ", "", ".", "", "-", "", "_", "")
 var mediaJoinedChannels = regexp.MustCompile(`(?i)(truehd|dts|ddp|dd|eac3|ac3|aac|flac|opus)([12567]\.1|2\.0)`)
 
@@ -69,9 +69,6 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 	}
 	if hint.BitDepth != "" {
 		tags[naming.BitDepth] = appendUnique(tags[naming.BitDepth], strings.TrimSuffix(strings.ToLower(hint.BitDepth), "bit")+"bit")
-	}
-	if hint.Container != "" {
-		tags[naming.Container] = appendUnique(tags[naming.Container], strings.ToUpper(hint.Container))
 	}
 	switch strings.ToLower(path.Ext(name)) {
 	case ".strm", ".mkv", ".mp4", ".m2ts", ".ts", ".webm", ".mov", ".iso":
@@ -118,17 +115,14 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 			field, value = naming.VideoCodec, strings.ToUpper(key)
 		case "8bit", "10bit", "12bit", "8b", "10b", "12b":
 			field, value = naming.BitDepth, map[string]string{"8bit": "8bit", "10bit": "10bit", "12bit": "12bit", "8b": "8bit", "10b": "10bit", "12b": "12bit"}[key]
-		case "profile5", "profile7", "profile8", "profile81", "p5", "p7", "p8", "p81":
-			field, value = naming.DVProfile, map[string]string{"profile5": "P5", "profile7": "P7", "profile8": "P8", "profile81": "P8.1", "p5": "P5", "p7": "P7", "p8": "P8", "p81": "P8.1"}[key]
-			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
-		case "fel", "mel":
+		case "profile5", "profile7", "profile8", "p5", "p7", "p8":
+			field, value = naming.DVProfile, "P"+key[len(key)-1:]
+		case "profile81", "profile84", "p81", "p84":
+			field, value = naming.DVProfile, "P8."+key[len(key)-1:]
+		case "el", "fel", "mel":
 			field, value = naming.DVLayer, strings.ToUpper(key)
-			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
-		case "el":
-			field, value = naming.DVLayer, "EL"
 		case "rpu":
 			field, value = naming.DVMetadata, "RPU"
-			tags[naming.DynamicRange] = appendUnique(tags[naming.DynamicRange], "DV")
 		case "dv", "dovi", "dolbyvision":
 			field, value = naming.DynamicRange, "DV"
 		case "hdr10+", "hdr10plus", "hdr10", "hdr", "hlg", "sdr":
@@ -156,8 +150,6 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 			field, value = naming.ScanType, map[string]string{"progressive": "Progressive", "interlaced": "Interlaced"}[key]
 		case "cfr", "vfr":
 			field, value = naming.FrameRateMode, strings.ToUpper(key)
-		case "mkv", "mp4", "m2ts", "ts", "webm", "mov", "iso":
-			field, value = naming.Container, strings.ToUpper(key)
 		default:
 			if strings.HasSuffix(key, "fps") {
 				field, value = naming.FrameRate, raw
@@ -175,6 +167,7 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 		}
 		tags[field] = appendUnique(tags[field], value)
 	}
+	// Profile、增强层和 RPU 单独出现时只是线索，只有明确的 DV 标签才写入命名字段。
 	hasDV := contains(tags[naming.DynamicRange], "DV")
 	for field, list := range tags {
 		if field == naming.DVProfile || field == naming.DVLayer || field == naming.DVMetadata {
@@ -191,6 +184,11 @@ func valuesWithPlatform(name string, hint releaseparse.Spec, group string, inclu
 		}
 		if field == naming.Source {
 			values[field] = strings.Join(list, " ")
+			continue
+		}
+		if field == naming.SourceMedium && len(list) > 1 {
+			// 显式留空标记介质冲突，防止渲染时回退到旧的组合来源。
+			values[field] = ""
 			continue
 		}
 		if len(list) == 1 || field == naming.DynamicRange && !contains(list, "SDR") {
