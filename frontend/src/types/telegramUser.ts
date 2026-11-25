@@ -11,7 +11,8 @@ export interface TelegramChannelMetadata {
 export interface TelegramChannelLink { type: '115' | 'ed2k'; url: string; metadata?: TelegramChannelMetadata; file?: { name: string; hash: string; sizeBytes: string } }
 export interface TelegramChannelSource { id: string; type: 'telegraph'; url: string; label: string }
 export interface TelegramChannelResource { id: string; title: string; text: string; channel: TelegramChannel; sourceUrl: string; postedAt: string; links: TelegramChannelLink[]; metadata?: TelegramChannelMetadata; version?: string; sources?: TelegramChannelSource[] }
-export interface TelegramChannelSourceResult { sourceId: string; pageTitle: string; groups: { id: string; title: string; links: TelegramChannelLink[] }[]; cached: boolean; expiresAt?: string }
+export interface TelegramChannelSourceGroup { id: string; title: string; links: TelegramChannelLink[] }
+export interface TelegramChannelSourceResult { sourceId: string; pageTitle: string; groups: TelegramChannelSourceGroup[]; shareGroups?: TelegramChannelSourceGroup[]; cached: boolean; expiresAt?: string }
 export interface TelegramChannelSearchResult { items: TelegramChannelResource[]; warnings: { channel: TelegramChannel; error: string }[]; cursor: string; hasMore: boolean; partial: boolean; cached: boolean; expiresAt: string; retryAt?: string; truncated?: boolean }
 export interface BotSearchResult { text: string; items: { id: string; title: string; tmdbId?: string; size?: string; kind: 'resource' | 'page' }[]; links: string[]; remaining?: number; page?: number; empty: boolean; allLoaded?: boolean; cached?: boolean; expiresAt?: string; partial?: boolean; warning?: string }
 export interface BotSearchStreamEvent { complete: boolean; result: BotSearchResult }

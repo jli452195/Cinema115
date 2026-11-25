@@ -30,11 +30,12 @@ type ChannelSourceGroup struct {
 }
 
 type ChannelSourceResult struct {
-	SourceID  string               `json:"sourceId"`
-	PageTitle string               `json:"pageTitle"`
-	Groups    []ChannelSourceGroup `json:"groups"`
-	Cached    bool                 `json:"cached"`
-	ExpiresAt time.Time            `json:"expiresAt"`
+	SourceID    string               `json:"sourceId"`
+	PageTitle   string               `json:"pageTitle"`
+	Groups      []ChannelSourceGroup `json:"groups"`
+	ShareGroups []ChannelSourceGroup `json:"shareGroups,omitempty"`
+	Cached      bool                 `json:"cached"`
+	ExpiresAt   time.Time            `json:"expiresAt"`
 }
 
 type telegraphCacheEntry struct {
@@ -263,9 +264,11 @@ func (c *Client) resolveTelegraph(ctx context.Context, client *http.Client, scop
 }
 
 type telegraphNode struct {
-	Tag      string            `json:"tag"`
-	Attrs    map[string]string `json:"attrs"`
-	Children []json.RawMessage `json:"children"`
+	tag         string
+	text        string
+	href        string
+	children    []telegraphNode
+	nestedBlock bool
 }
 
 type telegraphPage struct {
@@ -285,11 +288,17 @@ func parseTelegraph(data []byte, target ChannelSearchTarget) (ChannelSourceResul
 	if !telegraphTitleMatches(page.Title, target) {
 		return ChannelSourceResult{}, errors.New("Telegraph 页面作品与当前条目不匹配，请查看原帖")
 	}
+	remaining := 16000
+	nodes, err := decodeTelegraphNodes(page.Content, target, 0, &remaining)
+	if err != nil {
+		return ChannelSourceResult{}, err
+	}
 	groups := make([]ChannelSourceGroup, 0, 8)
 	current := ChannelSourceGroup{Title: "文件"}
 	groupFields, groupSubtitles := "", ""
 	seen := make(map[string]bool)
-	nodes, files := 0, 0
+	files := 0
+	shares := newTelegraphShares()
 	flush := func() {
 		if len(current.Links) == 0 {
 			return
@@ -297,8 +306,7 @@ func parseTelegraph(data []byte, target ChannelSearchTarget) (ChannelSourceResul
 		for i := range current.Links {
 			channelGroupMetadata(&current.Links[i], current.Title, groupFields, groupSubtitles)
 		}
-		hash := sha256.Sum256([]byte(strconv.Itoa(len(groups)) + "/" + current.Title))
-		current.ID = hex.EncodeToString(hash[:12])
+		current.ID = telegraphGroupID(len(groups), current.Title)
 		groups = append(groups, current)
 	}
 	add := func(text string) error {
@@ -316,114 +324,162 @@ func parseTelegraph(data []byte, target ChannelSearchTarget) (ChannelSourceResul
 				return errors.New("Telegraph 页面文件过多，请到原帖查看")
 			}
 			seen[key] = true
-			links := []ChannelLink{{Type: "ed2k", URL: raw}}
+			links := []ChannelLink{{Type: "ed2k", URL: raw, File: file}}
 			metadata := channelMetadata("", "", links)
 			links[0].Metadata = metadata
 			current.Links = append(current.Links, links[0])
 		}
 		return nil
 	}
-	// 标题节点不提取文件，但其中的显式 TMDB 链接同样不能绕过身份校验。
-	var checkHeadingIdentity func([]json.RawMessage, int) error
-	checkHeadingIdentity = func(children []json.RawMessage, depth int) error {
-		for _, raw := range children {
-			nodes++
-			if depth > 32 || nodes > 16000 {
-				return errors.New("Telegraph 页面结构过于复杂，请到原帖查看")
-			}
-			if len(raw) == 0 || raw[0] == '"' {
-				continue
-			}
-			var node telegraphNode
-			if err := json.Unmarshal(raw, &node); err != nil {
-				return errors.New("Telegraph 节点格式不可识别")
-			}
-			if node.Tag == "a" && telegraphTMDBLinkConflicts(node.Attrs["href"], target) {
-				return errors.New("Telegraph 页面 TMDB 身份与当前条目不匹配")
-			}
-			if err := checkHeadingIdentity(node.Children, depth+1); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	var walk func(json.RawMessage, int) error
-	walk = func(raw json.RawMessage, depth int) error {
-		nodes++
-		if depth > 32 || nodes > 16000 {
-			return errors.New("Telegraph 页面结构过于复杂，请到原帖查看")
-		}
-		if len(raw) == 0 {
-			return nil
-		}
-		if raw[0] == '"' {
-			var text string
-			if err := json.Unmarshal(raw, &text); err != nil {
-				return errors.New("Telegraph 文本格式不可识别")
-			}
-			return add(text)
-		}
-		var node telegraphNode
-		if err := json.Unmarshal(raw, &node); err != nil {
-			return errors.New("Telegraph 节点格式不可识别")
-		}
-		if node.Tag == "h3" {
-			if err := checkHeadingIdentity(node.Children, depth+1); err != nil {
-				return err
-			}
+	var walk func(telegraphNode) error
+	walk = func(node telegraphNode) error {
+		if node.tag == "h3" {
 			flush()
-			title := strings.TrimSpace(telegraphNodeText(node.Children, 0))
-			if title == "" {
-				title = "文件"
-			}
-			if len([]rune(title)) > 500 {
-				title = string([]rune(title)[:500])
-			}
-			current, seen = ChannelSourceGroup{Title: title}, make(map[string]bool)
+			block := readTelegraphBlock(node)
+			current, seen = ChannelSourceGroup{Title: telegraphGroupTitle(block.text, "文件")}, make(map[string]bool)
 			groupFields, groupSubtitles = "", ""
+			shares.startGroup(block.text, false)
+			return shares.add(node, block)
+		}
+		if node.tag == "hr" {
+			shares.startGroup("", true)
 			return nil
 		}
-		if node.Tag == "a" {
-			if telegraphTMDBLinkConflicts(node.Attrs["href"], target) {
-				return errors.New("Telegraph 页面 TMDB 身份与当前条目不匹配")
-			}
-			if err := add(node.Attrs["href"]); err != nil {
-				return err
-			}
-		}
-		if node.Tag == "p" || node.Tag == "pre" || node.Tag == "li" {
-			text := telegraphNodeText(node.Children, 0)
-			if node.Tag == "p" {
-				fields, subtitles := telegraphGroupFields(text)
-				groupFields += fields
-				if subtitles != "" {
-					if groupSubtitles != "" {
-						groupSubtitles += "/"
-					}
-					groupSubtitles += subtitles
+		if node.nestedBlock && node.tag != "a" {
+			// 嵌套段落单独读取规格和密码，段落外的相邻行内节点仍拼合。
+			start := 0
+			for i, child := range node.children {
+				if !child.isBlock() && !child.nestedBlock {
+					continue
 				}
+				if start < i {
+					if err := walk(telegraphNode{tag: node.tag, children: node.children[start:i]}); err != nil {
+						return err
+					}
+				}
+				if err := walk(child); err != nil {
+					return err
+				}
+				start = i + 1
 			}
-			if err := add(text); err != nil {
+			if start < len(node.children) {
+				return walk(telegraphNode{tag: node.tag, children: node.children[start:]})
+			}
+			return nil
+		}
+		block := readTelegraphBlock(node)
+		if node.tag == "p" {
+			fields, subtitles := telegraphGroupFields(block.text)
+			groupFields += fields
+			if subtitles != "" {
+				if groupSubtitles != "" {
+					groupSubtitles += "/"
+				}
+				groupSubtitles += subtitles
+			}
+		}
+		// ED2K 段落优先使用可见文本，单独的锚点优先使用实际地址。
+		if node.tag != "a" {
+			if err := add(block.text); err != nil {
 				return err
 			}
 		}
-		for _, child := range node.Children {
-			if err := walk(child, depth+1); err != nil {
+		for _, href := range block.hrefs {
+			if err := add(href); err != nil {
 				return err
 			}
 		}
-		return nil
+		if node.tag == "a" {
+			if err := add(block.text); err != nil {
+				return err
+			}
+		}
+		return shares.add(node, block)
 	}
-	for _, raw := range page.Content {
-		if err := walk(raw, 0); err != nil {
+	for _, node := range nodes {
+		if err := walk(node); err != nil {
 			return ChannelSourceResult{}, err
 		}
 	}
 	flush()
-	if len(groups) == 0 {
-		return ChannelSourceResult{}, errors.New("Telegraph 页面未找到有效 ED2K 文件，可重试或查看原帖")
+	shareGroups := shares.finish()
+	if len(groups) == 0 && len(shareGroups) == 0 {
+		return ChannelSourceResult{}, errors.New("Telegraph 页面未找到有效 ED2K 文件或 115 分享，可重试或查看原帖")
 	}
-	return ChannelSourceResult{PageTitle: page.Title, Groups: groups}, nil
+	return ChannelSourceResult{PageTitle: page.Title, Groups: groups, ShareGroups: shareGroups}, nil
+}
+
+// 同一棵节点树供两种资源解析使用，标题内的外链也要先验证作品身份。
+func decodeTelegraphNodes(rawNodes []json.RawMessage, target ChannelSearchTarget, depth int, remaining *int) ([]telegraphNode, error) {
+	if len(rawNodes) == 0 {
+		return nil, nil
+	}
+	if depth > 32 || len(rawNodes) > *remaining {
+		return nil, errors.New("Telegraph 页面结构过于复杂，请到原帖查看")
+	}
+	*remaining -= len(rawNodes)
+	nodes := make([]telegraphNode, len(rawNodes))
+	for i, raw := range rawNodes {
+		if len(raw) > 0 && raw[0] == '"' {
+			if err := json.Unmarshal(raw, &nodes[i].text); err != nil {
+				return nil, errors.New("Telegraph 文本格式不可识别")
+			}
+			continue
+		}
+		var object struct {
+			Tag      string            `json:"tag"`
+			Attrs    map[string]string `json:"attrs"`
+			Children []json.RawMessage `json:"children"`
+		}
+		if err := json.Unmarshal(raw, &object); err != nil {
+			return nil, errors.New("Telegraph 节点格式不可识别")
+		}
+		node := telegraphNode{tag: object.Tag}
+		if node.tag == "a" {
+			node.href = object.Attrs["href"]
+			if telegraphTMDBLinkConflicts(node.href, target) {
+				return nil, errors.New("Telegraph 页面 TMDB 身份与当前条目不匹配")
+			}
+		}
+		children, err := decodeTelegraphNodes(object.Children, target, depth+1, remaining)
+		if err != nil {
+			return nil, err
+		}
+		node.children = children
+		for _, child := range children {
+			if child.isBlock() || child.nestedBlock {
+				node.nestedBlock = true
+				break
+			}
+		}
+		nodes[i] = node
+	}
+	return nodes, nil
+}
+
+func (node telegraphNode) isBlock() bool {
+	switch node.tag {
+	case "h3", "hr", "p", "pre", "li":
+		return true
+	default:
+		return false
+	}
+}
+
+func telegraphGroupTitle(text, fallback string) string {
+	title := strings.TrimSpace(text)
+	if title == "" {
+		return fallback
+	}
+	if runes := []rune(title); len(runes) > 500 {
+		return string(runes[:500])
+	}
+	return title
+}
+
+func telegraphGroupID(index int, title string) string {
+	hash := sha256.Sum256([]byte(strconv.Itoa(index) + "/" + title))
+	return hex.EncodeToString(hash[:12])
 }
 
 func telegraphGroupFields(text string) (string, string) {
@@ -459,32 +515,52 @@ func telegraphGroupFields(text string) (string, string) {
 	return fields, subtitles
 }
 
-func telegraphNodeText(children []json.RawMessage, depth int) string {
-	if depth > 32 {
-		return ""
-	}
-	var text strings.Builder
-	for _, raw := range children {
-		if len(raw) == 0 {
-			continue
-		}
-		if raw[0] == '"' {
-			var value string
-			if json.Unmarshal(raw, &value) == nil {
-				text.WriteString(value)
+type telegraphBlock struct {
+	text      string
+	plainText string
+	hrefs     []string
+}
+
+func readTelegraphBlock(node telegraphNode) telegraphBlock {
+	var block telegraphBlock
+	var text, plainText strings.Builder
+	hasAnchor := false
+	var read func(telegraphNode, bool)
+	read = func(node telegraphNode, inAnchor bool) {
+		if node.tag == "br" {
+			text.WriteByte('\n')
+			if hasAnchor && !inAnchor {
+				plainText.WriteByte('\n')
 			}
-			continue
+			return
 		}
-		var node telegraphNode
-		if json.Unmarshal(raw, &node) == nil {
-			if node.Tag == "br" {
-				text.WriteByte('\n')
-			} else {
-				text.WriteString(telegraphNodeText(node.Children, depth+1))
+		if node.tag == "a" {
+			if node.href != "" {
+				block.hrefs = append(block.hrefs, node.href)
 			}
+			// 分享只使用锚点实际地址，展示文字中的其他地址不参与识别。
+			if !hasAnchor {
+				hasAnchor = true
+				plainText.WriteString(text.String())
+			}
+			plainText.WriteByte(' ')
+			inAnchor = true
+		}
+		text.WriteString(node.text)
+		if hasAnchor && !inAnchor {
+			plainText.WriteString(node.text)
+		}
+		for _, child := range node.children {
+			read(child, inAnchor)
 		}
 	}
-	return text.String()
+	read(node, false)
+	block.text = text.String()
+	block.plainText = block.text
+	if hasAnchor {
+		block.plainText = plainText.String()
+	}
+	return block
 }
 
 func telegraphTitleMatches(title string, target ChannelSearchTarget) bool {

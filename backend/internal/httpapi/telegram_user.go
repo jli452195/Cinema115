@@ -31,7 +31,7 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 		}))
 		group.Use(operationLogs(sinks[0], "搜索", "TG 频道", map[string]string{
 			group.BasePath() + "/channels/search":  "频道资源搜索",
-			group.BasePath() + "/channels/resolve": "解析频道文件列表",
+			group.BasePath() + "/channels/resolve": "解析频道资源清单",
 		}))
 	}
 	group.Use(func(c *gin.Context) {
@@ -236,11 +236,14 @@ func RegisterTelegramUser(admin *gin.RouterGroup, account *tguser.Client, tmdb T
 			return
 		}
 		c.Set("operationLogCached", result.Cached)
-		files := 0
+		files, shares := 0, 0
 		for _, group := range result.Groups {
 			files += len(group.Links)
 		}
-		c.Set("operationLogSummary", fmt.Sprintf("已解析版本 %d 组、文件 %d 项", len(result.Groups), files))
+		for _, group := range result.ShareGroups {
+			shares += len(group.Links)
+		}
+		c.Set("operationLogSummary", fmt.Sprintf("已解析 ED2K 文件 %d 项、115 分享 %d 条", files, shares))
 		c.JSON(200, result)
 	})
 	group.POST("/search", func(c *gin.Context) {

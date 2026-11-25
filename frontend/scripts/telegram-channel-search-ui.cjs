@@ -28,6 +28,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const pageURL = 'https://telegra.ph/tmdbid-42-11-17'
   const candidate = message('11:13', channels[0], [], { sources: [{ id: 'source-one', type: 'telegraph', url: pageURL, label: 'ED2K链接' }] })
   const duplicateCandidate = message('12:14', channels[1], [], { sources: [{ id: 'source-two', type: 'telegraph', url: pageURL, label: 'ED2K链接' }] })
+  const pureShareCandidate = message('11:15', channels[0], [], { sources: [{ id: 'share-only', type: 'telegraph', url: `${pageURL}-shares`, label: '查看资源' }] })
+  const telegraphShare = { type: '115', url: 'https://115cdn.com/s/telegraphSample?password=efgh' }
+  const pureShare = { type: '115', url: 'https://115cdn.com/s/shareOnlySample?password=ijkl' }
+  const shareTarget = { id: 'incoming', name: '频道接收', accountId: 'main', targetCID: '456', targetPath: '/频道接收' }
   const queueCandidates = [1, 2, 3].map(index => message(`11:${30 + index}`, channels[0], [], { title: '相同片名的不同页面', sources: [{ id: `queue-${index}`, type: 'telegraph', url: `${pageURL}-${index}`, label: 'ED2K链接' }] }))
   const extraVersion = message('12:20', channels[1], [anotherVersion])
   const selectionLinks = Array.from({ length: 545 }, (_, index) => makeLink(String(index + 1).padStart(3, '0'), 1000 + index, index < 500 ? '2160p' : '1080p'))
@@ -55,6 +59,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const filterCandidate = message('11:61', channels[0], [], { sources: [{ id: 'filter-page', type: 'telegraph', url: `${pageURL}-filters`, label: 'ED2K链接' }] })
   let ed2kTargets = [{ id: 'ed2k-movie', name: '电影', outputDir: 'ed2k/电影' }, { id: 'ed2k-tv', name: '剧集', outputDir: 'ed2k/剧集' }]
   let failMore = false, expired = false, holdSearch = false, releaseSearch, rejectED2K = true, resolveFailure = true, uncertainSTRM = false, moreLoaded = false, queueMode = false, selectionMode = false, filterMode = false, holdResolves = false, maximumResolves = 0
+  let shareSourceMode = ''
   const resolvedPages = new Set(), heldResolves = new Map(), activeResolves = new Set()
   page.on('requestfailed', request => {
    if (new URL(request.url()).pathname.endsWith('/telegram-user/channels/resolve')) { abortedResolves.push(request.postDataJSON()); activeResolves.delete(request) }
@@ -66,8 +71,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   }
   let run
   const baseResult = () => {
-   const standalone = queueMode || selectionMode || filterMode
-   const items = filterMode ? [filterMessage, filterCandidate] : selectionMode ? [selectionMessage, selectionCandidate] : queueMode ? [multi, ...queueCandidates] : [share, multi, duplicate, candidate]
+   const standalone = queueMode || selectionMode || filterMode || !!shareSourceMode
+   const shareItems = { pure: [pureShareCandidate], mixed: [share, candidate, duplicateCandidate], parallel: [pureShareCandidate, candidate] }
+   const items = shareItems[shareSourceMode] || (filterMode ? [filterMessage, filterCandidate] : selectionMode ? [selectionMessage, selectionCandidate] : queueMode ? [multi, ...queueCandidates] : [share, multi, duplicate, candidate])
    return { items, warnings: standalone ? [] : [{ channel: channels[1], error: '频道读取超时，可加载更多重试' }], hasMore: !standalone, cursor: standalone ? '' : 'page2', partial: !standalone, cached: false, expiresAt: '2099-11-17T02:00:00Z' }
   }
   await page.route('**/api/**', async route => {
@@ -89,12 +95,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    }
    if (endpoint.endsWith('/telegram-user/channels/resolve')) {
     const body = req.postDataJSON(); resolves.push(body)
-    const record = [candidate, duplicateCandidate, selectionCandidate, filterCandidate, ...queueCandidates].find(item => item.id === body.resourceId && item.sources.some(source => source.id === body.sourceId))
+    const record = [candidate, duplicateCandidate, pureShareCandidate, selectionCandidate, filterCandidate, ...queueCandidates].find(item => item.id === body.resourceId && item.sources.some(source => source.id === body.sourceId))
     assert.ok(record, '解析只接受搜索结果中的已有候选')
     assert.deepEqual(Object.keys(body).sort(), ['kind', 'resourceId', 'sourceId', 'tmdbId'])
     assert.equal(body.kind, 'movie'); assert.equal(body.tmdbId, '42')
-    if (!queueMode) {
-     const expected = filterMode ? filterCandidate : selectionMode ? selectionCandidate : candidate
+    if (!queueMode && shareSourceMode !== 'parallel') {
+     const expected = shareSourceMode === 'pure' ? pureShareCandidate : filterMode ? filterCandidate : selectionMode ? selectionCandidate : candidate
      assert.deepEqual(body, { resourceId: expected.id, sourceId: expected.sources[0].id, kind: 'movie', tmdbId: '42' }, '同URL固定首个服务端候选，并携带作品身份')
     }
     const sourceURL = record.sources[0].url
@@ -105,6 +111,15 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      if (resolveFailure) return await route.fulfill({ status: 502, json: { error: '清单读取暂时失败' } })
      const cached = resolvedPages.has(sourceURL)
      resolvedPages.add(sourceURL)
+     if (shareSourceMode) {
+      const pure = record === pureShareCandidate
+      const groups = pure ? [] : [{ id: 'nf', title: '1080p ED2K', links: pageLinks }]
+      const shareGroups = pure ? [{ id: 'share-only-version', title: '仅分享版本', links: [pureShare] }] : [
+       { id: 'duplicate-share-version', title: '与原帖重复的版本', links: [{ type: '115', url: share.links[0].url.replace('115.com', '115cdn.com') }] },
+       { id: 'telegraph-share-version', title: '蓝光收藏版', links: [telegraphShare] },
+      ]
+      return await route.fulfill({ json: { sourceId: record.sources[0].id, pageTitle: '测试电影', groups, shareGroups, cached, expiresAt: '2099-11-17T02:00:00Z' } })
+     }
      const queueIndex = queueCandidates.indexOf(record)
      const groups = record === filterCandidate ? [{ id: 'filter-extra', title: '异步追加的筛选样本', links: appendedFilterLinks }] : record === selectionCandidate ? [{ id: 'selection-extra', title: '自动追加文件', links: appendedSelectionLinks }] : queueIndex < 0 ? [{ id: 'nf', title: 'Where.the.Mask.Ends.S01.1080p.NF.WEB-DL.H265.AAC-HHWEB', links: pageLinks }, { id: 'same', title: 'Where.the.Mask.Ends.S01.2160p.YK.WEB-DL.H265.AAC-ADWeb', links: [links[0]] }] : [{ id: 'same-title', title: '相同版本标题', links: [makeLink(String(31 + queueIndex), 31 + queueIndex)] }]
      return await route.fulfill({ json: { sourceId: record.sources[0].id, pageTitle: '测试电影 (2026) {tmdbid-42}', groups, cached, expiresAt: '2099-11-17T02:00:00Z' } })
@@ -139,6 +154,11 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     return route.fulfill({ status: 202, json: { resources: [], tasks: [] } })
    }
    if (endpoint === '/api/admin/p115/share/automation-config') return route.fulfill({ json: { settings: { accountId: 'main', generation: { baseUrl: 'http://nas', outputDir: '/strm', videoExtensions: '.mkv', recursive: true } } } })
+   if (endpoint === '/api/admin/p115/share-transfer/targets') return route.fulfill({ json: { accountId: 'main', profiles: [shareTarget] } })
+   if (endpoint === '/api/admin/p115/share-transfer' && req.method() === 'POST') {
+    const body = req.postDataJSON(); writes.push({ path: endpoint, body })
+    return route.fulfill({ json: { receipt: { targetPath: shareTarget.targetPath, itemCount: 1, acceptedItems: 1 } } })
+   }
    if (endpoint === '/api/admin/p115/share/generation-runs' && req.method() === 'POST') {
     const body = req.postDataJSON(); writes.push({ path: endpoint, body })
     run = { id: body.id, status: 'success', items: [{ taskId: 'task', status: 'success', message: '', result: { count: 1, directory: '/strm/Test' } }] }
@@ -692,12 +712,65 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.locator('.ed-file').count(), 7, '关闭大样本并重开后恢复小样本，不残留大列表或选择')
   assert.equal(await dialog.locator('.ed-selected-count').count(), 0)
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' }); moreLoaded = false
+   // 同一请求的两种资源进入各自页签，分享去重并沿用现有的操作与目标。
+   shareSourceMode = 'mixed'; holdResolves = true
+   const shareResolveStart = resolves.length, shareWriteStart = writes.length
+   await trigger.click()
+   await waitUntil(() => resolves.length === shareResolveStart + 1, '两个入口引用的同一清单只启动一次解析')
+   await resourceControl.getByRole('button', { name: '115 分享', exact: true }).click()
+   await sourceProgress.filter({ hasText: /读取中 1 页/ }).waitFor()
+   await dialog.getByText('显示 1 / 1 个分享', { exact: true }).waitFor()
+   holdResolves = false; releaseHeldResolves()
+   await dialog.getByText('显示 2 / 2 个分享', { exact: true }).waitFor()
+   const parsedShareLink = page.locator(`a[href=${JSON.stringify(telegraphShare.url)}]`)
+   const parsedShareRow = dialog.locator('.tg-share-row').filter({ has: parsedShareLink })
+   const parsedShareCard = dialog.locator('.tg-resource').filter({ has: parsedShareLink })
+   await parsedShareCard.getByText('蓝光收藏版', { exact: true }).waitFor()
+   assert.equal(await parsedShareCard.locator(`a[href=${JSON.stringify(candidate.sourceUrl)}]`).count(), 1)
+   assert.equal(await parsedShareCard.locator(`a[href=${JSON.stringify(duplicateCandidate.sourceUrl)}]`).count(), 1)
+   assert.equal(writes.length, shareWriteStart, '自动解析清单不执行转存或生成')
+   await parsedShareRow.getByRole('button', { name: '复制分享链接', exact: true }).click()
+   await parsedShareRow.getByRole('button', { name: '复制分享链接', exact: true }).getByText('已复制').waitFor()
+   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), telegraphShare.url)
+   await parsedShareRow.getByRole('button', { name: '115 转存', exact: true }).click()
+   await parsedShareRow.getByRole('button', { name: '已转存', exact: true }).waitFor()
+   assert.deepEqual(writes.at(-1).body, { target: shareTarget, url: telegraphShare.url })
+   await parsedShareRow.getByRole('button', { name: '分享 STRM', exact: true }).click()
+   await parsedShareRow.getByRole('button', { name: '已生成', exact: true }).waitFor()
+   assert.equal(writes.at(-1).body.inputs[0].url, telegraphShare.url)
+   await resourceControl.getByRole('button', { name: 'ED2K 文件', exact: true }).click()
+   await dialog.getByText('显示 2 / 2 个文件', { exact: true }).waitFor()
+   await resourceControl.getByRole('button', { name: '115 分享', exact: true }).click()
+   await parsedShareRow.getByRole('button', { name: '已生成', exact: true }).waitFor()
+   assert.equal(resolves.length, shareResolveStart + 1, '切换任一页签继续用同一清单回执')
+   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
+
+   shareSourceMode = 'pure'
+   await trigger.click()
+   await dialog.getByText('显示 1 / 1 个分享', { exact: true }).waitFor()
+   await dialog.getByText('仅分享版本', { exact: true }).waitFor()
+   assert.equal(await resourceControl.getByRole('button', { name: '115 分享', exact: true }).getAttribute('aria-pressed'), 'true', '未手动选页签时纯分享清单默认展示分享')
+   assert.equal(await dialog.locator('.ed-file').count(), 0)
+   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
+   // 先返回纯分享清单时，仍等待另一页确定是否有 ED2K。
+   shareSourceMode = 'parallel'; holdResolves = true
+   await trigger.click()
+   await waitUntil(() => heldResolves.size === 2, '两种清单应各有一个待返回请求')
+   const [pureRequest, finishPure] = [...heldResolves].find(([request]) => request.postDataJSON().sourceId === 'share-only')
+   heldResolves.delete(pureRequest); finishPure()
+   await sourceProgress.filter({ hasText: /清单已载入 1 \/ 2 页，读取中 1 页/ }).waitFor()
+   assert.equal(await resourceControl.getByRole('button', { name: 'ED2K 文件', exact: true }).getAttribute('aria-pressed'), 'true')
+   holdResolves = false; releaseHeldResolves()
+   await dialog.getByText('显示 2 / 2 个文件', { exact: true }).waitFor()
+   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
+   shareSourceMode = ''
+
   holdSearch = true
   await trigger.click(); await dialog.getByText('正在搜索频道资源…', { exact: true }).waitFor()
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
   releaseSearch(); holdSearch = false
   assert.deepEqual(errors, [])
   assert.ok(searches.every(search => search.tmdbId === '42' && search.kind === 'movie'))
-  console.log('TG 文件列表 UI 通过：自动清单恢复、2路队列/暂停继续、失败手动重试、跨帖分页去重来源、关闭/刷新取消、五级规格联动/计数/关键词/隐藏维度/异步追加、545文件全选/混合/隐藏选择/整包STRM和云下载、追加547文件复制、单文件/批量/504原包重放、分页失败/过期、分享STRM及320/390/1440深浅主题。')
+   console.log('TG 文件列表 UI 通过：清单读取、两路并发、暂停和重试、跨帖分页去重、取消和刷新、规格筛选、545 项批量操作、纯分享和混合清单、分享转存和 STRM，以及 320/390/1440 深浅主题。')
  } finally { await browser.close() }
 })().catch(error => { console.error(error); process.exitCode = 1 })

@@ -78,7 +78,7 @@ export function useTelegramChannelSources(options: TelegramChannelSourcesOptions
       statuses.value[request.url] = {}
     } catch (reason) {
       if (!owns(request)) return
-      statuses.value[request.url] = { error: reason instanceof Error ? reason.message || '读取 ED2K 清单失败' : '读取 ED2K 清单失败' }
+      statuses.value[request.url] = { error: reason instanceof Error && reason.message ? reason.message : '读取资源清单失败' }
       if (reason instanceof TelegramSearchError && reason.code === 'channel_search_expired') options.onExpired?.(reason)
     } finally {
       if (active.get(request.url) === request) active.delete(request.url)

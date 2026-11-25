@@ -17,6 +17,7 @@ function loadModule(relativePath, dependencies = {}) {
 }
 const sources = loadModule('../src/utils/telegramSources.ts')
 const files = loadModule('../src/utils/telegramFiles.ts')
+const { telegramShareCards, telegramShareIdentities } = loadModule('../src/utils/telegramShares.ts', { './shareLink': loadModule('../src/utils/shareLink.ts') })
 const { TelegramSearchError } = loadModule('../src/types/telegramUser.ts')
 const canonical = sources.canonicalTelegramSourceURL
 const page = (sourceId = 'source') => ({ sourceId, pageTitle: '测试作品', groups: [{ id: 'version', title: '1080p WEB-DL', links: [{ type: 'ed2k', url: 'ed2k://|file|Show.S01E01.mkv|1000|0123456789abcdef0123456789abcdef|/' }] }], cached: true })
@@ -62,6 +63,84 @@ test('清单仅按规范化官方 URL 合并，跨页保留真实引用，不按
   assert.equal(canonical('https://telegra.ph@evil.test/Page-01'), undefined)
   assert.equal(canonical('https://telegra.ph/a/b'), undefined)
   assert.equal(canonical('not a url'), undefined)
+})
+
+test('115 直链与清单中的相同分享合并，保留原 STRM 身份、版本和原帖来源', () => {
+  const a = resource('a', 'https://telegra.ph/Drama-01')
+  const b = resource('b', 'http://telegra.ph/Drama-01#copy')
+  const direct = 'https://115.com/s/shared?password=abcd'
+  a.links = [{ type: '115', url: direct }]
+  const candidates = sources.telegramSourceCandidates([a, b])
+  const cards = telegramShareCards([a, b], candidates, {
+    [candidates[0].url]: { ...page(), shareGroups: [
+      { id: 'bluray', title: '蓝光版', links: [
+        { type: '115', url: 'https://115cdn.com/s/shared?password=abcd&', metadata: { specs: ['1080p'] } },
+        { type: '115', url: 'https://115cdn.com/s/other?password=efgh' },
+        { type: '115', url: 'https://115cdn.com.bad.test/s/wrong' },
+        { type: 'ed2k', url: page().groups[0].links[0].url },
+      ] },
+    ] },
+  })
+  assert.equal(cards.length, 2)
+  assert.equal(telegramShareIdentities(cards[0].links[0], 'tv', '123')[0], `tg-channel/a/${direct}`)
+  assert.equal(cards[0].links[0].url, direct)
+  assert.deepEqual(cards[0].links[0].versions, ['蓝光版'])
+  assert.deepEqual(cards[0].links[0].sources.map(source => source.url), [a.sourceUrl, candidates[0].url, b.sourceUrl])
+  assert.deepEqual(cards[0].links[0].metadata.specs, ['1080p'])
+  assert.equal(cards[1].title, '蓝光版')
+  assert.equal(cards[1].links.length, 1)
+})
+
+test('有明确提取码的清单分享补足无密码直链，保留不同明确密码', () => {
+  const a = resource('a')
+  const bare = 'https://115.com/s/shared'
+  a.links = [{ type: '115', url: bare }]
+  const candidates = sources.telegramSourceCandidates([a])
+  const url = candidates[0].url
+  const linkFor = password => ({ type: '115', url: `https://115cdn.com/s/shared?password=${password}` })
+  const first = linkFor('abcd'), second = linkFor('efgh')
+  const group = { id: 'file', title: '剧集分享', links: [first] }
+  const resolved = { ...page(), groups: [], shareGroups: [group] }
+  const one = telegramShareCards([a], candidates, { [url]: resolved }).flatMap(card => card.links)
+  assert.equal(one.length, 1)
+  assert.equal(one[0].url, first.url)
+  assert.deepEqual(telegramShareIdentities(one[0], 'tv', '123'), [`tg-channel/a/${bare}`, `tg-channel/tv/123/telegraph/${first.url}`])
+  const many = telegramShareCards([a], candidates, { [url]: { ...resolved, shareGroups: [{ ...group, links: [first, second] }] } }).flatMap(card => card.links)
+  assert.deepEqual(many.map(item => item.url), [first.url, second.url])
+  assert.equal(new Set(many.map(item => item.id)).size, 2)
+  assert.deepEqual(many.map(item => telegramShareIdentities(item, 'tv', '123')), [[`tg-channel/tv/123/telegraph/${first.url}`], [`tg-channel/tv/123/telegraph/${second.url}`]])
+})
+
+test('分页补入同一 Telegraph 分享的直链时，任务恢复优先原帖键并保留同作品的清单键', () => {
+  const source = resource('source')
+  const candidates = sources.telegramSourceCandidates([source])
+  const canonical = 'https://115cdn.com/s/shared?password=abcd'
+  const first = 'https://115.com/s/shared?password=abcd', second = 'https://anxia.com/s/shared?password=abcd'
+  const pages = { [candidates[0].url]: { ...page(), shareGroups: [{ id: 'share', title: '蓝光', links: [{ type: '115', url: canonical }] }] } }
+  const [before] = telegramShareCards([source], candidates, pages).flatMap(card => card.links)
+  const a = { ...resource('a'), links: [{ type: '115', url: first }] }
+  const b = { ...resource('b'), links: [{ type: '115', url: second }] }
+  const [after] = telegramShareCards([source, a, b], candidates, pages).flatMap(card => card.links)
+  const [telegraph] = telegramShareIdentities(before, 'tv', '123')
+  assert.equal(after.id, before.id)
+  assert.deepEqual(telegramShareIdentities(after, 'tv', '123'), [`tg-channel/a/${first}`, `tg-channel/b/${second}`, telegraph])
+  const [whileLoading] = telegramShareCards([source, a, b], candidates, {}).flatMap(card => card.links)
+  assert.deepEqual(telegramShareIdentities(whileLoading, 'tv', '123'), telegramShareIdentities(after, 'tv', '123'))
+  assert.notEqual(telegramShareIdentities(after, 'movie', '123').at(-1), telegraph)
+})
+
+test('纯分享清单使用同一读取结果，不会进入 ED2K 文件列表', async t => {
+  const a = resource('a')
+  const context = harness([a])
+  t.after(() => context.lifecycle.abort())
+  await flush()
+  const link = { type: '115', url: 'https://115cdn.com/s/shared?password=abcd' }
+  context.requests[0].resolve({ ...page(), groups: [], shareGroups: [{ id: 'share', title: '4K 版本', links: [link] }] })
+  await flush()
+  assert.equal(context.state.progress.value.loaded, 1)
+  assert.equal(files.telegramFiles(context.state.resolvedItems.value).length, 0)
+  assert.equal(telegramShareCards(context.resources.value, context.state.candidates.value, context.state.pages.value)[0].links[0].url, link.url)
+  assert.equal(context.requests.length, 1)
 })
 
 test('自动泵维持两路并发，先完成一路立即补下一页，同页跨帖只请求一次', async t => {

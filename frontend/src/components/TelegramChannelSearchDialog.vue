@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { IconCopy, IconExternalLink, IconFile, IconInfoCircle, IconRefresh, IconSearch, IconSettings } from '@tabler/icons-vue'
 import FloatingDialog from './FloatingDialog.vue'
 import ShareTransferDirectory from './ShareTransferDirectory.vue'
@@ -7,10 +7,11 @@ import ShareTransferButton from './ShareTransferButton.vue'
 import SegmentedControl from './SegmentedControl.vue'
 import ED2KFileList from './ED2KFileList.vue'
 import { useShareTransfer } from '../composables/useShareTransfer'
-import { telegramUserRequest, TelegramSearchError, type TelegramChannelConfig, type TelegramChannelLink, type TelegramChannelResource, type TelegramChannelSearchResult } from '../types/telegramUser'
+import { telegramUserRequest, TelegramSearchError, type TelegramChannelConfig, type TelegramChannelLink, type TelegramChannelSearchResult, type TelegramChannelSourceResult } from '../types/telegramUser'
 import { useShareSTRMRun, type ShareSTRMResource } from '../composables/useShareSTRMRun'
 import { useTelegramChannelSources } from '../composables/useTelegramChannelSources'
 import { telegramFiles } from '../utils/telegramFiles'
+import { telegramShareCards, telegramShareIdentities, type TelegramShareCard, type TelegramShareLink } from '../utils/telegramShares'
 import { copyText } from '../utils/clipboard'
 import telegramIcon from '../assets/telegram/telegram.svg'
 
@@ -28,17 +29,49 @@ const shares = useShareSTRMRun(props.token, lifecycle.signal, { scope: `tg-chann
 const sourcePages = useTelegramChannelSources({
   token: props.token, signal: lifecycle.signal, kind: props.kind, tmdbId: props.tmdbId,
   resources: () => result.value?.items || [],
-  enabled: () => tab.value === 'ed2k' && !!result.value && !phase.value && errorCode.value !== 'channel_search_expired',
+  enabled: () => !!result.value && !phase.value && errorCode.value !== 'channel_search_expired',
   onExpired: showError,
 })
 const { candidates, pages, statuses: pageStatus, resolvedItems, progress: sourceProgress, paused: sourcesPaused } = sourcePages
 const files = computed(() => telegramFiles([...(result.value?.items || []), ...resolvedItems.value]))
-const shareItems = computed(() => (result.value?.items || []).map(item => ({ ...item, links: item.links.filter(link => link.type === '115') })).filter(item => item.links.length))
+const shareItems = computed(() => telegramShareCards(result.value?.items || [], candidates.value, pages.value))
 const shareCount = computed(() => shareItems.value.reduce((sum, item) => sum + item.links.length, 0))
 const tabs = computed(() => [{ value: 'ed2k' as const, label: 'ED2K 文件', count: files.value.length }, { value: '115' as const, label: '115 分享', count: shareCount.value }])
 const filteredShares = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
-  return shareItems.value.filter(item => !needle || [item.title, item.metadata?.episode, item.metadata?.specs?.join(' '), item.metadata?.size, ...item.links.flatMap(link => [link.metadata?.episode, link.metadata?.specs?.join(' '), link.metadata?.size])].join(' ').toLocaleLowerCase().includes(needle))
+  if (!needle) return shareItems.value
+  return shareItems.value.filter(item => [item.title, item.pageTitle, item.metadata?.episode, item.metadata?.specs?.join(' '), item.metadata?.size, ...item.links.flatMap(link => [...link.versions, link.metadata?.episode, link.metadata?.specs?.join(' '), link.metadata?.size])].join(' ').toLocaleLowerCase().includes(needle))
+})
+const emptyShareMessage = computed(() => {
+  const { pending, loading, failed } = sourceProgress.value
+  if (pending || loading) return sourcesPaused.value && !loading ? '清单读取已暂停，继续读取可搜索更多分享。' : '正在读取资源清单，分享将逐步显示。'
+  if (failed) return '已读取的资源中没有匹配的分享，可重试失败清单。'
+  return query.value.trim() ? '没有匹配的分享' : '暂未找到 115 分享'
+})
+watch([() => files.value.length, shareCount, () => !sourceProgress.value.pending && !sourceProgress.value.loading], ([fileCount, count, sourcesSettled]) => {
+  if (tabChosen.value) return
+  if (tab.value === 'ed2k' && !fileCount && count && sourcesSettled) tab.value = '115'
+  else if (tab.value === '115' && !count && fileCount) tab.value = 'ed2k'
+})
+const restoredShares = new Set<string>()
+let shareRestoration = Promise.resolve()
+watch(shareItems, items => {
+  const resources: ShareSTRMResource[] = []
+  for (const item of items) for (const link of item.links) {
+    if (shares.pending.value[link.id] || shares.statuses.value[link.id]?.success) continue
+    for (const identity of telegramShareIdentities(link, props.kind, props.tmdbId)) {
+      if (restoredShares.has(identity)) continue
+      restoredShares.add(identity)
+      resources.push(shareResource(item, link, identity))
+    }
+  }
+  if (!resources.length) return
+  shareRestoration = shareRestoration.then(async () => {
+    for (const resource of resources) {
+      if (shares.pending.value[resource.id] || shares.statuses.value[resource.id]?.success) continue
+      await shares.restore([resource])
+    }
+  }).catch(() => {})
 })
 const retryAt = ref(0), clock = ref(Date.now())
 let retryTimer: ReturnType<typeof setInterval> | undefined
@@ -74,16 +107,23 @@ async function search(more = false, refresh = false) {
     if (lifecycle.signal.aborted || revision !== searchRevision) return
     if (!more) sourcePages.reset()
     result.value = value; cooldown(value.retryAt)
-    if (!tabChosen.value) tab.value = files.value.length || candidates.value.length || !shareCount.value ? 'ed2k' : '115'
-    void shares.restore(value.items.flatMap(item => item.links.filter(link => link.type === '115').map(link => shareResource(item, link))))
   } catch (reason) { if (!lifecycle.signal.aborted) showError(reason) }
   finally { phase.value = '' }
 }
-function linkID(item: TelegramChannelResource, link: TelegramChannelLink) { return `${item.id}/${link.url}` }
-function shareResource(item: TelegramChannelResource, link: TelegramChannelLink): ShareSTRMResource {
-  const id = linkID(item, link), size = link.metadata?.size || item.metadata?.size
-  const description = ['TG · ' + item.channel.title, item.title || props.title, size && !item.title.includes(size) ? size : ''].filter(Boolean).join(' · ')
-  return { id, identity: `tg-channel/${id}`, description, load: async () => [{ url: link.url }] }
+function shareResource(item: TelegramShareCard, link: TelegramShareLink, identity = telegramShareIdentities(link, props.kind, props.tmdbId)[0]!): ShareSTRMResource {
+  const size = link.metadata?.size || item.metadata?.size
+  const description = ['TG · ' + item.channelTitle, item.title || props.title, size && !item.title.includes(size) ? size : ''].filter(Boolean).join(' · ')
+  return { id: link.id, identity, description, load: async () => [{ url: link.url }] }
+}
+async function submitShare(item: TelegramShareCard, link: TelegramShareLink) {
+  // 先尝试恢复该行已有的任务，避免在候补身份仍待查找时再次提交。
+  await shareRestoration
+  await shares.submit(shareResource(item, link))
+}
+function sourceSummary(page: TelegramChannelSourceResult) {
+  const files = page.groups.reduce((sum, group) => sum + group.links.length, 0)
+  const shares = page.shareGroups?.reduce((sum, group) => sum + group.links.length, 0) || 0
+  return [files && `${page.groups.length} 个版本，${files} 个文件`, shares && `${shares} 个分享`].filter(Boolean).join(' · ')
 }
 async function copy(link: TelegramChannelLink) {
   try { await copyText(link.url); copied.value = link.url }
@@ -111,49 +151,47 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
     <template v-if="result">
       <details v-if="result.warnings.length" class="tg-warnings"><summary>部分频道暂不可用（{{ result.warnings.length }}）</summary><p v-for="warning in result.warnings" :key="warning.channel.id">{{ warning.channel.title }}：{{ warning.error }}</p></details>
       <p v-if="result.truncated" class="tg-notice">本次频道消息已达到加载上限，可到来源频道查看更多。</p>
-      <div v-show="tab === 'ed2k'">
-        <div v-if="candidates.length || canContinue" class="tg-load-status">
-          <span v-if="candidates.length" role="status" aria-live="polite">清单已载入 {{ sourceProgress.loaded }} / {{ sourceProgress.total }} 页<span v-if="sourceProgress.loading">，读取中 {{ sourceProgress.loading }} 页</span><span v-if="sourceProgress.failed">，失败 {{ sourceProgress.failed }} 页</span><span v-if="sourcesPaused && sourceProgress.pending">，已暂停</span></span>
-          <span v-if="sourceProgress.references > sourceProgress.total" class="tg-merged-hint">{{ sourceProgress.references }} 个入口已合并为 {{ sourceProgress.total }} 页</span>
-          <span v-if="canContinue" class="tg-more-hint">频道还有更多结果</span>
-          <div class="tg-load-actions">
-            <button v-if="sourceProgress.pending && !sourcesPaused" type="button" class="tg-text" @click="sourcePages.pause()">暂停后续读取</button>
-            <button v-if="sourcesPaused && (sourceProgress.pending || sourceProgress.failed)" type="button" class="tg-text" :disabled="!!phase" @click="sourcePages.resume()">继续读取清单</button>
-            <button v-if="sourceProgress.failed" type="button" class="tg-text" :disabled="!!phase || sourcesPaused || errorCode === 'channel_search_expired'" @click="sourcePages.retryFailed()">重试失败清单</button>
-          </div>
+      <div v-if="candidates.length || canContinue" class="tg-load-status">
+        <span v-if="candidates.length" role="status" aria-live="polite">清单已载入 {{ sourceProgress.loaded }} / {{ sourceProgress.total }} 页<span v-if="sourceProgress.loading">，读取中 {{ sourceProgress.loading }} 页</span><span v-if="sourceProgress.failed">，失败 {{ sourceProgress.failed }} 页</span><span v-if="sourcesPaused && sourceProgress.pending">，已暂停</span></span>
+        <span v-if="sourceProgress.references > sourceProgress.total" class="tg-merged-hint">{{ sourceProgress.references }} 个入口已合并为 {{ sourceProgress.total }} 页</span>
+        <span v-if="canContinue" class="tg-more-hint">频道还有更多结果</span>
+        <div class="tg-load-actions">
+          <button v-if="sourceProgress.pending && !sourcesPaused" type="button" class="tg-text" @click="sourcePages.pause()">暂停后续读取</button>
+          <button v-if="sourcesPaused && (sourceProgress.pending || sourceProgress.failed)" type="button" class="tg-text" :disabled="!!phase" @click="sourcePages.resume()">继续读取清单</button>
+          <button v-if="sourceProgress.failed" type="button" class="tg-text" :disabled="!!phase || sourcesPaused || errorCode === 'channel_search_expired'" @click="sourcePages.retryFailed()">重试失败清单</button>
         </div>
-        <ED2KFileList :files="files" :query="query" :token="token" :signal="lifecycle.signal" @settings="emit('close')" />
-        <details v-if="candidates.length" class="tg-candidates" :open="!files.length">
-          <summary>清单来源与读取状态（{{ candidates.length }} 页）</summary>
-          <p class="tg-candidate-hint">相同网址只读取一次，文件自动加入列表；不同网址分别读取，保留各版本与原帖来源。</p>
-          <div v-for="candidate in candidates" :key="candidate.url" class="tg-candidate">
-            <div><strong>{{ candidate.item.title }}</strong><span>{{ candidate.item.channel.title }}</span><span v-if="candidate.references.length > 1">合并 {{ candidate.references.length }} 个入口</span><a :href="candidate.url" target="_blank" rel="noopener noreferrer">查看清单<IconExternalLink :size="12" aria-hidden="true" /></a><a :href="candidate.item.sourceUrl" target="_blank" rel="noopener noreferrer">原帖</a></div>
-            <span v-if="pages[candidate.url]">{{ pages[candidate.url]!.groups.length }} 个版本，{{ pages[candidate.url]!.groups.reduce((sum, group) => sum + group.links.length, 0) }} 个文件</span>
-            <span v-else-if="pageStatus[candidate.url]?.busy">正在读取…</span>
-            <button v-else-if="pageStatus[candidate.url]?.error" type="button" class="tg-button" :disabled="!!phase || sourcesPaused || errorCode === 'channel_search_expired'" @click="sourcePages.resolve(candidate)">重试读取</button>
-            <span v-else>{{ sourcesPaused ? '已暂停，等待继续' : '等待读取' }}</span>
-            <p v-if="pageStatus[candidate.url]?.error" role="status">{{ pageStatus[candidate.url]!.error }}</p>
-          </div>
-        </details>
       </div>
+      <ED2KFileList v-show="tab === 'ed2k'" :files="files" :query="query" :token="token" :signal="lifecycle.signal" @settings="emit('close')" />
       <div v-show="tab === '115'">
         <div class="tg-share-tools"><span>显示 {{ filteredShares.reduce((sum, item) => sum + item.links.length, 0) }} / {{ shareCount }} 个分享</span><ShareTransferDirectory :transfer="transfers" @settings="emit('close')" /><button v-if="shares.activeRunID.value" class="tg-button" :disabled="shares.stopping.value" @click="shares.stop()">{{ shares.stopping.value ? '停止中…' : '停止分享批次' }}</button></div>
-        <p v-if="!filteredShares.length" class="tg-empty">{{ query.trim() ? '没有匹配的分享' : '暂未找到 115 分享' }}</p>
+        <p v-if="!filteredShares.length" class="tg-empty">{{ emptyShareMessage }}</p>
         <ul class="tg-results" aria-label="115 分享列表">
           <li v-for="item in filteredShares" :key="item.id" class="tg-resource">
             <div class="tg-resource-title"><h4>{{ item.title }}</h4><span v-if="item.metadata?.episode" class="tg-episode">{{ item.metadata.episode }}</span></div>
             <p v-if="item.metadata?.specs?.length || item.metadata?.size" class="tg-specs"><span v-for="spec in item.metadata.specs" :key="spec">{{ spec }}</span><span>{{ item.metadata.size }}</span></p>
-            <div v-for="link in item.links" :key="link.url" class="tg-share-row">
+            <div v-for="link in item.links" :key="link.id" class="tg-share-row">
               <p v-if="link.metadata" class="tg-specs"><span>{{ link.metadata.episode }}</span><span v-for="spec in link.metadata.specs" :key="spec">{{ spec }}</span><span>{{ link.metadata.size }}</span></p>
               <div class="tg-link-heading"><button class="tg-copy" aria-label="复制分享链接" @click="copy(link)"><IconCopy :size="14" aria-hidden="true" />{{ copied === link.url ? '已复制' : '复制' }}</button><a :href="link.url" target="_blank" rel="noopener noreferrer" class="tg-copy">打开分享<IconExternalLink :size="12" aria-hidden="true" /></a></div>
-              <div class="tg-actions"><ShareTransferButton :transfer="transfers" :resource="{ load: async () => [{ url: link.url }] }" /><button type="button" class="resource-action-button resource-primary-button" :disabled="shares.pending.value[linkID(item, link)] || shares.statuses.value[linkID(item, link)]?.success" :title="shares.statuses.value[linkID(item, link)]?.message" @click="shares.submit(shareResource(item, link))"><IconFile :size="15" aria-hidden="true" /><span>{{ shares.pending.value[linkID(item, link)] ? '处理中…' : shares.statuses.value[linkID(item, link)]?.success ? '已生成' : '分享 STRM' }}</span></button></div>
-              <p v-if="shares.statuses.value[linkID(item, link)]?.message" class="tg-task-status" role="status">{{ shares.statuses.value[linkID(item, link)]?.message }}</p>
+              <div class="tg-actions"><ShareTransferButton :transfer="transfers" :resource="{ load: async () => [{ url: link.url }] }" /><button type="button" class="resource-action-button resource-primary-button" :disabled="shares.pending.value[link.id] || shares.statuses.value[link.id]?.success" :title="shares.statuses.value[link.id]?.message" @click="submitShare(item, link)"><IconFile :size="15" aria-hidden="true" /><span>{{ shares.pending.value[link.id] ? '处理中…' : shares.statuses.value[link.id]?.success ? '已生成' : '分享 STRM' }}</span></button></div>
+              <p v-if="shares.statuses.value[link.id]?.message" class="tg-task-status" role="status">{{ shares.statuses.value[link.id]?.message }}</p>
+              <div class="tg-resource-meta tg-share-sources"><span v-for="version in link.versions.filter(title => title !== item.title)" :key="version">{{ version }}</span><a v-for="source in link.sources" :key="source.url" :href="source.url" target="_blank" rel="noopener noreferrer">{{ source.label }}<IconExternalLink :size="12" aria-hidden="true" /></a></div>
             </div>
-            <div class="tg-resource-meta"><a :href="item.sourceUrl" target="_blank" rel="noopener noreferrer">{{ item.channel.title }}<IconExternalLink :size="12" aria-hidden="true" /></a><time :datetime="item.postedAt">{{ date(item.postedAt) }}</time></div>
+            <div class="tg-resource-meta"><time :datetime="item.postedAt">{{ date(item.postedAt) }}</time></div>
           </li>
         </ul>
       </div>
-      <div class="tg-list-end"><button v-if="canContinue" class="tg-button" :disabled="!!phase || retrySeconds > 0" @click="search(true)">{{ phase === 'more' ? '正在加载…' : '加载更多资源' }}</button><span v-else-if="!phase && !error && !result.partial && !result.truncated">{{ tab === 'ed2k' && sourceProgress.loaded < sourceProgress.total ? '频道结果已加载，清单尚未全部载入' : '已加载全部频道结果' }}</span></div>
+      <details v-if="candidates.length" class="tg-candidates" :open="!(tab === 'ed2k' ? files.length : shareCount)">
+        <summary>清单来源与读取状态（{{ candidates.length }} 页）</summary>
+        <div v-for="candidate in candidates" :key="candidate.url" class="tg-candidate">
+          <div><strong>{{ candidate.item.title }}</strong><span>{{ candidate.item.channel.title }}</span><span v-if="candidate.references.length > 1">合并 {{ candidate.references.length }} 个入口</span><a :href="candidate.url" target="_blank" rel="noopener noreferrer">查看清单<IconExternalLink :size="12" aria-hidden="true" /></a><a :href="candidate.item.sourceUrl" target="_blank" rel="noopener noreferrer">原帖</a></div>
+          <span v-if="pages[candidate.url]">{{ sourceSummary(pages[candidate.url]!) }}</span>
+          <span v-else-if="pageStatus[candidate.url]?.busy">正在读取…</span>
+          <button v-else-if="pageStatus[candidate.url]?.error" type="button" class="tg-button" :disabled="!!phase || sourcesPaused || errorCode === 'channel_search_expired'" @click="sourcePages.resolve(candidate)">重试读取</button>
+          <span v-else>{{ sourcesPaused ? '已暂停，等待继续' : '等待读取' }}</span>
+          <p v-if="pageStatus[candidate.url]?.error" role="status">{{ pageStatus[candidate.url]!.error }}</p>
+        </div>
+      </details>
+      <div class="tg-list-end"><button v-if="canContinue" class="tg-button" :disabled="!!phase || retrySeconds > 0" @click="search(true)">{{ phase === 'more' ? '正在加载…' : '加载更多资源' }}</button><span v-else-if="!phase && !error && !result.partial && !result.truncated">{{ sourceProgress.loaded < sourceProgress.total ? '频道结果已加载，清单尚未全部载入' : '已加载全部频道结果' }}</span></div>
     </template>
   </FloatingDialog>
 </template>
@@ -174,8 +212,8 @@ onBeforeUnmount(() => { lifecycle.abort(); clearInterval(retryTimer) })
 .tg-tabs { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }.tg-tabs > span { font-size: var(--search-dialog-font-meta, 11px); color: var(--search-dialog-muted); }.tg-notice { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-bottom: 10px; padding: 10px; border-radius: 9px; background: var(--search-dialog-card); font-size: 12px; line-height: 1.7; }.tg-error { color: #b91c1c; background: rgb(239 68 68 / .08); }.dark .tg-error { color: #fca5a5; }.tg-text { color: var(--search-dialog-primary); text-decoration: underline; }
 .tg-warnings { padding: 8px 10px; margin-bottom: 8px; background: var(--search-dialog-card); border-radius: 8px; font-size: 12px; color: var(--search-dialog-muted); }.tg-warnings summary { cursor: pointer; }.tg-warnings p { margin-top: 6px; overflow-wrap: anywhere; }
 .tg-load-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; font-size: var(--search-dialog-font-meta, 11px); line-height: 1.6; color: var(--search-dialog-muted); }.tg-load-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }.tg-load-actions button { min-height: 30px; }.tg-load-actions button:disabled { opacity: .45; cursor: default; }.tg-more-hint { margin-left: auto; }
-.tg-candidates { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--search-dialog-card-border); border-radius: 10px; font-size: 12px; }.tg-candidates > summary { cursor: pointer; color: var(--search-dialog-primary); }.tg-candidate-hint { margin-block: 8px; color: var(--search-dialog-muted); }.tg-candidate { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-block: 10px; border-top: 1px solid var(--search-dialog-card-border); }.tg-candidate > div { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }.tg-candidate strong { max-width: 100%; overflow-wrap: anywhere; font-weight: 500; }.tg-candidate span { color: var(--search-dialog-muted); }.tg-candidate a { display: inline-flex; align-items: center; gap: 4px; color: var(--search-dialog-primary); }.tg-candidate > p { width: 100%; color: #b45309; overflow-wrap: anywhere; }.dark .tg-candidate > p { color: #fcd34d; }
-.tg-share-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 10px; font-size: 12px; color: var(--search-dialog-muted); }.tg-results { display: grid; gap: 8px; }.tg-resource { min-width: 0; padding: 12px; border: 1px solid var(--search-dialog-card-border); border-radius: 10px; background: var(--search-dialog-card); }.tg-resource h4 { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }.tg-resource-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }.tg-resource-title h4 { min-width: 0; }.tg-episode { font-variant-numeric: tabular-nums; color: var(--search-dialog-primary); font-size: 12px; }.tg-specs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; margin-top: 5px; }.tg-resource-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; font-size: var(--search-dialog-font-meta, 11px); color: var(--search-dialog-muted); }.tg-resource-meta a { display: inline-flex; align-items: center; gap: 4px; }.tg-share-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; }.tg-share-row > .tg-specs { width: 100%; }.tg-link-heading, .tg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }.tg-copy { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 6px; border-radius: 6px; font-size: var(--search-dialog-font-meta, 11px); color: var(--search-dialog-muted); }.tg-task-status { width: 100%; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; color: var(--search-dialog-muted); }
+.tg-candidates { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--search-dialog-card-border); border-radius: 10px; font-size: 12px; }.tg-candidates > summary { cursor: pointer; color: var(--search-dialog-primary); }.tg-candidate { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-block: 10px; border-top: 1px solid var(--search-dialog-card-border); }.tg-candidate > div { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 12px; min-width: 0; }.tg-candidate strong { max-width: 100%; overflow-wrap: anywhere; font-weight: 500; }.tg-candidate span { color: var(--search-dialog-muted); }.tg-candidate a { display: inline-flex; align-items: center; gap: 4px; color: var(--search-dialog-primary); }.tg-candidate > p { width: 100%; color: #b45309; overflow-wrap: anywhere; }.dark .tg-candidate > p { color: #fcd34d; }
+.tg-share-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 10px; font-size: 12px; color: var(--search-dialog-muted); }.tg-results { display: grid; gap: 8px; }.tg-resource { min-width: 0; padding: 12px; border: 1px solid var(--search-dialog-card-border); border-radius: 10px; background: var(--search-dialog-card); }.tg-resource h4 { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }.tg-resource-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }.tg-resource-title h4 { min-width: 0; }.tg-episode { font-variant-numeric: tabular-nums; color: var(--search-dialog-primary); font-size: 12px; }.tg-specs { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 12px; margin-top: 5px; }.tg-resource-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 6px; font-size: var(--search-dialog-font-meta, 11px); color: var(--search-dialog-muted); }.tg-resource-meta a { display: inline-flex; align-items: center; gap: 4px; }.tg-share-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-top: 8px; }.tg-share-row > .tg-specs, .tg-share-sources { width: 100%; }.tg-link-heading, .tg-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }.tg-copy { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 4px 6px; border-radius: 6px; font-size: var(--search-dialog-font-meta, 11px); color: var(--search-dialog-muted); }.tg-task-status { width: 100%; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; color: var(--search-dialog-muted); }
 .tg-empty { padding: 24px 12px; text-align: center; font-size: 12px; line-height: 1.8; color: var(--search-dialog-muted); }.tg-empty p { margin-bottom: 10px; }.tg-list-end { display: flex; justify-content: center; margin-top: 14px; font-size: 12px; color: var(--search-dialog-muted); }.search-log-footer { padding: 0; }
 .tg-button:focus-visible, .tg-copy:focus-visible, .tg-text:focus-visible, .tg-filter:focus-within, summary:focus-visible, a:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: 2px; }
 @media (hover: hover) { .tg-button:hover:not(:disabled), .tg-copy:hover { background: var(--search-dialog-secondary-hover); } }

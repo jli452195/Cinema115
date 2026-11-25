@@ -80,9 +80,13 @@ func channelED2KFile(link ChannelLink) (string, string) {
 	if link.Type != "ed2k" {
 		return "", ""
 	}
-	file, err := channelED2KIdentity(link.URL)
-	if err != nil {
-		return "", ""
+	file := link.File
+	if file == nil {
+		var err error
+		file, err = channelED2KIdentity(link.URL)
+		if err != nil {
+			return "", ""
+		}
 	}
 	bytes, err := strconv.ParseUint(file.SizeBytes, 10, 63)
 	if err != nil {
@@ -210,10 +214,10 @@ func channelMetadata(title, text string, links []ChannelLink) *ChannelMetadata {
 		}
 	}
 	for i := range links {
-		name, fileSize := channelED2KFile(links[i])
-		if links[i].Type == "ed2k" {
+		if links[i].Type == "ed2k" && links[i].File == nil {
 			links[i].File, _ = channelED2KIdentity(links[i].URL)
 		}
+		name, fileSize := channelED2KFile(links[i])
 		facts := make(map[naming.Field]string)
 		episode := ""
 		if len(links) == 1 {
