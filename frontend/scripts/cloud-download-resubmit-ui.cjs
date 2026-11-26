@@ -12,7 +12,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const page = await context.newPage()
     page.setDefaultTimeout(10000)
     const errors = [], calls = [], batches = [], passed = []
-    let taskReads = 0, configWrites = 0
+    let taskReads = 0
+    const configWrites = []
     page.on('pageerror', err => errors.push(err.message))
     page.on('console', message => { if (message.text().includes('[Vue warn]')) errors.push(message.text()) })
     const magnet = 'magnet:?xt=urn:btih:' + 'a'.repeat(40)
@@ -28,7 +29,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       const profileRoute = url.pathname.match(/\/p115\/(cloud-download|share-transfer)\/profiles(?:\/([^/]+))?$/)
       if (profileRoute) {
         const profiles = targets[profileRoute[1]], id = profileRoute[2], method = route.request().method()
-        if (method === 'GET') return route.fulfill({ json: { profiles } })
+        if (method === 'GET') {
+          if (profileRoute[1] === 'share-transfer') return route.fulfill({ json: { profiles } })
+          return route.fulfill({ json: { accountId, profiles: profiles.map(profile => ({ ...profile, ready: profile.accountId === accountId })) } })
+        }
         if (method === 'DELETE') {
           if (rejectDelete) { rejectDelete = false; return route.fulfill({ status: 409, json: { error: '删除失败，请重试' } }) }
           const index = profiles.findIndex(profile => profile.id === id)
@@ -44,25 +48,33 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       }
       let data = {}, status = 200
       if (url.pathname === '/api/auth/me') data = { user: { id: 'mock', role: 'admin', username: 'mock', disabled: false } }
-      else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '主账号', primary: true, configured: true, revision: 1 }] }
+      else if (url.pathname.endsWith('/p115/accounts')) data = { accounts: [{ id: 'selected-account', name: '主账号', primary: true, configured: !!accountId, revision: 1 }] }
       else if (url.pathname.endsWith('/cloud-download/paths')) data = { cid: '0', directories: [], count: 0, hasMore: false }
       else if (url.pathname.endsWith('/cloud-download/config')) {
-        if (route.request().method() === 'PUT') configWrites++
-        data = { accountId, targetCID: '987', targetPath: '/测试目标' }
+        if (route.request().method() === 'PUT') configWrites.push(route.request().postDataJSON())
+        data = configWrites.at(-1) || { accountId, targetCID: '987', targetPath: '/测试目标' }
       }
+      else if (url.pathname.endsWith('/download-organize/jobs')) data = { jobs: [], pipelines: [] }
       else if (url.pathname.endsWith('/cloud-download/tasks')) {
         if (route.request().method() === 'GET') {
           taskReads++
           return route.fulfill({ json: { tasks: [] } })
         }
-        calls.push({ accountId: url.searchParams.get('accountId'), ...route.request().postDataJSON() })
+        assert.equal(url.searchParams.get('accountId'), null)
+        const body = route.request().postDataJSON()
+        calls.push(body)
+        const profile = targets['cloud-download'].find(item => item.id === body.profileId)
+        if (!profile || profile.accountId !== body.accountId || profile.targetCID !== body.targetCID) {
+          return route.fulfill({ status: 409, json: { code: 'cloud_target_changed', error: '所选目录已变更' } })
+        }
         if (scenario === 'gateway') return route.fulfill({ status: 504, contentType: 'text/html', body: '<html>Gateway Timeout</html>' })
         if (failures[scenario]) { status = scenario === 'uncertain' ? 504 : 502; data = { accepted: false, outcomeUncertain: scenario === 'uncertain', error: failures[scenario] } }
         else { status = 202; data = { accepted: true } }
       }
       else if (url.pathname.endsWith('/cloud-download/tasks/batch')) {
         const body = route.request().postDataJSON()
-        batches.push({ accountId: url.searchParams.get('accountId'), ...body })
+        assert.equal(url.searchParams.get('accountId'), null)
+        batches.push(body)
         const total = body.urls.length
         const events = [{ type: 'ready', total }]
         for (let start = 0; start < total; start += 100) {
@@ -137,6 +149,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
       await context.close()
       return
     }
+    targets['cloud-download'].push({ id: 'download', name: '测试目标', accountId: 'selected-account', targetCID: '987', targetPath: '/测试目标' })
+    // 下方目录管理用例可能自动选过根目录，单独初始化后续提交用例。
+    await page.evaluate(() => localStorage.clear())
     for (const source of ['web', 'gying', 'mikan']) {
       for (const mode of ['new', 'failed', 'uncertain', 'gateway', 'unconfigured']) {
         scenario = mode
@@ -154,19 +169,22 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           await page.getByRole('button', { name: '提交', exact: true }).click()
         } else {
           const button = page.getByRole('button', { name: source === 'gying' ? /观影\s*搜索/ : /Mikan\s*搜索/ })
+          const targetsLoaded = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/cloud-download/profiles'))
           try { await button.click() }
           catch (error) { throw new Error(`${source}:${mode}: ${await page.locator('main').innerText()}\n${errors.join('\n')}\n${error.message}`) }
-          await page.getByRole('button', { name: '115 云下载', exact: true }).click()
+          await targetsLoaded
+          const cloudDownload = page.getByRole('button', { name: '115 云下载', exact: true })
+          if (mode === 'unconfigured') assert.equal(await cloudDownload.isDisabled(), true)
+          else await cloudDownload.click()
         }
         if (mode === 'unconfigured') {
-          await page.getByText(/请先.*(?:选择|配置).*账号|请先在.*选择账号/).first().waitFor()
           assert.equal(calls.length, before)
         } else {
           const text = mode === 'new' ? '已提交 1 条（/测试目标）' : mode === 'gateway' ? /处理结果尚未确认，请先到 115 云下载核对/ : failures[mode]
           try { await page.getByText(text, { exact: false }).first().waitFor() }
           catch (error) { throw new Error(`${source}:${mode}: ${await page.locator('[role="alert"], [role="status"]').allTextContents()}\n${error.message}`) }
           assert.equal(calls.length, before + 1)
-          assert.deepEqual(calls.at(-1), { accountId: 'selected-account', url: magnet, targetCID: '987' })
+          assert.deepEqual(calls.at(-1), { profileId: 'download', accountId: 'selected-account', url: magnet, targetCID: '987' })
           if (mode === 'uncertain') assert.equal(await page.getByRole('link', { name: '前往配置' }).count(), 0)
         }
         passed.push(source + ':' + mode)
@@ -181,11 +199,36 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('button', { name: '提交', exact: true }).click()
     await page.getByText('已提交 100 条', { exact: true }).waitFor()
     await page.getByRole('alert').filter({ hasText: '1 条提交结果待核对' }).filter({ hasText: '1 条提交失败' }).waitFor()
-    assert.deepEqual(batches, [{ accountId: 'selected-account', targetCID: '987', urls }])
+    assert.deepEqual(batches, [{ profileId: 'download', accountId: 'selected-account', targetCID: '987', urls }])
     assert.equal(await textbox.inputValue(), urls[100])
+    // 已加载的同一目录被另一页修改时，即使唯一候选也必须重新确认。
+    targets['cloud-download'][0].targetCID = '988'
+    targets['cloud-download'][0].targetPath = '/修改后的目标'
+    const submit = page.getByRole('button', { name: '提交', exact: true })
+    await submit.click()
+    const destination = page.getByRole('combobox', { name: '下载到', exact: true })
+    await destination.waitFor()
+    assert.equal(await submit.isDisabled(), true)
+    assert.equal(await textbox.inputValue(), urls[100])
+    await destination.click()
+    await page.getByRole('option', { name: '测试目标', exact: true }).click()
+    await submit.click()
+    await page.getByText('已提交 1 条（/修改后的目标）', { exact: true }).waitFor()
+    assert.deepEqual(calls.slice(-2).map(body => body.targetCID), ['987', '988'])
+    passed.push('web:stale-directory-reconfirmation')
     assert.equal(taskReads, 0)
-    assert.equal(configWrites, 0)
+    assert.deepEqual(configWrites, [])
     passed.push('web:multiple-links')
+
+    await page.goto(origin + '/115/download-organize')
+    const staging = page.getByRole('region', { name: '整理下载暂存目录' })
+    await staging.getByText('/测试目标', { exact: true }).waitFor()
+    await staging.getByRole('button', { name: '选择目录', exact: true }).click()
+    await page.getByRole('dialog', { name: '选择整理下载暂存目录' }).getByRole('button', { name: '选择此目录' }).click()
+    await staging.getByText('115 根目录', { exact: true }).waitFor()
+    assert.deepEqual(configWrites, [{ accountId: 'selected-account', targetCID: '0', targetPath: '/' }])
+    assert.equal(targets['cloud-download'][0].targetCID, '988')
+    passed.push('organize:independent-staging-directory')
     assert.deepEqual(errors, [])
     console.log(JSON.stringify({ passed, submissions: calls.length, pageErrors: errors }))
   } finally { await browser.close() }

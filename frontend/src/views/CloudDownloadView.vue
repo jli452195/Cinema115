@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { IconCloudDownload, IconMagnet, IconShare } from '@tabler/icons-vue'
+import { IconCloudDownload, IconFolderPlus, IconMagnet, IconShare } from '@tabler/icons-vue'
 import ManagementLayout from '../components/ManagementLayout.vue'
 import P115PrimaryStatus from '../components/P115PrimaryStatus.vue'
-import P115DirectoryDialog from '../components/P115DirectoryDialog.vue'
+import CloudDownloadDirectory from '../components/CloudDownloadDirectory.vue'
 import P115TransferTargetSettings from '../components/P115TransferTargetSettings.vue'
 import { p115Request } from '../lib/p115-api'
-import { cloudDownloadNotice, submitCloudDownload } from '../lib/cloud-download'
+import { cloudDownloadNotice, isCloudDownloadUncertain, isCloudTargetChangedError, loadCloudDownloadConfig, submitCloudDownload, type CloudDownloadTargetSnapshot } from '../lib/cloud-download'
 import { submitCloudBatch, trackCloudBatch } from '../lib/cloud-download-batch'
+import { useCloudDownloadTarget } from '../composables/useCloudDownloadTarget'
 import type { P115Account } from '../types/p115Accounts'
 
 type TransferTab = 'magnet' | 'share'
@@ -20,20 +21,30 @@ const route = useRoute()
 const activeTab = ref<TransferTab>(route.query.tab === 'share' ? 'share' : 'magnet')
 const accounts = ref<P115Account[]>([])
 const accountsLoaded = ref(false)
-const accountId = ref('')
 const url = ref('')
-const targetCID = ref('0')
-const targetPath = ref('/')
-const directoryDialogOpen = ref(false)
 const submitting = ref(false)
 const error = ref('')
 const notice = ref('')
-const applyingConfig = ref(false)
+const importingLegacy = ref(false)
+const legacyConfig = ref<{ accountId: string; targetCID: string; targetPath: string }>()
+const cloudTarget = useCloudDownloadTarget(props.token, lifecycle.signal, { autoLoad: false })
+const directoryList = computed(() => ({
+  profiles: cloudTarget.allProfiles.value,
+  loading: cloudTarget.loading.value,
+  error: cloudTarget.error.value,
+}))
 
-const primaryAccount = computed(() => accounts.value.find(account => account.primary && account.id === accountId.value))
 const configuredPrimary = computed(() => accounts.value.find(account => account.primary && account.configured))
-const currentName = computed(() => targetCID.value === '0' ? '115 根目录' : targetPath.value)
-const canSubmit = computed(() => !!primaryAccount.value?.configured && !!targetCID.value && !!url.value.trim() && !submitting.value && !applyingConfig.value)
+const canSubmit = computed(() => !!configuredPrimary.value && cloudTarget.canSubmit.value && !!url.value.trim() && !submitting.value)
+// 仅在当前主账号下列表为空、旧配置确实绑定当前主账号且尚未存在同账号同 CID 条目时提供显式导入。
+const importableLegacy = computed(() => {
+  const primary = configuredPrimary.value
+  const legacy = legacyConfig.value
+  if (!primary || !legacy || !cloudTarget.loaded.value || cloudTarget.loading.value || cloudTarget.error.value || cloudTarget.targets.value.length) return undefined
+  if (legacy.accountId !== primary.id || !legacy.targetCID || !legacy.targetPath) return undefined
+  if (cloudTarget.allProfiles.value.some(item => item.accountId === legacy.accountId && item.targetCID === legacy.targetCID)) return undefined
+  return legacy
+})
 
 async function loadAccounts() {
   const data = await p115Request<{ accounts: P115Account[] }>(props.token, 'accounts', { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
@@ -41,76 +52,79 @@ async function loadAccounts() {
   accountsLoaded.value = true
 }
 
-async function loadConfig() {
-  const config = await p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'cloud-download/config', { signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
-  applyingConfig.value = true
-  accountId.value = config.accountId || ''
-  targetCID.value = config.targetCID || ''
-  targetPath.value = config.targetPath || '请选择下载目录'
-  if (targetCID.value === '0') targetPath.value = '/'
-  applyingConfig.value = false
-}
-
-function openDirectoryDialog() {
-  if (!primaryAccount.value?.configured) {
-    error.value = '请先在 115 助手中登录主账号'
-    return
+async function loadLegacyConfig() {
+  try {
+    const config = await loadCloudDownloadConfig(props.token, lifecycle.signal)
+    if (!lifecycle.signal.aborted) legacyConfig.value = config
+  } catch {
+    /* 读取旧配置失败不影响正常目录列表管理。 */
   }
-  error.value = ''
-  directoryDialogOpen.value = true
 }
 
-async function selectDirectory(value: { id: string; path: string }) {
-  directoryDialogOpen.value = false
-  if (!primaryAccount.value?.configured || submitting.value) return
-  applyingConfig.value = true
+async function importLegacyDirectory() {
+  const legacy = importableLegacy.value
+  if (!legacy || importingLegacy.value || submitting.value) return
+  importingLegacy.value = true
   error.value = ''
   notice.value = ''
   try {
-    await p115Request(props.token, 'cloud-download/config', {
-      method: 'PUT', body: JSON.stringify({ accountId: accountId.value, targetCID: value.id, targetPath: value.path }),
+    const path = legacy.targetCID === '0' ? '/' : legacy.targetPath
+    await p115Request(props.token, 'cloud-download/profiles', {
+      method: 'POST',
+      body: JSON.stringify({ name: '默认下载目录', accountId: legacy.accountId, targetCID: legacy.targetCID, targetPath: path }),
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
-    targetCID.value = value.id
-    targetPath.value = value.path
-    notice.value = '下载目录已保存。'
+    await cloudTarget.load()
+    notice.value = '已将原下载目录导入为转存目录。'
   } catch (reason) {
-    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存云下载配置失败'
+    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '导入原下载目录失败'
   } finally {
-    applyingConfig.value = false
+    importingLegacy.value = false
   }
 }
 
 async function submit() {
   if (!canSubmit.value) return
+  const snapshot = cloudTarget.snapshot()
+  if (!snapshot) return
   submitting.value = true
   error.value = ''
   notice.value = ''
-  const snapshot = { accountId: accountId.value, targetCID: targetCID.value, targetPath: targetPath.value }
   const urls = url.value.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   try {
     if (urls.length === 1) {
-      await submitCloudDownload(props.token, snapshot.accountId, urls[0]!, snapshot.targetCID, lifecycle.signal)
+      await submitCloudDownload(props.token, snapshot, urls[0]!, lifecycle.signal)
       notice.value = cloudDownloadNotice(snapshot.targetPath)
       url.value = ''
     } else {
       await submitBatch(urls, snapshot)
     }
   } catch (reason) {
-    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '提交云下载失败'
+    if (!lifecycle.signal.aborted) {
+      const message = reason instanceof Error ? reason.message : '提交云下载失败'
+      if (isCloudTargetChangedError(reason)) {
+        await cloudTarget.handleTargetChanged(snapshot, message)
+      }
+      if (urls.length === 1 && isCloudDownloadUncertain(reason)) {
+        url.value = ''
+        error.value = `${message}。已移除这条链接，核对后可重新粘贴。`
+      } else {
+        error.value = message
+      }
+    }
   } finally {
     submitting.value = false
   }
 }
 
-async function submitBatch(urls: string[], target: { accountId: string; targetCID: string }) {
+async function submitBatch(urls: string[], target: CloudDownloadTargetSnapshot) {
   const receipts = trackCloudBatch(urls.length)
   const rejected = new Set<number>()
   let accepted = 0
   let uncertain = 0
   let firstFailure = ''
   try {
-    await submitCloudBatch(props.token, target.accountId, target.targetCID, urls, lifecycle.signal, event => {
+    await submitCloudBatch(props.token, target, urls, lifecycle.signal, event => {
       receipts.accept(event)
       if (event.type !== 'result') return
       if (event.accepted) accepted++
@@ -122,6 +136,7 @@ async function submitBatch(urls: string[], target: { accountId: string; targetCI
     })
   } catch (reason) {
     if (lifecycle.signal.aborted) throw reason
+    if (isCloudTargetChangedError(reason)) throw reason
     if ((reason as { beforeStart?: boolean })?.beforeStart) {
       notice.value = '已提交 0 条'
       throw reason
@@ -140,22 +155,19 @@ async function submitBatch(urls: string[], target: { accountId: string; targetCI
   notice.value = `已提交 ${accepted} 条`
 }
 
-async function refresh() {
-  error.value = ''
-  try {
-    await loadAccounts()
-    await loadConfig()
-  } catch (reason) {
-    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取 115 配置失败'
-  }
+async function loadMagnetDirectories() {
+  await cloudTarget.load()
+  if (cloudTarget.accountID.value && !cloudTarget.targets.value.length && !cloudTarget.error.value) await loadLegacyConfig()
 }
 
-watch(accountId, () => {
-  if (applyingConfig.value) return
-  targetCID.value = ''
-  targetPath.value = '请选择下载目录'
-}, { flush: 'sync' })
-onMounted(refresh)
+watch(activeTab, tab => {
+  if (tab === 'magnet' && !cloudTarget.loaded.value) void loadMagnetDirectories()
+}, { immediate: true })
+onMounted(() => {
+  void loadAccounts().catch(reason => {
+    if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '读取 115 配置失败'
+  })
+})
 onBeforeUnmount(() => lifecycle.abort())
 </script>
 
@@ -172,12 +184,18 @@ onBeforeUnmount(() => lifecycle.abort())
           <div class="flex items-start gap-3"><span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconCloudDownload :size="19" aria-hidden="true" /></span><h2 class="text-base font-semibold text-slate-900 dark:text-slate-100">手动提交磁力或 ED2K</h2></div>
           <P115PrimaryStatus v-if="accountsLoaded" :accounts="accounts" class="mt-4" />
           <label class="mt-4 block text-sm font-medium text-slate-700 dark:text-slate-300">磁力或 ED2K 链接<textarea v-model="url" rows="3" :readonly="submitting" placeholder="每行一条链接" class="mt-2 block w-full resize-y rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-700 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" /></label>
-          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950"><div class="min-w-0"><p class="text-sm font-medium text-slate-700 dark:text-slate-300">下载目录</p><p class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{{ currentName }}（{{ targetCID || '未选择' }}）</p></div><button type="button" :disabled="!accountId || applyingConfig || submitting" class="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800" @click="openDirectoryDialog">选择目录</button></div>
+          <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950">
+            <CloudDownloadDirectory :controller="cloudTarget" label="下载到" variant="panel" :disabled="submitting" />
+            <div v-if="importableLegacy" class="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3 dark:border-slate-800">
+              <p class="min-w-0 text-xs leading-5 text-slate-500 dark:text-slate-400">检测到此前保存的下载目录：<span class="font-medium text-slate-700 dark:text-slate-200">{{ importableLegacy.targetCID === '0' ? '115 根目录' : importableLegacy.targetPath }}</span>（{{ importableLegacy.targetCID }}）</p>
+              <button type="button" :disabled="importingLegacy || submitting" class="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-40 dark:border-blue-800/60 dark:bg-blue-950/50 dark:text-blue-300 dark:hover:bg-blue-900/50" @click="importLegacyDirectory"><IconFolderPlus :size="15" aria-hidden="true" />{{ importingLegacy ? '导入中…' : '导入为转存目录' }}</button>
+            </div>
+          </div>
           <p v-if="error" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm leading-6 text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ error }}</p>
           <p v-if="notice" role="status" class="mt-4 rounded-lg bg-emerald-50 p-3 text-sm leading-6 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{{ notice }}</p>
           <div class="mt-4 flex justify-end"><button type="button" :disabled="!canSubmit" class="inline-flex min-h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" @click="submit"><IconCloudDownload :size="17" aria-hidden="true" />{{ submitting ? '正在提交…' : '提交' }}</button></div>
         </section>
-        <P115TransferTargetSettings :token="token" endpoint="cloud-download/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" title="Bot 磁力/ED2K 转存目录" description="每个目录是一个独立 Bot 功能。一个 Bot 可分配多个目录，私聊时由发送者选择。" empty-text="还没有 Bot 磁力/ED2K 转存目录" />
+        <P115TransferTargetSettings :token="token" endpoint="cloud-download/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" :directory-list="directoryList" title="磁力/ED2K 转存目录" description="手动提交和网页资源搜索共用。可在 Telegram 配置中分配给 Bot。" empty-text="还没有磁力/ED2K 转存目录" @change="loadMagnetDirectories" />
       </section>
 
       <section v-else id="share-panel" role="tabpanel" aria-labelledby="share-tab" class="space-y-5 pt-5">
@@ -188,6 +206,5 @@ onBeforeUnmount(() => lifecycle.abort())
         <P115TransferTargetSettings :token="token" endpoint="share-transfer/profiles" :account-id="configuredPrimary?.id || ''" :account-ready="!!configuredPrimary" title="115 链接转存目录" description="创建后即可在网页搜索结果中选择；也可在 Telegram Bot 配置页将目录分配给 Bot，无需绑定 Bot 即可用于网页。" empty-text="还没有 115 链接转存目录" />
       </section>
     </div>
-    <P115DirectoryDialog v-if="directoryDialogOpen" :token="token" :account-id="accountId" @close="directoryDialogOpen = false" @select="selectDirectory" />
   </ManagementLayout>
 </template>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { IconChevronDown, IconChevronUp, IconEdit, IconInfoCircle } from '@tabler/icons-vue'
 import OrganizeCompactName from './OrganizeCompactName.vue'
 import OrganizeDirectoryGroup from './OrganizeDirectoryGroup.vue'
 import type { OrganizeRow } from '../types/organize'
 import { directoryFileRows, directoryGroups, inDirectory, mobileDirectoryNames, mobileFileNames, parentDirectory, rowExcluded, setRangeSelection } from '../utils/organizeSelection'
 
-const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; emptyText?: string; targetNames?: Record<string, string>; conflicts?: Record<string, string>; shortConflicts?: Record<string, string> }>()
+const props = defineProps<{ rows: OrganizeRow[]; rootPath: string; tv: boolean; episodeEditable: boolean; disabled: boolean; compact?: boolean; flat?: boolean; autoExpandSingleTopDirectory?: boolean; emptyText?: string; targetNames?: Record<string, string>; conflicts?: Record<string, string>; shortConflicts?: Record<string, string> }>()
 const excluded = ref<string[]>([])
 const hasExcludedDirectories = computed(() => excluded.value.length > 0)
 const directoryOverrides = ref(new Map<string, boolean>())
@@ -29,7 +29,18 @@ const mobileNames = computed(() => isMobileCompact.value ? mobileFileNames(group
 const mobileDirectoryNameMap = computed(() => isMobileCompact.value && !props.flat ? mobileDirectoryNames(groups.value) : undefined)
 const fileRows = (rows: OrganizeRow[]) => rows.map(row => ({ row, mobileName: mobileNames.value?.get(row.id) }))
 const available = computed(() => props.rows.filter(row => !rowExcluded(row, excluded.value)))
-// 虚拟根分组直接展示入口，实际子目录初始折叠。
+// 虚拟根分组直接展示入口，实际子目录初始折叠；按需在首次有数据时仅展开单个真实顶层目录一层。
+let autoExpandedSingleTop = false
+watch(groups, list => {
+  if (!props.autoExpandSingleTopDirectory || props.flat || autoExpandedSingleTop || !props.rows.length) return
+  autoExpandedSingleTop = true
+  const root = list[0]
+  if (!root || root.rows.length > 0 || root.children.length !== 1) return
+  const top = root.children[0]!
+  if (!excluded.value.some(dir => inDirectory(top.path, dir)) && !directoryOverrides.value.has(top.path)) {
+    directoryOverrides.value.set(top.path, true)
+  }
+}, { immediate: true })
 const directoryExpanded = (path: string) => directoryOverrides.value.get(path) ?? (path === props.rootPath)
 const visiblePaths = computed(() => {
   const paths = new Set<string>()
@@ -215,8 +226,8 @@ defineExpose({ locateIssue, revealRows, hasExcludedDirectories })
 </template>
 
 <style scoped>
-.file-selection { color: rgb(var(--content-primary)); background: var(--organize-card-bg, rgb(var(--surface-card))); border-color: var(--organize-border, rgb(var(--line-default))); }
-.selection-header { padding: 6px 12px; border-bottom: 1px solid var(--organize-border, rgb(var(--line-default))); border-radius: 12px 12px 0 0; background: var(--organize-sub-bg, rgb(var(--surface-page))); }
+.file-selection { color: rgb(var(--content-primary)); border-radius: var(--organize-card-radius, 12px); background: var(--organize-card-bg, rgb(var(--surface-card))); border-color: var(--organize-border, rgb(var(--line-default))); }
+.selection-header { padding: 6px 12px; border-bottom: 1px solid var(--organize-border, rgb(var(--line-default))); border-radius: var(--organize-card-radius, 12px) var(--organize-card-radius, 12px) 0 0; background: var(--organize-sub-bg, rgb(var(--surface-page))); }
 .input { @apply rounded-lg border px-2 py-2 text-sm text-content-primary outline-none focus:border-focus; background: var(--organize-input-bg, rgb(var(--surface-card))); border-color: var(--organize-control-border, rgb(var(--line-control))); }
 .input:disabled { @apply cursor-not-allowed border-line-default bg-surface-page text-content-secondary; opacity: .6; }
 .input[aria-invalid="true"] { border-color: rgb(var(--status-danger)); }
@@ -224,7 +235,7 @@ defineExpose({ locateIssue, revealRows, hasExcludedDirectories })
 .edit-label { @apply flex flex-col gap-1 text-xs text-content-secondary; }
 .file-selection :is(button, input, summary):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
 .file-check { display: grid; flex-shrink: 0; place-items: center; width: 32px; min-height: 32px; margin: -4px 0 -4px -8px; cursor: pointer; }
-.file-check input { width: 16px; height: 16px; accent-color: rgb(var(--action-primary)); cursor: inherit; }
+.file-check input { width: 16px; height: 16px; accent-color: var(--organize-accent, rgb(var(--action-primary))); cursor: inherit; }
 .file-check:has(input:disabled) { cursor: not-allowed; opacity: .5; }
 .file-name { width: 100%; border-radius: 4px; text-align: left; overflow-wrap: anywhere; font-size: 14px; line-height: 20px; color: rgb(var(--content-primary)); }
 .file-name:disabled { cursor: default; }
@@ -238,11 +249,11 @@ defineExpose({ locateIssue, revealRows, hasExcludedDirectories })
 .episode-summary { @apply inline-flex items-center justify-start rounded-lg text-xs text-content-secondary disabled:cursor-not-allowed disabled:opacity-50; justify-self: start; min-height: var(--dialog-control-height, 36px); margin-left: 32px; }
 .episode-summary-inner { @apply inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2 transition-colors; background: var(--organize-sub-bg, rgb(var(--surface-hover) / .5)); min-height: var(--dialog-control-height, 36px); }
 .episode-summary:enabled:hover .episode-summary-inner { border-color: rgb(var(--focus)); background: rgb(var(--selection-surface)); color: rgb(var(--action-link)); }
-.compact-selection { container-type: inline-size; }
+.compact-selection { container-type: inline-size; overflow: clip; }
 .organize-file-row { background: var(--organize-row-bg, rgb(var(--surface-card))); padding-left: calc(28px + var(--directory-indent, 0px)); scroll-margin-top: calc(var(--organize-sticky-offset, 0px) + 12px); cursor: pointer; }
 .organize-file-row:not(.file-disabled):hover { background: var(--organize-row-hover, rgb(var(--surface-hover) / .6)); }
-.file-selected { background: rgb(var(--selection-surface)); box-shadow: inset 3px 0 rgb(var(--action-primary) / .65); }
-.file-selected:not(.file-disabled):hover { background: rgb(var(--selection-surface)); }
+.file-selected { background: var(--organize-row-selected, rgb(var(--selection-surface))); box-shadow: inset 3px 0 color-mix(in srgb, var(--organize-accent, rgb(var(--action-primary))) 65%, transparent); }
+.file-selected:not(.file-disabled):hover { background: var(--organize-row-selected-hover, rgb(var(--selection-surface))); }
 .file-disabled { cursor: default; }
 .file-has-issue { box-shadow: inset 3px 0 rgb(var(--status-danger) / .7); }
 .file-has-issue:focus-within { background: rgb(var(--status-danger-surface)); }
@@ -299,7 +310,7 @@ defineExpose({ locateIssue, revealRows, hasExcludedDirectories })
   .compact-selection .edit-label { flex-direction: row; align-items: center; gap: 4px; white-space: nowrap; }
   .compact-selection .edit-label > .input { width: 3.5rem; min-width: 0; padding-inline: 4px; text-align: center; }
   .compact-selection .episode-summary { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; margin: 0; padding: 8px 0; }
-  .compact-selection .episode-summary-inner { max-width: 84px; min-height: 26px; padding-inline: 7px; background: rgb(var(--surface-hover) / .75); font-variant-numeric: tabular-nums; }
+  .compact-selection .episode-summary-inner { max-width: 84px; min-height: 26px; padding-inline: 7px; background: var(--organize-sub-bg, rgb(var(--surface-hover) / .75)); font-variant-numeric: tabular-nums; }
   .compact-selection .episode-summary-inner.is-pending { border-color: rgb(var(--status-warning) / .35); color: rgb(var(--status-warning)); }
   .compact-selection .episode-summary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .compact-selection .file-tail { grid-column: 4; grid-row: 1; justify-self: end; align-self: center; gap: 4px; }

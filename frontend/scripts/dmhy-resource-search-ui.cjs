@@ -29,7 +29,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         if (state.magnetFail) { status = 502; data = { error: '模拟原帖磁力读取失败' } }
         else data = { id: body.id, magnet: item(Number(body.id)).magnet, cached: false }
       } else if (endpoint.endsWith('/download-organize/files')) data = { files: [], reason: '模拟空种子清单' }
-      else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '123', targetPath: '/下载' }
+      else if (endpoint.endsWith('/cloud-download/profiles')) data = { accountId: 'primary', profiles: [{ id: 'download', name: '下载', accountId: 'primary', targetCID: '123', targetPath: '/下载', ready: true }] }
       else if (endpoint.endsWith('/cloud-download/tasks')) data = { accepted: true }
       else if (endpoint.includes('/emby/media/')) data = { media: { state: 'unknown', items: [] }, baseUrl: '', serverId: '' }
       else if (endpoint.includes('/recommendations')) data = { items: [], page: 1, totalPages: 1 }

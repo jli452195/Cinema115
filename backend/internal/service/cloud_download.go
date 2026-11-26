@@ -56,20 +56,18 @@ type CloudDownloadService struct {
 	Coordinator *CloudDownloadCoordinator
 }
 
-func (s *CloudDownloadService) ValidateConfig(config CloudDownloadConfig) error {
+func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account, error) {
 	if s == nil || s.Accounts == nil || s.Client == nil || s.Coordinator == nil {
-		return generationInputError("云下载服务尚未初始化")
+		return P115Account{}, generationInputError("云下载服务尚未初始化")
 	}
-	config.AccountID = strings.TrimSpace(config.AccountID)
-	config.TargetCID = strings.TrimSpace(config.TargetCID)
-	config.TargetPath = strings.TrimSpace(config.TargetPath)
-	if err := s.Accounts.ValidatePrimary(config.AccountID); err != nil {
-		return err
+	account, err := s.Accounts.CloudDownloadPrimary(strings.TrimSpace(config.AccountID))
+	if err != nil {
+		return P115Account{}, err
 	}
-	if err := validateP115TargetDirectory(config.TargetCID, config.TargetPath); err != nil {
-		return generationInputError(err.Error())
+	if err := validateP115TargetDirectory(strings.TrimSpace(config.TargetCID), strings.TrimSpace(config.TargetPath)); err != nil {
+		return P115Account{}, generationInputError(err.Error())
 	}
-	return nil
+	return account, nil
 }
 
 // Submit 直接新增普通云下载任务，只使用提交接口本次返回的结果。
@@ -102,7 +100,7 @@ func (s *CloudDownloadService) acquireDirectResources(ctx context.Context, accou
 	}
 	if err := s.Accounts.ValidatePrimary(account.ID); err != nil {
 		release()
-		return nil, err
+		return nil, &CloudDownloadAccountError{cause: err}
 	}
 	return release, nil
 }
@@ -194,20 +192,21 @@ func submitCloudResource(ctx context.Context, client CloudURLAdder, cookie strin
 	return receipt, nil
 }
 
-func (s *CloudDownloadService) snapshot(config CloudDownloadConfig) (P115Account, error) {
-	if err := s.ValidateConfig(config); err != nil {
-		return P115Account{}, err
-	}
-	account, err := s.Accounts.Primary(strings.TrimSpace(config.AccountID))
+// CloudDownloadAccountError 表示写入前未能确认主账号可用或仍归属该配置。
+type CloudDownloadAccountError struct{ cause error }
+
+func (e *CloudDownloadAccountError) Error() string { return e.cause.Error() }
+func (e *CloudDownloadAccountError) Unwrap() error { return e.cause }
+
+// CloudDownloadPrimary 返回当前主账号的有效凭据快照，并核对凭据中的 UID。
+func (s *P115Accounts) CloudDownloadPrimary(expected string) (P115Account, error) {
+	account, err := s.Primary(expected)
 	if err != nil {
-		return P115Account{}, generationInputError("所选 115 配置已删除，请重新选择")
-	}
-	if strings.TrimSpace(account.Cookie) == "" {
-		return P115Account{}, generationInputError("所选 115 账号凭据已清空，请重新登录")
+		return P115Account{}, &CloudDownloadAccountError{cause: err}
 	}
 	uid := p115.CookieUserID(account.Cookie)
 	if uid == "" || uid != p115.CookieUserID("UID="+account.UID) {
-		return P115Account{}, generationInputError("无法确认所选 115 账号 UID，请重新登录")
+		return P115Account{}, &CloudDownloadAccountError{cause: generationInputError("无法确认所选 115 账号 UID，请重新登录")}
 	}
 	return account, nil
 }

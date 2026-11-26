@@ -14,6 +14,12 @@ import (
 	"strm115/backend/internal/service"
 )
 
+type cloudDownloadSelection struct {
+	ProfileID string `json:"profileId"`
+	AccountID string `json:"accountId"`
+	TargetCID string `json:"targetCID"`
+}
+
 // RegisterCloudDownload exposes the administrator-only cloud-download card.
 // Task endpoints use the primary account; secondary directory browsing is isolated.
 func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Accounts, settings *service.CloudDownloadSettings, downloads *service.CloudDownloadService, cloud *p115.CloudClient, drive *p115.ShareClient) {
@@ -56,12 +62,15 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		c.JSON(http.StatusOK, settings.View())
 	})
 	group.GET("/profiles", func(c *gin.Context) {
+		primary, _ := accounts.CloudDownloadPrimary("")
 		profiles := settings.Targets()
 		views := make([]gin.H, 0, len(profiles))
 		for _, profile := range profiles {
-			views = append(views, cloudDownloadTargetView(profile))
+			view := cloudDownloadTargetView(profile)
+			view["ready"] = primary.ID != "" && profile.AccountID == primary.ID
+			views = append(views, view)
 		}
-		c.JSON(http.StatusOK, gin.H{"profiles": views})
+		c.JSON(http.StatusOK, gin.H{"accountId": primary.ID, "profiles": views})
 	})
 	group.POST("/profiles", func(c *gin.Context) {
 		var input service.CloudDownloadTarget
@@ -165,39 +174,27 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 	admin.GET("/p115/accounts/:accountID/paths", paths)
 
 	group.POST("/tasks", func(c *gin.Context) {
-		value, ok := account(c)
-		if !ok {
-			return
-		}
 		var input struct {
-			URL       string `json:"url"`
-			TargetCID string `json:"targetCID"`
+			cloudDownloadSelection
+			URL string `json:"url"`
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "云下载链接参数无效"})
 			return
 		}
-		ctx, cancel := context.WithTimeout(c.Request.Context(), service.CloudDownloadTimeout)
-		defer cancel()
-		targetCID := strings.TrimSpace(input.TargetCID)
-		targetPath := "/"
-		if saved := settings.View(); saved.AccountID == value.ID {
-			if targetCID == "" {
-				targetCID = saved.TargetCID
-			}
-			if targetCID == saved.TargetCID {
-				targetPath = saved.TargetPath
-			}
-		}
-		if targetCID == "" {
-			c.JSON(400, gin.H{"error": "请先选择主账号的下载目录"})
+		config, ok := resolveCloudDownloadTarget(c, settings, input.cloudDownloadSelection)
+		if !ok {
 			return
 		}
-		err := downloads.Submit(ctx, service.CloudDownloadConfig{AccountID: value.ID, TargetCID: targetCID, TargetPath: targetPath}, input.URL)
+		err := downloads.Submit(c.Request.Context(), config, input.URL)
 		if err != nil {
 			status := http.StatusBadGateway
 			var upstream *p115.HTTPError
+			var accountErr *service.CloudDownloadAccountError
 			switch {
+			case errors.As(err, &accountErr):
+				cloudDownloadTargetConflict(c, accountErr)
+				return
 			case errors.Is(err, service.ErrCloudTaskBusy):
 				status = http.StatusConflict
 			case errors.Is(err, p115.ErrCloudInput), errors.Is(err, service.ErrGenerationInput), errors.Is(err, service.ErrAccountInput):
@@ -216,13 +213,9 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 	})
 
 	group.POST("/tasks/batch", func(c *gin.Context) {
-		value, ok := account(c)
-		if !ok {
-			return
-		}
 		var input struct {
-			URLs      []string `json:"urls"`
-			TargetCID string   `json:"targetCID"`
+			cloudDownloadSelection
+			URLs []string `json:"urls"`
 		}
 		if err := c.ShouldBindJSON(&input); err != nil {
 			var oversized *http.MaxBytesError
@@ -233,20 +226,24 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			c.JSON(http.StatusBadRequest, gin.H{"error": "批量云下载参数无效"})
 			return
 		}
-		saved := settings.View()
-		config := service.CloudDownloadConfig{AccountID: value.ID, TargetCID: strings.TrimSpace(input.TargetCID), TargetPath: "/"}
-		if saved.AccountID == value.ID && saved.TargetCID == config.TargetCID {
-			config.TargetPath = saved.TargetPath
+		config, ok := resolveCloudDownloadTarget(c, settings, input.cloudDownloadSelection)
+		if !ok {
+			return
 		}
 		batch, err := downloads.PrepareBatch(config, input.URLs)
 		if err != nil {
+			var accountErr *service.CloudDownloadAccountError
+			if errors.As(err, &accountErr) {
+				cloudDownloadTargetConflict(c, accountErr)
+				return
+			}
 			c.JSON(http.StatusBadRequest, gin.H{"error": service.CloudDownloadErrorMessage(err)})
 			return
 		}
 		c.Header("Content-Type", "application/x-ndjson; charset=utf-8")
 		c.Header("X-Accel-Buffering", "no")
 		encoder := json.NewEncoder(c.Writer)
-		// No background queue: disconnecting prevents the next link from starting.
+		// 批量提交随请求执行，断开连接后不再开始下一组。
 		if err := batch.Run(c.Request.Context(), func(event service.CloudDownloadBatchEvent) error {
 			if err := encoder.Encode(event); err != nil {
 				return err
@@ -254,8 +251,7 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 			c.Writer.Flush()
 			return c.Request.Context().Err()
 		}); err != nil {
-			// Headers have been sent; an incomplete stream is handled as uncertain
-			// by the client. Do not append a second JSON response or retry writes.
+			// 客户端将未完整结束的流视为结果待核对，不追加 JSON 错误或重试写入。
 			return
 		}
 	})
@@ -286,6 +282,31 @@ func RegisterCloudDownload(admin *gin.RouterGroup, accounts *service.P115Account
 		}
 		c.JSON(http.StatusOK, gin.H{"tasks": tasks, "total": result.Total, "page": page})
 	})
+}
+
+func resolveCloudDownloadTarget(c *gin.Context, settings *service.CloudDownloadSettings, selection cloudDownloadSelection) (service.CloudDownloadConfig, bool) {
+	profileID := strings.TrimSpace(selection.ProfileID)
+	accountID := strings.TrimSpace(selection.AccountID)
+	targetCID := strings.TrimSpace(selection.TargetCID)
+	if profileID == "" || accountID == "" || targetCID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请先选择主账号的下载目录"})
+		return service.CloudDownloadConfig{}, false
+	}
+	profile, found := settings.Target(profileID)
+	if !found {
+		cloudDownloadTargetConflict(c, service.ErrCloudTargetMissing)
+		return service.CloudDownloadConfig{}, false
+	}
+	// 只比较账号和目录编号。名称、显示路径和 Bot 分配可独立修改。
+	if profile.AccountID != accountID || profile.TargetCID != targetCID {
+		cloudDownloadTargetConflict(c, service.ErrCloudTargetChanged)
+		return service.CloudDownloadConfig{}, false
+	}
+	return service.CloudDownloadConfig{AccountID: profile.AccountID, TargetCID: profile.TargetCID, TargetPath: profile.TargetPath}, true
+}
+
+func cloudDownloadTargetConflict(c *gin.Context, err error) {
+	c.JSON(http.StatusConflict, gin.H{"code": "cloud_target_changed", "error": service.CloudDownloadErrorMessage(err), "accepted": false, "outcomeUncertain": false})
 }
 
 func cloudDownloadTargetView(profile service.CloudDownloadTarget) gin.H {

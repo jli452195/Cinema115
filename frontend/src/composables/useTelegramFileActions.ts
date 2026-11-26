@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { useCloudDownloadAction } from './useCloudDownloadAction'
-import { cloudDownloadNotice, loadCloudDownloadConfig } from '../lib/cloud-download'
+import { useCloudDownloadTarget } from './useCloudDownloadTarget'
+import { cloudDownloadNotice, isCloudTargetChangedError } from '../lib/cloud-download'
 import { submitCloudBatch, trackCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
 import { createED2KSTRMAPI } from '../lib/ed2k-strm-api'
 import { ed2kRequestID } from '../utils/ed2kSTRM'
@@ -11,7 +12,8 @@ export interface TelegramFileActionStatus { busy?: boolean; success?: boolean; u
 interface PendingSTRM { requestId: string; targetId: string; accountId: string; outputDir: string; baseUrl: string; files: TelegramFile[]; keys: string[] }
 
 export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
-  const cloud = useCloudDownloadAction(token, lifecycle)
+  const cloudTarget = useCloudDownloadTarget(token, lifecycle, { autoLoad: false })
+  const cloud = useCloudDownloadAction(token, lifecycle, undefined, cloudTarget)
   const api = createED2KSTRMAPI(() => token, lifecycle)
   const state = ref<ED2KSTRMState>(), targetID = ref(''), loading = ref(false)
   const setupError = ref(''), notice = ref(''), running = ref(false), cloudBatchRunning = ref(false)
@@ -29,6 +31,7 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
 
   async function loadTargets() {
     if (loading.value || running.value || cloud.busy.value || lifecycle.aborted) return
+    void cloudTarget.load()
     loading.value = true; setupError.value = ''
     try {
       const value = await api.state()
@@ -50,15 +53,18 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
       if (!lifecycle.aborted && status?.message) notice.value = status.message
       return
     }
+    const snapshot = cloudTarget.snapshot()
+    if (!snapshot) {
+      notice.value = cloudTarget.missingTargetMessage()
+      return
+    }
     running.value = true; cloudBatchRunning.value = true
     controller = new AbortController()
     const signal = AbortSignal.any([lifecycle, controller.signal])
     const receipts = trackCloudBatch(rows.length)
     let dispatched = false, accepted = 0, failed = 0, uncertain = 0
     try {
-      const config = await loadCloudDownloadConfig(token, signal)
-      if (!config.accountId || !config.targetCID) throw Object.assign(new Error('请先在 115 云下载保存主账号和下载目录'), { beforeStart: true })
-      // 整批交给现有批量接口，在后端固定账号与目录，不逐文件重新读取配置。
+      // 整批提交选中目录快照，在后端固定账号与目录，不逐文件重新读取配置。
       const onEvent = (event: CloudBatchEvent) => {
         receipts.accept(event)
         if (event.type === 'ready' || event.type === 'done') return
@@ -69,7 +75,7 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
         }
         if (event.accepted) {
           accepted++
-          cloud.statuses.value[file.id] = { success: true, message: cloudDownloadNotice(config.targetPath) }
+          cloud.statuses.value[file.id] = { success: true, message: cloudDownloadNotice(snapshot.targetPath) }
         } else {
           if (event.outcomeUncertain) uncertain++
           else failed++
@@ -77,7 +83,7 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
         }
       }
       dispatched = true
-      await submitCloudBatch(token, config.accountId, config.targetCID, rows.map(file => file.url), signal, onEvent)
+      await submitCloudBatch(token, snapshot, rows.map(file => file.url), signal, onEvent)
       const counts = [`已提交 ${accepted} 条`]
       if (failed) counts.push(`失败 ${failed} 条`)
       if (uncertain) counts.push(`待核对 ${uncertain} 条`)
@@ -86,6 +92,11 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
       notice.value = counts.join('，')
     } catch (reason) {
       const error = reason as Error & { beforeStart?: boolean }
+      if (isCloudTargetChangedError(reason)) {
+        if (!lifecycle.aborted) void cloudTarget.handleTargetChanged(snapshot, error.message)
+        if (!lifecycle.aborted) notice.value = error.message || '所选下载目录已变更或删除，本次未提交，请重新确认目录。'
+        return
+      }
       if (dispatched && !receipts.done && !error.beforeStart) {
         for (let i = 0; i < rows.length; i++) if (!receipts.completed.has(i)) {
           cloud.statuses.value[rows[i]!.id] = { uncertain: true, message: '接收结果尚未确认，请先到 115 云下载核对。' }
@@ -158,5 +169,5 @@ export function useTelegramFileActions(token: string, lifecycle: AbortSignal) {
       if (!lifecycle.aborted) notice.value = message
     } finally { running.value = false }
   }
-  return { state, targetID, targets, loading, setupError, notice, busy, running, cloudBatchRunning, pendingSTRM, retrySTRM, cloudStatus, strmStatus, cloudEligible, strmEligible, loadTargets, download, generate, stop: () => controller?.abort() }
+  return { state, targetID, targets, cloudTarget, loading, setupError, notice, busy, running, cloudBatchRunning, pendingSTRM, retrySTRM, cloudStatus, strmStatus, cloudEligible, strmEligible, loadTargets, download, generate, stop: () => controller?.abort() }
 }

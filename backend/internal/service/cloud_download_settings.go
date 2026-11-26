@@ -93,7 +93,9 @@ func (s *CloudDownloadSettings) Targets() []CloudDownloadTarget {
 }
 
 func (s *CloudDownloadSettings) Target(id string) (CloudDownloadTarget, bool) {
-	for _, target := range s.Targets() {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, target := range s.value.Targets {
 		if target.ID == id {
 			return target, true
 		}
@@ -257,7 +259,7 @@ func (s *CloudDownloadSettings) Save(input CloudDownloadConfig) (CloudDownloadCo
 	document := cloudDownloadDocument{Version: 1, CloudDownloadConfig: input}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Preserve named Telegram targets when saving the manual-transfer default.
+	// 修改下载整理的暂存目录时保留共用转存目录。
 	document.Targets = append([]CloudDownloadTarget{}, s.value.Targets...)
 	if err := s.commit(document); err != nil {
 		return CloudDownloadConfig{}, err

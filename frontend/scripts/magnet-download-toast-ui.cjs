@@ -8,7 +8,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
 ;(async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true })
   const errors = [], passed = []
-  async function fixture(source = 'gying') {
+  async function fixture(source = 'gying', configured = true) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: 'block', reducedMotion: 'reduce' })
     await context.addInitScript(() => {
       localStorage.setItem('admin_token', 'mock'); localStorage.setItem('cinema115-theme', 'light')
@@ -19,7 +19,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
     const page = await context.newPage(); page.setDefaultTimeout(8000)
     page.on('pageerror', error => errors.push(error.message))
     const calls = [], held = new Map(), unknown = new Set(), rejected = new Set()
-    const state = { configured: true, lostJob: false }
+    const state = { configured, lostJob: false }
     const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变之星', '2003')
     const files = [{ id: 'show/E001.mkv', name: 'E001.mkv', sourcePath: '/show/E001.mkv', directory: false, parentId: '', size: 1024, mediaType: 'video', season: 1, episode: 1 }]
     const links = Array.from({ length: 15 }, (_, i) => ({ category: 'torrent', type: 'magnet', typeLabel: '磁力', subTypeLabel: '1080P', workTitle: `测试合集 ${i + 1} [1080p]`, url: magnet(i + 1), hasTorrent: true }))
@@ -36,6 +36,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
       else if (endpoint.endsWith(`/${source}/search`)) data = { query: 'カレイドスター', matchedBy: 'title', total: 1, cached: false, attempts: [], items: [{ id: 'tv:Show', title: '百变之星', year: 2003, mediaType: 'tv', links }] }
       else if (endpoint.endsWith('/download-organize/files')) data = body.magnet === magnet(2) ? { files: [], reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, subtitles: [] }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: state.configured ? 'primary' : '', targetCID: state.configured ? '10' : '', targetPath: '/下载' }
+      else if (endpoint.endsWith('/cloud-download/profiles')) data = { accountId: state.configured ? 'primary' : '', profiles: state.configured ? [{ id: 'download', name: '下载', accountId: 'primary', targetCID: '10', targetPath: '/下载', ready: true }] : [] }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/动漫' }
       else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: false, reason: '请先完善分享 STRM 设置' }
       else if (endpoint.endsWith('/naming/media-preview')) data = naming.preview(body, 3)
@@ -72,8 +73,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
     }
     async function organize(index, loseReceipt = false) {
       await rows.nth(index).locator('[data-gy-action="organize"]').click()
-      const child = page.locator('dialog.floating-dialog-organize')
-      await child.getByText('版本 3', { exact: true }).waitFor()
+      const child = page.locator('.download-organize-dialog')
       await child.getByRole('checkbox', { name: '选择目录 show 及下级', exact: true }).check()
       state.lostJob = loseReceipt
       await child.getByRole('button', { name: '下载并自动整理', exact: true }).click()
@@ -179,8 +179,7 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
         await f.rows.first().locator('[data-gy-action="cloud"]').click()
         await f.rows.first().getByRole('button', { name: '提交中…', exact: true }).waitFor()
         await f.rows.nth(4).locator('[data-gy-action="organize"]').click()
-        const child = f.page.locator('dialog.floating-dialog-organize')
-        await child.getByText('版本 3', { exact: true }).waitFor()
+        const child = f.page.locator('.download-organize-dialog')
         await child.getByRole('checkbox', { name: '选择目录 show 及下级', exact: true }).check()
         await child.getByRole('button', { name: '下载并自动整理', exact: true }).click()
         await child.getByRole('button', { name: '正在确认并创建任务…', exact: true }).waitFor()
@@ -220,11 +219,6 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
         assert.equal(await unknown.getByRole('link', { name: '查看云下载', exact: true }).getAttribute('href'), '/115/cloud-download')
         await f.clear()
         assert.equal(await unknown.locator('.gy-task-status').isVisible(), true)
-        f.state.configured = false
-        await f.rows.nth(3).locator('[data-gy-action="cloud"]').click()
-        await f.rows.nth(3).getByRole('link', { name: '前往配置', exact: true }).waitFor()
-        assert.equal(f.count('/cloud-download/tasks'), 1)
-        f.state.configured = true
         const fallback = f.rows.nth(1)
         await fallback.locator('[data-gy-action="organize"]').click()
         await fallback.getByText(/清单中没有可整理的视频文件/).waitFor()
@@ -257,7 +251,16 @@ const magnet = n => `magnet:?xt=urn:btih:${n.toString(16).padStart(40, '0')}`
         await rejected.locator('[data-gy-action="cloud"]').click()
         await rejected.locator('[data-gy-action="cloud-task"]').waitFor()
         assert.equal(f.count('/cloud-download/tasks'), 4)
-        passed.push('未知回执与别名保持待核对并提供入口；缺配置不提交；无视频保留普通离线；复制失败可手动复制；明确拒绝只 Toast 且可重试')
+        passed.push('未知回执与别名保持待核对并提供入口；无视频保留普通离线；复制失败可手动复制；明确拒绝只 Toast 且可重试')
+      } finally { await f.context.close() }
+    }
+    {
+      const f = await fixture('gying', false)
+      try {
+        await f.search.getByRole('link', { name: '配置下载目录', exact: true }).waitFor()
+        assert.equal(await f.rows.first().locator('[data-gy-action="cloud"]').isDisabled(), true)
+        assert.equal(f.count('/cloud-download/tasks'), 0)
+        passed.push('无可用云下载目录时提示配置并禁止提交')
       } finally { await f.context.close() }
     }
     {

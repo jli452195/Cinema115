@@ -52,11 +52,21 @@ export function directoryFileRows(group: OrganizeDirectoryGroup): OrganizeRow[] 
   return [...group.children.flatMap(directoryFileRows), ...group.rows]
 }
 
-export function setRangeSelection(rows: OrganizeRow[], anchor: string, target: string, selected: boolean) {
-  const end = rows.findIndex(row => row.id === target)
+// 通用区间选择算法：按当前展示顺序对 [anchor, target] 闭区间执行回调，供整理与 ED2K 列表共用。
+export function applyRangeSelection<T extends { id: string }>(
+  items: readonly T[],
+  anchor: string,
+  target: string,
+  apply: (item: T) => void,
+) {
+  const end = items.findIndex(item => item.id === target)
   if (end < 0) return
-  const start = rows.findIndex(row => row.id === anchor)
-  for (const row of rows.slice(Math.min(start < 0 ? end : start, end), Math.max(start < 0 ? end : start, end) + 1)) row.selected = selected
+  const start = items.findIndex(item => item.id === anchor)
+  for (const item of items.slice(Math.min(start < 0 ? end : start, end), Math.max(start < 0 ? end : start, end) + 1)) apply(item)
+}
+
+export function setRangeSelection(rows: OrganizeRow[], anchor: string, target: string, selected: boolean) {
+  applyRangeSelection(rows, anchor, target, row => { row.selected = selected })
 }
 
 export interface OrganizeCompactName {

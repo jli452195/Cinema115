@@ -54,10 +54,10 @@ export function magnetKey(raw: string): string {
   } catch { return '' }
 }
 
-export async function submitCloudBatch(token: string, accountId: string, targetCID: string, urls: string[], signal: AbortSignal, onEvent: (event: CloudBatchEvent) => void): Promise<void> {
-  const response = await fetch(`/api/admin/p115/cloud-download/tasks/batch?accountId=${encodeURIComponent(accountId)}`, {
+export async function submitCloudBatch(token: string, target: { profileId: string; accountId: string; targetCID: string }, urls: string[], signal: AbortSignal, onEvent: (event: CloudBatchEvent) => void): Promise<void> {
+  const response = await fetch('/api/admin/p115/cloud-download/tasks/batch', {
     method: 'POST', cache: 'no-store', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ urls, targetCID }), signal,
+    body: JSON.stringify({ profileId: target.profileId, accountId: target.accountId, targetCID: target.targetCID, urls }), signal,
   })
   await readCloudBatch(response, onEvent)
 }
@@ -67,7 +67,12 @@ export async function readCloudBatch(response: Response, onEvent: (event: CloudB
   if (!response.ok) {
     const data = await response.json().catch(() => null)
     const rejectedBeforeStart = [400, 401, 403, 404, 409, 413, 422].includes(response.status) && !!data?.error
-    throw Object.assign(new Error(data?.error || `批量提交失败（HTTP ${response.status}）`), { beforeStart: rejectedBeforeStart })
+    throw Object.assign(new Error(data?.error || `批量提交失败（HTTP ${response.status}）`), {
+      beforeStart: rejectedBeforeStart,
+      status: response.status,
+      code: data?.code,
+      responseData: data,
+    })
   }
   if (!response.body || !response.headers.get('Content-Type')?.includes('application/x-ndjson')) throw new Error('批量提交未返回完整回执，请先核对 115 云下载')
   const reader = response.body.getReader(), decoder = new TextDecoder()

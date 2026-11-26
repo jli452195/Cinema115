@@ -7,6 +7,7 @@ import { normalize115Share } from '../utils/shareLink'
 import { requestErrorMessage } from '../utils/requestErrorMessage'
 import { useShareSTRMRun, type ShareSTRMResource } from './useShareSTRMRun'
 import { useCloudDownloadAction, type CloudDownloadActionStatus } from './useCloudDownloadAction'
+import type { CloudDownloadTargetController } from './useCloudDownloadTarget'
 import type { ConfirmOrganizeAction } from './useOrganizeDraftGuard'
 
 interface MediaResourceActionOptions {
@@ -23,10 +24,11 @@ export function useMediaResourceActions(
   signal: AbortSignal,
   searching: () => boolean,
   confirmOrganizeAction: ConfirmOrganizeAction,
+  cloudTarget?: CloudDownloadTargetController,
 ) {
   const shareRuns = useShareSTRMRun(options.token, signal, { scope: `${options.source}/${options.kind}/${options.tmdbId}` })
   const cloudStatuses = ref<Record<string, CloudDownloadStatus>>({})
-  const downloads = useCloudDownloadAction(options.token, signal, cloudStatuses)
+  const downloads = useCloudDownloadAction(options.token, signal, cloudStatuses, cloudTarget)
   const cloudSubmitting = downloads.pending
   const organizeEntries = ref<DownloadOrganizeResource[]>([])
   const organizeVisible = ref(false)

@@ -1,13 +1,13 @@
 import { ref, watch, type Ref } from 'vue'
 
-/** Paint a sticky toolbar only after its in-flow anchor reaches the scroll edge. */
+/** 仅在锚点越过滚动容器顶边后激活吸顶态。 */
 export function useStickySurface(container: Ref<HTMLElement | undefined>, anchor: Ref<HTMLElement | undefined>) {
   const stuck = ref(false)
 
   watch([container, anchor], ([root, target], _, onCleanup) => {
     stuck.value = false
     if (!root || !target) return
-    // Older browsers still need an opaque surface over scrolling content.
+    // 不支持 IntersectionObserver 时保守启用吸顶表面。
     if (typeof IntersectionObserver === 'undefined') {
       stuck.value = true
       return

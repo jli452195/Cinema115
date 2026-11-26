@@ -25,7 +25,7 @@ const origin = process.env.CINEMA_URL || 'http://127.0.0.1:5173'
         if(state.fail){status=502;data={error:'Garden 暂时无法读取'}}
         else data={query:body.query,page:body.page,hasMore:body.page===1&&!body.group,groups,items:body.page>1?[item(101)]:body.group?[body.group==='moe_p2'?item(2,'moe'):item(1)]:state.large?Array.from({length:100},(_,i)=>({...item(i+1),...(i===2?{title:'[测试组] 百变之星 [1440x1080]'}:{})})):[item(1),item(2,'moe')],cached:false,fetchedAt:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString()}
       } else if(endpoint.endsWith('/mikan/search')) data={query:body.query,groups:[],bangumis:[],attempts:[],items:[{id:'mikan',title:'蜜柑资源',size:'1 GB',updatedAt:'2026-10-23',magnet:item(8).magnet,url:'https://mikanani.me/',torrentUrl:'',resolution:'1080P'}]}
-      else if(endpoint.endsWith('/cloud-download/config')) data={accountId:'primary',targetCID:'123',targetPath:'/下载'}
+      else if(endpoint.endsWith('/cloud-download/profiles')) data={accountId:'primary',profiles:[{id:'download',name:'下载',accountId:'primary',targetCID:'123',targetPath:'/下载',ready:true}]}
       else if(endpoint.endsWith('/cloud-download/tasks')) data={accepted:true}
       else if(endpoint.endsWith('/cloud-download/tasks/batch')) {
         const total = body.urls.length

@@ -61,7 +61,7 @@ const showHeading = computed(() => !props.compact || props.group.path !== props.
 .directory-heading { @apply flex items-center gap-2 border-y py-1.5 pr-3; padding-left: calc(12px + var(--directory-indent)); background: var(--organize-sub-bg, rgb(var(--surface-page))); border-color: var(--organize-border, rgb(var(--line-default))); }
 .directory-files > :not([hidden]) ~ :not([hidden]) { border-color: var(--organize-border, rgb(var(--line-default))); }
 .directory-check { display: grid; flex-shrink: 0; place-items: center; width: 32px; min-height: 32px; margin-left: -8px; cursor: pointer; }
-.directory-check input { width: 16px; height: 16px; accent-color: rgb(var(--action-primary)); cursor: inherit; }
+.directory-check input { width: 16px; height: 16px; accent-color: var(--organize-accent, rgb(var(--action-primary))); cursor: inherit; }
 .directory-check:has(input:disabled) { cursor: not-allowed; opacity: .5; }
 .directory-toggle { @apply flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-sm font-medium text-content-primary; min-height: 32px; }
 .directory-icon { color: rgb(var(--content-secondary)); }

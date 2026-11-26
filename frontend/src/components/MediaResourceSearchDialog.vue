@@ -2,7 +2,9 @@
 import { copyText } from '../utils/clipboard'
 import ShareTransferDirectory from './ShareTransferDirectory.vue'
 import ShareTransferButton from './ShareTransferButton.vue'
+import CloudDownloadDirectory from './CloudDownloadDirectory.vue'
 import { useShareTransfer } from '../composables/useShareTransfer'
+import { useCloudDownloadTarget } from '../composables/useCloudDownloadTarget'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import AlertDialog from './AlertDialog.vue'
@@ -12,7 +14,7 @@ import DownloadOrganizeDialog from './DownloadOrganizeDialog.vue'
 import BottomSheetDialog from './BottomSheetDialog.vue'
 import BottomSheetExpandButton from './BottomSheetExpandButton.vue'
 import { useSlidingIndicator } from '../composables/useSlidingIndicator'
-import { useStickySurface } from '../composables/useStickySurface'
+import { useHorizontalScrollTrack } from '../composables/useHorizontalScrollTrack'
 import { provideSheetFlow } from '../composables/useSheetFlow'
 import type { ResourceLink as GyingResourceLink, ResourceSearchAttempt as GyingSearchAttempt, ResourceSearchItem as GyingSearchItem } from '../types/resourceSearch'
 import { useMediaResourceSearch } from '../composables/useMediaResourceSearch'
@@ -32,23 +34,21 @@ const dialog = computed(() => sheetDialog.value?.dialog)
 const organizeDialog = ref<InstanceType<typeof DownloadOrganizeDialog>>()
 const rootID = 'media-resource-search-root'
 const rootContainer = ref<HTMLElement>()
-const shortViewport = ref(false)
 const scrollBody = ref<HTMLElement>()
-const filterAnchor = ref<HTMLElement>()
-const filtersStuck = useStickySurface(scrollBody, filterAnchor)
 const displayLimit = ref(30)
 const activeItemId = ref('all')
 const activeResourceType = ref('all')
 const activeMagnetSubType = ref('all')
 const lifecycle = new AbortController()
 const transfers = useShareTransfer(props.token, lifecycle.signal)
+const cloudTarget = useCloudDownloadTarget(props.token, lifecycle.signal, { autoLoad: !!props.token })
 const router = useRouter()
 const toast = useToast()
 const searchState = useMediaResourceSearch(props, lifecycle.signal)
 const { config, result, searchEnabled, phase, elapsedSeconds, error, errorCode, moreError, moreErrorCode } = searchState
 const hasUnsavedOrganizeDraft = () => !!organizeDialog.value?.hasUnsavedDraft
 const { prompt: draftPrompt, settleDiscard, beforeClose, confirmDiscard } = useOrganizeDraftGuard(hasUnsavedOrganizeDraft, () => rootBlocked.value)
-const resourceActions = useMediaResourceActions(props, lifecycle.signal, () => phase.value !== '', confirmDiscard)
+const resourceActions = useMediaResourceActions(props, lifecycle.signal, () => phase.value !== '', confirmDiscard, cloudTarget)
 const {
   shareRuns, cloudBusy, cloudSubmitting, cloudStatuses, organizeEntries, organizeVisible, preparingOrganize, organizeNotices,
   shareResourceID, canShareSTRM, restoreShareRuns, shareSTRM, stopShareRun,
@@ -168,6 +168,18 @@ const subTypeStrip = ref<HTMLElement>()
 const { indicatorStyle: itemIndicatorStyle } = useSlidingIndicator(itemStrip, '[aria-pressed="true"]', [activeItemId, resultItems])
 const { indicatorStyle: sourceIndicatorStyle } = useSlidingIndicator(sourceStrip, '[aria-pressed="true"]', [activeResourceType, resourceOptions], { insetY: 6 })
 const { indicatorStyle: subTypeIndicatorStyle } = useSlidingIndicator(subTypeStrip, '[aria-pressed="true"]', [activeMagnetSubType, magnetSubTypeOptions], { insetY: 6 })
+const sourceTrack = useHorizontalScrollTrack(sourceStrip, {
+  selectedSelector: '[aria-pressed="true"]',
+  smoothOn: activeResourceType,
+  deps: [resourceOptions],
+  mouseDrag: true,
+})
+const subTypeTrack = useHorizontalScrollTrack(subTypeStrip, {
+  selectedSelector: '[aria-pressed="true"]',
+  smoothOn: activeMagnetSubType,
+  deps: [magnetSubTypeOptions],
+  mouseDrag: true,
+})
 const visibleItems = computed(() => {
   return selectedItems.value.flatMap(item => {
     const resourceLinks = activeResourceType.value === 'all' ? item.links : item.links.filter(link => link.type === activeResourceType.value)
@@ -197,6 +209,7 @@ function resetDisplay() {
   })
 }
 function selectMagnetSubType(type: string) {
+  if (activeMagnetSubType.value === type) subTypeTrack.centerSelected('smooth')
   activeMagnetSubType.value = type
   resetDisplay()
 }
@@ -208,8 +221,7 @@ async function showMore() {
   const row = dialog.value?.querySelectorAll<HTMLElement>('[data-resource-row]')[previousCount]
   row?.querySelector<HTMLElement>('button, a')?.focus({ preventScroll: true })
   const body = dialog.value?.querySelector<HTMLElement>('.gy-body')
-  const filters = dialog.value?.querySelector<HTMLElement>('.gy-filters')
-  if (row && body && filters) body.scrollTop += row.getBoundingClientRect().top - filters.getBoundingClientRect().bottom - 12
+  if (row && body) body.scrollTop += row.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
 }
 const searchAttempts = computed(() => result.value?.attempts || [])
 const currentSearchQuery = computed(() => searchAttempts.value.find(attempt => attempt.method === result.value?.matchedBy)?.query || result.value?.query || '')
@@ -238,6 +250,7 @@ function selectItem(id: string) {
 }
 
 function selectResourceType(type: string) {
+  if (activeResourceType.value === type) sourceTrack.centerSelected('smooth')
   activeResourceType.value = type
   activeMagnetSubType.value = 'all'
   resetDisplay()
@@ -294,13 +307,11 @@ onBeforeUnmount(() => lifecycle.abort())
       :aria-labelledby="flow.headingID.value"
       :aria-describedby="flow.isActive(rootID) ? 'gying-work-title' : undefined"
       class="gy-dialog media-search-dialog sheet-flow-host"
-      :class="{ 'gy-short-viewport': shortViewport }"
       :close-disabled="flow.blocked.value"
       :allow-swipe-close="flow.depth.value === 1 && !hasUnsavedOrganizeDraft()"
       restore-unexpected-close
       :before-close="flow.requestDismiss"
       @close="emit('close')"
-      @viewport-change="shortViewport = $event"
       v-slot="{ close, expanded, toggleExpanded }"
     >
       <div :ref="element => { flow.stage.value = (element as HTMLElement | null) || undefined }" class="sheet-flow-stage">
@@ -378,20 +389,44 @@ onBeforeUnmount(() => lifecycle.abort())
                     </button>
                   </nav>
                 </section>
-                <div ref="filterAnchor" class="gy-filter-anchor search-filter-anchor" aria-hidden="true"></div>
-                <section class="gy-filters search-filter-surface" :class="{ 'is-stuck': filtersStuck && !shortViewport }" :aria-label="sourceLabel + '结果筛选'">
+                <div class="gy-filter-anchor search-filter-anchor" aria-hidden="true"></div>
+                <section class="gy-filters" :aria-label="sourceLabel + '结果筛选'">
                   <div class="gy-filter-context">
                     <h3 class="gy-filter-title">资源筛选</h3>
                     <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
+                    <CloudDownloadDirectory v-if="token && visibleItems.some(item => item.links.some(canCloudDownload))" :controller="cloudTarget" :disabled="cloudBusy" @settings="close()" />
                     <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="close()" />
                   </div>
-                  <nav ref="sourceStrip" aria-label="资源来源" class="gy-source-strip gy-scroll" data-auto-scrollbar>
+                  <nav
+                    ref="sourceStrip"
+                    aria-label="资源来源"
+                    class="gy-source-strip gy-scroll"
+                    :class="{ 'has-scroll-left': sourceTrack.canScrollLeft.value, 'has-scroll-right': sourceTrack.canScrollRight.value, 'is-dragging': sourceTrack.isDragging.value }"
+                    @scroll.passive="sourceTrack.updateScrollEdges"
+                    @pointerdown="sourceTrack.onPointerdown"
+                    @click.capture="sourceTrack.onClickCapture"
+                    @dragstart="sourceTrack.onDragstart"
+                    @keydown="sourceTrack.moveFocus"
+                    @focusin="sourceTrack.handleFocusIn"
+                  >
                     <div class="gy-selection-indicator gy-chip-indicator" :style="sourceIndicatorStyle" aria-hidden="true"></div>
                     <button v-for="option in resourceOptions" :key="option.type" type="button" :aria-pressed="activeResourceType === option.type" class="gy-chip" @click="selectResourceType(option.type)">
                       <span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span>
                     </button>
                   </nav>
-                  <nav v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1" ref="subTypeStrip" aria-label="磁力清晰度分类" class="gy-source-strip gy-subtypes gy-scroll" data-auto-scrollbar>
+                  <nav
+                    v-if="activeResourceType === 'magnet' && magnetSubTypeOptions.length > 1"
+                    ref="subTypeStrip"
+                    aria-label="磁力清晰度分类"
+                    class="gy-source-strip gy-subtypes gy-scroll"
+                    :class="{ 'has-scroll-left': subTypeTrack.canScrollLeft.value, 'has-scroll-right': subTypeTrack.canScrollRight.value, 'is-dragging': subTypeTrack.isDragging.value }"
+                    @scroll.passive="subTypeTrack.updateScrollEdges"
+                    @pointerdown="subTypeTrack.onPointerdown"
+                    @click.capture="subTypeTrack.onClickCapture"
+                    @dragstart="subTypeTrack.onDragstart"
+                    @keydown="subTypeTrack.moveFocus"
+                    @focusin="subTypeTrack.handleFocusIn"
+                  >
                     <div class="gy-selection-indicator gy-chip-indicator" :style="subTypeIndicatorStyle" aria-hidden="true"></div>
                     <button v-for="option in magnetSubTypeOptions" :key="option.type" type="button" :aria-pressed="activeMagnetSubType === option.type" class="gy-chip" @click="selectMagnetSubType(option.type)"><span class="gy-chip-label">{{ option.label }}</span><span class="gy-chip-count">{{ option.count }}</span></button>
                   </nav>
@@ -449,7 +484,7 @@ onBeforeUnmount(() => lifecycle.abort())
                             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h11M9 12h11M9 19h11M3 5h1M3 12h1M3 19h1" /></svg>
                             已提交
                           </RouterLink>
-                          <button v-else-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="downloadBlocked(item, link)" :aria-busy="!!cloudSubmitting[cloudResourceID(item, link)]" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
+                          <button v-else-if="canCloudDownload(link)" type="button" data-gy-action="cloud" :disabled="!cloudTarget.canSubmit.value || downloadBlocked(item, link)" :aria-busy="!!cloudSubmitting[cloudResourceID(item, link)]" class="gy-button gy-primary-button" @click="cloudDownload(item, link)">
                             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18H6a4 4 0 0 1-.7-7.94 7 7 0 0 1 13.4 0A4 4 0 0 1 18 18h-1M12 12v9m-4-4 4 4 4-4" /></svg>
                             {{ cloudSubmitting[cloudResourceID(item, link)] ? '提交中…' : cloudStatuses[cloudResourceID(item, link)]?.uncertain ? '待核对' : organizeNotices[cloudResourceID(item, link)] ? '普通离线' : '115 云下载' }}
                           </button>
@@ -482,7 +517,7 @@ onBeforeUnmount(() => lifecycle.abort())
               <p v-if="moreError" role="alert" class="gy-notice gy-error">{{ moreError }}<span>下一页未加载，已加载条目仍可使用。</span><RouterLink v-if="['SESSION_EXPIRED', 'LOGIN_FAILED', 'NOT_CONFIGURED'].includes(moreErrorCode)" :to="settingsPath">前往配置</RouterLink></p>
             </template>
           </div>
-          <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力使用“115 云下载”中已保存的下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }">查看日志</RouterLink></footer>
+          <footer class="search-log-footer"><span>{{ source === 'woniu' ? '115 分享可生成 STRM；其他网盘可复制或打开。' : '115 分享可生成 STRM；磁力保存至上方所选下载目录。' }}</span><RouterLink :to="{ path: '/logs', query: { module: '搜索', level: 'ALL' } }">查看日志</RouterLink></footer>
         </div>
       </div>
     </BottomSheetDialog>
@@ -566,16 +601,27 @@ onBeforeUnmount(() => lifecycle.abort())
 .gy-item-card small span { margin-left: 8px; }
 .gy-all-items { width: 160px; padding: 12px; }
 .gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
-.gy-filters { position: sticky; top: 0; z-index: 2; margin: 0 -24px 8px; padding: 2px 24px 4px; }
+.gy-filters { display: grid; gap: 4px; margin: 0 0 8px; padding: 2px 0 4px; }
 .gy-filter-context { display: flex; flex-wrap: wrap; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
 .gy-filter-context > span { flex-shrink: 0; font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; color: var(--gy-muted); }
 .gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }
-.gy-short-viewport .gy-filters { position: static; }
-.gy-source-strip { position: relative; isolation: isolate; display: flex; gap: 6px; padding: 2px; overflow-x: auto; }
+.gy-source-strip {
+  position: relative; isolation: isolate; display: flex; min-width: 0; max-width: 100%; gap: 6px; padding: 2px;
+  overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none;
+  -webkit-overflow-scrolling: touch; -webkit-user-select: none; user-select: none;
+  -webkit-mask-image: linear-gradient(to right, var(--scroll-fade-left, #000), #000 26px, #000 calc(100% - 26px), var(--scroll-fade-right, #000));
+  mask-image: linear-gradient(to right, var(--scroll-fade-left, #000), #000 26px, #000 calc(100% - 26px), var(--scroll-fade-right, #000));
+}
+.gy-source-strip::-webkit-scrollbar { display: none; }
+.gy-source-strip.has-scroll-left { --scroll-fade-left: transparent; }
+.gy-source-strip.has-scroll-right { --scroll-fade-right: transparent; }
+.gy-source-strip:is(.has-scroll-left, .has-scroll-right) { cursor: grab; }
+.gy-source-strip.is-dragging, .gy-source-strip.is-dragging .gy-chip { cursor: grabbing; }
 .gy-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--gy-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
 .gy-chip::before { position: absolute; z-index: 0; inset: 6px 0; border-radius: inherit; background: var(--gy-card); pointer-events: none; content: ''; }
 .gy-chip > span { position: relative; z-index: 2; }
 .gy-chip[aria-pressed="true"] { color: var(--gy-on-tonal); font-weight: 600; }
+.gy-chip:focus-visible { outline-offset: -2px; }
 .gy-chip-count { opacity: .75; font-size: var(--search-dialog-font-meta, 10px); }
 .gy-film + .gy-film { margin-top: 28px; }
 .gy-film-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
@@ -659,7 +705,6 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-tool-button { min-height: var(--sheet-touch-size); padding-inline: 8px; font-size: var(--sheet-font-body); }
   .gy-body { padding: 0 var(--sheet-content-inset) 12px; scrollbar-gutter: auto; }
   .gy-item-picker { margin-bottom: 8px; }
-  .gy-filters { margin: 0 calc(-1 * var(--sheet-content-inset)) 8px; padding: 2px var(--sheet-content-inset) 4px; }
   .gy-picker-heading { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
   .gy-picker-heading h3, .gy-picker-heading > span { flex-shrink: 0; }
   .gy-picker-heading > span { font-size: var(--search-dialog-font-meta, 10px); }
@@ -680,6 +725,9 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-copy-button { min-height: 48px; }
 }
 @media (max-width: 359px) { .gy-actions { grid-template-columns: minmax(0, 1fr); } }
+@media (forced-colors: active) {
+  .gy-source-strip { -webkit-mask-image: none; mask-image: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   .gy-selection-indicator { transition: none !important; }
   .gy-spinning { animation: none; }

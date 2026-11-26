@@ -21,7 +21,9 @@ const props = defineProps<{
   title: string
   description: string
   emptyText: string
+  directoryList?: { profiles: TransferTarget[]; loading: boolean; error: string }
 }>()
+const emit = defineEmits<{ change: [] }>()
 
 const lifecycle = new AbortController()
 const targets = ref<TransferTarget[]>([])
@@ -32,7 +34,9 @@ const notice = ref('')
 const draft = ref<TransferTarget>()
 const deleting = ref<TransferTarget>()
 const directoryOpen = ref(false)
-const listError = computed(() => loading.value ? '' : error.value)
+const listLoading = computed(() => props.directoryList?.loading ?? loading.value)
+const listError = computed(() => listLoading.value ? '' : props.directoryList?.error || error.value)
+const listedTargets = computed(() => props.directoryList?.profiles ?? targets.value)
 
 async function load() {
   loading.value = true
@@ -83,10 +87,13 @@ async function save() {
       body: JSON.stringify({ name: value.name.trim(), accountId: props.accountId, targetCID: value.targetCID, targetPath: value.targetPath }),
       signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]),
     })
-    if (value.id) targets.value = targets.value.map(item => item.id === result.profile.id ? result.profile : item)
-    else targets.value = [...targets.value, result.profile]
+    if (!props.directoryList) {
+      if (value.id) targets.value = targets.value.map(item => item.id === result.profile.id ? result.profile : item)
+      else targets.value = [...targets.value, result.profile]
+    }
     draft.value = undefined
     notice.value = value.id ? '接收目录已更新' : '接收目录已创建'
+    emit('change')
   } catch (reason) {
     if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '保存接收目录失败'
   } finally {
@@ -101,9 +108,10 @@ async function remove() {
   error.value = ''
   try {
     await p115Request<void>(props.token, props.endpoint + '/' + encodeURIComponent(value.id), { method: 'DELETE', signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(15000)]) })
-    targets.value = targets.value.filter(item => item.id !== value.id)
+    if (!props.directoryList) targets.value = targets.value.filter(item => item.id !== value.id)
     deleting.value = undefined
     notice.value = '接收目录已删除'
+    emit('change')
   } catch (reason) {
     if (!lifecycle.signal.aborted) error.value = reason instanceof Error ? reason.message : '删除接收目录失败'
   } finally {
@@ -111,7 +119,7 @@ async function remove() {
   }
 }
 
-onMounted(load)
+onMounted(() => { if (!props.directoryList) void load() })
 onBeforeUnmount(() => lifecycle.abort())
 </script>
 
@@ -123,16 +131,16 @@ onBeforeUnmount(() => lifecycle.abort())
     </header>
     <p v-if="listError && !draft && !deleting" role="alert" class="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-300">{{ listError }}</p>
     <p v-else-if="notice" role="status" class="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">{{ notice }}</p>
-    <div v-if="loading" class="mt-4 h-16 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" aria-label="正在读取目录配置" />
-    <div v-else-if="targets.length" class="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
-      <article v-for="target in targets" :key="target.id" class="flex min-w-0 flex-wrap items-center gap-3 p-3 sm:p-4">
+    <div v-if="listLoading" class="mt-4 h-16 animate-pulse rounded-lg bg-slate-100 dark:bg-slate-800" aria-label="正在读取目录配置" />
+    <div v-else-if="listedTargets.length" class="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+      <article v-for="target in listedTargets" :key="target.id" class="flex min-w-0 flex-wrap items-center gap-3 p-3 sm:p-4">
         <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300"><IconFolder :size="18" aria-hidden="true" /></span>
         <div class="min-w-0 flex-1"><h3 class="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">{{ target.name }}</h3><p class="mt-1 truncate text-xs text-slate-500 dark:text-slate-400" :title="target.targetPath">{{ target.targetPath }} <span class="font-mono">({{ target.targetCID }})</span></p></div>
         <span v-if="target.accountId !== accountId" class="text-xs font-medium text-amber-700 dark:text-amber-300">主账号变更，需重选目录</span>
         <div class="flex shrink-0 items-center gap-1"><button type="button" class="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-blue-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-blue-300" :aria-label="'编辑 ' + target.name" title="编辑" :disabled="busy" @click="edit(target)"><IconPencil :size="16" aria-hidden="true" /></button><button type="button" class="grid h-9 w-9 place-items-center rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300" :aria-label="'删除 ' + target.name" title="删除" :disabled="busy" @click="deleting = target; error = ''"><IconTrash :size="16" aria-hidden="true" /></button></div>
       </article>
     </div>
-    <div v-else class="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-7 text-center dark:border-slate-700"><p class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ emptyText }}</p><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ endpoint === 'share-transfer/profiles' ? '创建后可在网页搜索结果中选择，也可分配给 Telegram Bot。' : '创建后可在 Telegram Bot 页面将目录分配给 Bot。' }}</p></div>
+    <div v-else class="mt-4 rounded-lg border border-dashed border-slate-300 px-4 py-7 text-center dark:border-slate-700"><p class="text-sm font-medium text-slate-700 dark:text-slate-200">{{ emptyText }}</p><p class="mt-1 text-xs text-slate-500 dark:text-slate-400">{{ endpoint === 'share-transfer/profiles' ? '创建后可在网页搜索结果中选择，也可分配给 Telegram Bot。' : '创建后可在网页手动提交与资源搜索中使用，也可按需分配给 Telegram Bot。' }}</p></div>
 
     <P115ActionDialog v-if="draft" :title="draft.id ? '编辑接收目录' : '新增接收目录'" :busy="busy" @close="draft = undefined">
       <label class="block text-sm font-medium text-slate-700 dark:text-slate-300">配置名称<input v-model="draft.name" maxlength="50" required placeholder="例如：动画、电影" class="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-950" /></label>

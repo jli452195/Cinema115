@@ -50,8 +50,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
           const rows = input.group ? items.slice(0, 4).map(item => ({ ...item, groupId: '615' })) : items.slice(0, 2).map((item, i) => ({ ...item, groupId: i ? '19' : '615' }))
           data = { items: rows, bangumi: bangumis.find(item => item.id === input.id), groups: [{ id: '615', name: '测试字幕组' }, { id: '19', name: '其他字幕组' }], more: input.group ? [] : [{ groupId: '615', take: 65 }], attempts: [], fetchedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString() }
         }
-      } else if (u.pathname.endsWith('/cloud-download/config')) data = { accountId: configured ? 'account-mikan-test' : '', targetCID: '987', targetPath: '/测试目录' }
-      else if (u.pathname.endsWith('/cloud-download/tasks')) { submissions.push({ account: u.searchParams.get('accountId'), ...route.request().postDataJSON() }); data = { accepted: true } }
+      } else if (u.pathname.endsWith('/cloud-download/profiles')) data = { accountId: configured ? 'account-mikan-test' : '', profiles: configured ? [{ id: 'download', name: '测试目录', accountId: 'account-mikan-test', targetCID: '987', targetPath: '/测试目录', ready: true }] : [] }
+      else if (u.pathname.endsWith('/cloud-download/tasks')) { submissions.push(route.request().postDataJSON()); data = { accepted: true } }
       else if (u.pathname.includes('/emby/media/')) data = { media: { state: 'unknown', items: [] }, baseUrl: '', serverId: '' }
       else if (u.pathname.includes('/recommendations')) data = { items: [], page: 1, totalPages: 1 }
       else if (u.pathname.includes('/follows/')) data = { subscribed: false, libraryState: 'unknown' }
@@ -60,7 +60,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     const rows = page.locator('[aria-label="蜜柑资源列表"] > li')
     const count = async n => { await page.waitForFunction(n => document.querySelectorAll('[aria-label="蜜柑资源列表"] > li').length === n, n) }
     await page.goto((process.env.CINEMA_URL || 'http://127.0.0.1:5173') + '/tv/65942')
-    await page.getByRole('button', { name: '蜜柑搜索', exact: true }).click()
+    await page.getByRole('button', { name: /^(?:Mikan|蜜柑)\s*搜索$/, exact: true }).click()
     await page.getByRole('dialog', { name: '蜜柑搜索', exact: true }).waitFor()
     // 本地品牌图加载成功，保留弹窗语义；Logo 不增加链接或外站请求。
     await page.waitForFunction(() => {
@@ -119,13 +119,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
     await page.getByRole('option', { name: '全部分辨率', exact: true }).click()
     await page.getByRole('button', { name: '复制磁力', exact: true }).first().click()
     await page.getByRole('textbox', { name: '手动复制磁力' }).waitFor()
-    await page.getByRole('button', { name: '115 转存', exact: true }).first().click()
-    await page.getByRole('link', { name: '前往配置', exact: true }).waitFor()
+    const cloudDownload = page.getByRole('button', { name: '115 云下载', exact: true }).first()
+    await page.getByRole('link', { name: '配置下载目录', exact: true }).waitFor()
+    assert.equal(await cloudDownload.isDisabled(), true)
     assert.equal(submissions.length, 0)
     configured = true
-    await page.getByRole('button', { name: '115 转存', exact: true }).first().click()
-    await page.getByRole('button', { name: '已提交', exact: true }).first().waitFor()
-    assert.equal(submissions[0].account, 'account-mikan-test')
+    await page.getByRole('button', { name: '关闭蜜柑搜索', exact: true }).click()
+    await page.getByRole('button', { name: /^(?:Mikan|蜜柑)\s*搜索$/, exact: true }).click()
+    await page.getByText('测试目录', { exact: true }).waitFor()
+    await cloudDownload.click()
+    await page.getByRole('button', { name: '115 云下载', exact: true }).filter({ hasText: '已提交' }).first().waitFor()
+    assert.equal(submissions[0].profileId, 'download')
+    assert.equal(submissions[0].accountId, 'account-mikan-test')
     assert.equal(submissions[0].targetCID, '987')
     assert.match(submissions[0].url, /^magnet:/)
     const beforeGroupFilter = searches.length

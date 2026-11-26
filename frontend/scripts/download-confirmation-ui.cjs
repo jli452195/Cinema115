@@ -28,6 +28,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
       else if (endpoint.endsWith('/resources/garden/search')) data = { items: [{ provider: 'dmhy', providerId: '1', title: 'Show S1-S2 合集', magnet: `magnet:?xt=urn:btih:${'a'.repeat(40)}`, size: 1000, createdAt: '2026-10-31T00:00:00Z', publisher: { id: 1, name: 'Group' } }], groups: [], query: body.query, page: 1, hasMore: false }
       else if (endpoint.endsWith('/download-organize/files')) data = { files, subtitles: [] }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
+      else if (endpoint.endsWith('/cloud-download/profiles')) data = { accountId: 'primary', profiles: [{ id: 'download', name: '下载', accountId: 'primary', targetCID: '10', targetPath: '/下载', ready: true }] }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: '20', targetPath: '/整理' }
       else if (endpoint.endsWith('/download-organize/progress')) data = { pipelines: [{ id: 'plan', title: '测试作品', jobIds: ['plan'], status: 'success', finished: true, message: '已完成全部整理', total: 1, ready: 1, organized: 1, failed: 0, videoCount: 4, written: 0, shares: [] }] }
       else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: true }
@@ -46,12 +47,15 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.goto(`${origin}/tv/42`)
     await page.getByRole('button', { name: 'Garden 搜索', exact: true }).click()
     await page.getByRole('button', { name: '115 整理', exact: true }).click()
-    const dialog = page.locator('dialog.floating-dialog-organize'), confirmed = dialog.getByRole('region', { name: '已暂存的整理文件' })
+    const dialog = page.locator('.download-organize-dialog'), confirmed = dialog.getByRole('region', { name: '已暂存的整理文件' })
     const row = id => dialog.locator(`[data-organize-file="${id}"]`)
     const confirm = () => dialog.getByRole('button', { name: /^暂存这 \d+ 项$/ })
     const start = () => dialog.getByRole('button', { name: '下载并自动整理', exact: true })
     const returnSeason = n => dialog.getByRole('button', { name: `退回编辑第 ${n} 季`, exact: true })
-    await row('a').waitFor(); await dialog.getByText('版本 3', { exact: true }).waitFor()
+    await row('a').getByText('测试作品.S01E01.mkv', { exact: true }).waitFor()
+    assert.equal(await dialog.getByRole('button', { name: '展开或折叠 flat', exact: true }).getAttribute('aria-expanded'), 'true')
+    await dialog.getByRole('link', { name: '公共命名模板', exact: true }).waitFor()
+    assert.doesNotMatch(await dialog.locator('.organize-config').innerText(), /版本\s*\d+/)
     assert.equal(await start().isDisabled(), true)
     const size = () => dialog.evaluate(el => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height] })
     const initial = await size()

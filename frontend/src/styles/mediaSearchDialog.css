@@ -98,29 +98,11 @@ dialog.media-search-dialog .mikan-input:focus {
   background: var(--search-dialog-input-focus);
 }
 
-/* Keep filters part of the glass surface until results scroll underneath them. */
+/* 用锚点检测筛选条是否到达滚动区顶边。 */
 .search-filter-anchor {
   height: 1px;
   margin-bottom: -1px;
   pointer-events: none;
-}
-
-dialog.media-search-dialog .search-filter-surface {
-  background: transparent;
-}
-
-/* An opaque pinned surface masks result text without another backdrop filter. */
-dialog.media-search-dialog .search-filter-surface.is-stuck {
-  background: var(--search-dialog-pinned-surface);
-}
-
-dialog.media-search-dialog .search-filter-surface.is-stuck::after {
-  position: absolute;
-  inset: 100% 0 auto;
-  height: 10px;
-  background: linear-gradient(var(--search-dialog-pinned-surface), transparent);
-  pointer-events: none;
-  content: '';
 }
 
 dialog.media-search-dialog .mikan-batch-footer {

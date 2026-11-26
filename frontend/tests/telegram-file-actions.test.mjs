@@ -12,7 +12,7 @@ const manyFiles = (total = 545) => Array.from({ length: total }, (_, index) => (
 
 function harness(options = {}) {
   const module = { exports: {} }, statuses = ref({}), writes = [], imports = []
-  let configReads = 0, requestNumber = 0
+  let targetSnapshots = 0, requestNumber = 0
   const state = { primaryAccountId: 'main', accountReady: true, settingsSaved: true, settings: { baseUrl: 'http://nas' }, targets: [{ id: 'tv', name: '剧集', outputDir: 'ed2k/剧集' }, { id: 'movie', name: '电影', outputDir: 'ed2k/电影' }] }
   const fetch = async (url, init) => {
     const body = JSON.parse(init.body)
@@ -33,8 +33,9 @@ function harness(options = {}) {
   const dependencies = {
     vue: { computed, ref },
     './useCloudDownloadAction': { useCloudDownloadAction: () => ({ statuses, busy: computed(() => Object.values(statuses.value).some(status => status.busy)), submit: async () => { throw new Error('此测试不走单文件接口') } }) },
-    '../lib/cloud-download': { loadCloudDownloadConfig: async () => { configReads++; return { accountId: 'main', targetCID: '123', targetPath: '/Downloads' } }, cloudDownloadNotice: () => '已提交' },
-    '../lib/cloud-download-batch': { trackCloudBatch, submitCloudBatch: async (token, accountId, cid, urls, signal, onEvent) => options.receipts ? options.receipts(onEvent, urls.length) : submitCloudBatch(token, accountId, cid, urls, signal, onEvent) },
+    './useCloudDownloadTarget': { useCloudDownloadTarget: () => ({ snapshot: () => { targetSnapshots++; return { profileId: 'download', accountId: 'main', targetCID: '123', targetPath: '/Downloads' } } }) },
+    '../lib/cloud-download': { isCloudTargetChangedError: reason => reason?.code === 'cloud_target_changed', cloudDownloadNotice: () => '已提交' },
+    '../lib/cloud-download-batch': { trackCloudBatch, submitCloudBatch: async (token, target, urls, signal, onEvent) => options.receipts ? options.receipts(onEvent, urls.length) : submitCloudBatch(token, target, urls, signal, onEvent) },
     '../lib/ed2k-strm-api': { createED2KSTRMAPI: () => ({ state: async () => state, imports: async input => { imports.push(input); if (options.imports) return options.imports(input, imports.length) } }) },
     '../utils/ed2kSTRM': { ed2kRequestID: () => `request-${++requestNumber}` },
   }
@@ -44,14 +45,14 @@ function harness(options = {}) {
   })
   const lifecycle = new AbortController()
   const actions = module.exports.useTelegramFileActions('mock-token', lifecycle.signal)
-  return { actions, statuses, writes, imports, state, lifecycle, configReads: () => configReads }
+  return { actions, statuses, writes, imports, state, lifecycle, targetSnapshots: () => targetSnapshots }
 }
 
-test('批量云下载一次读取目录并一次提交整批，按文件保存成功回执', async () => {
+test('批量云下载固定一次目录快照并一次提交整批，按文件保存成功回执', async () => {
   const context = harness()
   await context.actions.download(files)
-  assert.equal(context.configReads(), 1)
-  assert.deepEqual(context.writes, [{ url: '/api/admin/p115/cloud-download/tasks/batch?accountId=main', body: { urls: ['ed2k://a', 'ed2k://b'], targetCID: '123' } }])
+  assert.equal(context.targetSnapshots(), 1)
+  assert.deepEqual(context.writes, [{ url: '/api/admin/p115/cloud-download/tasks/batch', body: { profileId: 'download', accountId: 'main', targetCID: '123', urls: ['ed2k://a', 'ed2k://b'] } }])
   assert.equal(context.actions.cloudStatus(files[0]).success, true)
   assert.equal(context.actions.cloudStatus(files[1]).success, true)
   assert.equal(context.actions.cloudEligible(files[0]), false)
@@ -136,7 +137,7 @@ test('STRM 回执丢失后只重放完整原批次，原账号或目录变化时
 test('545 个云下载文件整包提交一次并逐条取得成功回执，不做前端拆批', async () => {
   const context = harness(), rows = manyFiles()
   await context.actions.download(rows)
-  assert.equal(context.configReads(), 1)
+  assert.equal(context.targetSnapshots(), 1)
   assert.equal(context.writes.length, 1)
   assert.equal(context.writes[0].body.targetCID, '123')
   assert.deepEqual(context.writes[0].body.urls, rows.map(file => file.url))

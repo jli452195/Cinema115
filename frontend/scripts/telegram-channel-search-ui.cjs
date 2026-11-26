@@ -125,16 +125,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
      return await route.fulfill({ json: { sourceId: record.sources[0].id, pageTitle: '测试电影 (2026) {tmdbid-42}', groups, cached, expiresAt: '2099-11-17T02:00:00Z' } })
     } finally { activeResolves.delete(req) }
    }
-   if (endpoint === '/api/admin/p115/cloud-download/config') return route.fulfill({ json: { accountId: 'main', targetCID: '123', targetPath: '/Downloads' } })
+   if (endpoint === '/api/admin/p115/cloud-download/profiles') return route.fulfill({ json: { accountId: 'main', profiles: [{ id: 'download', name: '云下载', accountId: 'main', targetCID: '123', targetPath: '/Downloads', ready: true }] } })
    if (endpoint === '/api/admin/p115/cloud-download/tasks') {
     const body = req.postDataJSON(); writes.push({ path: endpoint, body })
-    assert.equal(url.searchParams.get('accountId'), 'main'); assert.equal(body.targetCID, '123')
+    assert.equal(url.searchParams.get('accountId'), null)
+    assert.equal(body.profileId, 'download'); assert.equal(body.accountId, 'main'); assert.equal(body.targetCID, '123')
     if (body.url === links[1].url) return route.fulfill({ status: 504, body: '', contentType: 'text/plain' })
     return route.fulfill({ json: { accepted: true } })
    }
    if (endpoint === '/api/admin/p115/cloud-download/tasks/batch') {
     const body = req.postDataJSON(); writes.push({ path: endpoint, body })
-    assert.equal(url.searchParams.get('accountId'), 'main'); assert.equal(body.targetCID, '123')
+    assert.equal(url.searchParams.get('accountId'), null)
+    assert.equal(body.profileId, 'download'); assert.equal(body.accountId, 'main'); assert.equal(body.targetCID, '123')
     const events = [{ type: 'ready', index: 0, total: body.urls.length }]
     for (let start = 0; start < body.urls.length; start += 100) {
      const end = Math.min(start + 100, body.urls.length)
@@ -197,7 +199,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.locator('.floating-dialog-footer').count(), 0, 'TG弹窗完全移除固定footer，把说明收进头部帮助')
   const help = dialog.getByRole('button', { name: '搜索说明', exact: true })
   await help.click()
-  await dialog.locator('.tg-help').getByText('ED2K 按文件去重；点击文件信息可查看完整文件名与来源。', { exact: true }).waitFor()
+  await dialog.locator('.tg-help').getByText('ED2K 按文件去重。点击文件行勾选，点击箭头查看完整文件名与来源。', { exact: true }).waitFor()
   assert.equal(await dialog.locator('.tg-help').getByRole('link', { name: '查看日志', exact: true }).isVisible(), true)
   assert.equal(await dialog.locator('.tg-help').getByRole('link', { name: 'Telegram 搜索配置', exact: true }).isVisible(), true)
   await help.click()
@@ -218,10 +220,10 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await row('14').count(), 0)
   await query.fill('广告'); await dialog.getByText('没有匹配的文件', { exact: true }).waitFor()
   await query.fill('')
-  await row('13').locator('.ed-information').click()
+  await row('13').locator('.ed-expand-toggle').click()
   await row('13').getByText('来源（2）', { exact: true }).waitFor()
   await row('13').getByText(links[0].file.name, { exact: true }).waitFor()
-  await row('13').locator('.ed-information').click()
+  await row('13').locator('.ed-expand-toggle').click()
   assert.ok((await row('13').boundingBox()).height <= 72, '桌面文件行保持紧凑')
 
   assert.equal(await resourceControl.evaluate(element => element.classList.contains('segmented-control-underline')), true, '资源分类采用一级下划线外观')
@@ -273,9 +275,33 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await viewControl.getByRole('button', { name: '按版本', exact: true }).evaluate(element => document.activeElement === element), true)
   assert.equal(await viewControl.getByRole('button', { name: '文件列表', exact: true }).getAttribute('aria-pressed'), 'true', '展示方式方向键只移动焦点')
   await page.keyboard.press('Home'); await page.keyboard.press('End'); await page.keyboard.press('Enter')
-  assert.equal(await dialog.locator('.ed-group-title').count(), 2)
+  assert.equal(await dialog.locator('.ed-group-header').count(), 2)
+  assert.equal(await dialog.locator('.ed-file').count(), 0, '按版本默认折叠全部组')
+  const version = dialog.locator('.ed-group-card').filter({ has: page.locator('.ed-group-count', { hasText: /(?:^|\/ )4 个文件$/ }) })
+  const otherVersion = dialog.locator('.ed-group-card').filter({ has: page.locator('.ed-group-count', { hasText: /(?:^|\/ )1 个文件$/ }) })
+  const versionCheck = version.getByRole('checkbox', { name: /^选择版本/ })
+  await otherVersion.getByRole('checkbox', { name: /^选择版本/ }).click()
+  await dialog.locator('.tg-batch-heading strong').filter({ hasText: /^已选 1 项$/ }).waitFor()
+  assert.equal(await dialog.locator('.ed-file').count(), 0, '折叠时可选整组且不展开')
+  await version.locator('.ed-group-toggle').click()
+  const rowsInVersion = version.locator('.ed-file')
+  await rowsInVersion.first().locator('.ed-information').click()
+  assert.equal(await versionCheck.evaluate(input => input.indeterminate), true)
+  await rowsInVersion.last().getByRole('checkbox').click({ modifiers: ['Shift'] })
+  assert.equal(await versionCheck.isChecked(), true, 'Shift 点击复选框选中当前组的连续行')
+  await rowsInVersion.first().locator('.ed-information').click({ modifiers: ['Shift'] })
+  assert.equal(await versionCheck.isChecked(), false, 'Shift 点击已选行取消连续区间')
+  await dialog.locator('.tg-batch-heading strong').filter({ hasText: /^已选 1 项$/ }).waitFor()
+  await rowsInVersion.first().getByRole('checkbox').click()
+  await versionCheck.click()
+  assert.equal(await versionCheck.isChecked(), true, '部分选择时组级勾选补全整组')
+  await versionCheck.click()
+  assert.equal(await versionCheck.isChecked(), false)
+  assert.equal(await otherVersion.getByRole('checkbox', { name: /^选择版本/ }).isChecked(), true, '取消一组保留另一组')
+  await dialog.getByRole('button', { name: '清空选择', exact: true }).click()
+  await viewControl.getByRole('button', { name: '按版本', exact: true }).focus()
   await page.keyboard.press('Home'); await page.keyboard.press('Enter')
-  assert.equal(await dialog.locator('.ed-group-title').count(), 0)
+  assert.equal(await dialog.locator('.ed-group-header').count(), 0)
   assert.equal(apiRequests.length, beforeViewKeys, '文件/版本键盘切换只调整本地展示，不发起API请求')
 
   await row('13').getByRole('button', { name: 'ED2K STRM', exact: true }).click()
@@ -300,12 +326,13 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const singles = writes.filter(write => write.path.endsWith('/cloud-download/tasks'))
   assert.deepEqual(singles.map(write => write.body.url), [links[1].url, links[2].url])
   await row('13').getByRole('checkbox').check(); await row('24').getByRole('checkbox').check()
-  await dialog.getByRole('button', { name: '云下载所选', exact: true }).click()
+  await dialog.locator('.floating-dialog-footer').getByRole('group', { name: 'ED2K 批量操作' }).getByText('已选 2 项', { exact: true }).waitFor()
+  await dialog.getByRole('button', { name: '云下载所选文件', exact: true }).click()
   await row('24').getByRole('button', { name: '已提交', exact: true }).waitFor()
   assert.deepEqual(writes.find(write => write.path.endsWith('/cloud-download/tasks/batch')).body.urls, [links[0].url, links[3].url])
   await dialog.getByRole('button', { name: '清空选择', exact: true }).click()
   await row('14').getByRole('checkbox').check(); await row('22').getByRole('checkbox').check()
-  await dialog.getByRole('button', { name: 'STRM 所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '为所选文件生成 ED2K STRM', exact: true }).click()
   await row('22').getByRole('button', { name: '已接收', exact: true }).waitFor()
   assert.deepEqual(ed2kRequests.at(-1).links, [links[1].url, links[2].url])
   await dialog.getByRole('button', { name: '清空选择', exact: true }).click()
@@ -317,18 +344,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await sourceProgress.filter({ hasText: /^清单已载入 1 \/ 1 页$/ }).waitFor()
   assert.equal(await dialog.locator('.ed-file').count(), 7, '清单版本注入相同文件模型，已有文件继续去重')
   assert.equal(resolves.length, 2, '同页两个来源仅首次失败和主动重试各请求一次')
-  await row('01', '1080p').locator('.ed-information').click()
+  await row('01', '1080p').locator('.ed-expand-toggle').click()
   await row('01', '1080p').getByText('来源（2）', { exact: true }).waitFor()
   assert.deepEqual((await row('01', '1080p').locator('.ed-sources a').evaluateAll(elements => elements.map(element => element.href))).sort(), [candidate.sourceUrl, duplicateCandidate.sourceUrl].sort(), '解析文件保留跨帖子与分页的全部TG来源')
-  await row('01', '1080p').locator('.ed-information').click()
+  await row('01', '1080p').locator('.ed-expand-toggle').click()
 
   await row('01', '1080p').getByRole('checkbox').check(); await row('02', '1080p').getByRole('checkbox').check()
   uncertainSTRM = true
-  await dialog.getByRole('button', { name: 'STRM 所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '为所选文件生成 ED2K STRM', exact: true }).click()
   await row('01', '1080p').getByRole('button', { name: '待核对', exact: true }).waitFor()
   const originalPacket = ed2kRequests.at(-1), beforeSubset = ed2kRequests.length
   await row('02', '1080p').getByRole('checkbox').uncheck(); await row('24').getByRole('checkbox').check()
-  await dialog.getByRole('button', { name: 'STRM 所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '为所选文件生成 ED2K STRM', exact: true }).click()
   await dialog.getByText('上一批 STRM 接收情况尚未确认，请重试原批次或先查看 STRM 任务。', { exact: false }).waitFor()
   assert.equal(ed2kRequests.length, beforeSubset, '回执丢失后不允许按新子集创建请求')
   uncertainSTRM = false
@@ -346,8 +373,8 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   assert.equal(await dialog.locator('.ed-file').count(), 7, '重开自动恢复搜索累积结果与后端缓存清单')
   assert.equal(resolves.length, beforeReopen + 1, '重新打开仍只为同URL发起一次缓存恢复请求')
   assert.equal(await dialog.locator('.ed-filterbar').count(), 0, '规格筛选默认收起')
-  assert.equal(await dialog.locator('.ed-output').count(), 0, '输出目录默认收起')
-  assert.equal(await dialog.locator('.ed-batch-actions').count(), 0, '未选择文件时不占用批量操作空间')
+  assert.equal(await dialog.getByRole('listbox', { name: 'ED2K STRM 输出目录', exact: true }).count(), 0, '输出目录菜单默认关闭')
+  assert.equal(await dialog.locator('.tg-batch-actions').count(), 0, '未选择文件时不占用批量操作空间')
   assert.equal(await dialog.locator('.ed-notice').count(), 0)
   for (const close of await page.locator('[data-sonner-toast] [data-close-button]').all()) await close.click()
   await dialog.locator('.floating-dialog-body').evaluate(element => { element.scrollTop = 0 })
@@ -461,12 +488,12 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   const headerSelection = dialog.getByRole('checkbox', { name: '选择当前筛选文件', exact: true })
   const assertSelection = async (expected, reason) => {
    await dialog.getByText(`显示 ${expected.visible} / ${expected.total} 个文件`, { exact: true }).waitFor()
-   if (expected.selected) await dialog.locator('.ed-selected-count').filter({ hasText: new RegExp(`^已选 ${expected.selected}(?:（|$)`) }).waitFor()
-   else await dialog.locator('.ed-selected-count').waitFor({ state: 'hidden' })
+   if (expected.selected) await dialog.locator('.tg-batch-heading strong').filter({ hasText: new RegExp(`^已选 ${expected.selected} 项$`) }).waitFor()
+   else await dialog.locator('.tg-batch-heading').waitFor({ state: 'hidden' })
    const actual = await dialog.evaluate(element => {
     const header = element.querySelector('input[aria-label="选择当前筛选文件"]')
     const rows = [...element.querySelectorAll('.ed-file input[type="checkbox"]')]
-    const selectedText = element.querySelector('.ed-selected-count')?.textContent || ''
+    const selectedText = element.querySelector('.tg-batch-heading')?.textContent || ''
     const displayed = element.querySelector('.ed-selection label')?.textContent.match(/显示 (\d+) \/ (\d+) 个文件/)
     return { checked: header.checked, indeterminate: header.indeterminate, visible: rows.length, total: Number(displayed?.[2]), selectedVisible: rows.filter(input => input.checked).length, selected: Number(selectedText.match(/^已选 (\d+)/)?.[1] || 0), hidden: Number(selectedText.match(/（(\d+) 项在其他筛选中）/)?.[1] || 0) }
    })
@@ -500,18 +527,18 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await assertSelection(allSelection, '全选追加剩余45个文件后应恢复545个完整选择')
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
-  await dialog.getByRole('button', { name: '复制所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '复制所选 ED2K 链接', exact: true }).click()
   await page.getByText('已复制 545 条 ED2K 链接', { exact: true }).waitFor()
   assert.deepEqual((await page.evaluate(() => navigator.clipboard.readText())).split(/\r?\n/).sort(), selectionLinks.map(link => link.url).sort(), '复制所选必须包含545条完整链接，不能截断为旧上限')
   assert.equal(writes.length, selectionWrites); assert.equal(ed2kRequests.length, selectionImports, '选择及复制不触发任何写入请求')
 
-  await dialog.getByRole('button', { name: 'STRM 所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '为所选文件生成 ED2K STRM', exact: true }).click()
   await dialog.locator('.ed-notice').filter({ hasText: '已接收 545 个文件的 STRM 生成任务。' }).waitFor()
   const bulkImport = ed2kRequests.slice(selectionImports)
   assert.equal(bulkImport.length, 1, '545个文件通过单次STRM请求完整提交')
   assert.deepEqual([...bulkImport[0].links].sort(), selectionLinks.map(link => link.url).sort())
   assert.equal(await dialog.locator('.ed-file').getByRole('button', { name: '已接收', exact: true }).count(), 545, '整包STRM成功后每个文件显示已接收')
-  await dialog.getByRole('button', { name: '云下载所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '云下载所选文件', exact: true }).click()
   await dialog.locator('.ed-notice').filter({ hasText: '已提交 545 条' }).waitFor()
   const bulkCloud = writes.slice(selectionWrites).filter(write => write.path.endsWith('/cloud-download/tasks/batch'))
   assert.equal(bulkCloud.length, 1, '545个文件通过单次云下载请求完整提交')
@@ -537,6 +564,17 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    assert.equal(apiRequests.length, beforeShellRequests, '手机外壳变化不触发业务API请求')
   }
   await page.setViewportSize({ width: 390, height: 860 })
+  const pinnedFooter = await dialog.locator('.floating-dialog-footer').evaluate(footer => {
+   const body = footer.previousElementSibling
+   const oldScroll = body.scrollTop
+   const before = footer.getBoundingClientRect().top
+   body.scrollTop = 1600
+   const changed = body.scrollTop !== oldScroll
+   const after = footer.getBoundingClientRect().top
+   body.scrollTop = oldScroll
+   return changed && Math.abs(before - after) < 1 && footer.scrollWidth <= footer.clientWidth + 1
+  })
+  assert.equal(pinnedFooter, true, '手机滚动文件列表时批量底栏保留且无横向溢出')
   await help.click(); await dialog.locator('.tg-help').waitFor(); await assertShellState()
   await help.click(); await dialog.locator('.tg-help').waitFor({ state: 'hidden' }); await assertShellState()
   await dialog.getByRole('button', { name: '展开弹窗', exact: true }).click()
@@ -551,7 +589,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   await assertSelection({ ...allSelection, checked: false, indeterminate: true, visible: 547, total: 547 }, '恢复桌面及原筛选后仍保留原545个选择')
   await headerSelection.click()
   await assertSelection({ checked: true, indeterminate: false, visible: 547, total: 547, selectedVisible: 547, selected: 547, hidden: 0 }, '点击混合状态表头应把两条自动追加文件一起选中')
-  await dialog.getByRole('button', { name: '复制所选', exact: true }).click()
+  await dialog.getByRole('button', { name: '复制所选 ED2K 链接', exact: true }).click()
   await page.getByText('已复制 547 条 ED2K 链接', { exact: true }).waitFor()
   assert.deepEqual((await page.evaluate(() => navigator.clipboard.readText())).split(/\r?\n/).sort(), [...selectionLinks, ...appendedSelectionLinks].map(link => link.url).sort(), '追加后复制全部547个文件')
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' })
@@ -623,7 +661,32 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
    await page.setViewportSize({ width, height: 860 })
    await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), dark)
    await assertMobileToolbar(`${width}px ${dark ? '深色' : '浅色'}存在5个已选规格计数`)
+   const mobileControls = await dialog.locator('.ed-workspace').evaluate(workspace => {
+    const filterbar = workspace.querySelector('.ed-filterbar')
+    const filters = [...filterbar.querySelectorAll('[role="combobox"]')].map(button => button.getBoundingClientRect())
+    const targets = [...workspace.querySelector('.ed-target-controls').children].map(item => item.getBoundingClientRect())
+    const indicator = workspace.querySelector('.ed-toolbar .segmented-control-indicator')
+    return {
+     filtersOneRow: filters.every(box => Math.abs(box.top - filters[0].top) < 1 && box.height >= 44),
+     targetsOneRow: targets.length === 2 && Math.abs(targets[0].top - targets[1].top) < 1,
+     scrollable: filterbar.scrollWidth > filterbar.clientWidth && getComputedStyle(filterbar).overflowX === 'auto',
+     sliderColor: getComputedStyle(indicator, '::before').backgroundColor,
+    }
+   })
+   assert.equal(mobileControls.filtersOneRow, true, '规格筛选单行并保留 44px 点击区')
+   assert.equal(mobileControls.targetsOneRow, true, '两个目录并列')
+   if (width === 320) assert.equal(mobileControls.scrollable, true, '窄屏可横滑到末尾规格')
+   assert.equal(mobileControls.sliderColor, dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(255, 255, 255, 0.92)', '视图滑块随深浅主题更新')
   }
+  const facetRail = dialog.locator('.ed-filterbar')
+  await facetRail.evaluate(rail => { rail.scrollLeft = 0 })
+  await dialog.locator('.ed-filterbar.has-scroll-right:not(.has-scroll-left)').waitFor()
+  await filterControl('dynamicRange').locator('svg').click()
+  await dialog.getByRole('listbox', { name: filterLabels.dynamicRange, exact: true }).waitFor()
+  await dialog.locator('.ed-filterbar.has-scroll-left.has-scroll-right').waitFor()
+  await filterControl('dynamicRange').press('Escape')
+  await facetRail.evaluate(rail => { rail.scrollLeft = rail.scrollWidth })
+  await dialog.locator('.ed-filterbar.has-scroll-left:not(.has-scroll-right)').waitFor()
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), filterScreenshotDark)
   await assertFilterOptions('resolution', [['1080p', 2], ['2160p', 3]], '下游HDR、平台和发布组不能反向缩小上游清晰度选项')
@@ -710,7 +773,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || path.join(os.homed
   filterMode = false; moreLoaded = true
   await open(); await row('01', '1080p').waitFor()
   assert.equal(await dialog.locator('.ed-file').count(), 7, '关闭大样本并重开后恢复小样本，不残留大列表或选择')
-  assert.equal(await dialog.locator('.ed-selected-count').count(), 0)
+  assert.equal(await dialog.locator('.tg-batch-heading').count(), 0)
   await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'hidden' }); moreLoaded = false
    // 同一请求的两种资源进入各自页签，分享去重并沿用现有的操作与目标。
    shareSourceMode = 'mixed'; holdResolves = true

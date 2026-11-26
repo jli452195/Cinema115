@@ -36,6 +36,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
           data = { manifestId: `manifest-${n}`, hash: hash(n), files: [f], subtitles: [], specs: { [f.id]: { resolution: n === 2 ? '720p' : '1080p', languages: [n === 2 ? 'zh-Hant' : 'zh-Hans'] } } }
         }
       } else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
+      else if (endpoint.endsWith('/cloud-download/profiles')) data = { accountId: 'primary', profiles: [{ id: 'download', name: '下载', accountId: 'primary', targetCID: '10', targetPath: '/下载', ready: true }] }
       else if (endpoint.endsWith('/cloud-download/tasks/batch')) {
         const events = [{ type: 'ready', total: body.urls.length }, ...body.urls.flatMap((_, index) => [{ type: 'start', index, total: body.urls.length }, { type: 'result', index, total: body.urls.length, accepted: index > 0, outcomeUncertain: index === 0, error: index === 0 ? '模拟回执待核对' : '' }]), { type: 'done', total: body.urls.length, stopped: false }]
         return route.fulfill({ contentType: 'application/x-ndjson', body: events.map(event => JSON.stringify(event)).join('\n') + '\n' })
@@ -121,7 +122,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     await page.getByRole('button', { name: '继续解析', exact: true }).waitFor()
     await editor.getByRole('button', { name: /^暂存这 \d+ 项$/ }).click()
     assert.equal(await submit().isEnabled(), true, 'waiting resources do not block confirmed files')
-    await editor.getByText('文件已全部暂存，可继续核对整理清单。', { exact: true }).waitFor()
+    await editor.locator('.file-selection').waitFor({ state: 'hidden' })
     assert.equal(await editor.locator('.numbering-bar').count(), 0)
     assert.equal(await editor.locator('.mapping-bar').count(), 0)
     await editor.locator('.submit-summary > strong').getByText('待整理 1 个视频', { exact: true }).waitFor()
@@ -146,8 +147,6 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('测试�
     for (const row of await editor.locator('[data-organize-file]').all()) episodes.push(await (await episodeInput(row)).inputValue())
     assert.deepEqual(episodes, ['9', '1', '4', '1'])
     assert.equal(await editor.getByRole('textbox', { name: /自定义标记/ }).count(), 0)
-    const namingDetails = editor.locator('.naming-details')
-    if (!await namingDetails.evaluate(element => element.open)) await namingDetails.locator('summary').click()
     await editor.getByRole('link', { name: '公共命名模板', exact: true }).waitFor()
     assert.equal(await editor.getByLabel('字幕语言', { exact: true }).count(), 0)
     await (await episodeInput(editor.locator('[data-organize-file]').first())).fill('1')

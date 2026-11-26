@@ -29,10 +29,10 @@ Bot 也接收手动上传或 Telegram 自动生成的 `.txt` 清单，支持 ED2
 
 界面和 Bot 根据 115 当次回执显示已提交条数，另报失败、未确认和未发送的条数。普通入口省去旧任务查询、旧记录删除及提交后的状态刷新。需要核对时，可到 115 客户端查看云下载列表。批量回执缺项或提交结果不明时保留相应提示，后台不会自动补查或重发。
 
-网页单条走 `POST /api/admin/p115/cloud-download/tasks?accountId=...`，明确接收后返回 HTTP 202 和 `accepted: true`。网页批量走相同路径下的 `/batch`，按原条目编号返回 `start` 和 `result`，`done` 表示本次提交结束。
+网页从 `GET /api/admin/p115/cloud-download/profiles` 读取「磁力/ED2K 转存目录」，通过响应中的 `accountId` 和每项目录的 `ready` 识别当前主账号可选目录。单条走 `POST /api/admin/p115/cloud-download/tasks`，批量走相同路径下的 `/batch`。两者均提交选定的 `profileId`、`accountId` 和 `targetCID`。目录删除、目录编号变更或主账号失效时，提交前返回 HTTP 409 和 `cloud_target_changed`，需要重新确认。单条明确接收后返回 HTTP 202 和 `accepted: true`。批量按原条目编号返回 `start` 和 `result`，`done` 表示本次提交结束。
 
-服务层每组的提交预算为 90 秒，网页单条请求等待 95 秒。同一 115 UID 沿用每秒最多一次请求的节奏。Cookie 仅保存在本次调用的内存快照中。网页和 Telegram 入口统一使用主账号，各入口保留独立的目标目录设置。主账号变化后需重新选择目录。
+服务层每组的提交预算为 90 秒，网页单条请求等待 95 秒。同一 115 UID 沿用每秒最多一次请求的节奏。Cookie 仅保存在本次调用的内存快照中。网页和 Telegram 入口统一使用主账号并共用目录列表。网页可使用主账号下的有效条目，Bot 可使用分配给自己的条目。主账号变化后需重新选择目录。
 
-ED2K STRM 和下载后整理沿用各自的任务核对流程。
+ED2K STRM 和下载后整理沿用各自的任务核对流程。下载整理单独配置下载暂存目录，网页云下载的目录选择只用于普通云下载。
 
 前端构建使用 `npm run build`；云下载提交界面和 Bot 分配说明分别由 `scripts/cloud-download-resubmit-ui.cjs`、`scripts/telegram-bot-modules-ui.cjs` 在已有前端实例上使用模拟接口验证，不删除或提交真实 115 任务。

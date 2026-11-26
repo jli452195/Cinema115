@@ -18,7 +18,8 @@ const { magnetKey, readCloudBatch } = load(fileURLToPath(new URL('../src/lib/clo
 const resource = n => ({ id: String(n), title: '资源' + n, magnet: 'magnet:?xt=urn:btih:' + n.toString(16).padStart(40, '0') })
 const event = (type, index = 0, extra = {}, total = 3) => ({ type, index, total, ...extra })
 const response = events => new Response(events.map(e => JSON.stringify(e)).join('\n') + '\n', { headers: { 'Content-Type': 'application/x-ndjson' } })
-const config = { accountId: 'fixed-main', targetCID: '99', targetPath: '/fixed' }
+const target = { profileId: 'download', accountId: 'fixed-main', targetCID: '99', targetPath: '/fixed' }
+const selection = { snapshot: () => target }
 function mock(t, handler) { const original = globalThis.fetch; globalThis.fetch = handler; t.after(() => { globalThis.fetch = original }) }
 
 test('normalizes hex/base32 magnets and rejects unrelated URLs', () => {
@@ -29,7 +30,7 @@ test('normalizes hex/base32 magnets and rejects unrelated URLs', () => {
 })
 
 test('selection deduplicates resources and includes rows beyond one upstream batch', () => {
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.toggle(resource(1)); b.toggle({ ...resource(1), id: 'same-magnet' })
   assert.equal(b.count.value, 0)
   b.selectAll(Array.from({ length: 110 }, (_, n) => resource(n + 1)))
@@ -42,13 +43,13 @@ test('selection deduplicates resources and includes rows beyond one upstream bat
 test('partial batch receipts remove accepted/uncertain rows and preserve definite failures', async t => {
   let posts = 0
   mock(t, async (url, init) => {
-    if (url.endsWith('/config')) return Response.json(config)
+    assert.equal(url, '/api/admin/p115/cloud-download/tasks/batch')
     posts++
     const body = JSON.parse(init.body)
-    assert.equal(body.targetCID, '99'); assert.equal(new URL(url, 'http://test').searchParams.get('accountId'), 'fixed-main')
+    assert.deepEqual(body, { profileId: 'download', accountId: 'fixed-main', targetCID: '99', urls: [1, 2, 3].map(index => resource(index).magnet) })
     return response([event('ready'), event('start'), event('start', 1), event('start', 2), event('result', 0, { accepted: true }), event('result', 1, { error: '拒绝' }), event('result', 2, { error: '中断', outcomeUncertain: true }), event('done', 0, { stopped: true })])
   })
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.selectAll([resource(1), resource(2), resource(3)])
   await Promise.all([b.submit(), b.submit()])
   assert.equal(posts, 1); assert.equal(b.accepted.value, 1); assert.equal(b.failed.value, 1); assert.equal(b.uncertain.value, 1)
@@ -58,8 +59,8 @@ test('partial batch receipts remove accepted/uncertain rows and preserve definit
 })
 
 test('truncated/buffered streams never allow unacknowledged links to retry automatically', async t => {
-  mock(t, async url => url.endsWith('/config') ? Response.json(config) : response([event('ready'), event('start'), event('start', 1), event('result', 0, { accepted: true })]))
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  mock(t, async () => response([event('ready'), event('start'), event('start', 1), event('result', 0, { accepted: true })]))
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.selectAll([resource(1), resource(2), resource(3)]); await b.submit()
   assert.equal(b.accepted.value, 1); assert.equal(b.uncertain.value, 2); assert.equal(b.count.value, 0)
   assert.match(b.notice.value, /已提交 1 条/)
@@ -67,26 +68,42 @@ test('truncated/buffered streams never allow unacknowledged links to retry autom
 })
 
 test('explicit stopped receipt preserves resources the server has not started', async t => {
-  mock(t, async url => url.endsWith('/config') ? Response.json(config) : response([event('ready'), event('start'), event('result', 0, { outcomeUncertain: true, error: '中断' }), event('done', 0, { stopped: true })]))
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  mock(t, async () => response([event('ready'), event('start'), event('result', 0, { outcomeUncertain: true, error: '中断' }), event('done', 0, { stopped: true })]))
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.selectAll([resource(1), resource(2), resource(3)]); await b.submit()
   assert.equal(b.uncertain.value, 1); assert.equal(b.count.value, 2)
   assert.deepEqual([...b.selected.value.values()].map(r => r.id), ['2', '3'])
 })
 
-test('invalid config or validation failure preserves selection without POST or uncertain status', async t => {
-  let posts = 0
-  mock(t, async url => { if (url.endsWith('/config')) return Response.json({ ...config, accountId: '' }); posts++; return Response.json({ error: 'invalid' }, { status: 400 }) })
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+test('未选择目录或目录过期时保留批量选择，明确拒绝也保持可重试', async t => {
+  let posts = 0, selected, changeMessage = ''
+  mock(t, async () => {
+    posts++
+    return posts === 1
+      ? Response.json({ code: 'cloud_target_changed', error: '目录已变更' }, { status: 409 })
+      : Response.json({ error: 'invalid' }, { status: 400 })
+  })
+  const b = useCloudDownloadBatch('test', new AbortController().signal, {
+    snapshot: () => selected,
+    targets: { value: [] },
+    reconfirmMessage: { value: '' },
+    missingTargetMessage: () => '请先新增下载目录',
+    handleTargetChanged: (_snapshot, message) => { selected = undefined; changeMessage = message },
+  })
   b.toggle(resource(1)); await b.submit()
   assert.equal(posts, 0); assert.equal(b.count.value, 1); assert.equal(b.needsConfig.value, true)
-  globalThis.fetch = async url => url.endsWith('/config') ? Response.json(config) : Response.json({ error: 'invalid' }, { status: 400 })
+  selected = target
+  await b.submit()
+  assert.equal(changeMessage, '目录已变更')
+  assert.equal(b.count.value, 1)
+  assert.equal(b.uncertain.value, 0)
+  selected = { ...target, targetCID: '100' }
   await b.submit(); assert.equal(b.count.value, 1); assert.equal(b.uncertain.value, 0)
 })
 
 test('gateway rejection without a receipt is uncertain rather than safe to retry', async t => {
-  mock(t, async url => url.endsWith('/config') ? Response.json(config) : new Response('gateway timeout', { status: 504 }))
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  mock(t, async () => new Response('gateway timeout', { status: 504 }))
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.toggle(resource(1)); await b.submit()
   assert.equal(b.count.value, 0); assert.equal(b.uncheckedCount.value, 1)
 })
@@ -145,12 +162,11 @@ test('413 结构化错误明确标记接收前拒绝，网关超时保持接收�
 test('stop aborts network work and marks unknown receipts for review', async t => {
   let entered
   const started = new Promise(resolve => { entered = resolve })
-  mock(t, async (url, init) => {
-    if (url.endsWith('/config')) return Response.json(config)
+  mock(t, async (_url, init) => {
     entered()
     return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }))
   })
-  const b = useCloudDownloadBatch('test', new AbortController().signal)
+  const b = useCloudDownloadBatch('test', new AbortController().signal, selection)
   b.toggle(resource(1)); const task = b.submit(); await started; b.stop(); await task
   assert.equal(b.running.value, false); assert.equal(b.uncertain.value, 1); assert.equal(b.count.value, 0)
   assert.match(b.notice.value, /已提交 0 条/)

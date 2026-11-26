@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { IconFolder, IconArrowBackUp, IconChevronDown, IconRefresh, IconShare2, IconSubtitles } from '@tabler/icons-vue'
+import { IconFolder, IconArrowBackUp, IconChevronDown, IconExternalLink, IconInfoCircle, IconRefresh, IconShare2, IconSubtitles } from '@tabler/icons-vue'
 import FloatingDialog from './FloatingDialog.vue'
 import OrganizeFileSelection from './OrganizeFileSelection.vue'
 import P115DirectoryDialog from './P115DirectoryDialog.vue'
@@ -75,6 +75,8 @@ const confirming = ref(false)
 const shareIssue = ref('正在读取分享设置…'), shareAction = ref(false)
 const errorElement = ref<HTMLElement>()
 watch(error, async value => { if (value) { await nextTick(); errorElement.value?.scrollIntoView({ block: 'nearest' }) } })
+const helpOpen = ref(false)
+const helpID = useId()
 const batchOpen = ref(false)
 const mappingPanelID = useId()
 const batchToggleButton = ref<HTMLButtonElement>()
@@ -189,6 +191,7 @@ watch(() => props.active, active => {
     // 未确认的目录和字幕草稿随子页关闭；滚动位置由共享页面保存。
     directoryOpen.value = false
     subtitleOpen.value = false
+    helpOpen.value = false
     closeBatch(false)
   }
 }, { flush: 'pre' })
@@ -356,7 +359,7 @@ async function loadConfig() {
       p115Request<{ accountId: string; targetCID: string; targetPath: string }>(props.token, 'download-organize/config', { signal: signal() }).catch(() => undefined),
       p115Request<{ ready: boolean; reason: string }>(props.token, 'download-organize/share-config', { signal: signal() }).catch(() => ({ ready: false, reason: '读取分享设置失败，可重新读取配置' })),
     ])
-    if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在 115 云下载中配置主账号的下载目录')
+    if (!cloud.accountId || !cloud.targetCID) throw new Error('请先在「下载整理」页面配置整理下载暂存目录')
     const sameAccount = accountId.value === cloud.accountId
     const keepTarget = sameAccount && targetChanged.value
     accountId.value = cloud.accountId; downloadPath.value = cloud.targetPath
@@ -464,9 +467,21 @@ onBeforeUnmount(() => {
 
 <template>
   <FloatingDialog ref="floatingDialog" class="download-organize-dialog" :active="props.active" :title="`下载并整理 · ${title}`" close-label="关闭下载并整理" size="organize" :close-disabled="busy" :before-dismiss="beforeDialogDismiss" :style="themeColors" @close="emit('close')">
+    <template #toolbar-actions>
+      <button type="button" class="organize-help-toggle" aria-label="整理说明与参考" :title="helpOpen ? '收起整理说明' : '整理说明与参考'" :aria-expanded="helpOpen" :aria-controls="helpID" @click="helpOpen = !helpOpen"><IconInfoCircle :size="19" aria-hidden="true" /></button>
+    </template>
+    <template #header>
+      <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
+      <section v-if="helpOpen" :id="helpID" class="organize-help-panel" aria-label="整理说明与参考">
+        <p class="scope-note">整条磁力下载，整理已暂存和当前勾选的视频及其关联字幕；全部整理成功后，临时目录连同未选、排除及其他残留文件一并回收。暂存只保留本次映射，最终提交后才执行网盘操作。</p>
+        <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。完整进度与重试可在下载整理的任务记录中查看，分享设置沿用 115 分享 STRM 页面。</p>
+        <p v-if="titleOnlyCount" class="scope-note">{{ titleOnlyCount }} 项单集按标题预览命名，扩展名与关联字幕下载后确认；合集及不明确的资源读取文件清单。</p>
+        <p v-if="downloadPath" class="scope-note break-all">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</p>
+        <p class="scope-note">批量编号仅影响待处理区中勾选的文件。暂存后可继续处理其他季，或退回编辑并保留已有映射；无需暂存也可直接提交。</p>
+      </section>
+    </template>
   <section class="download-organize" aria-label="下载并整理映射" :aria-busy="busy || loading" :style="{ '--organize-sticky-offset': `${numberingHeight}px` }">
-    <p class="resource-title" :title="batch ? undefined : entries[0]?.resource.title">{{ batch ? `批量整理 ${active.length} 项资源${hiddenCount ? `，包含外层筛选隐藏的 ${hiddenCount} 项` : ''}` : entries[0]?.resource.title }}</p>
-      <div class="organize-config">
+      <div class="organize-config" :class="{ 'has-issue': Boolean(namingPreview.error.value) }">
         <div class="directory-bar">
           <IconFolder :size="17" class="shrink-0 text-content-secondary" aria-hidden="true" />
           <div class="directory-info">
@@ -474,27 +489,12 @@ onBeforeUnmount(() => {
             <p v-if="sharedDirectory" class="scope-note" :title="`公共子目录：${sharedDirectory}`">公共子目录：{{ sharedDirectory }}</p>
           </div>
           <div class="directory-actions">
+            <RouterLink class="secondary tool-action naming-link" :to="{ name: 'naming-settings', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板<IconExternalLink :size="13" aria-hidden="true" /></RouterLink>
+            <button type="button" class="secondary tool-action" :disabled="editDisabled || parsing || namingPreview.pending.value" :aria-busy="namingPreview.pending.value" @click="namingPreview.refresh"><IconRefresh :size="15" :class="{ 'motion-safe:animate-spin': namingPreview.pending.value }" aria-hidden="true" />{{ namingPreview.pending.value ? '更新中…' : '刷新命名' }}</button>
             <button type="button" class="secondary directory-pick" :disabled="editDisabled || !accountId" @click="directoryOpen = true">选择目录</button>
           </div>
         </div>
-        <details class="naming-details" :class="{ 'has-issue': Boolean(namingPreview.error.value) }">
-          <summary>
-            <IconChevronDown :size="14" class="shrink-0 transition-transform" aria-hidden="true" />
-            <span>命名设置</span>
-            <span v-if="namingPreview.error.value" class="naming-state is-error" role="status">命名异常</span>
-            <span v-else-if="namingPreview.pending.value" class="naming-state" role="status">更新中…</span>
-            <span v-else-if="namingPreview.value.value" class="naming-state">版本 {{ namingPreview.value.value.naming.revision }}</span>
-          </summary>
-          <div class="naming-panel">
-            <div class="naming-summary">
-              <RouterLink :to="{ name: 'naming-settings', query: kind === 'tv' ? { kind: 'tv' } : {} }" target="_blank" rel="noopener">公共命名模板</RouterLink>
-              <span v-if="namingPreview.pending.value || namingPreview.error.value" role="status">{{ namingPreview.pending.value ? '正在更新命名…' : namingPreview.error.value }}</span>
-              <button type="button" class="secondary tool-action" :disabled="editDisabled || parsing || namingPreview.pending.value" @click="namingPreview.refresh"><IconRefresh :size="15" aria-hidden="true" />刷新命名</button>
-            </div>
-            <p v-if="targetPath" class="scope-note break-all">整理目录：{{ targetPath }}</p>
-            <p v-if="sharedDirectory" class="scope-note break-all">公共子目录：{{ sharedDirectory }}</p>
-          </div>
-        </details>
+        <p v-if="namingPreview.error.value" role="status" class="naming-error">{{ namingPreview.error.value }}</p>
       </div>
       <template v-if="batch">
         <div class="resource-progress"><span role="status">已解析 {{ readyCount }} / {{ active.length }} 项资源<span v-if="unresolved.length && !parsing">，{{ unresolved.length }} 项待处理</span></span><button v-if="parsing" class="secondary" @click="preparation.pause">停止解析</button><button v-else-if="states.some(state => state.status === 'waiting')" class="secondary" :disabled="editDisabled" @click="preparation.parse">继续解析</button></div>
@@ -503,7 +503,13 @@ onBeforeUnmount(() => {
       </template>
       <section class="organize-workbench" aria-label="文件整理">
       <header class="workbench-heading">
-        <div class="workbench-title"><h3>文件整理</h3><p class="workbench-counts"><span>待处理 {{ pendingRows.length }} 个视频</span><span> · 已勾选 {{ editing.length }} 个</span><span v-if="staged.length"> · 已暂存 {{ staged.length }} 个</span></p></div>
+        <div class="workbench-title">
+          <div class="workbench-title-row">
+            <h3>文件整理</h3>
+            <p v-if="kind === 'tv' && seasons.length" class="tmdb-reference" aria-label="TMDB 季集参考"><span>TMDB</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span></p>
+          </div>
+          <p class="workbench-counts"><span>待处理 {{ pendingRows.length }} 个视频</span><span> · 已勾选 {{ editing.length }} 个</span><span v-if="staged.length"> · 已暂存 {{ staged.length }} 个</span></p>
+        </div>
         <div class="workbench-actions">
           <button type="button" class="secondary subtitle-action" aria-label="查找全部所选字幕" :disabled="editDisabled || parsing || !selected.length" :title="!selected.length ? '请先勾选需要整理的视频' : `为已暂存和当前勾选的 ${selected.length} 个视频查找字幕`" @click="openSubtitles()"><IconSubtitles :size="16" aria-hidden="true" />全部所选字幕<span v-if="selected.length" class="action-count">{{ selected.length }}</span></button>
         </div>
@@ -561,9 +567,9 @@ onBeforeUnmount(() => {
       </section>
       <p v-if="notice" role="status" class="notice">{{ notice }}</p>
       <p v-if="Object.keys(localConflicts).length" role="alert" class="error">有 {{ Object.keys(localConflicts).length }} 个文件目标重名，请核对季集编号、命名模板或取消重复文件。</p>
-      <OrganizeFileSelection ref="fileSelection" :rows="pendingRows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :target-names="targetNames" :conflicts="rowProblems" :short-conflicts="shortConflicts" :empty-text="staged.length ? '文件已全部暂存，可继续核对整理清单。' : undefined" compact>
-        <template v-if="!editing.length && pendingRows.length" #header>
-          <p class="selection-prompt"><span>{{ kind === 'tv' ? '勾选文件，可批量调整季集或暂存。' : '勾选文件，可暂存或直接提交整理。' }}</span><button v-if="undo.length" type="button" class="secondary tool-action" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销编号</button></p>
+      <OrganizeFileSelection v-show="pendingRows.length > 0 || !staged.length || !!fileSelection?.hasExcludedDirectories" ref="fileSelection" :rows="pendingRows" root-path="/" :flat="batch" :tv="kind === 'tv'" :episode-editable="true" :disabled="editDisabled" :auto-expand-single-top-directory="!batch" :target-names="targetNames" :conflicts="rowProblems" :short-conflicts="shortConflicts" :empty-text="staged.length ? '文件已全部暂存，可继续核对整理清单。' : undefined" compact>
+        <template v-if="!editing.length && pendingRows.length && undo.length" #header>
+          <p class="selection-prompt"><span>已应用上次批量编号</span><button type="button" class="secondary tool-action" :disabled="editDisabled" @click="undoMapping"><IconArrowBackUp :size="15" aria-hidden="true" />撤销编号</button></p>
         </template>
         <template #row-details="{ row }">
           <details v-if="allExternal.some(sub => sub.videoId === row.id)" class="subtitle-details" @click.stop @mousedown.stop><summary><IconChevronDown :size="13" aria-hidden="true" />外部字幕（{{ allExternal.filter(sub => sub.videoId === row.id).length }}）<span v-if="!row.selected">未选择</span></summary><div v-for="sub in allExternal.filter(sub => sub.videoId === row.id)" :key="'localId' in sub ? sub.localId : sub.path" class="subtitle-file"><p>{{ sub.file.name }}</p><p class="subtitle-target">{{ row.selected ? `整理后：${externalName(sub)}` : '随视频选择，当前不上传' }}</p></div></details>
@@ -583,18 +589,7 @@ onBeforeUnmount(() => {
         <summary><IconChevronDown :size="13" aria-hidden="true" />{{ unmatchedSubtitles.length }} 个字幕未能唯一匹配，整理成功后清理</summary>
         <p v-for="sub in unmatchedSubtitles" :key="sub.file.id" class="subtitle-file">{{ sub.file.sourcePath }}</p>
       </details>
-      <details class="organize-help">
-        <summary><IconChevronDown :size="13" aria-hidden="true" />整理说明与参考</summary>
-        <div>
-          <p class="scope-note">整条磁力下载，整理已暂存和当前勾选的视频及其关联字幕；全部整理成功后，临时目录连同未选、排除及其他残留文件一并回收。暂存只保留本次映射，最终提交后才执行网盘操作。</p>
-          <p class="scope-note">“115 分享 STRM”使用主网盘根目录下独立的 Cinema115-任务编号 文件夹，无需选择普通整理目录。完整进度与重试可在下载整理的任务记录中查看，分享设置沿用 115 分享 STRM 页面。</p>
-          <p v-if="titleOnlyCount" class="scope-note">{{ titleOnlyCount }} 项单集按标题预览命名，扩展名与关联字幕下载后确认；合集及不明确的资源读取文件清单。</p>
-          <div class="reference"><span>TMDB 季集参考</span><span v-for="s in seasons" :key="s.number">{{ s.number === 0 ? '特别篇' : `第 ${s.number} 季` }} {{ s.episodeCount }} 集</span><span v-if="kind === 'movie'">电影</span></div>
-          <p v-if="downloadPath" class="scope-note">临时下载：{{ downloadPath.replace(/\/$/, '') }}/garden-任务编号</p>
-          <p class="scope-note">批量编号仅影响待处理区中勾选的文件。暂存后可继续处理其他季，或退回编辑并保留已有映射；无需暂存也可直接提交。</p>
-        </div>
-      </details>
-    <p v-if="error" ref="errorElement" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/cloud-download">前往云下载设置</RouterLink></p>
+    <p v-if="error" ref="errorElement" role="alert" class="error">{{ error }} <button v-if="!accountId && !loading" class="secondary" @click="loadConfig">重新读取配置</button><RouterLink v-if="!accountId" to="/115/download-organize">前往配置整理暂存目录</RouterLink></p>
     <p v-if="loading" role="status" class="notice">读取目录配置…</p>
   </section>
     <template #footer>
@@ -614,60 +609,96 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 外壳与搜索窗口共用玻璃材质，内部只在容器上铺底，避免逐行叠加成实色面板。 */
+/* 外壳与 TG 搜索窗口共用宿主磨砂材质；子页保持透明，不在内层叠加 backdrop-filter。 */
+:global(section.floating-dialog.sheet-flow-page.download-organize-dialog) {
+  background: transparent;
+}
 :global(.download-organize-dialog) {
-  --organize-card-bg: rgb(255 255 255 / 54%);
-  --organize-sub-bg: rgb(241 245 249 / 60%);
+  /* 复用搜索弹窗的低饱和灰蓝与轻边缘体系，独立打开时保持同款回退值。 */
+  --organize-accent: var(--search-dialog-primary, #365b83);
+  --organize-accent-on: #ffffff;
+  --organize-tonal-bg: var(--search-dialog-action-background, rgb(59 91 135 / 11%));
+  --organize-tonal-hover: var(--search-dialog-action-hover, rgb(59 91 135 / 17%));
+  --organize-tonal-active: var(--search-dialog-action-pressed, rgb(59 91 135 / 22%));
+  --organize-tonal-text: var(--search-dialog-on-tonal, #365575);
+  --organize-btn-bg: var(--search-dialog-secondary-background, rgb(15 23 42 / 5%));
+  --organize-btn-hover: var(--search-dialog-secondary-hover, rgb(15 23 42 / 9%));
+  --organize-btn-active: var(--search-dialog-secondary-pressed, rgb(15 23 42 / 13%));
+  --organize-btn-border: transparent;
+  --organize-card-radius: 16px;
+  --organize-card-bg: var(--search-dialog-card, rgb(255 255 255 / 52%));
+  --organize-sub-bg: rgb(241 245 249 / 56%);
   --organize-row-bg: transparent;
-  --organize-row-hover: rgb(241 245 249 / 68%);
-  --organize-input-bg: rgb(255 255 255 / 80%);
-  --organize-border: rgb(148 163 184 / 24%);
-  --organize-control-border: rgb(100 116 139 / 34%);
-  --organize-footer-bg: rgb(241 245 249 / 58%);
+  --organize-row-hover: var(--search-dialog-secondary-background, rgb(15 23 42 / 5%));
+  --organize-row-selected: var(--search-dialog-tonal, rgb(59 91 135 / 9%));
+  --organize-row-selected-hover: var(--search-dialog-action-background, rgb(59 91 135 / 13%));
+  --organize-input-bg: var(--search-dialog-input, rgb(241 245 249 / 75%));
+  --organize-border: var(--search-dialog-card-border, rgb(148 163 184 / 22%));
+  --organize-control-border: rgb(100 116 139 / 26%);
+  --organize-footer-bg: transparent;
+  --organize-footer-shadow: 0 -4px 14px rgb(15 23 42 / 4%);
+  --organize-stuck-bg: var(--search-dialog-pinned-surface, color-mix(in srgb, var(--floating-surface-container) 94%, var(--floating-surface-text)));
 }
 :global(.dark .download-organize-dialog) {
-  --organize-card-bg: rgb(255 255 255 / 5%);
+  --organize-accent: var(--search-dialog-primary, #adc7ec);
+  --organize-accent-on: #0f172a;
+  --organize-tonal-bg: var(--search-dialog-action-background, rgb(173 199 236 / 14%));
+  --organize-tonal-hover: var(--search-dialog-action-hover, rgb(173 199 236 / 21%));
+  --organize-tonal-active: var(--search-dialog-action-pressed, rgb(173 199 236 / 27%));
+  --organize-tonal-text: var(--search-dialog-on-tonal, #c8d8ee);
+  --organize-btn-bg: var(--search-dialog-secondary-background, rgb(255 255 255 / 6%));
+  --organize-btn-hover: var(--search-dialog-secondary-hover, rgb(255 255 255 / 10%));
+  --organize-btn-active: var(--search-dialog-secondary-pressed, rgb(255 255 255 / 14%));
+  --organize-card-bg: var(--search-dialog-card, rgb(255 255 255 / 4.5%));
   --organize-sub-bg: rgb(255 255 255 / 3.5%);
-  --organize-row-hover: rgb(255 255 255 / 6%);
-  --organize-input-bg: rgb(10 15 24 / 45%);
-  --organize-border: rgb(255 255 255 / 10%);
-  --organize-control-border: rgb(255 255 255 / 16%);
-  --organize-footer-bg: rgb(10 15 24 / 38%);
+  --organize-row-hover: var(--search-dialog-secondary-background, rgb(255 255 255 / 6%));
+  --organize-row-selected: var(--search-dialog-tonal, rgb(173 199 236 / 10%));
+  --organize-row-selected-hover: var(--search-dialog-action-background, rgb(173 199 236 / 15%));
+  --organize-input-bg: var(--search-dialog-input, rgb(10 15 24 / 45%));
+  --organize-border: var(--search-dialog-card-border, rgb(255 255 255 / 8%));
+  --organize-control-border: rgb(255 255 255 / 15%);
+  --organize-footer-bg: transparent;
+  --organize-footer-shadow: 0 -4px 16px rgb(0 0 0 / 24%);
 }
-:global(.download-organize-dialog .floating-dialog-footer) { background: var(--organize-footer-bg); border-top-color: var(--organize-border); }
+:global(.download-organize-dialog .floating-dialog-toolbar) { padding-bottom: 2px; }
+:global(.download-organize-dialog .floating-dialog-header) { padding-bottom: 6px; }
+:global(.download-organize-dialog .floating-dialog-back) { border-radius: 999px; color: var(--organize-accent); }
+:global(.download-organize-dialog .floating-dialog-footer) { background: var(--organize-footer-bg); border-top-color: var(--organize-border); box-shadow: var(--organize-footer-shadow); }
 :global(.download-organize-dialog .floating-dialog-body) { padding-top: 0; scroll-padding-top: 60px; }
-.download-organize { @apply min-w-0 space-y-3 pt-1.5 text-content-primary; }
-.download-organize :is(button, summary, a, input):focus-visible, .submit-bar button:focus-visible, .share-config-note :is(a, button):focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 3px; }
+.organize-help-toggle { display: grid; flex: none; place-items: center; width: var(--dialog-control-height); height: var(--dialog-control-height); border-radius: 999px; color: var(--floating-surface-muted); transition: background-color .15s, color .15s; }
+.organize-help-toggle:hover { background: var(--organize-btn-hover); color: var(--floating-surface-text); }
+.organize-help-toggle[aria-expanded='true'] { background: var(--organize-tonal-bg); color: var(--organize-accent); }
+.organize-help-toggle:focus-visible { outline: 2px solid var(--organize-accent); outline-offset: 2px; }
+.download-organize { @apply min-w-0 space-y-2.5 pt-1 text-content-primary; }
+.download-organize :is(button, summary, a, input):focus-visible, .submit-bar button:focus-visible, .share-config-note :is(a, button):focus-visible { outline: 2px solid var(--organize-accent); outline-offset: 3px; }
 .resource-title { @apply truncate text-xs leading-5 text-content-secondary; }
-.organize-config { @apply flex min-w-0 flex-col gap-1 rounded-xl border border-line-default bg-surface-card px-3.5 py-2; }
+.organize-help-panel { @apply mt-2 space-y-1.5 border px-3.5 py-2.5 text-xs text-content-secondary; border-radius: var(--organize-card-radius); background: var(--organize-card-bg); border-color: var(--organize-border); }
+.organize-config { @apply flex min-w-0 flex-col gap-1.5 border px-3.5 py-2; border-radius: var(--organize-card-radius); }
 .organize-config, .confirmation-zone { background: var(--organize-card-bg); border-color: var(--organize-border); }
-.directory-bar { @apply flex min-w-0 items-center justify-between gap-2; }
-.directory-info { @apply min-w-0 flex-1 text-xs; }
+.organize-config.has-issue { border-color: rgb(var(--status-danger) / .4); }
+.directory-bar { @apply flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5; }
+.directory-info { @apply min-w-0 flex-1 text-xs; flex-basis: 14rem; }
 .directory-info p:first-child { @apply flex min-w-0 items-center gap-x-1.5; }
 .directory-label { @apply shrink-0 text-content-secondary; }
 .directory-info strong { @apply truncate font-medium text-content-primary; }
 .directory-info .scope-note { @apply truncate leading-5; }
-.directory-actions { @apply flex shrink-0 items-center gap-1.5; }
-.naming-details { @apply text-xs text-content-secondary; padding-left: 23px; }
-.naming-details summary { @apply inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md py-1 text-content-secondary transition-colors hover:text-action-link; min-height: 28px; }
-.naming-details summary::-webkit-details-marker { display: none; }
-.naming-details[open] > summary > svg { transform: rotate(180deg); }
-.naming-details.has-issue summary, .naming-state.is-error { @apply text-status-danger; }
-.naming-state { @apply text-content-secondary; }
-.naming-panel { @apply space-y-1 border-t border-line-default pt-2 pb-1; }
-.naming-summary { @apply flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-content-secondary; }
-.naming-summary a { @apply font-medium text-action-link hover:underline; }
+.directory-actions { @apply ml-auto flex shrink-0 flex-wrap items-center gap-1.5; }
+.naming-link { @apply font-medium; color: var(--organize-accent); }
+.naming-error { @apply text-xs leading-5 text-status-danger; padding-left: 23px; }
 .organize-workbench { @apply min-w-0 space-y-2; }
-.workbench-heading { @apply flex flex-wrap items-center justify-between gap-3 pt-1 pb-1; }
+.workbench-heading { @apply flex flex-wrap items-center justify-between gap-2.5 pt-0.5 pb-0.5; }
 .workbench-title { @apply min-w-0; }
+.workbench-title-row { @apply flex flex-wrap items-center gap-x-2 gap-y-1; }
 .workbench-title h3 { @apply text-sm font-semibold text-content-primary; }
+.tmdb-reference { @apply inline-flex flex-wrap items-center gap-x-1.5 rounded-full px-2.5 py-0.5 text-[11px] leading-4 text-content-secondary; background: var(--organize-btn-bg); }
+.tmdb-reference > span:first-child { @apply font-medium opacity-75; }
 .workbench-counts { @apply mt-1 text-xs leading-5 text-content-secondary; }
 .workbench-counts > span { display: inline-block; white-space: nowrap; }
 .workbench-actions { @apply ml-auto flex shrink-0 items-center; }
-.action-count { @apply rounded-md bg-selection-surface px-1.5 text-xs text-selection-content; font-variant-numeric: tabular-nums; }
-.confirmation-zone { @apply rounded-xl border px-3 py-2; box-shadow: inset 3px 0 rgb(var(--action-primary) / .55); }
+.action-count { @apply rounded-full px-1.5 text-xs font-semibold; background: var(--organize-tonal-bg); color: var(--organize-accent); font-variant-numeric: tabular-nums; }
+.confirmation-zone { @apply border px-3.5 py-2.5; border-radius: var(--organize-card-radius); box-shadow: inset 3px 0 color-mix(in srgb, var(--organize-accent) 60%, transparent); }
 .confirmation-heading { @apply flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs leading-5; }
-.confirmation-heading strong { @apply font-medium text-action-link; }
+.confirmation-heading strong { @apply font-medium; color: var(--organize-accent); }
 .confirmation-heading > span, .confirmation-subtitles { @apply text-xs leading-5 text-content-secondary; }
 .confirmed-group { @apply min-w-0 border-b border-line-default py-1 last:border-b-0; }
 .confirmed-group details { @apply block w-full min-w-0; }
@@ -679,18 +710,12 @@ onBeforeUnmount(() => {
 .confirmed-group details[open] .confirmed-chevron { transform: rotate(180deg); }
 .confirmed-range { @apply max-w-52 truncate; }
 .confirmed-actions { @apply ml-auto flex shrink-0 items-center gap-1; }
-.confirmed-group ul { @apply mt-1.5 w-full space-y-3 border-t border-line-default pt-2; }
+.confirmed-group ul { @apply mt-1.5 w-full space-y-2 border-t pt-2; border-top-color: var(--organize-border); }
 .confirmed-group li { @apply min-w-0 text-xs leading-5; overflow-wrap: anywhere; }
 .confirmed-target { @apply font-medium text-content-primary; }
 .confirmed-source { @apply text-content-secondary; }
-.reference { @apply flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-content-secondary; }
 .scope-note { @apply text-xs leading-5 text-content-secondary; }
 .locate-problem { @apply rounded px-1 py-1 text-xs font-medium text-status-danger underline underline-offset-2 hover:bg-status-danger-surface; }
-.organize-help { @apply text-xs text-content-secondary; }
-.organize-help summary { @apply flex w-fit cursor-pointer list-none items-center gap-1 rounded-md py-1; min-height: 32px; }
-.organize-help summary::-webkit-details-marker { display: none; }
-.organize-help[open] > summary > svg { transform: rotate(180deg); }
-.organize-help > div { @apply space-y-1 pt-1; }
 .resource-progress { @apply flex items-center justify-between gap-2 text-xs; }
 .resource-status { @apply text-xs; }
 .resource-status summary { @apply cursor-pointer py-1; }
@@ -709,11 +734,14 @@ onBeforeUnmount(() => {
 .subtitle-target { @apply text-content-primary; }
 .organize-workbench > .numbering-anchor, .organize-workbench > .numbering-bar { margin-top: 0; }
 .numbering-bar { @apply sticky top-0 z-10 flex items-center gap-2 py-2; margin-inline: calc(-1 * var(--dialog-content-inset)); padding-inline: var(--dialog-content-inset); background: transparent; }
-.numbering-bar.is-stuck { background: var(--floating-surface-container); box-shadow: 0 1px 0 rgb(var(--line-default)); }
+.numbering-bar.is-stuck { background: var(--organize-stuck-bg); box-shadow: 0 1px 0 var(--organize-border); }
+.numbering-bar.is-stuck::after { position: absolute; inset: 100% 0 auto; height: 8px; background: linear-gradient(var(--organize-stuck-bg), transparent); pointer-events: none; content: ''; }
 .editing-count { @apply text-xs text-content-secondary; font-variant-numeric: tabular-nums; }
-.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-line-default bg-surface-card px-3 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-surface-hover disabled:opacity-40; min-height: var(--dialog-control-height); }
-.batch-toggle[aria-expanded='true'] { @apply border-action-primary/40 bg-selection-surface text-selection-content; }
-.mapping-popover[popover] { position: fixed; inset: auto; z-index: 20; margin: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: 14px; padding: 12px; color: var(--floating-surface-text); outline: none; }
+.batch-toggle { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full px-3.5 text-sm font-medium transition-colors disabled:opacity-40; border: 1px solid var(--organize-btn-border); background: var(--organize-btn-bg); color: var(--floating-surface-text); min-height: var(--dialog-control-height); }
+.batch-toggle:enabled:hover { background: var(--organize-btn-hover); }
+.batch-toggle:enabled:active { background: var(--organize-btn-active); }
+.batch-toggle[aria-expanded='true'] { background: var(--organize-tonal-bg); color: var(--organize-accent); }
+.mapping-popover[popover] { position: fixed; inset: auto; z-index: 20; margin: 0; overflow-y: auto; overscroll-behavior: contain; border-radius: 16px; padding: 12px; color: var(--floating-surface-text); outline: none; }
 .mapping-popover:popover-open { display: flex; flex-direction: column; gap: 8px; }
 .mapping-bar { @apply flex flex-wrap items-center gap-x-3 gap-y-2 text-xs; }
 .mapping-error { @apply text-xs leading-5 text-status-danger; }
@@ -721,23 +749,34 @@ onBeforeUnmount(() => {
 .mapping-range { @apply flex items-center gap-2; }
 .mapping-range > span { @apply text-content-secondary; }
 .mapping-actions { @apply ml-auto flex flex-wrap items-center gap-1.5; }
-.mapping-bar input { @apply w-16 min-w-0 rounded-lg border text-content-primary outline-none focus:border-focus disabled:bg-surface-hover disabled:text-content-secondary; background: var(--organize-input-bg); border-color: var(--organize-control-border); height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-control-font); font-variant-numeric: tabular-nums; }
+.mapping-bar input { @apply w-16 min-w-0 rounded-xl border text-content-primary outline-none disabled:bg-surface-hover disabled:text-content-secondary; background: var(--organize-input-bg); border-color: var(--organize-control-border); height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-control-font); font-variant-numeric: tabular-nums; }
+.mapping-bar input:focus { border-color: var(--organize-accent); }
 .season-select { @apply w-40; }
-.stage-action { @apply ml-auto border-action-primary/40 text-action-link; }
 .selection-prompt { @apply flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs leading-5 text-content-secondary; }
-.secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border font-medium text-content-primary transition-colors enabled:hover:border-line-control enabled:hover:bg-surface-hover disabled:opacity-40; background: var(--organize-card-bg); border-color: var(--organize-control-border); min-height: var(--dialog-control-height); padding: var(--dialog-control-padding); font-size: var(--dialog-control-font); }
-.secondary.mapping-apply { @apply border-action-primary/40 bg-selection-surface text-selection-content enabled:hover:border-action-link; }
-.secondary.tool-action { @apply border-transparent bg-transparent text-content-secondary enabled:hover:border-transparent enabled:hover:bg-surface-hover enabled:hover:text-action-link; }
-.primary { @apply rounded-lg bg-action-primary px-4 py-2.5 text-sm font-medium text-action-on-primary enabled:hover:bg-action-primary-hover disabled:opacity-40; }
+/* 按钮对齐 Mikan/详情页的灰蓝 Tonal 胶囊语言，主提交按钮使用高辨识度低饱和灰蓝实底。 */
+.secondary { @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-full font-medium transition-colors disabled:cursor-default disabled:opacity-45; border: 1px solid var(--organize-btn-border); background: var(--organize-btn-bg); color: var(--floating-surface-text); min-height: var(--dialog-control-height); padding: 6px 14px; font-size: var(--dialog-control-font); }
+.secondary:enabled:hover { background: var(--organize-btn-hover); }
+.secondary:enabled:active { background: var(--organize-btn-active); }
+.secondary.stage-action { @apply ml-auto; background: var(--organize-tonal-bg); color: var(--organize-accent); }
+.secondary.stage-action:enabled:hover, .secondary.mapping-apply:enabled:hover { background: var(--organize-tonal-hover); }
+.secondary.stage-action:enabled:active, .secondary.mapping-apply:enabled:active { background: var(--organize-tonal-active); }
+.secondary.mapping-apply { background: var(--organize-tonal-bg); color: var(--organize-accent); }
+.secondary.tool-action { @apply border-transparent bg-transparent; padding-inline: 10px; color: var(--floating-surface-muted); }
+.secondary.tool-action.naming-link { color: var(--organize-accent); }
+.secondary.tool-action:hover:not(:disabled) { background: var(--organize-btn-hover); color: var(--organize-accent); }
+.secondary.tool-action:active:not(:disabled) { background: var(--organize-btn-active); }
+.primary { @apply inline-flex items-center justify-center rounded-full px-5 py-2.5 text-sm font-semibold transition-colors disabled:cursor-default disabled:opacity-45; background: var(--organize-accent); color: var(--organize-accent-on); }
+.primary:enabled:hover { background: color-mix(in srgb, var(--organize-accent) 88%, var(--floating-surface-text)); }
+.primary:enabled:active { background: color-mix(in srgb, var(--organize-accent) 78%, var(--floating-surface-text)); }
 .submit-bar { @apply flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs; }
 .submit-summary { @apply flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-content-secondary; }
 .submit-summary strong { @apply font-medium text-content-primary; }
 .submit-composition { @apply w-full; }
 .submit-actions { @apply flex flex-wrap items-center gap-2; }
 .submit-actions > button { min-height: 44px; }
-.secondary.share-action { @apply px-3 py-2.5 text-sm; }
+.secondary.share-action { @apply px-4 py-2.5 text-sm; }
 .share-config-note { @apply mt-2 text-xs leading-5 text-content-secondary; }
-.share-config-note a, .share-config-note button { @apply rounded text-action-link; }
+.share-config-note a, .share-config-note button { @apply rounded; color: var(--organize-accent); }
 .share-config-note button { @apply ml-2 disabled:opacity-40; }
 .notice { @apply text-xs leading-6 text-content-secondary; }
 .error { @apply break-all text-sm leading-6 text-status-danger; }
@@ -748,41 +787,64 @@ onBeforeUnmount(() => {
     --organize-card-bg: rgb(var(--surface-card));
     --organize-sub-bg: rgb(var(--surface-page));
     --organize-row-hover: rgb(var(--surface-hover));
+    --organize-row-selected: rgb(var(--selection-surface));
+    --organize-row-selected-hover: rgb(var(--selection-surface));
     --organize-input-bg: rgb(var(--surface-card));
     --organize-border: rgb(var(--line-default));
     --organize-control-border: rgb(var(--line-control));
     --organize-footer-bg: var(--floating-surface-container);
+    --organize-footer-shadow: none;
+    --organize-stuck-bg: var(--floating-surface-container);
   }
 }
-@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
   :global(.download-organize-dialog) {
+    --organize-btn-border: rgb(var(--line-control));
     --organize-card-bg: rgb(var(--surface-card));
     --organize-sub-bg: rgb(var(--surface-page));
     --organize-row-hover: rgb(var(--surface-hover));
+    --organize-row-selected: rgb(var(--selection-surface));
+    --organize-row-selected-hover: rgb(var(--selection-surface));
     --organize-input-bg: rgb(var(--surface-card));
     --organize-border: rgb(var(--line-control));
     --organize-control-border: rgb(var(--line-control));
     --organize-footer-bg: var(--floating-surface-container);
+    --organize-footer-shadow: none;
+    --organize-stuck-bg: var(--floating-surface-container);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .organize-help-toggle, .batch-toggle, .secondary, .primary { transition: none; }
 }
 @media (max-width: 639px), (pointer: coarse) {
   .mapping-bar input { font-size: var(--sheet-font-input); }
   .mapping-bar .season-select :deep(.select-menu-control.select-menu-compact) { min-height: var(--sheet-touch-size); height: var(--sheet-touch-size); font-size: var(--sheet-font-body); }
-  .naming-details summary, .organize-help summary, .subtitle-details summary { min-height: 44px; }
+  .subtitle-details summary { min-height: 44px; }
 }
 @media (max-width: 639px) {
+  /* 移动端仅在「下载并整理」为当前活动页时启用宿主磨砂玻璃，切回搜索页或子页时恢复宿主默认实色。 */
+  :global(dialog.bottom-sheet-dialog.bottom-sheet-dialog-mobile.download-organize-dialog),
+  :global(dialog.bottom-sheet-dialog.bottom-sheet-dialog-mobile:has(> .sheet-flow-stage > .download-organize-dialog:not([inert]))) {
+    background: var(--floating-surface-glass);
+    -webkit-backdrop-filter: var(--floating-surface-filter);
+    backdrop-filter: var(--floating-surface-filter);
+    box-shadow: 0 -4px 22px rgb(0 0 0 / .16), var(--floating-surface-shadow);
+  }
   :global(.download-organize-dialog .floating-dialog-body) { scroll-padding-top: 68px; }
   .resource-title { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
-  .organize-config { padding: 8px 10px; border: 0; background: var(--organize-sub-bg); }
+  .organize-config { padding: 8px 10px; }
   .directory-bar { gap: 6px; }
+  .directory-info { flex-basis: calc(100% - 26px); }
   .directory-info p:first-child { @apply flex-col items-start gap-0; }
   .directory-info strong { max-width: 100%; font-size: var(--sheet-font-body); line-height: var(--sheet-line-body); }
-  .directory-pick { padding-inline: 8px; border: 0; background: transparent; color: rgb(var(--action-link)); }
-  .naming-details { padding-left: 23px; }
+  .directory-actions { width: 100%; margin-left: 0; padding-top: 4px; border-top: 1px solid var(--organize-border); }
+  .directory-pick { margin-left: auto; padding-inline: 10px; border: 0; background: var(--organize-tonal-bg); color: var(--organize-accent); }
+  .naming-error { padding-left: 0; }
   .workbench-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; }
   .workbench-title { display: contents; }
+  .workbench-title-row { grid-column: 1; grid-row: 1; }
   .workbench-counts { grid-column: 1 / -1; grid-row: 2; margin-top: 0; }
-  .workbench-actions { grid-column: 2; grid-row: 1; margin-left: 0; }
+  .workbench-actions { grid-column: 2; grid-row: 1; align-self: start; margin-left: 0; }
   .subtitle-action { font-size: var(--sheet-font-body); }
   .confirmed-summary-main { flex-basis: 100%; }
   .confirmed-actions { margin-left: 18px; }

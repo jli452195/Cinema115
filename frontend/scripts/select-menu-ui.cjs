@@ -80,6 +80,44 @@ const { selectOption, inputValue, selectOptions } = require('./select-menu-helpe
     await page.getByRole('listbox', { name: 'Required choice' }).getByRole('option', { name: 'Alpha', exact: true }).click()
     assert.equal(await inputValue(choice), 'a')
     await page.evaluate(() => { document.querySelector('form > div').remove(); document.querySelector('dialog').style.height = '' })
+    await page.evaluate(() => {
+      const fieldset = document.querySelector('fieldset')
+      const viewport = document.createElement('div')
+      viewport.dataset.placementTest = ''
+      viewport.style.cssText = 'width:320px;height:90px;overflow:auto'
+      const track = document.createElement('div')
+      track.style.cssText = 'display:flex;align-items:flex-start;width:640px;min-height:160px;padding:36px 0 0 140px'
+      fieldset.before(viewport)
+      viewport.append(track)
+      track.append(fieldset)
+      viewport.scrollLeft = 40
+    })
+    const rail = page.locator('[data-placement-test]')
+    const openPanel = page.getByRole('listbox', { name: 'Required choice' })
+    const scrollRail = (left, top = 0) => rail.evaluate(async (element, position) => {
+      element.scrollTo(position)
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    }, { left, top })
+    await choice.click()
+    await openPanel.waitFor()
+    const initialPanel = await openPanel.boundingBox()
+    const initialButton = await choice.boundingBox()
+    await scrollRail(15, 12)
+    const coveredPanel = await openPanel.boundingBox()
+    assert.ok((await choice.boundingBox()).x > initialButton.x + 10, '滚动确实移动了触发器')
+    assert.ok(Math.abs(coveredPanel.x - initialPanel.x) < 1, '触发器中心仍在覆盖范围内时，弹层横向保持原位')
+    assert.ok(Math.abs(coveredPanel.y - initialPanel.y) > 5, '弹层纵向继续跟随触发器')
+    await scrollRail(125, 12)
+    assert.ok((await openPanel.boundingBox()).x < initialPanel.x - 10, '触发器移出覆盖范围时重新跟随')
+    await scrollRail(100, 12)
+    await page.setViewportSize({ width: 740, height: 700 })
+    await page.waitForFunction(() => {
+      const trigger = document.querySelector('#choice')
+      const menu = document.querySelector('[aria-label="Required choice"][role="listbox"]')
+      return Math.abs(menu.getBoundingClientRect().left - trigger.getBoundingClientRect().left) < 1
+    })
+    await choice.press('Escape')
+    await rail.evaluate(element => { element.before(element.querySelector('fieldset')); element.remove() })
     for (const dark of [false, true]) {
       await page.evaluate(value => document.documentElement.classList.toggle('dark', value), dark)
       await page.setViewportSize({ width: 320, height: 640 })

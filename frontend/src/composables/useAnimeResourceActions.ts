@@ -4,6 +4,7 @@ import { magnetKey } from '../lib/cloud-download-batch'
 import { loadAnimeOrganizeFiles } from '../lib/anime-resource-api'
 import { readDmhyMagnet } from '../lib/dmhy-search'
 import { useCloudDownloadAction } from './useCloudDownloadAction'
+import type { CloudDownloadTargetController } from './useCloudDownloadTarget'
 import type { ConfirmOrganizeAction } from './useOrganizeDraftGuard'
 import type { DownloadFiles, DownloadResourceInput, DownloadOrganizeResource } from '../types/organize'
 import type { AnimeResourceItem as Item, AnimeResourceGroup as Group, AnimeResourceProvider } from '../types/animeResourceSearch'
@@ -22,7 +23,7 @@ interface AnimeResourceActionOptions {
 
 const ORGANIZE_RESOURCE_LIMIT = 100
 
-export function useAnimeResourceActions(options: AnimeResourceActionOptions, signal: AbortSignal, batch: ReturnType<typeof useCloudDownloadBatch>) {
+export function useAnimeResourceActions(options: AnimeResourceActionOptions, signal: AbortSignal, batch: ReturnType<typeof useCloudDownloadBatch>, cloudTarget?: CloudDownloadTargetController) {
   const { selected: batchSelected, count: batchCount } = batch
   const preparing = ref<{ id: string; kind: 'files' | 'magnet' }>()
   const preparingItem = computed(() => preparing.value?.kind === 'files' ? preparing.value.id : '')
@@ -32,7 +33,7 @@ export function useAnimeResourceActions(options: AnimeResourceActionOptions, sig
   const busy = computed(() => batch.running.value || !!preparing.value || organizeVisible.value)
   const interactionBusy = computed(() => options.searching() || busy.value)
   const submissions = ref<Record<string, BatchStatus & { organize?: boolean }>>({})
-  const cloudDownload = useCloudDownloadAction(options.token, signal, submissions)
+  const cloudDownload = useCloudDownloadAction(options.token, signal, submissions, cloudTarget)
   const singleSubmitting = cloudDownload.busy
   function submission(item: Pick<Item, 'magnet'>) { return batch.statuses.value[magnetKey(item.magnet)] || submissions.value[magnetKey(item.magnet)] }
   function canSelect(item: Item) { return batch.eligible(item) && !submission(item)?.success && !submission(item)?.busy && !submission(item)?.uncertain }

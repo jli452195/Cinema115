@@ -76,9 +76,10 @@ func TestCloudDownloadPOSTSubmitsDirectly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r, accounts, id := setupAccountsAPI(t, nil, nil)
 			settings := testCloudDownloadSettings(t, accounts)
+			profile := testCloudDownloadTarget(t, settings, id)
 			client := &cloudSubmitAPIFake{addErr: tc.addErr}
 			RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
-			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId="+id, strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","targetCID":"99"}`))
+			request := httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks", strings.NewReader(`{"url":"magnet:?xt=urn:btih:`+hash+`","profileId":"`+profile.ID+`","accountId":"`+id+`","targetCID":"99"}`))
 			response := httptest.NewRecorder()
 			r.ServeHTTP(response, request)
 			var body struct {
@@ -110,10 +111,11 @@ func TestCloudDownloadPOSTSubmitsDirectly(t *testing.T) {
 
 func TestCloudDownloadRequiresConfiguredPrimary(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
+	settings := testCloudDownloadSettings(t, accounts)
+	profile := testCloudDownloadTarget(t, settings, id)
 	if err := accounts.Delete(id, 2); err != nil {
 		t.Fatal(err)
 	}
-	settings := testCloudDownloadSettings(t, accounts)
 	cloud := p115.NewCloudClient()
 	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: cloud, Coordinator: &service.CloudDownloadCoordinator{}}, cloud, p115.NewShareClient())
 	for _, tc := range []struct {
@@ -123,13 +125,18 @@ func TestCloudDownloadRequiresConfiguredPrimary(t *testing.T) {
 	}{
 		{http.MethodGet, "/api/admin/p115/cloud-download/paths", ""},
 		{http.MethodGet, "/api/admin/p115/cloud-download/tasks", ""},
-		{http.MethodPost, "/api/admin/p115/cloud-download/tasks", `{"url":"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"}`},
+		{http.MethodPost, "/api/admin/p115/cloud-download/tasks", `{"url":"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567","profileId":"` + profile.ID + `","accountId":"` + id + `","targetCID":"99"}`},
 	} {
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, strings.NewReader(tc.body)))
 		if w.Code != http.StatusConflict {
 			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, w.Code, w.Body.String())
 		}
+	}
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/admin/p115/cloud-download/profiles", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"accountId":""`) || !strings.Contains(w.Body.String(), `"ready":false`) || !strings.Contains(w.Body.String(), profile.ID) {
+		t.Fatalf("失效配置应留在列表供编辑，status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -163,12 +170,15 @@ func TestCloudDownloadNamedTargetProfilesCRUD(t *testing.T) {
 		t.Fatalf("unexpected target response, including bot-owned metadata: %+v", response.Profile)
 	}
 	id := response.Profile.ID
+	if err := settings.BindTarget(id, "", "bot-1"); err != nil {
+		t.Fatal(err)
+	}
 	updated := call(http.MethodPut, base+"/"+id, `{"name":"转存 XC","accountId":"`+accountID+`","targetCID":"88","targetPath":"/XC"}`)
 	if updated.Code != http.StatusOK || !strings.Contains(updated.Body.String(), `"name":"转存 XC"`) {
 		t.Fatalf("update status=%d body=%s", updated.Code, updated.Body.String())
 	}
 	listed := call(http.MethodGet, base, "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"targetPath":"/XC"`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"targetPath":"/XC"`) || !strings.Contains(listed.Body.String(), `"accountId":"`+accountID+`"`) || !strings.Contains(listed.Body.String(), `"ready":true`) || strings.Contains(listed.Body.String(), "bot-1") {
 		t.Fatalf("list status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	deleted := call(http.MethodDelete, base+"/"+id, "")
@@ -178,6 +188,50 @@ func TestCloudDownloadNamedTargetProfilesCRUD(t *testing.T) {
 	listed = call(http.MethodGet, base, "")
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"profiles":[]`) {
 		t.Fatalf("empty list status=%d body=%s", listed.Code, listed.Body.String())
+	}
+}
+
+func TestCloudDownloadPOSTRequiresSameSavedTargetBeforeWriting(t *testing.T) {
+	r, accounts, id := setupAccountsAPI(t, nil, nil)
+	settings := testCloudDownloadSettings(t, accounts)
+	profile := testCloudDownloadTarget(t, settings, id)
+	if _, err := settings.Save(service.CloudDownloadConfig{AccountID: id, TargetCID: "99", TargetPath: "/旧默认"}); err != nil {
+		t.Fatal(err)
+	}
+	client := &cloudSubmitAPIFake{}
+	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
+	post := func(fields string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks?accountId="+id, strings.NewReader(`{"url":"magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",`+fields+`}`)))
+		return w
+	}
+	confirmed := `"profileId":"` + profile.ID + `","accountId":"` + id + `","targetCID":"99"`
+	if w := post(`"accountId":"` + id + `","targetCID":"99"`); w.Code != http.StatusBadRequest || len(client.steps) != 0 {
+		t.Fatalf("应拒绝直接传入目录编号，status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
+	}
+	if err := settings.BindTarget(profile.ID, "", "bot-1"); err != nil {
+		t.Fatal(err)
+	}
+	profile.Name, profile.TargetPath = "重命名", "/显示路径"
+	if _, err := settings.SaveTarget(profile); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(confirmed); w.Code != http.StatusAccepted || strings.Join(client.steps, ",") != "add" || client.cid != "99" {
+		t.Fatalf("目录名称、显示路径和 Bot 分配不能阻止网页提交，status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
+	}
+	client.steps = nil
+	profile.TargetCID = "88"
+	if _, err := settings.SaveTarget(profile); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(confirmed); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"cloud_target_changed"`) || len(client.steps) != 0 {
+		t.Fatalf("应在写入前拒绝已变化的目录，status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
+	}
+	if err := settings.DeleteTarget(profile.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := post(confirmed); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"cloud_target_changed"`) || len(client.steps) != 0 {
+		t.Fatalf("应在写入前拒绝已删除的目录，status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
 	}
 }
 
@@ -232,4 +286,13 @@ func testCloudDownloadSettings(t *testing.T, accounts *service.P115Accounts) *se
 	settings.ValidateAccount = accounts.ValidatePrimary
 	settings.PrimaryID = accounts.PrimaryID
 	return settings
+}
+
+func testCloudDownloadTarget(t *testing.T, settings *service.CloudDownloadSettings, accountID string) service.CloudDownloadTarget {
+	t.Helper()
+	profile, err := settings.SaveTarget(service.CloudDownloadTarget{Name: "共用目录", AccountID: accountID, TargetCID: "99", TargetPath: "/下载"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
 }

@@ -14,25 +14,29 @@ import (
 func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 	r, accounts, id := setupAccountsAPI(t, nil, nil)
 	settings := testCloudDownloadSettings(t, accounts)
+	profile := testCloudDownloadTarget(t, settings, id)
 	client := &cloudSubmitAPIFake{}
 	RegisterCloudDownload(r.Group("/api/admin"), accounts, settings, &service.CloudDownloadService{Accounts: accounts, Client: client, Coordinator: &service.CloudDownloadCoordinator{}}, p115.NewCloudClient(), p115.NewShareClient())
 	link := "magnet:?xt=urn:btih:" + strings.Repeat("a", 40)
 	otherLink := "ed2k://|file|example.mkv|100|" + strings.Repeat("b", 32) + "|/"
+	selection := `,"profileId":"` + profile.ID + `","accountId":"` + id + `"`
 	for _, tc := range []struct {
 		name, body, step, eventOrder string
 		status                       int
 	}{
-		{name: "single", body: `{"urls":["` + link + `"],"targetCID":"99"}`, step: "add", eventOrder: "ready,start,result,done", status: 200},
-		{name: "batch", body: `{"urls":["` + link + `","` + otherLink + `"],"targetCID":"99"}`, step: "batch", eventOrder: "ready,start,start,result,result,done", status: 200},
-		{name: "invalid-second", body: `{"urls":["` + link + `","invalid"],"targetCID":"99"}`, status: 400},
-		{name: "empty", body: `{"urls":[],"targetCID":"99"}`, status: 400},
-		{name: "missing-directory", body: `{"urls":["` + link + `"]}`, status: 400},
-		{name: "body-too-large", body: `{"urls":["` + link + `&dn=` + strings.Repeat("x", 256<<10) + `"],"targetCID":"99"}`, status: http.StatusRequestEntityTooLarge},
+		{name: "single", body: `{"urls":["` + link + `"],"targetCID":"99"` + selection + `}`, step: "add", eventOrder: "ready,start,result,done", status: 200},
+		{name: "batch", body: `{"urls":["` + link + `","` + otherLink + `"],"targetCID":"99"` + selection + `}`, step: "batch", eventOrder: "ready,start,start,result,result,done", status: 200},
+		{name: "invalid-second", body: `{"urls":["` + link + `","invalid"],"targetCID":"99"` + selection + `}`, status: 400},
+		{name: "empty", body: `{"urls":[],"targetCID":"99"` + selection + `}`, status: 400},
+		{name: "missing-directory", body: `{"urls":["` + link + `"]` + selection + `}`, status: 400},
+		{name: "missing-profile", body: `{"urls":["` + link + `"],"targetCID":"99","accountId":"` + id + `"}`, status: 400},
+		{name: "changed-directory", body: `{"urls":["` + link + `"],"targetCID":"88"` + selection + `}`, status: 409},
+		{name: "body-too-large", body: `{"urls":["` + link + `&dn=` + strings.Repeat("x", 256<<10) + `"],"targetCID":"99"` + selection + `}`, status: http.StatusRequestEntityTooLarge},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client.steps = nil
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks/batch?accountId="+id, strings.NewReader(tc.body)))
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks/batch", strings.NewReader(tc.body)))
 			if w.Code != tc.status || strings.Join(client.steps, ",") != tc.step {
 				t.Fatalf("status=%d body=%s steps=%v", w.Code, w.Body.String(), client.steps)
 			}
@@ -40,6 +44,9 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 				t.Fatal("credentials exposed")
 			}
 			if tc.status != 200 {
+				if tc.status == http.StatusConflict && (!strings.Contains(w.Body.String(), `"code":"cloud_target_changed"`) || w.Flushed) {
+					t.Fatal("目录冲突不能开启提交流", w.Body.String())
+				}
 				if tc.status == http.StatusRequestEntityTooLarge && (!strings.Contains(w.Body.String(), "本次未提交") || strings.HasPrefix(w.Header().Get("Content-Type"), "application/x-ndjson")) {
 					t.Fatal("请求体过大必须明确拒绝且不能开启提交流", w.Body.String())
 				}
@@ -70,8 +77,8 @@ func TestCloudBatchAPIStreamsAndValidatesBeforeWriting(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	client.steps = nil
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks/batch?accountId=missing", strings.NewReader(`{"urls":["`+link+`"],"targetCID":"99"}`)))
-	if w.Code != 409 || len(client.steps) != 0 {
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/admin/p115/cloud-download/tasks/batch", strings.NewReader(`{"urls":["`+link+`"],"targetCID":"99","profileId":"`+profile.ID+`","accountId":"missing"}`)))
+	if w.Code != 409 || len(client.steps) != 0 || !strings.Contains(w.Body.String(), `"code":"cloud_target_changed"`) {
 		t.Fatal("missing account fell back")
 	}
 }

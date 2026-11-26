@@ -1,11 +1,12 @@
 import { computed, ref } from 'vue'
-import { cloudDownloadNotice, loadCloudDownloadConfig } from '../lib/cloud-download'
+import { cloudDownloadNotice, isCloudTargetChangedError } from '../lib/cloud-download'
 import { magnetKey, submitCloudBatch, trackCloudBatch, type CloudBatchEvent } from '../lib/cloud-download-batch'
+import type { CloudDownloadTargetController } from './useCloudDownloadTarget'
 
 export interface BatchResource { id: string; title: string; magnet: string }
 export interface BatchStatus { busy?: boolean; success?: boolean; uncertain?: boolean; message?: string; needsConfig?: boolean }
 
-export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
+export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal, targetController?: CloudDownloadTargetController) {
   const mode = ref(false), running = ref(false)
   const selected = ref(new Map<string, BatchResource>())
   const statuses = ref<Record<string, BatchStatus>>({})
@@ -54,6 +55,12 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
     if (running.value || !count.value) return
     const rows = [...selected.value.values()].filter(eligible)
     if (!rows.length) return
+    const snapshot = targetController?.snapshot()
+    if (!snapshot) {
+      notice.value = targetController?.missingTargetMessage() || '请先在“115 云转存”新增磁力/ED2K 转存目录'
+      needsConfig.value = !targetController?.targets.value.length && !targetController?.reconfirmMessage.value
+      return
+    }
     running.value = true; notice.value = ''; needsConfig.value = false
     total.value = rows.length; processed.value = 0; accepted.value = 0; failed.value = 0; uncertain.value = 0
     controller = new AbortController()
@@ -61,8 +68,6 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
     let dispatched = false
     const receipts = trackCloudBatch(rows.length)
     try {
-      const config = await loadCloudDownloadConfig(token, signal)
-      if (!config.accountId || !config.targetCID) throw Object.assign(new Error('请先在 115 云下载配置主账号和下载目录'), { beforeStart: true, needsConfig: true })
       const onEvent = (event: CloudBatchEvent) => {
         receipts.accept(event)
         if (event.type === 'ready' || event.type === 'done') return
@@ -73,7 +78,7 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
         }
         processed.value++
         if (event.accepted) {
-          statuses.value[key] = { success: true, message: cloudDownloadNotice(config.targetPath) }
+          statuses.value[key] = { success: true, message: cloudDownloadNotice(snapshot.targetPath) }
           selected.value.delete(key); accepted.value++
         } else {
           statuses.value[key] = { uncertain: event.outcomeUncertain, message: event.error || '提交失败' }
@@ -81,7 +86,7 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
         }
       }
       dispatched = true
-      await submitCloudBatch(token, config.accountId, config.targetCID, rows.map(item => item.magnet), signal, onEvent)
+      await submitCloudBatch(token, snapshot, rows.map(item => item.magnet), signal, onEvent)
       const counts = [`已提交 ${accepted.value} 条`]
       if (failed.value) counts.push(`失败 ${failed.value} 条`)
       if (uncertain.value) counts.push(`待核对 ${uncertain.value} 条`)
@@ -89,6 +94,11 @@ export function useCloudDownloadBatch(token: string, lifecycle: AbortSignal) {
       notice.value = counts.join('，')
     } catch (reason) {
       const error = reason as Error & { beforeStart?: boolean; needsConfig?: boolean }
+      if (isCloudTargetChangedError(reason)) {
+        if (!lifecycle.aborted) void targetController?.handleTargetChanged(snapshot, error.message)
+        notice.value = error.message || '所选下载目录已变更或删除，本次未提交，请重新确认目录。'
+        return
+      }
       // 回执可能被缓冲，连接中断后所有未确认的资源都需核对。
       if (dispatched && !error.beforeStart && !receipts.done) {
         const unknown = rows.map((_, index) => index).filter(index => !receipts.completed.has(index))

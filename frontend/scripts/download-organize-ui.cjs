@@ -122,6 +122,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
         else data = nestedMode ? { files: nestedFiles, subtitles: [] } : Number.parseInt(isGying ? body.magnet.split(':').at(-1) : body.providerId, 16) === 2 ? { files: [], reason: '清单中没有可整理的视频文件，可使用普通离线（不支持 ISO）' } : { files, subtitles }
       }
       else if (endpoint.endsWith('/cloud-download/config')) data = { accountId: 'primary', targetCID: '10', targetPath: '/下载' }
+      else if (endpoint.endsWith('/cloud-download/profiles')) data = { accountId: 'primary', profiles: [{ id: 'download', name: '下载', accountId: 'primary', targetCID: '10', targetPath: '/下载', ready: true }] }
       else if (endpoint.endsWith('/download-organize/config')) data = { accountId: 'primary', targetCID: omitOrganizeDirectory ? '' : '20', targetPath: omitOrganizeDirectory ? '' : '/动漫' }
       else if (endpoint.endsWith('/download-organize/share-config')) data = { ready: shareConfigured, reason: '请先完善分享 STRM 设置' }
       else if (endpoint.endsWith('/download-organize/progress')) data = { pipelines: new URL(req.url()).searchParams.get('ids').split(',').map(id => ({ id, title: '测试作品', jobIds: [id], status: 'success', finished: true, message: '已完成全部整理', total: 1, ready: 1, organized: 1, failed: 0, videoCount: 2, written: 0, shares: [] })) }
@@ -216,7 +217,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.deepEqual(await stableLayout(), expandedLayout)
     await groupToggle.click()
     assert.equal(await organizeDialog.getByRole('searchbox').count(), 0)
-    await page.getByText('版本 3', { exact: true }).waitFor()
+    await fileRow(0).getByText('百变之星.S01E27-测试组.mkv', { exact: true }).waitFor()
     const selectionCalls = calls.length
     await organizeDialog.getByRole('checkbox', { name: '选择目录 show 及下级', exact: true }).check()
     await organizeDialog.getByRole('button', { name: '排除目录 show 及下级', exact: true }).click()
@@ -236,7 +237,7 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     assert.equal(await organizeDialog.getByRole('button', { name: '查找全部所选字幕', exact: true }).isDisabled(), true, 'subtitle mapping still requires selected videos')
     assert.equal(await organizeDialog.locator('.numbering-bar').count(), 0)
     assert.equal(await organizeDialog.locator('.mapping-bar').count(), 0)
-    await organizeDialog.locator('.selection-prompt').waitFor()
+    assert.equal(await organizeDialog.locator('.selection-prompt').count(), 0)
     if (assrtMode) {
       const second = fileRow(1)
       await second.getByRole('checkbox').check()
@@ -768,13 +769,11 @@ const naming = require('./media-naming-fixture.cjs').mediaNamingFixture('百变�
     await badRow.getByRole('spinbutton', { name: 'OVA.mkv 集', exact: true }).fill('1.5')
     assert.equal(await badRow.getByRole('checkbox').isChecked(), false)
     await page.waitForRequest(req => req.url().endsWith('/naming/media-preview') && req.postDataJSON().files[2].episode === -1)
-    await page.getByText('版本 3', { exact: true }).waitFor()
-    assert.equal(await organizeDialog.getByRole('button', { name: /^暂存这 [1-9]\d* 项$/ }).isEnabled(), true)
+    await organizeDialog.locator('.stage-action:enabled').waitFor()
     await badRow.getByRole('spinbutton', { name: 'OVA.mkv 集', exact: true }).fill('0')
-    await page.getByText('版本 3', { exact: true }).waitFor()
+    await organizeDialog.locator('.stage-action:enabled').waitFor()
     await subtitleToggle.click()
     subtitleError = true
-    await organizeDialog.locator('.naming-details > summary').click()
     await page.getByRole('button', { name: '刷新命名', exact: true }).click()
     await first.getByRole('alert').filter({ hasText: '字幕名称超过长度限制' }).waitFor()
     assert.equal(await first.locator('.subtitle-details').getAttribute('open'), '')

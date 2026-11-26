@@ -21,6 +21,7 @@ const selectedIndex = computed(() => props.options.findIndex(option => option.va
 const selectedLabel = computed(() => props.options.find(option => option.value === props.modelValue)?.label ?? props.placeholder ?? props.options[0]?.label ?? '')
 let fieldsetObserver: MutationObserver | undefined
 let searchText = '', searchTime = 0
+let lockedLeft: number | undefined
 
 function syncDisabled() {
   inheritedDisabled.value = !!nativeControl.value?.matches(':disabled')
@@ -53,18 +54,28 @@ function revealActiveOption() {
   if (top < menu.scrollTop) menu.scrollTop = top
   else if (bottom > menu.scrollTop + menu.clientHeight) menu.scrollTop = bottom - menu.clientHeight
 }
-function positionPanel() {
+function positionPanel(preserveHorizontal = false) {
   if (!button.value) return
   const rect = button.value.getBoundingClientRect(), gap = 6, inset = 8
   const width = Math.min(Math.max(rect.width, props.menuMinWidth || 160), innerWidth - inset * 2)
   const below = innerHeight - rect.bottom - gap - inset, above = rect.top - gap - inset
   const upward = below < Math.min(props.options.length * 44 + 8, 200) && above > below
   const maxHeight = Math.max(44, Math.min(264, upward ? above : below))
-  panelStyle.value = { width: `${width}px`, maxHeight: `${maxHeight}px`, left: `${Math.max(inset, Math.min(rect.left, innerWidth - width - inset))}px`, top: upward ? 'auto' : `${rect.bottom + gap}px`, bottom: upward ? `${innerHeight - rect.top + gap}px` : 'auto' }
+  const maxLeft = Math.max(inset, innerWidth - width - inset)
+  let left = Math.max(inset, Math.min(rect.left, maxLeft))
+  if (preserveHorizontal && lockedLeft !== undefined) {
+    const currentLeft = Math.max(inset, Math.min(lockedLeft, maxLeft))
+    const buttonCenter = rect.left + rect.width / 2
+    // 横向滚动期间只要触发器中心仍在弹层水平覆盖范围内，就锁住 left 避免弹层跟随漂移。
+    if (buttonCenter >= currentLeft && buttonCenter <= currentLeft + width) left = currentLeft
+  }
+  lockedLeft = left
+  panelStyle.value = { width: `${width}px`, maxHeight: `${maxHeight}px`, left: `${left}px`, top: upward ? 'auto' : `${rect.bottom + gap}px`, bottom: upward ? `${innerHeight - rect.top + gap}px` : 'auto' }
 }
 function close(focus = false) {
   if (panel.value?.matches(':popover-open')) panel.value.hidePopover()
   open.value = false
+  lockedLeft = undefined
   if (focus) void nextTick(() => button.value?.focus({ preventScroll: true }))
 }
 function toggle() { open.value ? close() : show() }
@@ -114,7 +125,7 @@ function outside(event: PointerEvent) {
   if (open.value && event.target instanceof Node && !root.value?.contains(event.target)) close()
 }
 function viewportChanged(event: Event) {
-  if (open.value && !(event.target instanceof Node && panel.value?.contains(event.target))) positionPanel()
+  if (open.value && !(event.target instanceof Node && panel.value?.contains(event.target))) positionPanel(event.type === 'scroll')
 }
 
 watch(() => props.modelValue, () => { activeIndex.value = selectedIndex.value })
