@@ -394,8 +394,10 @@ onBeforeUnmount(() => lifecycle.abort())
                   <div class="gy-filter-context">
                     <h3 class="gy-filter-title">资源筛选</h3>
                     <span role="status" :aria-label="'当前筛选显示 ' + displayedLinkCount + ' 条，共 ' + filteredLinkCount + ' 条资源'">{{ displayedLinkCount < filteredLinkCount ? '显示 ' + displayedLinkCount + ' / ' + filteredLinkCount : filteredLinkCount }} 条资源</span>
-                    <CloudDownloadDirectory v-if="token && visibleItems.some(item => item.links.some(canCloudDownload))" :controller="cloudTarget" :disabled="cloudBusy" @settings="close()" />
-                    <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="close()" />
+                    <div v-if="(token && visibleItems.some(item => item.links.some(canCloudDownload))) || visibleItems.some(item => item.links.some(canShareSTRM))" class="gy-filter-directories">
+                      <CloudDownloadDirectory v-if="token && visibleItems.some(item => item.links.some(canCloudDownload))" :controller="cloudTarget" :disabled="cloudBusy" @settings="close()" />
+                      <ShareTransferDirectory v-if="visibleItems.some(item => item.links.some(canShareSTRM))" :transfer="transfers" @settings="close()" />
+                    </div>
                   </div>
                   <nav
                     ref="sourceStrip"
@@ -554,27 +556,28 @@ onBeforeUnmount(() => lifecycle.abort())
   --gy-error: #ffb4ab; --gy-error-bg: #502c2b;
   color-scheme: dark;
 }
-.gy-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
-.gy-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--gy-card); }
+.gy-header { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 16px 24px 10px; }
+.gy-brand { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: var(--gy-card); }
 .gy-woniu-brand { background: transparent; }
-.gy-woniu-brand img { width: 44px; height: 44px; object-fit: contain; }
+.gy-woniu-brand img { width: 38px; height: 38px; object-fit: contain; }
 .gy-heading { flex: 1; min-width: 0; }
-.gy-heading h2 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 650; }
-.gy-heading p { margin: 4px 0 0; color: var(--gy-muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.gy-heading h2 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 650; }
+.gy-heading p { margin: 2px 0 0; color: var(--gy-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .gy-heading-meta { display: flex; align-items: center; gap: 8px; }
 .gy-heading-meta p { flex: 1; min-width: 0; }
-.gy-search-caption { flex-shrink: 0; margin-top: 4px; color: var(--gy-muted); font-size: var(--search-dialog-font-meta, 10px); line-height: 18px; }
+.gy-search-caption { flex-shrink: 0; margin-top: 2px; color: var(--gy-muted); font-size: var(--search-dialog-font-meta, 10px); line-height: 18px; }
 .gy-cached-caption { color: var(--gy-primary); }
-.gy-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; color: var(--gy-muted); }
-.gy-icon-button svg { width: 24px; height: 24px; }
+.gy-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: var(--gy-muted); }
+.gy-icon-button svg { width: 20px; height: 20px; }
 .gy-tools { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; gap: 12px; padding: 0 24px 8px; }
 .gy-tools > span { color: var(--gy-muted); font-size: 12px; }
-.gy-tools > div { display: flex; gap: 4px; }
+.gy-tools > div { display: flex; align-items: center; gap: 6px; }
 .gy-search-query { display: flex; align-items: center; flex: 1; min-width: 0; gap: 6px; }
 .gy-query-method { flex-shrink: 0; color: var(--gy-primary); font-size: var(--search-dialog-font-meta, 10px); font-weight: 600; }
 .gy-query-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--search-dialog-font-meta, 11px); }
-.gy-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 48px; padding: 0 12px; border: 0; border-radius: 24px; background: transparent; color: var(--gy-muted); font-size: 12px; font-weight: 550; text-decoration: none; white-space: nowrap; }
-.gy-tool-button svg { width: 18px; height: 18px; }
+/* 对齐 TG 频道搜索的轻胶囊工具按钮，收紧桌面端头部空白。 */
+.gy-tool-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 32px; padding: 0 11px; border: 0; border-radius: 999px; background: var(--search-dialog-secondary-background); color: var(--gy-text); font-size: 12px; font-weight: 500; text-decoration: none; white-space: nowrap; transition: background-color .15s ease; }
+.gy-tool-button svg { width: 15px; height: 15px; }
 .gy-body { position: relative; min-height: 0; padding: 0 24px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .gy-search-process { margin-bottom: 12px; color: var(--gy-muted); font-size: 12px; }
 .gy-process-heading { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: var(--search-dialog-font-meta, 11px); line-height: 20px; }
@@ -588,7 +591,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .gy-item-strip { position: relative; isolation: isolate; display: flex; gap: 10px; padding: 4px 2px 12px; overflow-x: auto; }
 .gy-selection-indicator { position: absolute; z-index: 1; background: var(--search-dialog-action-background); pointer-events: none; }
 .gy-item-indicator { border-radius: 16px; }
-.gy-chip-indicator { border-radius: 10px; }
+.gy-chip-indicator { border-radius: 999px; }
 .gy-item-card { position: relative; display: flex; flex-shrink: 0; align-items: center; gap: 10px; width: 220px; min-height: 92px; padding: 8px; border: 2px solid transparent; border-radius: 16px; background: var(--gy-card); color: var(--gy-text); text-align: left; }
 .gy-item-card > svg, .gy-item-card > span { position: relative; z-index: 2; }
 .gy-item-card[aria-pressed="true"] { color: var(--gy-on-tonal); }
@@ -602,8 +605,9 @@ onBeforeUnmount(() => lifecycle.abort())
 .gy-all-items { width: 160px; padding: 12px; }
 .gy-all-items > svg { width: 26px; height: 26px; flex-shrink: 0; }
 .gy-filters { display: grid; gap: 4px; margin: 0 0 8px; padding: 2px 0 4px; }
-.gy-filter-context { display: flex; flex-wrap: wrap; min-height: 28px; align-items: center; justify-content: space-between; gap: 8px; }
+.gy-filter-context { display: flex; flex-wrap: wrap; min-height: 32px; align-items: center; gap: 6px 12px; }
 .gy-filter-context > span { flex-shrink: 0; font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; color: var(--gy-muted); }
+.gy-filter-directories { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-left: auto; min-width: 0; }
 .gy-filter-title { margin: 0; font-size: 12px; line-height: 20px; font-weight: 600; }
 .gy-source-strip {
   position: relative; isolation: isolate; display: flex; min-width: 0; max-width: 100%; gap: 6px; padding: 2px;
@@ -617,7 +621,7 @@ onBeforeUnmount(() => lifecycle.abort())
 .gy-source-strip.has-scroll-right { --scroll-fade-right: transparent; }
 .gy-source-strip:is(.has-scroll-left, .has-scroll-right) { cursor: grab; }
 .gy-source-strip.is-dragging, .gy-source-strip.is-dragging .gy-chip { cursor: grabbing; }
-.gy-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--gy-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
+.gy-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 4px; min-width: 44px; min-height: 44px; padding: 6px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--gy-muted); font-size: 12px; line-height: 18px; }
 .gy-chip::before { position: absolute; z-index: 0; inset: 6px 0; border-radius: inherit; background: var(--gy-card); pointer-events: none; content: ''; }
 .gy-chip > span { position: relative; z-index: 2; }
 .gy-chip[aria-pressed="true"] { color: var(--gy-on-tonal); font-weight: 600; }
@@ -633,8 +637,8 @@ onBeforeUnmount(() => lifecycle.abort())
 .gy-film-details p { margin: 0 0 12px; font-size: 12px; line-height: 22px; overflow-wrap: anywhere; }
 .gy-film-single .gy-film-details { margin: -8px 0 0; }
 .gy-film-single .gy-resource-list { margin-top: 0; }
-.gy-resource-list { display: grid; gap: 10px; margin: 12px 0 0; padding: 0; list-style: none; }
-.gy-resource { min-width: 0; padding: 16px 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--gy-card); }
+.gy-resource-list { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+.gy-resource { min-width: 0; padding: 14px 16px; border: 1px solid var(--search-dialog-card-border); border-radius: 14px; background: var(--gy-card); }
 .gy-resource-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 20px; }
 .gy-resource-info { display: contents; }
 .gy-resource-title { grid-column: 1 / -1; min-width: 0; line-height: 23px; }
@@ -680,7 +684,8 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
 .gy-spinning { animation: gy-spin 1s linear infinite; }
 @keyframes gy-spin { to { transform: rotate(360deg); } }
 @media (hover: hover) {
-  .gy-icon-button:hover, .gy-tool-button:hover:not(:disabled), .gy-copy-button:hover { background: color-mix(in srgb, var(--gy-primary) 8%, transparent); }
+  .gy-icon-button:hover, .gy-copy-button:hover { background: var(--search-dialog-secondary-hover); }
+  .gy-tool-button:hover:not(:disabled) { background: var(--search-dialog-secondary-hover); }
   .gy-item-card:hover:not([aria-pressed="true"]), .gy-chip:hover:not([aria-pressed="true"])::before { background: var(--search-dialog-secondary-hover); }
   .gy-item-strip:has(.gy-item-card[aria-pressed="true"]:hover) > .gy-selection-indicator,
   .gy-source-strip:has(.gy-chip[aria-pressed="true"]:hover) > .gy-selection-indicator { background: var(--search-dialog-action-hover); }
@@ -702,7 +707,7 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-tools > span { display: none; }
   .gy-tools > .gy-search-query { display: flex; }
   .gy-icon-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); }
-  .gy-tool-button { min-height: var(--sheet-touch-size); padding-inline: 8px; font-size: var(--sheet-font-body); }
+  .gy-tool-button { min-height: var(--sheet-touch-size); padding-inline: 10px; background: transparent; color: var(--gy-muted); font-size: var(--sheet-font-body); }
   .gy-body { padding: 0 var(--sheet-content-inset) 12px; scrollbar-gutter: auto; }
   .gy-item-picker { margin-bottom: 8px; }
   .gy-picker-heading { flex-wrap: nowrap; justify-content: flex-start; gap: 8px; margin-bottom: 8px; }
@@ -716,6 +721,7 @@ details[open] > summary > .gy-chevron { transform: rotate(90deg); }
   .gy-all-items > svg { width: 20px; height: 20px; }
   .gy-all-items small { margin-top: 0; }
   .gy-filter-context > span { font-size: var(--search-dialog-font-meta, 10px); }
+  .gy-filter-directories { width: 100%; margin-left: 0; }
   .gy-film-heading h3 { font-size: 15px; }
   .gy-film-details summary { min-height: 48px; }
   .gy-resource { padding: 12px; border-radius: 12px; }

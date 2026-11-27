@@ -88,14 +88,71 @@
   --search-dialog-secondary-pressed: rgb(255 255 255 / 14%);
 }
 
-dialog.media-search-dialog :is(.re0-search-field, .bot-search-field, .mikan-input) {
+/* 资源搜索主视图沿用 TG 频道搜索的灰蓝焦点与选中色。 */
+:is(.mikan-layout, .gy-layout, .bot-layout) {
+  --focus: 54 91 131;
+  --selection-content: 54 91 131;
+  --selection-surface: 235 241 248;
+}
+
+.dark :is(.mikan-layout, .gy-layout, .bot-layout) {
+  --focus: 173 199 236;
+  --selection-content: 173 199 236;
+  --selection-surface: 34 45 62;
+}
+
+dialog.media-search-dialog .re0-search-field {
   background: var(--search-dialog-input);
   box-shadow: inset 0 0 0 1px var(--search-dialog-card-border);
 }
 
-dialog.media-search-dialog :is(.re0-search-field, .bot-search-field):focus-within,
-dialog.media-search-dialog .mikan-input:focus {
+:is(.mikan-layout .mikan-search-field, .bot-layout .bot-search-field) {
+  background: var(--search-dialog-card);
+  box-shadow: inset 0 0 0 1px var(--search-dialog-card-border);
+}
+
+dialog.media-search-dialog .re0-search-field:focus-within,
+:is(.mikan-layout .mikan-search-field, .bot-layout .bot-search-field):focus-within {
   background: var(--search-dialog-input-focus);
+}
+
+/* 搜索主视图的下拉使用轻胶囊。 */
+:is(.mikan-layout, .gy-layout, .bot-layout) .select-menu .select-menu-control {
+  min-height: 34px;
+  padding: 5px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--search-dialog-secondary-background);
+  color: var(--search-dialog-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  box-shadow: none;
+  transform: none;
+}
+
+:is(.mikan-layout, .gy-layout, .bot-layout) .select-menu .select-menu-control:hover:not(:disabled) {
+  background: var(--search-dialog-secondary-hover);
+  box-shadow: none;
+  transform: none;
+}
+
+:is(.mikan-layout, .gy-layout, .bot-layout) .select-menu .select-menu-control:active:not(:disabled) {
+  background: var(--search-dialog-secondary-pressed);
+  transform: none;
+}
+
+:is(.mikan-layout, .gy-layout, .bot-layout) .select-menu-panel {
+  border-color: var(--search-dialog-card-border);
+  border-radius: 14px;
+}
+
+:is(.mikan-layout, .gy-layout, .bot-layout) .select-menu-option {
+  min-height: 34px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 /* 用锚点检测筛选条是否到达滚动区顶边。 */
@@ -182,6 +239,10 @@ dialog.media-search-dialog .mikan-batch-footer {
   color: var(--search-dialog-primary);
 }
 
+:is(.mikan-layout, .gy-layout, .bot-layout) :is(.bot-primary-button, .gy-primary-button, .mikan-primary-button, .resource-primary-button)::before {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--search-dialog-primary) 24%, transparent);
+}
+
 .media-search-dialog :is(.re0-outlined-button, .bot-outlined-button, .gy-outlined-button, .mikan-outlined-button, .resource-secondary-button) {
   --search-dialog-button-background: var(--search-dialog-secondary-background);
   color: var(--search-dialog-muted);
@@ -217,6 +278,8 @@ dialog.media-search-dialog .mikan-batch-footer {
 @media (max-width: 639px) {
   .media-search-dialog { --search-dialog-font-meta: var(--sheet-font-meta); }
   .media-search-dialog :is(.re0-button, .bot-button, .gy-button, .mikan-button, .resource-action-button) { min-height: var(--sheet-touch-size); font-size: var(--sheet-font-body); }
+  :is(.mikan-layout, .gy-layout, .bot-layout) .select-menu .select-menu-control,
+  :is(.mikan-layout, .gy-layout, .bot-layout) .select-menu-option { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

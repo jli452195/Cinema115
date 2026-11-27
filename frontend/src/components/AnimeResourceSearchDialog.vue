@@ -170,8 +170,11 @@ onBeforeUnmount(() => lifecycle.abort())
           </header>
           <div ref="scrollBody" class="mikan-body" data-auto-scrollbar>
             <form class="mikan-search-form" @submit.prevent="search()">
-              <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
-              <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button">搜索</button>
+              <label class="mikan-search-field">
+                <svg aria-hidden="true" class="mikan-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+                <input v-model="query" :aria-label="`${providerName}搜索词`" :maxlength="isGarden ? 128 : 200" :readonly="interactionBusy" :aria-busy="interactionBusy" class="mikan-input" placeholder="输入片名、原名或其他译名" />
+              </label>
+              <button :disabled="interactionBusy || !query.trim()" class="mikan-button mikan-primary-button mikan-search-submit">搜索</button>
               <button type="button" :disabled="interactionBusy || (!selectedBangumi && !query.trim())" aria-label="强制刷新" title="强制刷新，重新读取原站资源" class="mikan-tool-button mikan-refresh-button" @click="refreshCurrent"><svg aria-hidden="true" :class="{ 'mikan-loading-spinner': busy }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5M6.2 6.2A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.8 5.8" /></svg><span>强制刷新</span></button>
             </form>
             <div class="mikan-search-tools">
@@ -213,7 +216,8 @@ onBeforeUnmount(() => lifecycle.abort())
             <p v-if="result && !selectedBangumi && result.attempts.length > 1" role="status" class="mikan-search-note">中文标题未找到资源，已尝试原名：{{ result.query }}</p>
             <div v-if="result" ref="filterAnchor" class="mikan-filter-anchor search-filter-anchor" aria-hidden="true"></div>
             <section v-if="result" :aria-label="`${providerName}结果筛选`" class="mikan-filter-controls">
-              <div v-if="isDmhy" class="dmhy-category-filter"><SegmentedControl v-model="categoryScope" :options="categoryOptions" label="动漫花园结果范围" density="compact" :disabled="interactionBusy" /></div>
+              <div v-if="isDmhy" class="dmhy-category-filter"><SegmentedControl v-model="categoryScope" :options="categoryOptions" label="动漫花园结果范围" density="compact" appearance="underline" :disabled="interactionBusy" /></div>
+              <p v-if="isDmhy" class="dmhy-category-note">影视包含动画、全集、RAW、日剧和特摄；音乐及未知分类保留在补充中，漫画、游戏可在全部中查看。</p>
               <div class="mikan-filter-row">
                 <span class="mikan-filter-label" aria-hidden="true">{{ isGarden ? '发布方' : '字幕组' }}</span>
                 <MikanFilterSelect :model-value="group" :options="groupOptions" :label="`${providerName}${isGarden ? '发布方' : '字幕组'}`" :disabled="interactionBusy" @update:model-value="selectGroup" />
@@ -223,15 +227,19 @@ onBeforeUnmount(() => lifecycle.abort())
                 <MikanFilterSelect v-model="resolution" :options="resolutionOptions" :label="`${providerName}分辨率`" :disabled="interactionBusy" />
               </div>
             </section>
-            <p v-if="result && isDmhy" class="dmhy-category-note">影视包含动画、全集、RAW、日剧和特摄；音乐及未知分类保留在补充中，漫画、游戏可在全部中查看。</p>
-            <input v-if="result" v-model="filter" :aria-label="`筛选${providerName}结果`" :placeholder="pagedSearch ? '已加载结果内筛选：合集 / 第二季 / 简繁…' : '结果内筛选：合集 / 第二季 / 简繁…'" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
+            <label v-if="result" class="mikan-search-field mikan-result-field">
+              <svg aria-hidden="true" class="mikan-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+              <input v-model="filter" :aria-label="`筛选${providerName}结果`" :placeholder="pagedSearch ? '已加载结果内筛选：合集 / 第二季 / 简繁…' : '结果内筛选：合集 / 第二季 / 简繁…'" :readonly="interactionBusy" class="mikan-input mikan-result-input" />
+            </label>
             <template v-if="result">
               <div class="mikan-result-summary">
                 <p>匹配 {{ filtered.length }} / {{ selectedBangumi || pagedSearch ? '已加载' : '已获取' }} {{ result.items.length }} 条<span v-if="pagedSearch || result.more?.length">，仅筛选已加载资源</span></p>
                 <p v-if="busy" role="status" class="mikan-loading" :title="loadingMessage"><svg aria-hidden="true" class="mikan-loading-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 12a8 8 0 1 1-4-6.9" /></svg><span>更新中，暂显旧结果</span></p>
                 <details v-else-if="error" role="alert" class="mikan-load-error mikan-error-details"><summary><span>更新失败，已保留原结果</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6" /></svg></summary><p>{{ error }}</p></details>
-                <CloudDownloadDirectory v-if="token" :controller="cloudTarget" :disabled="batchRunning || singleSubmitting" @settings="close()" />
-                <button type="button" class="mikan-tool-button mikan-batch-entry" :disabled="interactionBusy" :aria-pressed="batchMode" @click="batchMode ? batch.exit() : batchMode = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5" /><path d="M13 7h8M13 17h8m-17 0 2 2 4-5" /></svg>{{ batchMode ? '退出选择' : '批量选择' }}</button>
+                <div class="mikan-summary-actions">
+                  <CloudDownloadDirectory v-if="token" :controller="cloudTarget" :disabled="batchRunning || singleSubmitting" @settings="close()" />
+                  <button type="button" class="mikan-tool-button mikan-batch-entry" :disabled="interactionBusy" :aria-pressed="batchMode" @click="batchMode ? batch.exit() : batchMode = true"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="6" height="6" rx="1.5" /><path d="M13 7h8M13 17h8m-17 0 2 2 4-5" /></svg>{{ batchMode ? '退出选择' : '批量选择' }}</button>
+                </div>
               </div>
               <div v-if="batchMode" class="mikan-selection-tools">
                 <label class="mikan-select-all"><input type="checkbox" :checked="allFilteredSelected" :indeterminate="!allFilteredSelected && availableSelection.some(item => batchSelected.has(magnetKey(item.magnet)))" :disabled="interactionBusy || !availableSelection.length" @change="batch.selectAll(availableSelection)" /><span>全选当前筛选</span><small>{{ availableSelection.length }} 项</small></label>
@@ -296,9 +304,11 @@ onBeforeUnmount(() => lifecycle.abort())
 
 <style scoped>
 .dmhy-brand { display:inline-flex;align-items:center;gap:9px;font-size:21px;font-weight:650;color:var(--search-dialog-text,#1e293b); }
-.dmhy-category-filter { min-width:0;max-width:100%; }
-.dmhy-category-note { margin:2px 0 6px;font-size:12px;line-height:1.5;color:var(--search-dialog-muted,#64748b); }
-.dmhy-category { padding:2px 7px;border-radius:5px;background:rgb(59 130 246 / .10);color:var(--search-dialog-text,#334155); }
+/* 动漫花园一级分类沿用 TG 底线标签结构，说明紧贴分类行下方。 */
+.dmhy-category-filter { display: flex; align-items: center; min-width: 0; max-width: 100%; border-bottom: 1px solid var(--search-dialog-card-border); }
+.dmhy-category-filter > :deep(.segmented-control) { margin-bottom: -1px; }
+.dmhy-category-note { margin: 2px 0 4px; font-size: var(--search-dialog-font-meta, 11px); line-height: 1.5; color: var(--search-dialog-muted, #64748b); }
+.dmhy-category { padding: 3px 8px; border-radius: 8px; background: var(--search-dialog-tonal); color: var(--search-dialog-on-tonal); font-weight: 550; }
 .garden-prepare-notice { color: var(--search-dialog-muted, #64748b); }
 
 .mikan-dialog {
@@ -308,26 +318,30 @@ onBeforeUnmount(() => lifecycle.abort())
   color-scheme: light;
 }
 .dark .mikan-dialog { --mikan-success: #a5d8b8; --mikan-success-bg: #223d31; --mikan-warning: #eed085; --mikan-warning-bg: #42371e; --mikan-error: #ffb4ab; --mikan-error-bg: #502c2b; color-scheme: dark; }
-.mikan-header { display: flex; flex-shrink: 0; align-items: center; gap: 14px; padding: 24px 24px 12px; }
-.mikan-brand { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border-radius: 14px; background: var(--search-dialog-card); }
-.mikan-brand img { width: 40px; height: 40px; object-fit: contain; }
+.mikan-header { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 16px 24px 10px; }
+.mikan-brand { display: grid; place-items: center; flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px; background: var(--search-dialog-card); }
+.mikan-brand img { width: 32px; height: 32px; object-fit: contain; }
 .mikan-heading { flex: 1; min-width: 0; }
-.mikan-heading h2 { display: flex; align-items: center; height: 28px; margin: 0; }
-.mikan-heading h2 img { width: auto; height: 22px; }
-.mikan-heading p { margin: 4px 0 0; color: var(--search-dialog-muted); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.mikan-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 48px; height: 48px; border: 0; border-radius: 50%; background: transparent; color: var(--search-dialog-muted); }
-.mikan-icon-button svg { width: 24px; height: 24px; }
+.mikan-heading h2 { display: flex; align-items: center; height: 24px; margin: 0; }
+.mikan-heading h2 img { width: auto; height: 20px; }
+.mikan-heading p { margin: 2px 0 0; color: var(--search-dialog-muted); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.mikan-icon-button { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: var(--search-dialog-muted); }
+.mikan-icon-button svg { width: 20px; height: 20px; }
 .mikan-body { position: relative; min-height: 0; padding: 0 24px 20px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+/* 对齐 TG 频道搜索的全圆角轻胶囊搜索栏与紧凑操作按钮。 */
 .mikan-search-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.mikan-search-form > input { flex: 1; width: 0; min-width: 100px; }
-.mikan-search-form > .mikan-primary-button { min-width: 64px; flex-shrink: 0; }
-.mikan-input { min-width: 0; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--search-dialog-card); color: var(--search-dialog-text); font-size: 16px; line-height: 24px; }
+.mikan-search-field { display: flex; flex: 1; min-width: 140px; align-items: center; gap: 8px; min-height: 38px; padding: 0 14px; border-radius: 999px; color: var(--search-dialog-muted); transition: background-color .15s ease; }
+.mikan-search-field:focus-within { outline: 2px solid var(--search-dialog-primary); outline-offset: 1px; }
+.mikan-search-icon { flex: none; width: 15px; height: 15px; }
+.mikan-input { flex: 1; min-width: 0; width: 100%; padding: 8px 0; border: 0; background: transparent; color: var(--search-dialog-text); font-size: 13px; line-height: 20px; outline: none; }
 .mikan-input::placeholder { color: var(--search-dialog-muted); opacity: 1; }
 .mikan-input[readonly] { cursor: wait; }
-.mikan-input:focus-visible { outline: 2px solid var(--search-dialog-primary); outline-offset: -2px; }
-.mikan-search-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0 4px; }
-.mikan-tool-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 6px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 24px; background: transparent; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; text-decoration: none; white-space: nowrap; }
-.mikan-tool-button svg { width: 18px; height: 18px; margin: 0; }
+.mikan-search-submit { min-width: 64px; min-height: 38px; padding: 6px 14px; flex-shrink: 0; }
+.mikan-search-submit::before { inset: 0; }
+.mikan-refresh-button { min-height: 38px; padding: 0 13px; background: var(--search-dialog-secondary-background); color: var(--search-dialog-text); font-size: 12px; font-weight: 500; }
+.mikan-search-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin-top: 6px; }
+.mikan-tool-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 5px; min-height: 30px; padding: 0 10px; border: 0; border-radius: 999px; background: transparent; color: var(--search-dialog-muted); font-size: 12px; line-height: 18px; text-decoration: none; white-space: nowrap; transition: background-color .15s ease, color .15s ease; }
+.mikan-tool-button svg { width: 15px; height: 15px; margin: 0; }
 .mikan-site-link { margin-left: auto; }
 .mikan-cover-retry { min-height: 32px; }
 .mikan-search-note { margin: 8px 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; overflow-wrap: anywhere; }
@@ -368,12 +382,14 @@ onBeforeUnmount(() => lifecycle.abort())
 .mikan-filter-row { display: flex; min-width: 0; max-width: 100%; align-items: center; gap: 10px; }
 .mikan-filter-row > nav { flex: 1; min-width: 0; }
 .mikan-filter-label { flex-shrink: 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
-.mikan-result-input { width: 100%; min-height: 40px; margin-top: 2px; padding-block: 8px; font-size: 16px; }
-.mikan-result-summary { display: flex; min-height: 32px; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 12px; margin: 8px 0; color: var(--search-dialog-muted); font-size: var(--search-dialog-font-meta, 11px); line-height: 18px; }
+.mikan-result-field { width: 100%; min-height: 36px; margin-top: 2px; }
+.mikan-result-input { padding: 7px 0; font-size: 13px; }
+.mikan-result-summary { display: flex; min-height: 34px; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 8px 0; color: var(--search-dialog-muted); font-size: 12px; line-height: 18px; }
 .mikan-result-summary p { margin: 0; }
 .mikan-result-summary .mikan-loading { font-size: var(--search-dialog-font-meta, 11px); }
-.mikan-resource-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
-.mikan-resource { min-width: 0; padding: 16px 20px; border: 1px solid var(--search-dialog-card-border); border-radius: 20px; background: var(--search-dialog-card); }
+.mikan-summary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-left: auto; min-width: 0; }
+.mikan-resource-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mikan-resource { min-width: 0; padding: 14px 16px; border: 1px solid var(--search-dialog-card-border); border-radius: 14px; background: var(--search-dialog-card); }
 .mikan-resource.mikan-selectable { position: relative; cursor: pointer; }
 .mikan-resource-selected { background: var(--search-dialog-tonal); }
 .mikan-selectable .mikan-resource-title { padding-left: 36px; }
@@ -458,13 +474,17 @@ onBeforeUnmount(() => lifecycle.abort())
   .mikan-heading h2 img { height: 20px; }
   .mikan-heading p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 12px; line-height: 18px; }
   .mikan-body { padding: 0 var(--sheet-content-inset) 12px; scrollbar-gutter: auto; }
-  .mikan-search-form > input { min-height: var(--sheet-touch-size); }
+  .mikan-search-field { min-height: var(--sheet-touch-size); }
+  .mikan-input { font-size: 16px; }
+  .mikan-search-submit { min-height: var(--sheet-touch-size); }
   .mikan-refresh-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); padding: 0; }.mikan-icon-button { width: var(--sheet-touch-size); height: var(--sheet-touch-size); }
   .mikan-refresh-button > span { display: none; }
-  .mikan-search-tools { flex-wrap: wrap; gap: 0; }
+  .mikan-search-tools { flex-wrap: wrap; gap: 0; margin-top: 2px; }
   .mikan-tool-button { min-height: var(--sheet-touch-size); padding-inline: 8px; font-size: var(--sheet-font-body); }
   .mikan-filter-row { gap: 6px; }
-  .mikan-result-input { min-height: 44px; }
+  .mikan-result-field { min-height: 44px; }
+  .mikan-summary-actions { width: 100%; margin-left: 0; justify-content: space-between; }
+  .mikan-result-summary .mikan-batch-entry { min-height: var(--sheet-touch-size); }
   .mikan-resource { padding: 12px; border-radius: 12px; }
   .mikan-resource-checkbox { top: 8px; left: 8px; width: 48px; height: 48px; }
   .mikan-selection-tools .mikan-select-all { min-height: 48px; }

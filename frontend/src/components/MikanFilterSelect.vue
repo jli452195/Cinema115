@@ -60,8 +60,8 @@ function choose(value: string) {
 .mikan-filter-strip.has-scroll-right { --scroll-fade-right: transparent; }
 .mikan-filter-strip:is(.has-scroll-left, .has-scroll-right) { cursor: grab; }
 .mikan-filter-strip.is-dragging, .mikan-filter-strip.is-dragging .mikan-filter-chip { cursor: grabbing; }
-.mikan-filter-indicator { position: absolute; z-index: 1; border-radius: 10px; background: var(--search-dialog-action-background); pointer-events: none; }
-.mikan-filter-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--search-dialog-muted); font-size: 11px; line-height: 18px; white-space: nowrap; cursor: pointer; }
+.mikan-filter-indicator { position: absolute; z-index: 1; border-radius: 999px; background: var(--search-dialog-action-background); pointer-events: none; }
+.mikan-filter-chip { position: relative; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 6px 12px; border: 0; border-radius: 999px; background: transparent; color: var(--search-dialog-muted); font-size: 12px; line-height: 18px; white-space: nowrap; cursor: pointer; }
 .mikan-filter-chip::before { position: absolute; z-index: 0; inset: 6px 0; border-radius: inherit; background: var(--search-dialog-card); pointer-events: none; content: ''; }
 .mikan-filter-chip > span { position: relative; z-index: 2; }
 .mikan-filter-chip[aria-pressed="true"] { color: var(--search-dialog-on-tonal); font-weight: 600; }
