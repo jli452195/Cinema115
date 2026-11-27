@@ -394,8 +394,11 @@ func (s *MediaOrganizer) render(ctx context.Context, files *mediaOrganizeFiles, 
 				continue
 			}
 		}
-		result, err := p.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: e.File.ID, Season: e.File.Season, Episode: e.File.Episode}, Name: e.File.Name, NamingValues: e.File.NamingValues})
+		result, err := p.render(ctx, MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: e.File.ID, Season: e.File.Season, Episode: e.File.Episode}, Name: e.File.Name, NamingValues: e.File.NamingValues})
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			e.Status = "invalid"
 			e.Message = err.Error()
 			e.ResultCode = "NAMING_FAILED"

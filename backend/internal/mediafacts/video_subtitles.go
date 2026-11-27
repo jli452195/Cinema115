@@ -15,7 +15,8 @@ const videoSubtitleCodeList = videoSubtitleCode + `(?:\+` + videoSubtitleCode + 
 
 var (
 	// 点号分隔的独立括号组是命名模板生成的字幕字段，例如 AAC.[zh-CN]。
-	videoAudioLanguage   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:AAC|FLAC|ALAC|AC-?3|E-?AC-?3|DDP?|DTS(?:-HD)?|TRUEHD|OPUS|AUDIO)[ _-]*[\[【(（][^\[\]【】()（）]*[\]】)）]`)
+	videoAudioLanguage   = regexp.MustCompile(`(?i)(^|[^a-z0-9])(?:AAC|FLAC|ALAC|AC-?3|E-?AC-?3|DDP?|DTS(?:-HD)?|TRUEHD|OPUS|AUDIO)[ _-]*[\[【(（]([^\[\]【】()（）]*)[\]】)）]`)
+	videoSubtitleMarker  = regexp.MustCompile(`(?i)内封|內封|内嵌|內嵌|嵌入|外挂|外掛|字幕|softsub|hardsub|external`)
 	videoSubtitleField   = regexp.MustCompile(`(?i)\.((?:` + videoSubtitleCodeList + `)|softsub|hardsub|external)`)
 	videoSubtitleCodeTag = regexp.MustCompile(`(?i)^` + videoSubtitleCodeList + `$`)
 	videoSubtitleContext = regexp.MustCompile(`(?i)(?:^|[. (])(?:s[0-9]{1,3}e[0-9]{1,4}|(?:19|20)[0-9]{2}|[0-9]{3,4}[pi]|[48]k|web[.-]?dl|bluray|remux|h26[45]|hevc|aac|flac|opus|ddp|truehd|dts)(?:$|[. )])`)
@@ -29,7 +30,8 @@ var videoSubtitleLanguages = [...]struct{ code, legacy, short, label string }{
 
 // VideoSubtitleFields 提取原始发布标题中可用于命名的字幕字段。
 func VideoSubtitleFields(name string) (language, mode string) {
-	return videoSubtitleValues(name, Search(name), releaseparse.Spec{})
+	language, mode, _ = videoSubtitleValues(name, releaseparse.Spec{})
+	return language, mode
 }
 
 func videoSubtitleLanguageValue(languages []string) string {
@@ -61,11 +63,15 @@ func videoSubtitleModeValue(value string) string {
 	}
 }
 
-func videoSubtitleValues(name string, detected SearchSpec, hint releaseparse.Spec) (language, mode string) {
-	if withoutAudio := videoAudioLanguage.ReplaceAllString(name, "$1 "); withoutAudio != name {
-		name = withoutAudio
-		detected = Search(name)
-	}
+func videoSubtitleValues(name string, hint releaseparse.Spec) (language, mode string, conflict bool) {
+	name = videoAudioLanguage.ReplaceAllStringFunc(name, func(annotation string) string {
+		match := videoAudioLanguage.FindStringSubmatch(annotation)
+		if videoSubtitleMarker.MatchString(match[2]) {
+			return annotation
+		}
+		return match[1] + " "
+	})
+	detected, conflict := specificationWithSubtitleModeConflict(name)
 	languages := detected.Languages
 	var modes []string
 	modes = appendUnique(modes, videoSubtitleModeValue(detected.SubtitleMode))
@@ -102,13 +108,16 @@ func videoSubtitleValues(name string, detected SearchSpec, hint releaseparse.Spe
 	if len(languages) == 0 {
 		languages = hint.Languages
 	}
+	if conflict || len(modes) > 1 {
+		return videoSubtitleLanguageValue(languages), "", true
+	}
 	switch len(modes) {
 	case 0:
 		mode = videoSubtitleModeValue(hint.SubtitleMode)
 	case 1:
 		mode = modes[0]
 	}
-	return videoSubtitleLanguageValue(languages), mode
+	return videoSubtitleLanguageValue(languages), mode, false
 }
 
 // NormalizeVideoSubtitleValues 将旧清单中的字幕字段转换为当前命名格式。

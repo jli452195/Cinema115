@@ -45,8 +45,11 @@ func (s *OrganizeEngine) buildPlan(ctx context.Context, scan OrganizeScan, input
 			return OrganizeJob{}, fmt.Errorf("%w：请从扫描结果选择视频，每个文件只能出现一次", ErrOrganizeInput)
 		}
 		seen[f.ID] = true
-		result, err := p.render(MediaNamingFile{OrganizeSelection: selection, Name: f.Name, TitleOnly: f.TitleOnly, NamingValues: f.NamingValues})
+		result, err := p.render(ctx, MediaNamingFile{OrganizeSelection: selection, Name: f.Name, TitleOnly: f.TitleOnly, NamingValues: f.NamingValues})
 		if err != nil {
+			if ctx.Err() != nil {
+				return OrganizeJob{}, ctx.Err()
+			}
 			return OrganizeJob{}, fmt.Errorf("%w：%s：%w", ErrOrganizeInput, f.Name, err)
 		}
 		job.Items = append(job.Items, OrganizeItem{File: f, Directory: result.Directory, Stem: result.Stem, Name: result.Name, TargetPath: path.Join(scan.Config.TargetPath, result.RelativePath), Status: "pending"})

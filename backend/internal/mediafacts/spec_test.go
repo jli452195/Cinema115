@@ -32,3 +32,14 @@ func TestExplicitResolutionTagsAreNotLimitedToCommonHeights(t *testing.T) {
 		})
 	}
 }
+
+func TestResolutionHintOnlyFillsMissingDeclaration(t *testing.T) {
+	hint := releaseparse.Spec{Resolution: "2160p"}
+	if got := Values("Show.1080Pixels.mkv", hint, "")[naming.Resolution]; got != "2160p" {
+		t.Errorf("无完整分辨率声明时应采用提示，实际为 %q", got)
+	}
+	values := Values("Show.720p.1080p.mkv", hint, "")
+	if got, present := values[naming.Resolution]; got != "" || !present {
+		t.Errorf("相互矛盾的分辨率应保留冲突，实际为 %q（已声明 %v）", got, present)
+	}
+}

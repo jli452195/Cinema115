@@ -33,6 +33,17 @@ func Specification(title string) Spec {
 }
 
 func specification(title string) (Spec, bool) {
+	spec, ambiguous, _ := specificationDetails(title)
+	return spec, ambiguous
+}
+
+// SpecificationWithSubtitleModeConflict 单独返回字幕形式冲突，供命名补缺时区分未知与矛盾。
+func SpecificationWithSubtitleModeConflict(title string) (Spec, bool) {
+	spec, _, subtitleConflict := specificationDetails(title)
+	return spec, subtitleConflict
+}
+
+func specificationDetails(title string) (Spec, bool, bool) {
 	out := Spec{}
 	if q := resolution(title); q != nil && *q != "unknown" {
 		out.Resolution = *q
@@ -159,7 +170,8 @@ func specification(title string) (Spec, bool) {
 		out.Languages = append(out.Languages, language)
 	}
 	slices.Sort(out.Languages)
-	return out, len(codecs) > 1 || len(containers) > 1 || len(depths) > 1 || len(modes) > 1
+	subtitleConflict := len(modes) > 1
+	return out, len(codecs) > 1 || len(containers) > 1 || len(depths) > 1 || subtitleConflict, subtitleConflict
 }
 
 func NormalizeSpec(spec Spec) Spec {

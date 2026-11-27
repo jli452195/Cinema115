@@ -14,6 +14,7 @@ import (
 	"strm115/backend/internal/client/tmdb"
 	"strm115/backend/internal/model"
 	"strm115/backend/internal/naming"
+	"strm115/backend/internal/recognition"
 	"strm115/backend/internal/utils/torrentmeta"
 )
 
@@ -326,6 +327,60 @@ func TestDownloadBatchSpecsUseEachFileAndSingleTitleTagsAsFallback(t *testing.T)
 	files, err = s.Files(context.Background(), in)
 	if err != nil || files.Specs[files.Files[0].ID].Resolution != "" || files.Specs[files.Files[1].ID].Fansub != "" {
 		t.Fatal("pack title was copied onto every video", err, files.Specs)
+	}
+}
+
+func TestDownloadTitleNamingPreservesFieldEvidence(t *testing.T) {
+	rules, err := recognition.Compile("ReadyGroup\n甲 ~= AmbiguousGroup\n乙 ~= AmbiguousGroup", "NF\nAMZN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, file, title       string
+		resolution, languages   string
+		mode, platform, group   string
+		specLanguages, specMode string
+		conflicting             []naming.Field
+	}{
+		{
+			name:  "文件规格冲突不会由目录或原帖覆盖",
+			file:  "Movie[简体外挂]/Movie.S01E01.1080p.720p.[内封][内嵌].NF.AMZN.WEB-DL.mkv",
+			title: "Movie [1080p][NF][简繁外挂]", languages: "zh-CN", specLanguages: "zh-Hans",
+			conflicting: []naming.Field{naming.Resolution, naming.Platform, naming.SubtitleMode},
+		},
+		{
+			name: "标题补缺时词表冲突只影响对应类别",
+			file: "[ReadyGroup] Movie.mkv", title: "[AmbiguousGroup] Movie [1080p][NF]",
+			resolution: "1080p", platform: "NF", group: "ReadyGroup",
+		},
+		{
+			name: "明确的原标题字幕可补缺",
+			file: "Movie.mkv", title: "Movie [简繁内封]",
+			languages: "zh-CN+zh-TW", mode: "softsub", specLanguages: "zh-Hans,zh-Hant", specMode: "soft",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := organizeResourceFiles(gardenTestHash, []torrentmeta.File{{Path: tc.file, Size: 10}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := prepareDownloadNaming(&out, DownloadResourceInput{Title: tc.title}, rules); err != nil {
+				t.Fatal(err)
+			}
+			file := out.Files[0]
+			values, spec := file.NamingValues, out.Specs[file.ID]
+			if values[naming.Resolution] != tc.resolution || values[naming.Languages] != tc.languages || values[naming.SubtitleMode] != tc.mode || values[naming.Platform] != tc.platform || values[naming.ReleaseGroup] != tc.group {
+				t.Fatal("命名规格错误", values)
+			}
+			for _, field := range tc.conflicting {
+				if value, exists := values[field]; !exists || value != "" {
+					t.Fatal("应保留字段冲突", field, values)
+				}
+			}
+			if spec.Resolution != tc.resolution || strings.Join(spec.Languages, ",") != tc.specLanguages || spec.SubtitleMode != tc.specMode || spec.Fansub != tc.group {
+				t.Fatal("清单没有沿用命名规格", spec)
+			}
+		})
 	}
 }
 

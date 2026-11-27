@@ -15,6 +15,7 @@ func TestVideoSubtitleNamingReadsCanonicalFields(t *testing.T) {
 		{"Show.[zh-SG].external.mkv", "zh-SG", "external"},
 		{"Show.S01E02.1080p.[zh-en].mkv", "zh+en", ""},
 		{"Show.S01E02.1080p.AAC[CHS][CHT].mkv", "zh-TW", ""},
+		{"Show.S01E02.1080p.AAC [简繁内封].mkv", "zh-CN+zh-TW", "softsub"},
 		{"Show.S01E02.1080p.[简繁内封].hardsub.mkv", "zh-CN+zh-TW", ""},
 		{"An.External.Cause.S01E02.1080p.mkv", "", ""},
 		{"Show.S01E02.1080p.zh-CNish.externalized.mkv", "", ""},
@@ -29,6 +30,19 @@ func TestVideoSubtitleNamingReadsCanonicalFields(t *testing.T) {
 				t.Errorf("字幕形式 = %q，期望 %q", got, tt.mode)
 			}
 		})
+	}
+}
+
+func TestInheritSubtitlesKeepsExplicitModeConflict(t *testing.T) {
+	for _, tt := range []struct{ name, wantMode string }{
+		{"Show.1080p.[内封和内嵌].mkv", ""},
+		{"Show.1080p.mkv", "softsub"},
+	} {
+		values := Values(tt.name, releaseparse.Spec{}, "")
+		InheritSubtitles(values, "Show [简繁内封]")
+		if mode, present := values[naming.SubtitleMode]; !present || mode != tt.wantMode || values[naming.Languages] != "zh-CN+zh-TW" {
+			t.Errorf("%q 的目录字幕补缺 = %+v，期望简繁与字幕形式 %q", tt.name, values, tt.wantMode)
+		}
 	}
 }
 

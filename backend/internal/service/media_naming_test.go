@@ -53,6 +53,50 @@ func (s *mediaNamingMetadata) Details(ctx context.Context, kind string, id int) 
 	return &tmdb.Detail{Item: tmdb.Item{ID: id, Kind: kind, Title: "作品.名称", OriginalTitle: "Original", Date: "2026-01-01"}}, ctx.Err()
 }
 
+type mediaNamingEpisodeMetadata struct {
+	mediaNamingMetadata
+	seasonCalls int
+}
+
+func (s *mediaNamingEpisodeMetadata) Season(_ context.Context, _, season int) (*tmdb.SeasonDetail, error) {
+	s.seasonCalls++
+	if season != 1 {
+		return nil, tmdb.ErrNotFound
+	}
+	return &tmdb.SeasonDetail{Number: season, Episodes: []tmdb.Episode{
+		{Number: 1, Name: "第一话"}, {Number: 2, Name: "第二话"},
+	}}, nil
+}
+
+func TestMediaNamingEpisodeTitleUsesTargetSeasonAndEpisode(t *testing.T) {
+	template, err := naming.Default(naming.TV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := MediaNamingInput{Kind: "tv", TMDBID: 42, Files: []MediaNamingFile{
+		{OrganizeSelection: OrganizeSelection{ID: "a", Season: 1, Episode: 2}, Name: "原文件.S03E15.strm", NamingValues: map[naming.Field]string{naming.EpisodeTitle: "客户端集名"}},
+		{OrganizeSelection: OrganizeSelection{ID: "b", Season: 1, Episode: 1}, Name: "原文件.S03E16.strm"},
+		{OrganizeSelection: OrganizeSelection{ID: "c", Season: 1, Episode: 0}, Name: "原文件.S03E17.strm"},
+		{OrganizeSelection: OrganizeSelection{ID: "d", Season: 2, Episode: 1}, Name: "原文件.S03E18.strm", NamingValues: map[naming.Field]string{naming.EpisodeTitle: "客户端集名"}},
+	}}
+	metadata := &mediaNamingEpisodeMetadata{}
+	templates := &mediaNamingTemplates{record: naming.Snapshot{Template: template}}
+	service := MediaNaming{Templates: templates, Metadata: metadata}
+	if _, err := service.Preview(context.Background(), input); err != nil || metadata.seasonCalls != 0 {
+		t.Fatalf("默认模板不应请求季详情: calls=%d err=%v", metadata.seasonCalls, err)
+	}
+	templates.record.Template.Filename = append(template.Filename, naming.Block{Field: naming.EpisodeTitle, Separator: "."})
+	preview, err := service.Preview(context.Background(), input)
+	if err != nil || metadata.seasonCalls != 2 || len(preview.Items) != len(input.Files) {
+		t.Fatalf("每季只查一次集名: calls=%d preview=%+v err=%v", metadata.seasonCalls, preview, err)
+	}
+	for i, want := range []string{"作品.名称.S01E02.第二话.strm", "作品.名称.S01E01.第一话.strm", "作品.名称.S01E00.strm", "作品.名称.S02E01.strm"} {
+		if item := preview.Items[i]; item.Result == nil || item.Result.Name != want {
+			t.Fatalf("集名或缺失集名回退错误: item=%+v want=%q", item, want)
+		}
+	}
+}
+
 func TestMediaNamingExplicitZeroEpisode(t *testing.T) {
 	template, err := naming.Default(naming.TV)
 	if err != nil {

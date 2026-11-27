@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -97,57 +98,99 @@ func (s *DownloadOrganize) Files(ctx context.Context, in DownloadResourceInput) 
 func prepareDownloadNaming(out *DownloadFiles, in DownloadResourceInput, rules recognition.Snapshot) error {
 	completeDownloadFileNumbering(out.Files)
 	for i := range out.Files {
-		spec := out.Specs[out.Files[i].ID]
-		fileSpec := spec.Spec
+		file := &out.Files[i]
+		fileSpec := out.Specs[file.ID].Spec
 		// 清单规格来自同一文件名，字幕由命名规则单独判定，避免把音轨标签重新填回。
 		fileSpec.Languages, fileSpec.SubtitleMode = nil, ""
-		values, err := mediafacts.ValuesWithRecognition(out.Files[i].Name, fileSpec, rules)
+		values, err := mediafacts.ValuesWithRecognition(file.Name, fileSpec, rules)
 		if err != nil {
-			return fmt.Errorf("%s：%w", out.Files[i].Name, err)
+			return fmt.Errorf("%s：%w", file.Name, err)
 		}
-		out.Files[i].NamingValues = values
-		spec.Fansub = values[naming.ReleaseGroup]
-		if out.Specs == nil {
-			out.Specs = make(map[string]DownloadFileSpec, len(out.Files))
-		}
-		out.Specs[out.Files[i].ID] = spec
+		file.NamingValues = values
 	}
 	if err := mediaDirectorySubtitleValues(out.Files, rules); err != nil {
 		return err
 	}
-	// A single video's post title can fill missing cosmetic tags. For a pack,
-	// only each file's metadata applies; the pack title cannot describe all rows.
+	// 单视频原帖只补缺失字段。合集按各文件查规格，避免把标题套给每个文件。
 	if len(out.Files) == 1 && !out.Files[0].TitleOnly && in.Title != "" {
-		spec := out.Specs[out.Files[0].ID]
-		title := resourceSearchSpec(in.Title)
-		if spec.Resolution == "" {
-			spec.Resolution = title.Resolution
+		if err := fillDownloadTitleNaming(out.Files[0].NamingValues, in.Title, rules); err != nil {
+			return err
 		}
-		if len(spec.Languages) == 0 {
-			spec.Languages = title.Languages
-		}
-		// 文件名和固定词表没有变化，只补充规格，复用首轮已校验的发布组与平台。
-		fileSpec := spec.Spec
-		fileSpec.Languages, fileSpec.SubtitleMode = nil, ""
-		values := mediafacts.ValuesWithRecognizedRelease(out.Files[0].Name, fileSpec, out.Files[0].NamingValues)
-		if out.Files[0].NamingValues[naming.Languages] == "" {
-			values[naming.Languages], _ = mediafacts.VideoSubtitleFields(in.Title)
-		}
-		// 保留原有规格继承范围，发布标题只额外补充缺失的组名和平台。
-		if values[naming.ReleaseGroup] == "" || values[naming.Platform] == "" {
-			titleValues, err := mediafacts.ValuesWithRecognition(in.Title, spec.Spec, rules)
-			if err != nil {
-				return fmt.Errorf("识别单视频发布标题: %w", err)
+	}
+	if out.Specs == nil && len(out.Files) > 0 {
+		out.Specs = make(map[string]DownloadFileSpec, len(out.Files))
+	}
+	for _, file := range out.Files {
+		spec := out.Specs[file.ID]
+		values := file.NamingValues
+		// 清单展示与命名采用同一结果，语言继续沿用清单已有的简繁代码。
+		spec.Resolution, spec.Fansub = values[naming.Resolution], values[naming.ReleaseGroup]
+		spec.SubtitleMode = map[string]string{"hardsub": "hard", "softsub": "soft", "external": "external"}[values[naming.SubtitleMode]]
+		spec.Languages = nil
+		if language := values[naming.Languages]; language != "" {
+			spec.Languages = strings.Split(language, "+")
+			for i, code := range spec.Languages {
+				switch code {
+				case "zh-CN":
+					spec.Languages[i] = "zh-Hans"
+				case "zh-TW":
+					spec.Languages[i] = "zh-Hant"
+				}
 			}
-			values[naming.ReleaseGroup], values[naming.Platform] = titleValues[naming.ReleaseGroup], titleValues[naming.Platform]
+			slices.Sort(spec.Languages)
 		}
-		for field, value := range values {
-			if out.Files[0].NamingValues[field] == "" {
-				out.Files[0].NamingValues[field] = value
+		out.Specs[file.ID] = spec
+	}
+	return nil
+}
+
+func fillDownloadTitleNaming(values map[naming.Field]string, title string, rules recognition.Snapshot) error {
+	titleValues := mediafacts.Values(title, DownloadFileSpec{}.Spec, "")
+	fileLanguages, hasLanguages := values[naming.Languages]
+	for _, field := range []naming.Field{naming.Resolution, naming.Languages, naming.SubtitleMode} {
+		if _, exists := values[field]; exists {
+			continue
+		}
+		// 已有字幕语言时，只有标题声明同一组语言才可补字幕形式。
+		if field == naming.SubtitleMode && hasLanguages && (fileLanguages == "" || fileLanguages != titleValues[naming.Languages]) {
+			continue
+		}
+		if value, exists := titleValues[field]; exists {
+			values[field] = value
+		}
+	}
+	_, hasGroup := values[naming.ReleaseGroup]
+	_, hasPlatform := values[naming.Platform]
+	if hasGroup && hasPlatform {
+		return nil
+	}
+	result, err := rules.Recognize(title)
+	if err != nil {
+		return fmt.Errorf("识别单视频发布标题: %w", err)
+	}
+	// 原帖词表冲突只影响对应的补缺类别，已确认的文件字段仍然优先。
+	for _, conflict := range result.Conflicts {
+		switch conflict.Kind {
+		case "groups":
+			if !hasGroup {
+				values[naming.ReleaseGroup] = ""
+				hasGroup = true
+			}
+		case "platforms":
+			if !hasPlatform {
+				values[naming.Platform] = ""
+				hasPlatform = true
 			}
 		}
-		spec.Fansub = out.Files[0].NamingValues[naming.ReleaseGroup]
-		out.Specs[out.Files[0].ID] = spec
+	}
+	if !hasGroup && len(result.ReleaseGroups) > 0 {
+		values[naming.ReleaseGroup] = strings.Join(result.ReleaseGroups, "&")
+	}
+	if !hasPlatform && len(result.Platforms) > 0 {
+		values[naming.Platform] = ""
+		if len(result.Platforms) == 1 {
+			values[naming.Platform] = result.Platforms[0]
+		}
 	}
 	return nil
 }

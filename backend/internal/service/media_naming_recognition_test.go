@@ -86,13 +86,13 @@ func TestMediaNamingRecognitionPinsPreviewAndRejectsConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	item := MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: "v", Season: 1, Episode: 1}, Name: "[LoliHouse] Show.S01E01.IQ.WEB-DL.mkv"}
-	result, err := p.render(item)
+	result, err := p.render(ctx, item)
 	if err != nil || !strings.Contains(result.Name, "-规范组.mkv") || !strings.Contains(result.Name, ".IQ-") {
 		t.Fatal("公共命名没有使用固定词表", result, err)
 	}
 	conflict := recognitionTestSnapshot(t, "组甲 ~= LoliHouse\n组乙 ~= LoliHouse", "")
 	p.recognition = conflict
-	if _, err := p.render(item); err == nil {
+	if _, err := p.render(ctx, item); err == nil {
 		t.Fatal("冲突映射不能生成可执行命名结果")
 	}
 }

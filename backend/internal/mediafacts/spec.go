@@ -26,16 +26,26 @@ func Search(title string) SearchSpec {
 }
 
 func Specification(title string) releaseparse.Spec {
-	parsed := releaseparse.Specification(title)
+	parsed, _ := specificationWithSubtitleModeConflict(title)
+	return parsed
+}
+
+func specificationWithSubtitleModeConflict(title string) (releaseparse.Spec, bool) {
+	parsed, subtitleConflict := releaseparse.SpecificationWithSubtitleModeConflict(title)
 	// Reuse language boundaries without altering RSS profiles or subtitle modes.
 	normalized := resourceSizeTags.ReplaceAllString(resourceCompoundSubtitles.ReplaceAllString(title, "字幕"), " ")
 	if normalized != title {
 		parsed.Languages = releaseparse.Specification(normalized).Languages
 	}
-	return parsed
+	return parsed, subtitleConflict
 }
 
 func resolution(title string) string {
+	value, _ := resolutionFact(title)
+	return value
+}
+
+func resolutionFact(title string) (value string, conflict bool) {
 	quality := ""
 	for _, index := range resourceQuality.FindAllStringSubmatchIndex(title, -1) {
 		if end := index[1]; end < len(title) && (title[end] >= 'a' && title[end] <= 'z' || title[end] >= 'A' && title[end] <= 'Z' || title[end] >= '0' && title[end] <= '9') {
@@ -56,9 +66,9 @@ func resolution(title string) string {
 			value = map[string]string{"4": "2160p", "8": "4320p"}[part(5)]
 		}
 		if quality != "" && quality != value {
-			return ""
+			return "", true
 		}
 		quality = value
 	}
-	return quality
+	return quality, false
 }

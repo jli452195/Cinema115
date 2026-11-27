@@ -120,13 +120,20 @@ func (s *MediaOrganizer) PreviewName(ctx context.Context, raw string) (MediaName
 		out.Message = factsErr.Error()
 		return out, nil
 	}
-	result, err := template.render(MediaNamingFile{
+	result, err := template.render(ctx, MediaNamingFile{
 		OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode},
 		Name:              name,
 		TitleOnly:         titleOnly,
 		NamingValues:      specifications,
 	})
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			out.Message = "命名预览查询超时，请重试"
+			return out, nil
+		}
+		if ctx.Err() != nil {
+			return out, ctx.Err()
+		}
 		out.Message = err.Error()
 		return out, nil
 	}

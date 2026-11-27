@@ -181,7 +181,7 @@ func TestMediaOrganizeRegressionCorpus(t *testing.T) {
 				t.Fatalf("作品识别回归: got=%+v want=%s", group, tc.work)
 			}
 			prepared := mediaRegressionPreparedNaming(t, ctx, metadata, group.Kind, group.TMDBID)
-			result, err := prepared.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name})
+			result, err := prepared.render(ctx, MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name})
 			if err == nil && tc.videoSource != "" {
 				sub := mediaSubtitleTestFile(tc.source, path.Dir(tc.source), path.Base(tc.source), "subtitle")
 				matches := mediaOrganizeSubtitles([]OrganizeFile{file, sub})
@@ -221,7 +221,7 @@ func testMediaRegressionDownload(t *testing.T, ctx context.Context, metadata *me
 	prepared := mediaRegressionPreparedNaming(t, ctx, metadata, kind, id)
 	for _, file := range out.Files {
 		if file.ID == tc.source {
-			result, err := prepared.render(MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name, NamingValues: file.NamingValues})
+			result, err := prepared.render(ctx, MediaNamingFile{OrganizeSelection: OrganizeSelection{ID: file.ID, Season: file.Season, Episode: file.Episode}, Name: file.Name, NamingValues: file.NamingValues})
 			if err != nil || result.Name != tc.filename {
 				t.Fatalf("下载整理季集或命名回归: got=%q want=%q err=%v", result.Name, tc.filename, err)
 			}

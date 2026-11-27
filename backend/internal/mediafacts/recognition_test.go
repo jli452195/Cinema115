@@ -1,7 +1,6 @@
 package mediafacts
 
 import (
-	"reflect"
 	"testing"
 
 	"strm115/backend/internal/naming"
@@ -29,37 +28,26 @@ func TestRecognitionDoesNotChangeRSSSourceGroupValues(t *testing.T) {
 	}
 }
 
-func TestRecognizedReleaseReuseMatchesFreshRecognition(t *testing.T) {
-	rules, err := recognition.Compile("规范组 ~= LoliHouse\n(?:桜|樱)都字幕[组組]", "NF ~= NF|Netflix\nIQ ~= iQIYI|爱奇艺")
+func TestRecognizedPlatformDistinguishesMissingFromConflict(t *testing.T) {
+	rules, err := recognition.Compile("", "NF ~= NF|Netflix\nIQ ~= iQIYI|爱奇艺")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{
-		"[LoliHouse] Show.S01E01.NF.WEB-DL.mkv",
-		"[樱都字幕組] Show.1080p.HEVC.mkv",
-		"Show.S01E01.NF.iQIYI.WEB-DL.mkv",
-		"Show.S01E01.WEB-DL.mkv",
+	for _, tc := range []struct {
+		name, want string
+		present    bool
+	}{
+		{"Show.S01E01.NF.WEB-DL.mkv", "NF", true},
+		{"Show.S01E01.NF.iQIYI.WEB-DL.mkv", "", true},
+		{"Show.S01E01.WEB-DL.mkv", "", false},
 	} {
-		t.Run(name, func(t *testing.T) {
-			original, err := ValuesWithRecognition(name, releaseparse.Spec{}, rules)
+		t.Run(tc.name, func(t *testing.T) {
+			values, err := ValuesWithRecognition(tc.name, releaseparse.Spec{}, rules)
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := make(map[naming.Field]string, len(original))
-			for field, value := range original {
-				before[field] = value
-			}
-			hint := releaseparse.Spec{Resolution: "2160p", Languages: []string{"zh-Hant"}, SubtitleMode: "soft"}
-			want, err := ValuesWithRecognition(name, hint, rules)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := ValuesWithRecognizedRelease(name, hint, original)
-			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("补充规格必须等价于同一词表重新识别：新=%+v，旧=%+v", got, want)
-			}
-			if !reflect.DeepEqual(original, before) {
-				t.Fatal("补充规格修改了首轮已确认的文件事实")
+			if got, present := values[naming.Platform]; got != tc.want || present != tc.present {
+				t.Fatalf("平台值 = %q，已声明 = %v；期望 %q，%v", got, present, tc.want, tc.present)
 			}
 		})
 	}

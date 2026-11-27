@@ -162,10 +162,10 @@ func Build(job model.AnimeDownloadJob) (Plan, error) {
 				subtitleLanguage, subtitleMode = mediafacts.VideoSubtitleFields(job.Snapshot.Release.Title)
 			}
 			values := mediafacts.Values(e.Name, hint, job.Snapshot.Source.GroupName)
-			if values[naming.Languages] == "" {
+			if _, exists := values[naming.Languages]; !exists && subtitleLanguage != "" {
 				values[naming.Languages] = subtitleLanguage
 			}
-			if values[naming.SubtitleMode] == "" {
+			if _, exists := values[naming.SubtitleMode]; !exists && subtitleMode != "" {
 				values[naming.SubtitleMode] = subtitleMode
 			}
 			if directoryVideos[e.ParentCID] == 1 {

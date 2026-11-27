@@ -50,6 +50,33 @@ func TestValuesRejectsConflictingScalarFields(t *testing.T) {
 	}
 }
 
+func TestValuesAudioAliasesAndChannels(t *testing.T) {
+	for _, tt := range []struct{ name, codec, channels string }{
+		{"Title.2024.1080p.DD+5.1.mkv", "DDP", "5.1"},
+		{"Title.2024.2160p.DTS-HD_MA.7.1.mkv", "DTSHDMA", "7.1"},
+		{"Title.2.0.2009.1080p.DTS-HD.MA.5.1.mkv", "DTSHDMA", "5.1"},
+		{"Title.2.0.2009.1080p.mkv", "", ""},
+	} {
+		values := Values(tt.name, releaseparse.Spec{}, "")
+		if values[naming.AudioCodec] != tt.codec || values[naming.Channels] != tt.channels {
+			t.Errorf("%q 的音频字段 = %+v，期望 %s / %s", tt.name, values, tt.codec, tt.channels)
+		}
+	}
+}
+
+func TestValuesPreservesSourceAndDynamicRangeConflicts(t *testing.T) {
+	values := Values("Title.2160p.BluRay.WEB_DL.DV.HDR10.SDR.mkv", releaseparse.Spec{}, "")
+	for _, field := range []naming.Field{naming.Source, naming.SourceMedium, naming.DynamicRange, naming.HDRBaseLayer} {
+		if value, present := values[field]; value != "" || !present {
+			t.Errorf("%s 应保留显式冲突，实际为 %q（已声明 %v）", field, value, present)
+		}
+	}
+	values = Values("Title.HDR10.HLG.mkv", releaseparse.Spec{}, "")
+	if value, present := values[naming.DynamicRange]; value != "" || !present {
+		t.Errorf("HDR10 和 HLG 应保留显式冲突，实际为 %q（已声明 %v）", value, present)
+	}
+}
+
 func TestValuesPreservesCombinedSource(t *testing.T) {
 	values := Values("Title.2160p.BluRay.REMUX.HEVC.mkv", releaseparse.Spec{}, "")
 	if values[naming.Source] != "BluRay REMUX" {

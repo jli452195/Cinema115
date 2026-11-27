@@ -49,12 +49,19 @@ type MediaNamingPreview struct {
 	Items  []MediaNamingItem `json:"items"`
 }
 
+type namingSeasonSource interface {
+	Season(context.Context, int, int) (*tmdb.SeasonDetail, error)
+}
+
 type preparedMediaNaming struct {
-	recognition recognition.Snapshot
-	snapshot    naming.Snapshot
-	detail      *tmdb.Detail
-	renderer    *naming.Renderer
-	english     string
+	recognition  recognition.Snapshot
+	snapshot     naming.Snapshot
+	detail       *tmdb.Detail
+	renderer     *naming.Renderer
+	english      string
+	seasonSource namingSeasonSource
+	numbering    *numberingSelection
+	episodeNames map[int]map[int]string
 }
 
 func (s MediaNaming) prepare(ctx context.Context, kind string, id int, expected *int64) (preparedMediaNaming, error) {
@@ -98,6 +105,13 @@ func (s MediaNaming) prepareWithDetail(ctx context.Context, kind string, id int,
 		return preparedMediaNaming{}, fmt.Errorf("命名模板或作品信息无效")
 	}
 	p := preparedMediaNaming{snapshot: snapshot, detail: detail, renderer: renderer, recognition: rules}
+	if kind == "tv" && namingTemplateUsesField(snapshot.Template, naming.EpisodeTitle) {
+		p.seasonSource, _ = s.Metadata.(namingSeasonSource)
+		if p.seasonSource != nil {
+			p.numbering, _ = ctx.Value(numberingKey{id}).(*numberingSelection)
+			p.episodeNames = make(map[int]map[int]string)
+		}
+	}
 	p.english, err = optionalNamingEnglish(ctx, s.Metadata, snapshot.Template, kind, id)
 	if err != nil {
 		return preparedMediaNaming{}, err
@@ -105,35 +119,64 @@ func (s MediaNaming) prepareWithDetail(ctx context.Context, kind string, id int,
 	return p, nil
 }
 
+func namingTemplateUsesField(template naming.Template, field naming.Field) bool {
+	layers := append([][]naming.Block{template.Filename}, template.Directories...)
+	for _, layer := range layers {
+		for _, block := range layer {
+			if block.Field == field {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func optionalNamingEnglish(ctx context.Context, metadata any, template naming.Template, kind string, id int) (string, error) {
 	source, ok := metadata.(interface {
 		EnglishTitle(context.Context, string, int) (string, error)
 	})
-	if !ok {
+	if !ok || !namingTemplateUsesField(template, naming.EnglishTitle) {
 		return "", nil
 	}
-	layers := append([][]naming.Block{template.Filename}, template.Directories...)
-	for _, layer := range layers {
-		for _, block := range layer {
-			if block.Field != naming.EnglishTitle {
-				continue
-			}
-			lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
-			english, err := source.EnglishTitle(lookupCtx, kind, id)
-			cancel()
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			if err != nil {
-				return "", nil
-			}
-			return english, nil
-		}
+	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	english, err := source.EnglishTitle(lookupCtx, kind, id)
+	cancel()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
 	}
-	return "", nil
+	if err != nil {
+		return "", nil
+	}
+	return english, nil
 }
 
-func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error) {
+// 同一作品的命名计划按季复用一次可选查询，缺失的集名与查询失败均可省略。
+func (p preparedMediaNaming) episodeTitle(ctx context.Context, season, episode int) string {
+	if p.seasonSource == nil {
+		return ""
+	}
+	if names, exists := p.episodeNames[season]; exists {
+		return names[episode]
+	}
+	p.episodeNames[season] = nil
+	if p.numbering != nil {
+		ctx = context.WithValue(ctx, numberingKey{p.detail.ID}, p.numbering)
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	detail, err := p.seasonSource.Season(lookupCtx, p.detail.ID, season)
+	if err != nil || detail == nil || detail.Number != season || p.detail.Numbering != nil && detail.NumberingRevision != p.detail.Numbering.Revision {
+		return ""
+	}
+	names := make(map[int]string, len(detail.Episodes))
+	for _, item := range detail.Episodes {
+		names[item.Number] = item.Name
+	}
+	p.episodeNames[season] = names
+	return names[episode]
+}
+
+func (p preparedMediaNaming) render(ctx context.Context, file MediaNamingFile) (naming.Result, error) {
 	if p.snapshot.Template.Kind == naming.TV && (file.Season < 0 || file.Season > 1000 || file.Episode < 0 || file.Episode > 10000) {
 		return naming.Result{}, fmt.Errorf("%w：请填写有效目标季集", ErrOrganizeInput)
 	}
@@ -161,10 +204,17 @@ func (p preparedMediaNaming) render(file MediaNamingFile) (naming.Result, error)
 	if len(p.detail.Date) >= 4 {
 		values[naming.Year] = p.detail.Date[:4]
 	}
+	// 集名和作品字段一样由实际目标元数据决定。
+	delete(values, naming.EpisodeTitle)
+	if p.seasonSource != nil {
+		values[naming.EpisodeTitle] = p.episodeTitle(ctx, file.Season, file.Episode)
+		if err := ctx.Err(); err != nil {
+			return naming.Result{}, err
+		}
+	}
 	data := naming.Data{Values: values, OriginalName: file.Name, TitleOnly: file.TitleOnly}
 	if p.snapshot.Template.Kind == naming.TV {
-		// Combined episodes keep their span for numbering, but name the file
-		// after its starting episode (S01E01-02 becomes S01E01).
+		// 连集保留原范围用于编号，文件名仍沿用起始集。
 		data.Season, data.Episode = &file.Season, &file.Episode
 	}
 	return p.renderer.Render(data)
@@ -189,7 +239,10 @@ func (s MediaNaming) Preview(ctx context.Context, input MediaNamingInput) (Media
 			return MediaNamingPreview{}, ErrOrganizeInput
 		}
 		seen[file.ID] = true
-		result, err := p.render(file)
+		result, err := p.render(ctx, file)
+		if ctx.Err() != nil {
+			return MediaNamingPreview{}, ctx.Err()
+		}
 		item := MediaNamingItem{ID: file.ID}
 		if err != nil {
 			item.Error = err.Error()
